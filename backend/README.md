@@ -33,7 +33,7 @@ Environment variables:
 
 | Variable | Description | Default |
 |---|---|---|
-| `DATABASE_URL` | SQLite database URL | `sqlite://data/hosting.db` |
+| `DATABASE_URL` | SQLite database URL | `sqlite://data/caravel.db` |
 | `HOST` | Bind host | `127.0.0.1` |
 | `PORT` | Bind port | `3000` |
 | `ZOOID_API_URL` | Zooid API base URL | `http://127.0.0.1:8032` |
@@ -116,7 +116,7 @@ Tenant routes (all require NIP-98 auth; pubkey is inferred from the token):
 - `GET /tenant/invoices` — list invoices
 - `PUT /tenant/billing` — update tenant billing (NWC URL)
 
-Admin routes (all require NIP-98 auth; pubkey must be in `HOSTING_ADMIN_PUBKEYS`):
+Admin routes (all require NIP-98 auth; pubkey must be in `PLATFORM_ADMIN_PUBKEYS`):
 
 - `GET /admin/tenants` — list tenants
 - `GET /admin/tenants/:pubkey` — tenant detail (includes relays)

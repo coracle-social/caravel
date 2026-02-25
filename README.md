@@ -1,4 +1,4 @@
-# Nostr Community Relay Hosting Platform
+# Caravel
 
 A multi-tenant platform for hosting Nostr community relays, built on top of [zooid](./ref/zooid) — a multi-tenant relay implementation configured via TOML and an HTTP API.
 
@@ -121,7 +121,7 @@ When a relay is created, an async worker is spawned that sends the appropriate A
 ### Environment Variables
 | Variable | Description |
 |---|---|
-| `HOSTING_ADMIN_PUBKEYS` | Comma-separated Nostr pubkeys with super admin access |
+| `PLATFORM_ADMIN_PUBKEYS` | Comma-separated Nostr pubkeys with super admin access |
 | `PLATFORM_SECRET` | Nostr private key used by the platform to send NIP-17 DMs |
 | `NWC_URL` | Nostr Wallet Connect URL used by the platform to generate Lightning invoices |
 | `NOSTR_INDEXER_RELAYS` | Relays used to fetch kind `10050` DM relay lists |
@@ -174,7 +174,7 @@ When a relay is created, an async worker is spawned that sends the appropriate A
 - Toggle for recurring billing via Nostr Wallet Connect (tenant provides their own NWC URL)
 
 ### Super Admin Dashboard (`/admin`)
-- Authenticated via NIP-98 against `HOSTING_ADMIN_PUBKEYS`
+- Authenticated via NIP-98 against `PLATFORM_ADMIN_PUBKEYS`
 - No link to this page from any other page
 
 #### Tenants Page (`/admin/tenants`)

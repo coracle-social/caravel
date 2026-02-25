@@ -6,6 +6,7 @@ pub async fn publish_platform_identity(
     indexer_relays: &[String],
     name: &str,
     description: &str,
+    picture: &str,
     messaging_relays: &[String],
 ) -> Result<()> {
     if indexer_relays.is_empty() {
@@ -31,6 +32,9 @@ pub async fn publish_platform_identity(
     }
     if !description.is_empty() {
         metadata = metadata.about(description);
+    }
+    if !picture.is_empty() {
+        metadata = metadata.picture(Url::parse(picture)?);
     }
 
     let metadata_builder = EventBuilder::metadata(&metadata);

@@ -13,6 +13,7 @@ pub struct Config {
     pub indexer_relays: Vec<String>,
     pub platform_name: String,
     pub platform_description: String,
+    pub platform_picture: String,
     pub platform_messaging_relays: Vec<String>,
 }
 
@@ -45,6 +46,7 @@ impl Config {
             .collect::<Vec<_>>();
         let platform_name = env::var("PLATFORM_NAME").unwrap_or_default();
         let platform_description = env::var("PLATFORM_DESCRIPTION").unwrap_or_default();
+        let platform_picture = env::var("PLATFORM_PICTURE").unwrap_or_default();
         let platform_messaging_relays = env::var("PLATFORM_MESSAGING_RELAYS")
             .unwrap_or_default()
             .split(',')
@@ -64,6 +66,7 @@ impl Config {
             indexer_relays,
             platform_name,
             platform_description,
+            platform_picture,
             platform_messaging_relays,
         }
     }

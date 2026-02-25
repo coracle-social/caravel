@@ -42,6 +42,7 @@ async fn main() -> Result<()> {
         &config.indexer_relays,
         &config.platform_name,
         &config.platform_description,
+        &config.platform_picture,
         &config.platform_messaging_relays,
     )
     .await?;

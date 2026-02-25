@@ -39,6 +39,7 @@ Users of the platform. Identified by their Nostr public key.
 |---|---|
 | `pubkey` | Primary key — Nostr public key |
 | `status` | Account status (active, suspended, etc.) |
+| `tenant_nwc_url` | Tenant-provided NWC URL for recurring billing |
 
 ### `relays`
 Virtual relays linked to a tenant.
@@ -50,6 +51,7 @@ Virtual relays linked to a tenant.
 | `name` | Human-readable relay name |
 | `subdomain` | Subdomain slug (e.g. `my-relay` → `my-relay.spaces.coracle.social`) |
 | `schema` | zooid DB schema name (subdomain with dashes replaced by underscores; stored for reference only) |
+| `icon` | Relay icon URL |
 | `description` | Relay description |
 | `plan` | Pricing tier: `free`, `basic`, or `growth` |
 | `status` | Relay status (pending, active, suspended, etc.) |
@@ -106,7 +108,7 @@ Line items linking an invoice to a specific relay charge.
 - Async job runner for billing checks, invoice collection, and relay provisioning
 
 ### Relay Provisioning
-When a relay is created, an async worker is spawned that sends the appropriate API request to zooid to set up the virtual relay.
+When a relay is created, an async worker is spawned that sends the appropriate API request to zooid to set up the virtual relay. Status updates to `active` on success and `provisioning_failed` on error.
 
 ### Billing Logic
 - Billing is monthly. Invoices batch all of a tenant's relay charges into a single payment.
@@ -120,6 +122,11 @@ When a relay is created, an async worker is spawned that sends the appropriate A
 | `HOSTING_ADMIN_PUBKEYS` | Comma-separated Nostr pubkeys with super admin access |
 | `PLATFORM_SECRET` | Nostr private key used by the platform to send NIP-17 DMs |
 | `NWC_URL` | Nostr Wallet Connect URL used by the platform to generate Lightning invoices |
+| `NOSTR_INDEXER_RELAYS` | Relays used to fetch kind `10050` DM relay lists |
+| `PLATFORM_NAME` | Platform display name (published as kind `0`) |
+| `PLATFORM_DESCRIPTION` | Platform description (published as kind `0`) |
+| `PLATFORM_PICTURE` | Platform picture URL (published as kind `0`) |
+| `PLATFORM_MESSAGING_RELAYS` | Relays published in kind `10050` for DMs |
 
 ---
 
@@ -151,6 +158,7 @@ When a relay is created, an async worker is spawned that sends the appropriate A
 - Fields:
   - Relay name
   - Subdomain (auto-generated from name, editable; displayed as `<subdomain>.spaces.coracle.social`)
+  - Icon URL
   - Description
   - Plan selection — shown as a comparison table (see Pricing Tiers)
 - On submit (if plan is not free): generates a Lightning invoice
@@ -185,7 +193,7 @@ When a relay is created, an async worker is spawned that sends the appropriate A
 - Actions: edit or deactivate relay
 
 #### Relay Edit Form (`/admin/relays/{id}/edit`)
-- Edit relay name, subdomain, description, and plan
+- Edit relay name, subdomain, icon, description, and plan
 
 ### Relay Edit Form (`/relays/{id}/edit`)
-- Edit relay name, subdomain, description, and plan
+- Edit relay name, subdomain, icon, description, and plan

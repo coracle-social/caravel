@@ -16,10 +16,14 @@ backend/
   migrations/          # SQL migrations
   src/
     auth.rs            # NIP-98 verification helper
+    billing.rs         # Billing loop + invoice generation
     config.rs          # Env-based configuration
     db.rs              # SQLite pool + migrations
     main.rs            # Axum server entrypoint
     models.rs          # Data models
+    notifications.rs   # NIP-17 DM sender + relay discovery
+    platform.rs        # Startup kind 0/10050 publishing
+    provisioning.rs    # Zooid provisioning worker
     repo.rs            # Data access layer
 ```
 
@@ -39,6 +43,7 @@ Environment variables:
 | `NOSTR_INDEXER_RELAYS` | Comma-separated relays to fetch kind `10050` DM relays | _required for notifications_ |
 | `PLATFORM_NAME` | Platform display name for kind `0` metadata | _optional_ |
 | `PLATFORM_DESCRIPTION` | Platform description for kind `0` metadata | _optional_ |
+| `PLATFORM_PICTURE` | Platform picture URL for kind `0` metadata | _optional_ |
 | `PLATFORM_MESSAGING_RELAYS` | Comma-separated relays published in kind `10050` | _optional_ |
 
 The database directory is created automatically if it doesn’t exist.
@@ -85,6 +90,12 @@ The backend runs an in-process billing loop that:
 - Sends NIP-17 DMs with invoices when recurring is off
 - Sends NIP-17 DMs on successful payment when recurring is on
 
+NIP-17 relay discovery:
+
+- Uses `NOSTR_INDEXER_RELAYS` to fetch kind `10050` for each tenant
+- Cached for a short period
+- If no relays are found, no DM is sent
+
 On startup, the backend publishes:
 
 - Kind `0` metadata (name/description)
@@ -114,7 +125,3 @@ Admin routes (all require NIP-98 auth; pubkey must be in `HOSTING_ADMIN_PUBKEYS`
 - `GET /admin/relays/:id` — get relay
 - `PUT /admin/relays/:id` — update relay
 - `DELETE /admin/relays/:id` — deactivate relay
-
-## Next Steps
-
-- Add invoice generation and billing jobs

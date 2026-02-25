@@ -1,28 +1,78 @@
-## Usage
+# Frontend
 
-```bash
-$ npm install # or pnpm install or yarn install
+SolidJS frontend for the Caravel platform. This app includes the marketing site, tenant dashboard, and super admin dashboard, and talks to the backend API using NIP-98 authentication.
+
+## Tech Stack
+
+- TypeScript
+- SolidJS + Vite
+- Tailwind CSS + Preline UI
+- applesauce (Nostr tooling)
+- nonboard (Nostr login)
+- TanStack Query (data fetching)
+
+## Layout
+
+```
+frontend/
+  public/
+  src/
+    assets/
+    components/       # Shared UI components
+    lib/              # Nostr helpers
+    pages/            # Route components
+    App.tsx           # Router + layout
+    index.tsx         # App entrypoint
+    index.css         # Global styles
 ```
 
-### Learn more on the [Solid Website](https://solidjs.com) and come chat with us on our [Discord](https://discord.com/invite/solidjs)
+## Configuration
 
-## Available Scripts
+Environment variables (see `.env.template`):
 
-In the project directory, you can run:
+| Variable | Description | Default |
+|---|---|---|
+| `VITE_API_URL` | Backend API base URL | `http://127.0.0.1:3000` |
 
-### `npm run dev`
+## Running
 
-Runs the app in the development mode.<br>
-Open [http://localhost:5173](http://localhost:5173) to view it in the browser.
+```bash
+cd frontend
+npm install
+npm run dev
+```
 
-### `npm run build`
+Build and preview:
 
-Builds the app for production to the `dist` folder.<br>
-It correctly bundles Solid in production mode and optimizes the build for the best performance.
+```bash
+npm run build
+npm run preview
+```
 
-The build is minified and the filenames include the hashes.<br>
-Your app is ready to be deployed!
+## Authentication
 
-## Deployment
+- Tenant requests use NIP-98 tokens derived from the logged-in user
+- Admin routes require a pubkey listed in `PLATFORM_ADMIN_PUBKEYS` on the backend
 
-Learn more about deploying your application with the [documentations](https://vite.dev/guide/static-deploy.html)
+## Routes
+
+Marketing and onboarding:
+
+- `/` — marketing page with a “Get Started” CTA
+- `/login` — login via nonboard
+
+Tenant dashboard:
+
+- `/relays` — list relays
+- `/relays/new` — create relay + invoice flow
+- `/relays/:id` — relay detail
+- `/relays/:id/edit` — edit relay
+- `/account` — billing + invoice history
+
+Super admin dashboard:
+
+- `/admin/tenants` — list tenants
+- `/admin/tenants/:id` — tenant detail
+- `/admin/relays` — list relays
+- `/admin/relays/:id` — relay detail
+- `/admin/relays/:id/edit` — edit relay

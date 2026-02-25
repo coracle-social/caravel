@@ -22,7 +22,9 @@ A proof of concept exists in [`ref/metamanager`](./ref/metamanager) (backend) an
 - Bun
 - TypeScript
 - SolidJS
-- shadcn/ui
+- Preline UI
+- https://applesauce.build/
+- tanstack tools where relevant
 
 **Backend**
 - Rust

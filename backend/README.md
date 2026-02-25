@@ -32,6 +32,9 @@ Environment variables:
 | `DATABASE_URL` | SQLite database URL | `sqlite://data/hosting.db` |
 | `HOST` | Bind host | `127.0.0.1` |
 | `PORT` | Bind port | `3000` |
+| `ZOOID_API_URL` | Zooid API base URL | `http://127.0.0.1:8032` |
+| `PLATFORM_SECRET` | Platform Nostr secret key for NIP-98 auth | _required_ |
+| `RELAY_DOMAIN` | Relay base domain for subdomains | `spaces.coracle.social` |
 
 The database directory is created automatically if it doesn’t exist.
 
@@ -92,5 +95,4 @@ Admin routes (all require NIP-98 auth; pubkey must be in `HOSTING_ADMIN_PUBKEYS`
 
 ## Next Steps
 
-- Add relay provisioning worker (zooid API calls)
 - Add invoice generation and billing jobs

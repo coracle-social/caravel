@@ -13,12 +13,14 @@ use uuid::Uuid;
 
 use crate::auth::verify_nip98;
 use crate::models::{NewRelay, NewTenant, Relay, UpdateRelay};
+use crate::provisioning::Provisioner;
 use crate::repo::Repo;
 
 #[derive(Clone)]
 pub struct AppState {
     pub repo: Repo,
     pub admin_pubkeys: Arc<Vec<String>>,
+    pub provisioner: Provisioner,
 }
 
 pub fn router(state: AppState) -> Router {
@@ -145,6 +147,7 @@ async fn list_tenant_relays(
 struct CreateRelayRequest {
     name: String,
     subdomain: String,
+    icon: String,
     description: String,
     plan: String,
 }
@@ -177,6 +180,7 @@ async fn create_tenant_relay(
         name: payload.name,
         subdomain: payload.subdomain.clone(),
         schema: payload.subdomain.replace('-', "_"),
+        icon: payload.icon,
         description: payload.description,
         plan: payload.plan,
         status: "pending".to_string(),
@@ -186,7 +190,7 @@ async fn create_tenant_relay(
         return (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError { error: "failed to create relay".into() })).into_response();
     }
 
-    spawn_provisioning_worker(relay.clone());
+    spawn_provisioning_worker(state.repo.clone(), state.provisioner.clone(), relay.clone());
 
     (StatusCode::CREATED, Json(relay)).into_response()
 }
@@ -215,6 +219,7 @@ async fn get_tenant_relay(
 struct UpdateRelayRequest {
     name: String,
     subdomain: String,
+    icon: String,
     description: String,
     plan: String,
 }
@@ -247,6 +252,7 @@ async fn update_tenant_relay(
         name: payload.name,
         subdomain: payload.subdomain.clone(),
         schema: payload.subdomain.replace('-', "_"),
+        icon: payload.icon,
         description: payload.description,
         plan: payload.plan,
         status: existing.status,
@@ -286,6 +292,7 @@ async fn deactivate_tenant_relay(
         name: existing.name,
         subdomain: existing.subdomain.clone(),
         schema: existing.subdomain.replace('-', "_"),
+        icon: existing.icon,
         description: existing.description,
         plan: existing.plan,
         status: "deactivated".to_string(),
@@ -489,6 +496,7 @@ async fn admin_update_relay(
         name: payload.name,
         subdomain: payload.subdomain.clone(),
         schema: payload.subdomain.replace('-', "_"),
+        icon: payload.icon,
         description: payload.description,
         plan: payload.plan,
         status: existing.status,
@@ -528,6 +536,7 @@ async fn admin_deactivate_relay(
         name: existing.name,
         subdomain: existing.subdomain.clone(),
         schema: existing.subdomain.replace('-', "_"),
+        icon: existing.icon,
         description: existing.description,
         plan: existing.plan,
         status: "deactivated".to_string(),
@@ -540,8 +549,22 @@ async fn admin_deactivate_relay(
     (StatusCode::OK, Json(updated)).into_response()
 }
 
-fn spawn_provisioning_worker(relay: NewRelay) {
+fn spawn_provisioning_worker(repo: Repo, provisioner: Provisioner, relay: NewRelay) {
     tokio::spawn(async move {
         tracing::info!(relay_id = relay.id, "provisioning worker started");
+        if let Err(err) = provisioner.provision_relay(&relay).await {
+            tracing::error!(relay_id = relay.id, error = %err, "provisioning failed");
+            if let Err(err) = repo
+                .update_relay_status(&relay.id, "provisioning_failed")
+                .await
+            {
+                tracing::error!(relay_id = relay.id, error = %err, "failed to update relay status");
+            }
+            return;
+        }
+
+        if let Err(err) = repo.update_relay_status(&relay.id, "active").await {
+            tracing::error!(relay_id = relay.id, error = %err, "failed to update relay status");
+        }
     });
 }

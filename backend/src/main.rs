@@ -3,6 +3,7 @@ mod auth;
 mod config;
 mod db;
 mod models;
+mod provisioning;
 mod repo;
 
 use std::net::SocketAddr;
@@ -15,6 +16,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::config::Config;
 use crate::db::init_pool;
+use crate::provisioning::Provisioner;
 use crate::repo::Repo;
 
 #[tokio::main]
@@ -29,9 +31,15 @@ async fn main() -> Result<()> {
 
     let pool = init_pool(&config.database_url).await?;
     let repo = Repo::new(pool);
+    let provisioner = Provisioner::new(
+        config.zooid_api_url.clone(),
+        config.relay_domain.clone(),
+        config.platform_secret.clone(),
+    )?;
     let state = api::AppState {
         repo,
         admin_pubkeys: std::sync::Arc::new(config.admin_pubkeys.clone()),
+        provisioner,
     };
 
     let app = Router::new()

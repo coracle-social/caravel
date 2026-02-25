@@ -6,6 +6,9 @@ pub struct Config {
     pub host: String,
     pub port: u16,
     pub admin_pubkeys: Vec<String>,
+    pub zooid_api_url: String,
+    pub platform_secret: String,
+    pub relay_domain: String,
 }
 
 impl Config {
@@ -23,12 +26,20 @@ impl Config {
             .map(|v| v.trim().to_string())
             .filter(|v| !v.is_empty())
             .collect::<Vec<_>>();
+        let zooid_api_url =
+            env::var("ZOOID_API_URL").unwrap_or_else(|_| "http://127.0.0.1:8032".to_string());
+        let platform_secret = env::var("PLATFORM_SECRET").unwrap_or_default();
+        let relay_domain =
+            env::var("RELAY_DOMAIN").unwrap_or_else(|_| "spaces.coracle.social".to_string());
 
         Self {
             database_url,
             host,
             port,
             admin_pubkeys,
+            zooid_api_url,
+            platform_secret,
+            relay_domain,
         }
     }
 }

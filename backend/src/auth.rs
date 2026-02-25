@@ -11,5 +11,5 @@ pub fn verify_nip98(auth_header: &str, url: &str, method: &str) -> Result<Public
     let method = HttpMethod::from_str(&method.to_uppercase()).map_err(|e| anyhow!(e))?;
     let now = Timestamp::now();
 
-    nip98::verify_auth_header(auth_header, &url, method, now).map_err(|e| anyhow!(e))
+    nip98::verify_auth_header(auth_header, &url, method, now, None).map_err(|e| anyhow!(e))
 }

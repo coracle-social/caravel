@@ -67,14 +67,15 @@ impl Repo {
 
     pub async fn create_relay(&self, relay: &NewRelay) -> Result<()> {
         sqlx::query(
-            "INSERT INTO relays (id, tenant, name, subdomain, schema, description, plan, status)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO relays (id, tenant, name, subdomain, schema, icon, description, plan, status)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&relay.id)
         .bind(&relay.tenant)
         .bind(&relay.name)
         .bind(&relay.subdomain)
         .bind(&relay.schema)
+        .bind(&relay.icon)
         .bind(&relay.description)
         .bind(&relay.plan)
         .bind(&relay.status)
@@ -85,12 +86,13 @@ impl Repo {
 
     pub async fn update_relay(&self, relay: &UpdateRelay) -> Result<()> {
         sqlx::query(
-            "UPDATE relays SET name = ?, subdomain = ?, schema = ?, description = ?, plan = ?, status = ?
+            "UPDATE relays SET name = ?, subdomain = ?, schema = ?, icon = ?, description = ?, plan = ?, status = ?
              WHERE id = ?",
         )
         .bind(&relay.name)
         .bind(&relay.subdomain)
         .bind(&relay.schema)
+        .bind(&relay.icon)
         .bind(&relay.description)
         .bind(&relay.plan)
         .bind(&relay.status)
@@ -100,9 +102,18 @@ impl Repo {
         Ok(())
     }
 
+    pub async fn update_relay_status(&self, id: &str, status: &str) -> Result<()> {
+        sqlx::query("UPDATE relays SET status = ? WHERE id = ?")
+            .bind(status)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
     pub async fn get_relay(&self, id: &str) -> Result<Option<Relay>> {
         let relay = sqlx::query_as::<_, Relay>(
-            "SELECT id, tenant, name, subdomain, schema, description, plan, status FROM relays WHERE id = ?",
+            "SELECT id, tenant, name, subdomain, schema, icon, description, plan, status FROM relays WHERE id = ?",
         )
         .bind(id)
         .fetch_optional(&self.pool)
@@ -112,7 +123,7 @@ impl Repo {
 
     pub async fn list_relays_by_tenant(&self, tenant: &str) -> Result<Vec<Relay>> {
         let relays = sqlx::query_as::<_, Relay>(
-            "SELECT id, tenant, name, subdomain, schema, description, plan, status FROM relays WHERE tenant = ? ORDER BY name",
+            "SELECT id, tenant, name, subdomain, schema, icon, description, plan, status FROM relays WHERE tenant = ? ORDER BY name",
         )
         .bind(tenant)
         .fetch_all(&self.pool)
@@ -122,7 +133,7 @@ impl Repo {
 
     pub async fn list_relays(&self) -> Result<Vec<Relay>> {
         let relays = sqlx::query_as::<_, Relay>(
-            "SELECT id, tenant, name, subdomain, schema, description, plan, status FROM relays ORDER BY name",
+            "SELECT id, tenant, name, subdomain, schema, icon, description, plan, status FROM relays ORDER BY name",
         )
         .fetch_all(&self.pool)
         .await?;

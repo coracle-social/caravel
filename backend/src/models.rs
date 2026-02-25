@@ -1,0 +1,88 @@
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct Tenant {
+    pub pubkey: String,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NewTenant {
+    pub pubkey: String,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct Relay {
+    pub id: String,
+    pub tenant: String,
+    pub name: String,
+    pub subdomain: String,
+    pub schema: String,
+    pub description: String,
+    pub plan: String,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NewRelay {
+    pub id: String,
+    pub tenant: String,
+    pub name: String,
+    pub subdomain: String,
+    pub schema: String,
+    pub description: String,
+    pub plan: String,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateRelay {
+    pub id: String,
+    pub name: String,
+    pub subdomain: String,
+    pub schema: String,
+    pub description: String,
+    pub plan: String,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct Invoice {
+    pub id: String,
+    pub tenant: String,
+    pub amount: i64,
+    pub status: String,
+    pub created_at: String,
+    pub invoice: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NewInvoice {
+    pub id: String,
+    pub tenant: String,
+    pub amount: i64,
+    pub status: String,
+    pub created_at: String,
+    pub invoice: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct InvoiceItem {
+    pub id: String,
+    pub invoice: String,
+    pub relay: String,
+    pub amount: i64,
+    pub period_start: String,
+    pub period_end: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NewInvoiceItem {
+    pub id: String,
+    pub invoice: String,
+    pub relay: String,
+    pub amount: i64,
+    pub period_start: String,
+    pub period_end: String,
+}

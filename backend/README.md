@@ -37,6 +37,9 @@ Environment variables:
 | `RELAY_DOMAIN` | Relay base domain for subdomains | `spaces.coracle.social` |
 | `NWC_URL` | Platform NWC URL for invoice generation | _required for billing_ |
 | `NOSTR_INDEXER_RELAYS` | Comma-separated relays to fetch kind `10050` DM relays | _required for notifications_ |
+| `PLATFORM_NAME` | Platform display name for kind `0` metadata | _optional_ |
+| `PLATFORM_DESCRIPTION` | Platform description for kind `0` metadata | _optional_ |
+| `PLATFORM_MESSAGING_RELAYS` | Comma-separated relays published in kind `10050` | _optional_ |
 
 The database directory is created automatically if it doesn’t exist.
 
@@ -82,6 +85,13 @@ The backend runs an in-process billing loop that:
 - Sends NIP-17 DMs with invoices when recurring is off
 - Sends NIP-17 DMs on successful payment when recurring is on
 
+On startup, the backend publishes:
+
+- Kind `0` metadata (name/description)
+- Kind `10050` relay list for DMs
+
+These are published to the relays listed in `NOSTR_INDEXER_RELAYS`.
+
 ## API Routes
 
 Tenant routes (all require NIP-98 auth; pubkey is inferred from the token):
@@ -108,4 +118,3 @@ Admin routes (all require NIP-98 auth; pubkey must be in `HOSTING_ADMIN_PUBKEYS`
 ## Next Steps
 
 - Add invoice generation and billing jobs
-- On start, publish kind 0, 10002, 10050 to indexer relays based on env vars

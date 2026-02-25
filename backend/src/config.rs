@@ -11,6 +11,9 @@ pub struct Config {
     pub relay_domain: String,
     pub platform_nwc_url: String,
     pub indexer_relays: Vec<String>,
+    pub platform_name: String,
+    pub platform_description: String,
+    pub platform_messaging_relays: Vec<String>,
 }
 
 impl Config {
@@ -40,6 +43,14 @@ impl Config {
             .map(|v| v.trim().to_string())
             .filter(|v| !v.is_empty())
             .collect::<Vec<_>>();
+        let platform_name = env::var("PLATFORM_NAME").unwrap_or_default();
+        let platform_description = env::var("PLATFORM_DESCRIPTION").unwrap_or_default();
+        let platform_messaging_relays = env::var("PLATFORM_MESSAGING_RELAYS")
+            .unwrap_or_default()
+            .split(',')
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+            .collect::<Vec<_>>();
 
         Self {
             database_url,
@@ -51,6 +62,9 @@ impl Config {
             relay_domain,
             platform_nwc_url,
             indexer_relays,
+            platform_name,
+            platform_description,
+            platform_messaging_relays,
         }
     }
 }

@@ -5,6 +5,7 @@ mod config;
 mod db;
 mod models;
 mod notifications;
+mod platform;
 mod provisioning;
 mod repo;
 
@@ -20,6 +21,7 @@ use crate::config::Config;
 use crate::db::init_pool;
 use crate::billing::BillingService;
 use crate::notifications::Nip17Notifier;
+use crate::platform::publish_platform_identity;
 use crate::provisioning::Provisioner;
 use crate::repo::Repo;
 
@@ -35,6 +37,14 @@ async fn main() -> Result<()> {
 
     let pool = init_pool(&config.database_url).await?;
     let repo = Repo::new(pool);
+    publish_platform_identity(
+        &config.platform_secret,
+        &config.indexer_relays,
+        &config.platform_name,
+        &config.platform_description,
+        &config.platform_messaging_relays,
+    )
+    .await?;
     let notifier = Nip17Notifier::new(config.platform_secret.clone(), config.indexer_relays.clone()).await?;
     let billing = BillingService::new(
         repo.clone(),

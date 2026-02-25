@@ -122,6 +122,14 @@ impl Repo {
         Ok(())
     }
 
+    pub async fn suspend_relays_for_tenant(&self, tenant: &str) -> Result<()> {
+        sqlx::query("UPDATE relays SET status = 'suspended' WHERE tenant = ? AND status = 'active'")
+            .bind(tenant)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
     pub async fn get_relay(&self, id: &str) -> Result<Option<Relay>> {
         let relay = sqlx::query_as::<_, Relay>(
             "SELECT id, tenant, name, subdomain, schema, icon, description, plan, status FROM relays WHERE id = ?",

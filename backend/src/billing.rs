@@ -44,6 +44,9 @@ impl BillingService {
             if let Err(err) = self.bill_tenant(&tenant).await {
                 tracing::error!(tenant = tenant.pubkey, error = %err, "billing failed");
             }
+            if let Err(err) = self.suspend_if_delinquent(&tenant).await {
+                tracing::error!(tenant = tenant.pubkey, error = %err, "grace period enforcement failed");
+            }
         }
         Ok(())
     }
@@ -102,6 +105,32 @@ impl BillingService {
             }
         }
 
+        Ok(())
+    }
+
+    async fn suspend_if_delinquent(&self, tenant: &Tenant) -> Result<()> {
+        if tenant.status != "active" {
+            return Ok(());
+        }
+
+        let invoices = self.repo.list_invoices_by_tenant(&tenant.pubkey).await?;
+        let latest = match invoices.first() {
+            Some(invoice) => invoice,
+            None => return Ok(()),
+        };
+
+        if latest.status != "pending" {
+            return Ok(());
+        }
+
+        let created_at = parse_timestamp(&latest.created_at)?;
+        let deadline = created_at + chrono::Duration::days(7);
+        if Utc::now() < deadline {
+            return Ok(());
+        }
+
+        self.repo.update_tenant_status(&tenant.pubkey, "suspended").await?;
+        self.repo.suspend_relays_for_tenant(&tenant.pubkey).await?;
         Ok(())
     }
 

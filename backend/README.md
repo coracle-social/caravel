@@ -35,6 +35,8 @@ Environment variables:
 | `ZOOID_API_URL` | Zooid API base URL | `http://127.0.0.1:8032` |
 | `PLATFORM_SECRET` | Platform Nostr secret key for NIP-98 auth | _required_ |
 | `RELAY_DOMAIN` | Relay base domain for subdomains | `spaces.coracle.social` |
+| `NWC_URL` | Platform NWC URL for invoice generation | _required for billing_ |
+| `NOSTR_INDEXER_RELAYS` | Comma-separated relays to fetch kind `10050` DM relays | _required for notifications_ |
 
 The database directory is created automatically if it doesn’t exist.
 
@@ -71,6 +73,15 @@ NIP-98 verification is implemented in `auth.rs` using the Rust Nostr SDK. It ver
 
 This is ready to be used by API routes.
 
+## Billing Jobs
+
+The backend runs an in-process billing loop that:
+
+- Generates monthly invoices (using `NWC_URL`)
+- Uses the tenant’s `tenant_nwc_url` for recurring pull payments (if set)
+- Sends NIP-17 DMs with invoices when recurring is off
+- Sends NIP-17 DMs on successful payment when recurring is on
+
 ## API Routes
 
 Tenant routes (all require NIP-98 auth; pubkey is inferred from the token):
@@ -82,6 +93,7 @@ Tenant routes (all require NIP-98 auth; pubkey is inferred from the token):
 - `PUT /tenant/relays/:id` — update relay
 - `DELETE /tenant/relays/:id` — deactivate relay
 - `GET /tenant/invoices` — list invoices
+- `PUT /tenant/billing` — update tenant billing (NWC URL)
 
 Admin routes (all require NIP-98 auth; pubkey must be in `HOSTING_ADMIN_PUBKEYS`):
 
@@ -96,3 +108,4 @@ Admin routes (all require NIP-98 auth; pubkey must be in `HOSTING_ADMIN_PUBKEYS`
 ## Next Steps
 
 - Add invoice generation and billing jobs
+- On start, publish kind 0, 10002, 10050 to indexer relays based on env vars

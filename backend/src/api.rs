@@ -31,7 +31,8 @@ pub fn router(state: AppState) -> Router {
             "/tenant/relays/:id",
             get(get_tenant_relay).put(update_tenant_relay).delete(deactivate_tenant_relay),
         )
-        .route("/tenant/invoices", get(list_tenant_invoices));
+        .route("/tenant/invoices", get(list_tenant_invoices))
+        .route("/tenant/billing", put(update_tenant_billing));
 
     let admin_routes = Router::new()
         .route("/admin/tenants", get(admin_list_tenants))
@@ -114,6 +115,7 @@ async fn get_tenant(
             let tenant = NewTenant {
                 pubkey: pubkey.clone(),
                 status: "active".to_string(),
+                tenant_nwc_url: "".to_string(),
             };
             if state.repo.create_tenant(&tenant).await.is_ok() {
                 (StatusCode::OK, Json(tenant)).into_response()
@@ -167,6 +169,7 @@ async fn create_tenant_relay(
     let tenant = NewTenant {
         pubkey: pubkey.clone(),
         status: "active".to_string(),
+        tenant_nwc_url: "".to_string(),
     };
 
     if let Err(_) = state.repo.create_tenant_if_missing(&tenant).await {
@@ -322,6 +325,35 @@ async fn list_tenant_invoices(
     }
 }
 
+#[derive(Debug, Deserialize)]
+struct UpdateTenantBillingRequest {
+    tenant_nwc_url: String,
+}
+
+async fn update_tenant_billing(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    method: Method,
+    uri: Uri,
+    Json(payload): Json<UpdateTenantBillingRequest>,
+) -> Response {
+    let pubkey = match extract_auth_pubkey(&headers, &method, &uri) {
+        Ok(pubkey) => pubkey,
+        Err(_) => return unauthorized(),
+    };
+
+    if let Err(_) = state
+        .repo
+        .update_tenant_nwc_url(&pubkey, &payload.tenant_nwc_url)
+        .await
+    {
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError { error: "failed to update billing".into() }))
+            .into_response();
+    }
+
+    (StatusCode::OK, Json(payload)).into_response()
+}
+
 async fn admin_list_tenants(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -419,6 +451,7 @@ async fn admin_update_tenant_status(
     let updated = NewTenant {
         pubkey: tenant.pubkey,
         status: payload.status,
+        tenant_nwc_url: tenant.tenant_nwc_url,
     };
 
     (StatusCode::OK, Json(updated)).into_response()

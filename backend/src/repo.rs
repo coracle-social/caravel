@@ -15,21 +15,13 @@ impl Repo {
         Self { pool }
     }
 
-    pub async fn update_tenant_status(&self, pubkey: &str, status: &str) -> Result<()> {
-        sqlx::query("UPDATE tenants SET status = ? WHERE pubkey = ?")
-            .bind(status)
-            .bind(pubkey)
-            .execute(&self.pool)
-            .await?;
-        Ok(())
-    }
-
     pub async fn create_tenant(&self, tenant: &NewTenant) -> Result<()> {
         sqlx::query(
-            "INSERT INTO tenants (pubkey, status) VALUES (?, ?)",
+            "INSERT INTO tenants (pubkey, status, tenant_nwc_url) VALUES (?, ?, ?)",
         )
         .bind(&tenant.pubkey)
         .bind(&tenant.status)
+        .bind(&tenant.tenant_nwc_url)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -37,10 +29,11 @@ impl Repo {
 
     pub async fn create_tenant_if_missing(&self, tenant: &NewTenant) -> Result<()> {
         sqlx::query(
-            "INSERT OR IGNORE INTO tenants (pubkey, status) VALUES (?, ?)",
+            "INSERT OR IGNORE INTO tenants (pubkey, status, tenant_nwc_url) VALUES (?, ?, ?)",
         )
         .bind(&tenant.pubkey)
         .bind(&tenant.status)
+        .bind(&tenant.tenant_nwc_url)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -48,7 +41,7 @@ impl Repo {
 
     pub async fn get_tenant(&self, pubkey: &str) -> Result<Option<Tenant>> {
         let tenant = sqlx::query_as::<_, Tenant>(
-            "SELECT pubkey, status FROM tenants WHERE pubkey = ?",
+            "SELECT pubkey, status, tenant_nwc_url FROM tenants WHERE pubkey = ?",
         )
         .bind(pubkey)
         .fetch_optional(&self.pool)
@@ -58,11 +51,29 @@ impl Repo {
 
     pub async fn list_tenants(&self) -> Result<Vec<Tenant>> {
         let tenants = sqlx::query_as::<_, Tenant>(
-            "SELECT pubkey, status FROM tenants ORDER BY pubkey",
+            "SELECT pubkey, status, tenant_nwc_url FROM tenants ORDER BY pubkey",
         )
         .fetch_all(&self.pool)
         .await?;
         Ok(tenants)
+    }
+
+    pub async fn update_tenant_status(&self, pubkey: &str, status: &str) -> Result<()> {
+        sqlx::query("UPDATE tenants SET status = ? WHERE pubkey = ?")
+            .bind(status)
+            .bind(pubkey)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn update_tenant_nwc_url(&self, pubkey: &str, tenant_nwc_url: &str) -> Result<()> {
+        sqlx::query("UPDATE tenants SET tenant_nwc_url = ? WHERE pubkey = ?")
+            .bind(tenant_nwc_url)
+            .bind(pubkey)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
     }
 
     pub async fn create_relay(&self, relay: &NewRelay) -> Result<()> {
@@ -197,5 +208,14 @@ impl Repo {
         .fetch_all(&self.pool)
         .await?;
         Ok(items)
+    }
+
+    pub async fn update_invoice_status(&self, id: &str, status: &str) -> Result<()> {
+        sqlx::query("UPDATE invoices SET status = ? WHERE id = ?")
+            .bind(status)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
     }
 }

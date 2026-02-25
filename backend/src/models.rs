@@ -4,12 +4,14 @@ use serde::{Deserialize, Serialize};
 pub struct Tenant {
     pub pubkey: String,
     pub status: String,
+    pub tenant_nwc_url: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NewTenant {
     pub pubkey: String,
     pub status: String,
+    pub tenant_nwc_url: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]

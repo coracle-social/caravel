@@ -111,7 +111,7 @@ When a relay is created, an async worker is spawned that sends the appropriate A
 ### Billing Logic
 - Billing is monthly. Invoices batch all of a tenant's relay charges into a single payment.
 - Tenants can enable **recurring billing** by providing their own NWC URL on the account page. The platform uses this to pull payments automatically.
-- If recurring billing is off, invoices are sent via **NIP-17 DMs** (from the platform's Nostr key) when a subscription is due.
+- If recurring billing is off, invoices are sent via **NIP-17 DMs** (from the platform's Nostr key) when a subscription is due. If recurring billing is on, still send notifications when a payment is made.
 - A **7-day grace period** applies before access is restricted for non-payment.
 
 ### Environment Variables

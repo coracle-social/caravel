@@ -9,6 +9,8 @@ pub struct Config {
     pub zooid_api_url: String,
     pub platform_secret: String,
     pub relay_domain: String,
+    pub platform_nwc_url: String,
+    pub indexer_relays: Vec<String>,
 }
 
 impl Config {
@@ -31,6 +33,13 @@ impl Config {
         let platform_secret = env::var("PLATFORM_SECRET").unwrap_or_default();
         let relay_domain =
             env::var("RELAY_DOMAIN").unwrap_or_else(|_| "spaces.coracle.social".to_string());
+        let platform_nwc_url = env::var("NWC_URL").unwrap_or_default();
+        let indexer_relays = env::var("NOSTR_INDEXER_RELAYS")
+            .unwrap_or_default()
+            .split(',')
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+            .collect::<Vec<_>>();
 
         Self {
             database_url,
@@ -40,6 +49,8 @@ impl Config {
             zooid_api_url,
             platform_secret,
             relay_domain,
+            platform_nwc_url,
+            indexer_relays,
         }
     }
 }

@@ -1,8 +1,10 @@
 mod api;
 mod auth;
+mod billing;
 mod config;
 mod db;
 mod models;
+mod notifications;
 mod provisioning;
 mod repo;
 
@@ -16,6 +18,8 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::config::Config;
 use crate::db::init_pool;
+use crate::billing::BillingService;
+use crate::notifications::Nip17Notifier;
 use crate::provisioning::Provisioner;
 use crate::repo::Repo;
 
@@ -31,6 +35,13 @@ async fn main() -> Result<()> {
 
     let pool = init_pool(&config.database_url).await?;
     let repo = Repo::new(pool);
+    let notifier = Nip17Notifier::new(config.platform_secret.clone(), config.indexer_relays.clone()).await?;
+    let billing = BillingService::new(
+        repo.clone(),
+        notifier,
+        config.platform_nwc_url.clone(),
+    );
+    tokio::spawn(billing.run());
     let provisioner = Provisioner::new(
         config.zooid_api_url.clone(),
         config.relay_domain.clone(),

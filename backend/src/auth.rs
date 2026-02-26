@@ -5,7 +5,6 @@ use std::str::FromStr;
 
 use nostr_sdk::nostr::key::PublicKey;
 use nostr_sdk::nostr::nips::nip98::HttpMethod;
-use nostr_sdk::nostr::types::time::Timestamp;
 use nostr_sdk::nostr::types::url::Url;
 use nostr_sdk::nostr::{Alphabet, Event, Kind, SingleLetterTag, TagKind, TagStandard};
 use nostr_sdk::JsonUtil;
@@ -13,7 +12,6 @@ use nostr_sdk::JsonUtil;
 pub fn verify_nip98(auth_header: &str, url: &str, method: &str) -> Result<PublicKey> {
     let url = Url::parse(url)?;
     let method = HttpMethod::from_str(&method.to_uppercase())?;
-    let now = Timestamp::now();
 
     let event = decode_auth_event(auth_header)?;
 
@@ -38,16 +36,6 @@ pub fn verify_nip98(auth_header: &str, url: &str, method: &str) -> Result<Public
 
     if authorized_url != &url || authorized_method != &method {
         return Err(anyhow!("authorization does not match request"));
-    }
-
-    let created_at = event.created_at.as_u64();
-    let now_secs = now.as_u64();
-    if created_at > now_secs {
-        if created_at - now_secs > 30 {
-            return Err(anyhow!("authorization timestamp too far in future"));
-        }
-    } else if now_secs - created_at > 60 {
-        return Err(anyhow!("authorization timestamp too old"));
     }
 
     event.verify()?;

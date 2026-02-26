@@ -1,8 +1,8 @@
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use sqlx::{migrate::Migrator, sqlite::SqliteConnectOptions, sqlite::SqlitePoolOptions, SqlitePool};
-use std::str::FromStr;
 use std::fs;
 use std::path::Path;
+use std::str::FromStr;
 
 static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 
@@ -24,25 +24,20 @@ pub async fn init_pool(database_url: &str) -> Result<SqlitePool> {
 }
 
 fn ensure_sqlite_directory(database_url: &str) -> Result<()> {
-    const PREFIX: &str = "sqlite://";
-    if !database_url.starts_with(PREFIX) {
+    let Some(path) = sqlite_path(database_url) else {
         return Ok(());
-    }
-
-    let path = &database_url[PREFIX.len()..];
-    if path.is_empty() || path == ":memory:" {
-        return Ok(());
-    }
-
-    let path = if let Some(stripped) = path.strip_prefix('/') {
-        format!("/{}", stripped)
-    } else {
-        path.to_string()
     };
-
-    let parent = Path::new(&path)
-        .parent()
-        .ok_or_else(|| anyhow!("invalid sqlite path"))?;
-    fs::create_dir_all(parent)?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
     Ok(())
+}
+
+fn sqlite_path(database_url: &str) -> Option<&Path> {
+    const PREFIX: &str = "sqlite://";
+    let path = database_url.strip_prefix(PREFIX)?;
+    if path.is_empty() || path == ":memory:" {
+        return None;
+    }
+    Some(Path::new(path))
 }

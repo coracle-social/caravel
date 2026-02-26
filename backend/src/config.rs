@@ -85,8 +85,9 @@ fn resolve_database_url(database_url: String) -> String {
         return database_url;
     }
 
-    let base = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let absolute = base.join(path);
-    let normalized = absolute.to_string_lossy();
-    format!("sqlite:///{}", normalized.trim_start_matches('/'))
+    let absolute = Path::new(env!("CARGO_MANIFEST_DIR")).join(path);
+    format!(
+        "sqlite:///{}",
+        absolute.to_string_lossy().trim_start_matches('/')
+    )
 }

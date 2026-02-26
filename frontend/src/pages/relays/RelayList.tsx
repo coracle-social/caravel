@@ -1,9 +1,23 @@
 import { A } from "@solidjs/router"
-import { createResource, For, Show } from "solid-js"
+import { createMemo, createResource, createSignal, For, Show } from "solid-js"
 import { listTenantRelays } from "../../lib/api"
 
 export default function RelayList() {
   const [relays] = createResource(listTenantRelays)
+  const [query, setQuery] = createSignal("")
+  const [status, setStatus] = createSignal("all")
+
+  const filtered = createMemo(() => {
+    const q = query().trim().toLowerCase()
+    return (relays() ?? []).filter((relay) => {
+      const matchesQuery =
+        !q ||
+        relay.name.toLowerCase().includes(q) ||
+        relay.subdomain.toLowerCase().includes(q)
+      const matchesStatus = status() === "all" || relay.status === status()
+      return matchesQuery && matchesStatus
+    })
+  })
 
   return (
     <div class="max-w-4xl mx-auto px-4 py-8">
@@ -17,6 +31,28 @@ export default function RelayList() {
         </A>
       </div>
 
+      <div class="mb-6 grid gap-3 sm:grid-cols-[1fr_auto]">
+        <input
+          type="search"
+          value={query()}
+          onInput={(e) => setQuery(e.currentTarget.value)}
+          placeholder="Search by name or subdomain"
+          class="w-full border border-gray-300 rounded-lg px-3 py-2"
+        />
+        <select
+          value={status()}
+          onChange={(e) => setStatus(e.currentTarget.value)}
+          class="border border-gray-300 rounded-lg px-3 py-2 bg-white"
+        >
+          <option value="all">All statuses</option>
+          <option value="active">Active</option>
+          <option value="pending">Pending</option>
+          <option value="deactivated">Deactivated</option>
+          <option value="provisioning_failed">Provisioning failed</option>
+          <option value="suspended">Suspended</option>
+        </select>
+      </div>
+
       <Show when={relays.loading}>
         <p class="text-gray-500">Loading relays...</p>
       </Show>
@@ -25,9 +61,9 @@ export default function RelayList() {
         <p class="text-red-600">Failed to load relays.</p>
       </Show>
 
-      <Show when={(relays()?.length ?? 0) > 0} fallback={<p class="text-gray-500">No relays yet. Create one to get started.</p>}>
+      <Show when={(filtered().length ?? 0) > 0} fallback={<p class="text-gray-500">No relays match your filters.</p>}>
         <ul class="space-y-3">
-          <For each={relays()}>
+          <For each={filtered()}>
             {(relay) => (
               <li>
                 <A

@@ -96,8 +96,40 @@ export type Relay = {
   status: string
 }
 
+export type Tenant = {
+  pubkey: string
+  status: string
+  tenant_nwc_url: string
+}
+
+export type Invoice = {
+  id: string
+  tenant: string
+  amount: number
+  status: string
+  created_at: string
+  invoice: string
+}
+
+export type TenantDetail = {
+  tenant: Tenant
+  relays: Relay[]
+}
+
+export type UpdateRelayInput = {
+  name: string
+  subdomain: string
+  icon: string
+  description: string
+  plan: string
+}
+
 export function listTenantRelays() {
   return request<Relay[]>("/tenant/relays")
+}
+
+export function getTenant() {
+  return request<Tenant>("/tenant")
 }
 
 export type CreateRelayInput = {
@@ -117,4 +149,64 @@ export function createTenantRelay(input: CreateRelayInput) {
 
 export function getTenantRelay(id: string) {
   return request<Relay>(`/tenant/relays/${id}`)
+}
+
+export function updateTenantRelay(id: string, input: UpdateRelayInput) {
+  return request<Relay>(`/tenant/relays/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(input),
+  })
+}
+
+export function deactivateTenantRelay(id: string) {
+  return request<Relay>(`/tenant/relays/${id}`, {
+    method: "DELETE",
+  })
+}
+
+export function listTenantInvoices() {
+  return request<Invoice[]>("/tenant/invoices")
+}
+
+export function updateTenantBilling(tenant_nwc_url: string) {
+  return request<Tenant>("/tenant/billing", {
+    method: "PUT",
+    body: JSON.stringify({ tenant_nwc_url }),
+  })
+}
+
+export function adminListTenants() {
+  return request<Tenant[]>("/admin/tenants")
+}
+
+export function adminGetTenant(pubkey: string) {
+  return request<TenantDetail>(`/admin/tenants/${pubkey}`)
+}
+
+export function adminUpdateTenantStatus(pubkey: string, status: string) {
+  return request<Tenant>(`/admin/tenants/${pubkey}`, {
+    method: "PUT",
+    body: JSON.stringify({ status }),
+  })
+}
+
+export function adminListRelays() {
+  return request<Relay[]>("/admin/relays")
+}
+
+export function adminGetRelay(id: string) {
+  return request<Relay>(`/admin/relays/${id}`)
+}
+
+export function adminUpdateRelay(id: string, input: UpdateRelayInput) {
+  return request<Relay>(`/admin/relays/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(input),
+  })
+}
+
+export function adminDeactivateRelay(id: string) {
+  return request<Relay>(`/admin/relays/${id}`, {
+    method: "DELETE",
+  })
 }

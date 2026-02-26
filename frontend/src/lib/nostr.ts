@@ -6,6 +6,7 @@ import { registerCommonAccountTypes } from "applesauce-accounts/accounts"
 import { NostrConnectSigner } from "applesauce-signers"
 
 export const API_URL = import.meta.env.VITE_API_URL
+export const PLATFORM_NAME = import.meta.env.VITE_PLATFORM_NAME || "Caravel"
 
 export const eventStore = new EventStore()
 export const pool = new RelayPool()

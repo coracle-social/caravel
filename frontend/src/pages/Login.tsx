@@ -4,6 +4,7 @@ import { ExtensionAccount, NostrConnectAccount, PasswordAccount, PrivateKeyAccou
 import { PasswordSigner } from "applesauce-signers"
 import QrScanner from "qr-scanner"
 import { activateAccount } from "../lib/nostr"
+import { PLATFORM_NAME } from "../lib/nostr"
 
 const NIP46_RELAYS = ['wss://bucket.coracle.social', 'wss://ephemeral.snowflare.cc']
 
@@ -74,7 +75,7 @@ export default function Login() {
       const NostrConnectSigner = await loadNostrConnectSigner()
       const signer = new NostrConnectSigner({ relays: NIP46_RELAYS })
       const uri = signer.getNostrConnectURI({
-        name: "Caravel",
+        name: PLATFORM_NAME,
         url: window.location.origin,
       })
       setNostrConnectUri(uri)

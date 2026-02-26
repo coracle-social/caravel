@@ -19,8 +19,8 @@
     "applesauce-relay": "^5.1.0",
     "applesauce-signers": "^5.1.0",
     "applesauce-wallet-connect": "^5.0.1",
-    "nonboard": "^1.0.8",
     "preline": "^4.1.1",
+    "qr-scanner": "^1.4.2",
     "solid-js": "^1.9.10",
     "tailwindcss": "^4.2.1"
   },

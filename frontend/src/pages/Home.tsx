@@ -4,7 +4,7 @@ export default function Home() {
   return (
     <div class="min-h-screen bg-white">
       {/* Hero */}
-      <div class="max-w-5xl mx-auto px-4 py-24 text-center">
+      <div class="max-w-4xl mx-auto px-4 py-24 text-center">
         <h1 class="text-5xl font-bold text-gray-900 mb-4">
           Host Your Own Nostr Community Relay
         </h1>
@@ -21,7 +21,7 @@ export default function Home() {
       </div>
 
       {/* Pricing */}
-      <div class="max-w-5xl mx-auto px-4 pb-24">
+      <div class="max-w-4xl mx-auto px-4 pb-24">
         <h2 class="text-3xl font-bold text-center text-gray-900 mb-12">Pricing</h2>
         <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
           <div class="border border-gray-200 rounded-xl p-6">

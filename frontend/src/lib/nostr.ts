@@ -29,8 +29,8 @@ export function restoreAccounts() {
     try {
       const saved = JSON.parse(raw) as SerializedAccount[]
       accounts.fromJSON(saved, true)
-    } catch (error) {
-      console.warn("Failed to restore accounts", error)
+    } catch {
+      // ignore corrupted local state
     }
   }
 

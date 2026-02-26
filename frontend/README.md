@@ -80,7 +80,6 @@ Super admin dashboard:
 ## Todos
 
 - [ ] Marketing page (`/`) with value props, features, and CTA
-- [ ] Login page (`/login`) via nonboard
 - [ ] Tenant dashboard auth via NIP-98
   - [ ] Relays list (`/relays`) with search/filter and add relay CTA
   - [ ] Relay detail (`/relays/:id`) with edit + deactivate actions

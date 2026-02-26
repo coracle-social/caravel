@@ -76,6 +76,19 @@ fn not_found() -> Response {
     (StatusCode::NOT_FOUND, Json(ApiError { error: "not found".into() })).into_response()
 }
 
+fn is_unique_subdomain_violation(err: &anyhow::Error) -> bool {
+    let Some(sqlx_err) = err.downcast_ref::<sqlx::Error>() else {
+        return false;
+    };
+
+    let sqlx::Error::Database(db_err) = sqlx_err else {
+        return false;
+    };
+
+    db_err.message().contains("relays.subdomain")
+        || db_err.message().contains("relays_subdomain_unique")
+}
+
 fn extract_auth_pubkey(headers: &HeaderMap, method: &Method, uri: &Uri) -> Result<String> {
     let auth_header = headers
         .get(axum::http::header::AUTHORIZATION)
@@ -189,7 +202,11 @@ async fn create_tenant_relay(
         status: "pending".to_string(),
     };
 
-    if let Err(_) = state.repo.create_relay(&relay).await {
+    if let Err(err) = state.repo.create_relay(&relay).await {
+        if is_unique_subdomain_violation(&err) {
+            return (StatusCode::CONFLICT, Json(ApiError { error: "subdomain already exists".into() })).into_response();
+        }
+
         return (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError { error: "failed to create relay".into() })).into_response();
     }
 
@@ -261,7 +278,11 @@ async fn update_tenant_relay(
         status: existing.status,
     };
 
-    if let Err(_) = state.repo.update_relay(&updated).await {
+    if let Err(err) = state.repo.update_relay(&updated).await {
+        if is_unique_subdomain_violation(&err) {
+            return (StatusCode::CONFLICT, Json(ApiError { error: "subdomain already exists".into() })).into_response();
+        }
+
         return (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError { error: "failed to update relay".into() })).into_response();
     }
 
@@ -535,7 +556,11 @@ async fn admin_update_relay(
         status: existing.status,
     };
 
-    if let Err(_) = state.repo.update_relay(&updated).await {
+    if let Err(err) = state.repo.update_relay(&updated).await {
+        if is_unique_subdomain_violation(&err) {
+            return (StatusCode::CONFLICT, Json(ApiError { error: "subdomain already exists".into() })).into_response();
+        }
+
         return (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError { error: "failed to update relay".into() })).into_response();
     }
 

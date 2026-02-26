@@ -1,5 +1,6 @@
 import { createSignal } from "solid-js"
 import { useNavigate } from "@solidjs/router"
+import { createTenantRelay, listTenantRelays } from "../../lib/api"
 
 const PLANS = [
   { id: "free", label: "Free", price: 0, members: "Up to 10", blossom: false, livekit: false },
@@ -26,22 +27,54 @@ export default function RelayNew() {
   const [icon, setIcon] = createSignal("")
   const [description, setDescription] = createSignal("")
   const [plan, setPlan] = createSignal<PlanId>("free")
+  const [submitting, setSubmitting] = createSignal(false)
+  const [error, setError] = createSignal("")
 
   function handleNameInput(value: string) {
     setName(value)
     setSubdomain(slugify(value))
   }
 
-  function handleSubmit(e: Event) {
+  async function handleSubmit(e: Event) {
     e.preventDefault()
-    // TODO: submit to backend, handle invoice flow
-    navigate("/relays")
+
+    setError("")
+    setSubmitting(true)
+
+    try {
+      const normalizedSubdomain = slugify(subdomain())
+      const existingRelays = await listTenantRelays()
+      const hasDuplicate = existingRelays.some(relay => relay.subdomain.toLowerCase() === normalizedSubdomain.toLowerCase())
+
+      if (hasDuplicate) {
+        throw new Error("You already have a relay with this subdomain")
+      }
+
+      const relay = await createTenantRelay({
+        name: name().trim(),
+        subdomain: normalizedSubdomain,
+        icon: icon().trim(),
+        description: description().trim(),
+        plan: plan(),
+      })
+      navigate(`/relays/${relay.id}`)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to create relay")
+    } finally {
+      setSubmitting(false)
+    }
   }
 
   return (
     <div class="max-w-2xl mx-auto px-4 py-8">
       <h1 class="text-2xl font-bold text-gray-900 mb-6">New Relay</h1>
       <form onSubmit={handleSubmit} class="space-y-6">
+        {error() && (
+          <div class="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+            {error()}
+          </div>
+        )}
+
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">Relay Name</label>
           <input
@@ -118,9 +151,10 @@ export default function RelayNew() {
 
         <button
           type="submit"
+          disabled={submitting()}
           class="w-full py-3 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition-colors"
         >
-          Create Relay
+          {submitting() ? "Creating..." : "Create Relay"}
         </button>
       </form>
     </div>

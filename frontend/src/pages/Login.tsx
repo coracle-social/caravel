@@ -68,7 +68,6 @@ export default function Login() {
     try {
       await completeLogin(await ExtensionAccount.fromExtension())
     } catch (e) {
-      console.error("NIP-07 login failed", e)
       setError(e instanceof Error ? e.message : "Failed to login with extension")
     } finally {
       setLoading(false)

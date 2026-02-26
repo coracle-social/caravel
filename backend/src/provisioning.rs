@@ -54,7 +54,7 @@ impl Provisioner {
         if !res.status().is_success() {
             let status = res.status();
             let body = res.text().await.unwrap_or_default();
-            return Err(anyhow!("zooid provisioning failed: {} {}", status, body));
+            return Err(anyhow!("zooid provisioning failed for {}: {} {}", url, status, body));
         }
 
         Ok(())

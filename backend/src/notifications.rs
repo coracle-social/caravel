@@ -19,7 +19,7 @@ impl Nip17Notifier {
             return Err(anyhow!("PLATFORM_SECRET is required for NIP-17 notifications"));
         }
 
-        let keys = Keys::parse(platform_secret)?;
+        let keys = Keys::parse(&platform_secret)?;
         let indexer_client = Client::new(keys.clone());
 
         for relay in &relays {
@@ -71,15 +71,15 @@ impl Nip17Notifier {
         let filter = Filter::new().kind(Kind::Custom(10050)).author(pubkey);
         let events = self
             .indexer_client
-            .get_events_of(vec![filter], Some(Duration::from_secs(5)))
+            .fetch_events(filter, Duration::from_secs(5))
             .await?;
 
         let mut relays = Vec::new();
         if let Some(event) = events.into_iter().max_by_key(|event| event.created_at) {
             for tag in event.tags.iter() {
-                if let Some(first) = tag.as_vec().get(0) {
+                if let Some(first) = tag.as_slice().get(0) {
                     if first == "relay" {
-                        if let Some(value) = tag.as_vec().get(1) {
+                        if let Some(value) = tag.as_slice().get(1) {
                             relays.push(value.to_string());
                         }
                     }

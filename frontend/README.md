@@ -76,3 +76,20 @@ Super admin dashboard:
 - `/admin/relays` — list relays
 - `/admin/relays/:id` — relay detail
 - `/admin/relays/:id/edit` — edit relay
+
+## Todos
+
+- [ ] Marketing page (`/`) with value props, features, and CTA
+- [ ] Login page (`/login`) via nonboard
+- [ ] Tenant dashboard auth via NIP-98
+  - [ ] Relays list (`/relays`) with search/filter and add relay CTA
+  - [ ] Relay detail (`/relays/:id`) with edit + deactivate actions
+  - [ ] New relay form (`/relays/new`) with plan selection + invoice flow
+  - [ ] Relay edit form (`/relays/:id/edit`)
+  - [ ] Account page (`/account`) with status, invoices, and recurring billing toggle
+- [ ] Super admin dashboard auth via `PLATFORM_ADMIN_PUBKEYS`
+  - [ ] Tenants list (`/admin/tenants`)
+  - [ ] Tenant detail (`/admin/tenants/:id`) with status + deactivate actions
+  - [ ] Relays list (`/admin/relays`)
+  - [ ] Relay detail (`/admin/relays/:id`)
+  - [ ] Relay edit form (`/admin/relays/:id/edit`)

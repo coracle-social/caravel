@@ -1,4 +1,5 @@
 use std::env;
+use std::path::Path;
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -21,6 +22,7 @@ impl Config {
     pub fn from_env() -> Self {
         let database_url =
             env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite://data/caravel.db".to_string());
+        let database_url = resolve_database_url(database_url);
         let host = env::var("HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
         let port = env::var("PORT")
             .ok()
@@ -70,4 +72,21 @@ impl Config {
             platform_messaging_relays,
         }
     }
+}
+
+fn resolve_database_url(database_url: String) -> String {
+    const PREFIX: &str = "sqlite://";
+    if !database_url.starts_with(PREFIX) {
+        return database_url;
+    }
+
+    let path = &database_url[PREFIX.len()..];
+    if path.is_empty() || path.starts_with('/') || path == ":memory:" {
+        return database_url;
+    }
+
+    let base = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let absolute = base.join(path);
+    let normalized = absolute.to_string_lossy();
+    format!("sqlite:///{}", normalized.trim_start_matches('/'))
 }

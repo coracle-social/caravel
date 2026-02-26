@@ -7,7 +7,8 @@ use crate::models::{Invoice, NewInvoice, NewInvoiceItem, Relay, Tenant};
 use crate::notifications::Nip17Notifier;
 use crate::repo::Repo;
 
-use nostr_sdk::nwc::prelude::*;
+use nostr_sdk::nips::nip47::{self, MakeInvoiceRequest, NostrWalletConnectURI, PayInvoiceRequest};
+use nostr_sdk::{Client, Filter, Kind, Keys, Timestamp};
 
 #[derive(Clone)]
 pub struct BillingService {
@@ -140,18 +141,51 @@ impl BillingService {
         }
 
         let uri = NostrWalletConnectURI::parse(&self.platform_nwc_url)?;
-        let nwc = NWC::new(uri);
-        let request = MakeInvoiceRequest::new(amount as u64, "Relay hosting");
-        let response = nwc.make_invoice(request).await?;
-        Ok(response.invoice)
+        let request = nip47::Request::make_invoice(MakeInvoiceRequest {
+            amount: (amount as u64) * 1_000,
+            description: Some("Relay hosting".to_string()),
+            description_hash: None,
+            expiry: None,
+        });
+        let response = self.send_nwc_request(&uri, request).await?;
+        Ok(response.to_make_invoice()?.invoice)
     }
 
     async fn pay_invoice(&self, tenant_nwc_url: &str, invoice: &str) -> Result<()> {
         let uri = NostrWalletConnectURI::parse(tenant_nwc_url)?;
-        let nwc = NWC::new(uri);
-        let request = PayInvoiceRequest::new(invoice);
-        nwc.pay_invoice(request).await?;
+        let request = nip47::Request::pay_invoice(PayInvoiceRequest::new(invoice));
+        self.send_nwc_request(&uri, request).await?.to_pay_invoice()?;
         Ok(())
+    }
+
+    async fn send_nwc_request(
+        &self,
+        uri: &NostrWalletConnectURI,
+        request: nip47::Request,
+    ) -> Result<nip47::Response> {
+        let app_keys = Keys::new(uri.secret.clone());
+        let app_pubkey = app_keys.public_key();
+        let client = Client::new(app_keys);
+        client.add_relay(uri.relay_url.clone()).await?;
+        client.connect().await;
+
+        let started_at = Timestamp::now();
+        let event = request.to_event(uri)?;
+        client.send_event(event).await?;
+
+        let filter = Filter::new()
+            .kind(Kind::WalletConnectResponse)
+            .author(uri.public_key)
+            .pubkey(app_pubkey)
+            .since(started_at);
+
+        let events = client.fetch_events(filter, Duration::from_secs(10)).await?;
+        let event = events
+            .into_iter()
+            .max_by_key(|event| event.created_at)
+            .ok_or_else(|| anyhow!("no NWC response"))?;
+
+        Ok(nip47::Response::from_event(uri, &event)?)
     }
 
     async fn send_invoice_dm(

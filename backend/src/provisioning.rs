@@ -24,7 +24,7 @@ impl Provisioner {
             return Err(anyhow!("PLATFORM_SECRET is required"));
         }
 
-        let admin_keys = Keys::parse(admin_secret)?;
+        let admin_keys = Keys::parse(&admin_secret)?;
         let client = Client::new();
 
         Ok(Self {

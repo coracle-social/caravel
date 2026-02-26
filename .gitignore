@@ -1,5 +1,6 @@
 ref
 node_modules
 target
+data
 .env
 **/.env

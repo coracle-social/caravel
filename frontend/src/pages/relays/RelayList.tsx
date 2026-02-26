@@ -37,7 +37,7 @@ export default function RelayList() {
                   <div class="flex items-center justify-between">
                     <div>
                       <p class="font-medium text-gray-900">{relay.name}</p>
-                      <p class="text-sm text-gray-500">{relay.subdomain}</p>
+                      <p class="text-sm text-gray-500">https://{relay.subdomain}.spaces.coracle.social</p>
                     </div>
                     <p class="text-xs uppercase tracking-wide text-gray-500">{relay.status}</p>
                   </div>

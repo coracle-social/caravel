@@ -1,6 +1,6 @@
-import { createSignal } from "solid-js"
+import { Show, createSignal } from "solid-js"
 import { useNavigate } from "@solidjs/router"
-import { createTenantRelay, listTenantRelays } from "../../lib/api"
+import { createTenantRelay } from "../../lib/api"
 
 const PLANS = [
   { id: "free", label: "Free", price: 0, members: "Up to 10", blossom: false, livekit: false },
@@ -28,38 +28,31 @@ export default function RelayNew() {
   const [description, setDescription] = createSignal("")
   const [plan, setPlan] = createSignal<PlanId>("free")
   const [submitting, setSubmitting] = createSignal(false)
-  const [error, setError] = createSignal("")
+  const [subdomainError, setSubdomainError] = createSignal("")
 
   function handleNameInput(value: string) {
     setName(value)
     setSubdomain(slugify(value))
+    setSubdomainError("")
   }
 
   async function handleSubmit(e: Event) {
     e.preventDefault()
 
-    setError("")
+    setSubdomainError("")
     setSubmitting(true)
 
     try {
-      const normalizedSubdomain = slugify(subdomain())
-      const existingRelays = await listTenantRelays()
-      const hasDuplicate = existingRelays.some(relay => relay.subdomain.toLowerCase() === normalizedSubdomain.toLowerCase())
-
-      if (hasDuplicate) {
-        throw new Error("You already have a relay with this subdomain")
-      }
-
       const relay = await createTenantRelay({
         name: name().trim(),
-        subdomain: normalizedSubdomain,
+        subdomain: slugify(subdomain()),
         icon: icon().trim(),
         description: description().trim(),
         plan: plan(),
       })
       navigate(`/relays/${relay.id}`)
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to create relay")
+      setSubdomainError(e instanceof Error ? e.message : "Failed to create relay")
     } finally {
       setSubmitting(false)
     }
@@ -69,12 +62,6 @@ export default function RelayNew() {
     <div class="max-w-2xl mx-auto px-4 py-8">
       <h1 class="text-2xl font-bold text-gray-900 mb-6">New Relay</h1>
       <form onSubmit={handleSubmit} class="space-y-6">
-        {error() && (
-          <div class="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-            {error()}
-          </div>
-        )}
-
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">Relay Name</label>
           <input
@@ -89,18 +76,35 @@ export default function RelayNew() {
 
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">Subdomain</label>
-          <div class="flex items-center border border-gray-300 rounded-lg overflow-hidden focus-within:ring-2 focus-within:ring-blue-500">
+          <div class="relative">
+            <div
+              class="flex items-center border rounded-lg overflow-hidden focus-within:ring-2"
+              classList={{
+                "border-gray-300 focus-within:ring-blue-500": !subdomainError(),
+                "border-red-400 focus-within:ring-red-400": !!subdomainError(),
+              }}
+            >
             <input
               type="text"
               required
               value={subdomain()}
-              onInput={e => setSubdomain(e.currentTarget.value)}
+              onInput={e => {
+                setSubdomain(e.currentTarget.value)
+                setSubdomainError("")
+              }}
               placeholder="my-community"
               class="flex-1 px-3 py-2 focus:outline-none"
             />
             <span class="px-3 py-2 bg-gray-50 text-gray-500 text-sm border-l border-gray-300">
               .spaces.coracle.social
             </span>
+            </div>
+
+            <Show when={subdomainError()}>
+              <div class="pointer-events-none absolute right-0 top-full z-10 mt-2 rounded-md bg-red-600 px-3 py-2 text-xs text-white shadow-lg">
+                {subdomainError()}
+              </div>
+            </Show>
           </div>
         </div>
 

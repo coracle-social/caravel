@@ -4,6 +4,7 @@ import Fuse from "fuse.js"
 import { adminCheck as fetchAdminCheck, listTenantRelays, type Relay } from "../lib/api"
 import { eventStore, primeProfiles, useActiveAccount, useProfilePicture } from "../lib/nostr"
 import serverIcon from "../assets/server.svg"
+import Modal from "./Modal"
 
 type Profile = {
   name?: string
@@ -37,9 +38,7 @@ export default function AppShell(props: { children?: any }) {
   const [tenantRelays] = createResource(() => account()?.id, () => listTenantRelays())
   const [profile, setProfile] = createSignal<Profile>({})
   const [searchOpen, setSearchOpen] = createSignal(false)
-  const [searchEntered, setSearchEntered] = createSignal(false)
   const [searchQuery, setSearchQuery] = createSignal("")
-  let searchTransitionTimer: number | undefined
 
   const isAdmin = createMemo(() => !!adminCheck()?.is_admin)
   const username = createMemo(() => profile().name || profile().display_name || shortenPubkey(account()?.pubkey))
@@ -96,24 +95,11 @@ export default function AppShell(props: { children?: any }) {
       : "block rounded-lg px-3 py-2 text-sm text-white/80 hover:bg-white/10 hover:text-white"
   }
 
-  const openSearchModal = () => {
-    if (searchTransitionTimer) window.clearTimeout(searchTransitionTimer)
-    setSearchOpen(true)
-    setSearchEntered(false)
-    searchTransitionTimer = window.setTimeout(() => setSearchEntered(true), 10)
-  }
-
+  const openSearchModal = () => setSearchOpen(true)
   const closeSearchModal = () => {
-    setSearchEntered(false)
-    searchTransitionTimer = window.setTimeout(() => {
-      setSearchOpen(false)
-      setSearchQuery("")
-    }, 200)
+    setSearchOpen(false)
+    setSearchQuery("")
   }
-
-  onCleanup(() => {
-    if (searchTransitionTimer) window.clearTimeout(searchTransitionTimer)
-  })
 
   return (
     <div class="min-h-screen bg-gray-50 md:grid md:grid-cols-[260px_minmax(0,1fr)]">
@@ -158,14 +144,22 @@ export default function AppShell(props: { children?: any }) {
         <main>{props.children}</main>
       </div>
 
-      <nav class="fixed inset-x-0 bottom-0 z-20 border-t border-gray-200 bg-white md:hidden">
+      <nav
+        class="fixed inset-x-0 bottom-0 z-20 border-t border-gray-200 bg-white md:hidden"
+        onClick={() => {
+          if (searchOpen()) closeSearchModal()
+        }}
+      >
         <div class="flex h-16 items-center justify-between px-6">
           <div class="flex items-center gap-3">
             <button
               type="button"
               aria-label="Search"
               class="rounded-lg p-2 text-gray-700 hover:bg-gray-100"
-              onClick={openSearchModal}
+              onClick={(e) => {
+                e.stopPropagation()
+                openSearchModal()
+              }}
             >
               <SearchIcon />
             </button>
@@ -184,70 +178,63 @@ export default function AppShell(props: { children?: any }) {
         </div>
       </nav>
 
-      <Show when={searchOpen()}>
-        <div
-          class={`fixed inset-x-0 top-0 bottom-16 z-30 flex items-end bg-black/40 p-0 transition-opacity duration-200 md:hidden ${searchEntered() ? "opacity-100" : "opacity-0"}`}
-          role="dialog"
-          aria-modal="true"
-          onClick={closeSearchModal}
-        >
-          <div
-            class={`min-h-[40vh] max-h-[80vh] w-full overflow-hidden rounded-t-2xl bg-white transition-all duration-200 ${searchEntered() ? "translate-y-0 opacity-100" : "translate-y-16 opacity-0"}`}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div class="border-b border-gray-200 p-4">
-              <div class="flex items-center gap-2">
-                <div class="relative flex-1">
-                  <span class="pointer-events-none absolute inset-y-0 left-3 flex items-center text-gray-400">
-                    <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                      <circle cx="11" cy="11" r="8" />
-                      <path d="M21 21l-4.3-4.3" />
-                    </svg>
-                  </span>
-                  <input
-                    type="search"
-                    value={searchQuery()}
-                    onInput={(e) => setSearchQuery(e.currentTarget.value)}
-                    placeholder="Search your relays"
-                    class="w-full rounded-lg border border-gray-300 py-2 pl-10 pr-3"
-                    autofocus
-                  />
-                </div>
-                <button
-                  type="button"
-                  class="rounded-lg px-3 py-2 text-sm text-gray-600 hover:bg-gray-100"
-                  onClick={closeSearchModal}
-                >
-                  Close
-                </button>
-              </div>
+      <Modal
+        open={searchOpen()}
+        onClose={closeSearchModal}
+        wrapperClass="fixed inset-x-0 top-0 bottom-16 z-30 flex items-end bg-black/40 p-0 md:hidden"
+        panelClass="min-h-[40vh] max-h-[80vh] w-full overflow-hidden rounded-t-2xl bg-white"
+      >
+        <div class="border-b border-gray-200 p-4">
+          <div class="flex items-center gap-2">
+            <div class="relative flex-1">
+              <span class="pointer-events-none absolute inset-y-0 left-3 flex items-center text-gray-400">
+                <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <circle cx="11" cy="11" r="8" />
+                  <path d="M21 21l-4.3-4.3" />
+                </svg>
+              </span>
+              <input
+                type="search"
+                value={searchQuery()}
+                onInput={(e) => setSearchQuery(e.currentTarget.value)}
+                placeholder="Search your relays"
+                class="w-full rounded-lg border border-gray-300 py-2 pl-10 pr-3"
+                autofocus
+              />
             </div>
-
-            <div class="max-h-[calc(80vh-73px)] overflow-y-auto p-4">
-              <Show when={!tenantRelays.loading} fallback={<p class="text-sm text-gray-500">Loading relays...</p>}>
-                <Show when={(searchedRelays().length ?? 0) > 0} fallback={<p class="text-sm text-gray-500">No relays found.</p>}>
-                  <ul class="space-y-2">
-                    <For each={searchedRelays()}>
-                      {(relay) => (
-                        <li>
-                          <A
-                            href={`/relays/${relay.id}`}
-                            class="block rounded-lg border border-gray-200 bg-white p-3"
-                            onClick={closeSearchModal}
-                          >
-                            <p class="text-sm font-medium text-gray-900">{relay.name}</p>
-                            <p class="text-xs text-gray-500">{relay.subdomain}.spaces.coracle.social</p>
-                          </A>
-                        </li>
-                      )}
-                    </For>
-                  </ul>
-                </Show>
-              </Show>
-            </div>
+            <button
+              type="button"
+              class="rounded-lg px-3 py-2 text-sm text-gray-600 hover:bg-gray-100"
+              onClick={closeSearchModal}
+            >
+              Close
+            </button>
           </div>
         </div>
-      </Show>
+
+        <div class="max-h-[calc(80vh-73px)] overflow-y-auto p-4">
+          <Show when={!tenantRelays.loading} fallback={<p class="text-sm text-gray-500">Loading relays...</p>}>
+            <Show when={(searchedRelays().length ?? 0) > 0} fallback={<p class="text-sm text-gray-500">No relays found.</p>}>
+              <ul class="space-y-2">
+                <For each={searchedRelays()}>
+                  {(relay) => (
+                    <li>
+                      <A
+                        href={`/relays/${relay.id}`}
+                        class="block rounded-lg border border-gray-200 bg-white p-3"
+                        onClick={closeSearchModal}
+                      >
+                        <p class="text-sm font-medium text-gray-900">{relay.name}</p>
+                        <p class="text-xs text-gray-500">{relay.subdomain}.spaces.coracle.social</p>
+                      </A>
+                    </li>
+                  )}
+                </For>
+              </ul>
+            </Show>
+          </Show>
+        </div>
+      </Modal>
     </div>
   )
 }

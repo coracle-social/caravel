@@ -26,23 +26,22 @@ export default function Account() {
 
   return (
     <div class="max-w-4xl mx-auto px-4 py-8">
-      <h1 class="text-2xl font-bold text-gray-900 mb-6">Account</h1>
+      <h1 class="text-2xl font-bold text-gray-900 mb-6">My Account</h1>
 
       <div class="space-y-6">
         <section class="bg-white border border-gray-200 rounded-xl p-6">
-          <h2 class="text-lg font-semibold text-gray-900 mb-4">Account Status</h2>
+          <div class="flex items-center justify-between gap-3">
+            <h2 class="text-lg font-semibold text-gray-900">Account Status</h2>
+            <Show when={tenant()}>
+              {(t) => (
+                <span class="rounded-full border border-gray-300 bg-gray-100 px-2.5 py-1 text-xs font-medium uppercase tracking-wide text-gray-700">
+                  {t().status}
+                </span>
+              )}
+            </Show>
+          </div>
           <Show when={tenant.loading}>
             <p class="text-gray-500">Loading account...</p>
-          </Show>
-          <Show when={tenant()}>
-            {(t) => (
-              <div class="text-sm text-gray-700 space-y-2">
-                <p>
-                  Status: <span class="font-medium capitalize">{t().status}</span>
-                </p>
-                <p class="break-all">Tenant pubkey: {t().pubkey}</p>
-              </div>
-            )}
           </Show>
         </section>
 
@@ -50,12 +49,6 @@ export default function Account() {
           <h2 class="text-lg font-semibold text-gray-900 mb-4">Recurring Billing</h2>
           <p class="text-sm text-gray-600 mb-4">
             Enable automatic payments by providing your Nostr Wallet Connect URL.
-          </p>
-          <p class="text-sm mb-3">
-            Current setting:{" "}
-            <span class={recurringEnabled() ? "text-green-700 font-medium" : "text-gray-600"}>
-              {recurringEnabled() ? "Enabled" : "Disabled"}
-            </span>
           </p>
           <div class="flex gap-2">
             <input

@@ -9,14 +9,11 @@ export default function Navbar() {
   return (
     <nav class="bg-white border-b border-gray-200">
       <div class="max-w-4xl mx-auto px-4 h-14 flex items-center justify-between">
-        <A href="/" class="flex items-center gap-2">
+        <A href={account() ? "/relays" : "/"} class="flex items-center gap-2">
           <img src="/caravel.png" alt={PLATFORM_NAME} class="h-8 w-8 rounded-full object-cover" />
           <span class="font-bold text-gray-900 text-lg">{PLATFORM_NAME}</span>
         </A>
         <div class="flex items-center gap-4">
-          <A href="/relays" class="text-sm text-gray-600 hover:text-gray-900">
-            Dashboard
-          </A>
           <Show
             when={account()}
             fallback={

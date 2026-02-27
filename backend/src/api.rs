@@ -35,6 +35,7 @@ pub fn router(state: AppState) -> Router {
         .route("/tenant/billing", put(update_tenant_billing));
 
     let admin_routes = Router::new()
+        .route("/admin/check", get(admin_check))
         .route("/admin/tenants", get(admin_list_tenants))
         .route(
             "/admin/tenants/:pubkey",
@@ -108,7 +109,7 @@ fn extract_auth_pubkey(headers: &HeaderMap, method: &Method, uri: &Uri) -> Resul
     let path = uri.path_and_query().map(|v| v.as_str()).unwrap_or(uri.path());
     let url = format!("{}://{}{}", scheme, host, path);
     let pubkey = verify_nip98(auth_header, &url, method.as_str())?;
-    Ok(pubkey.to_string())
+    Ok(pubkey.to_hex())
 }
 
 async fn get_tenant(
@@ -394,6 +395,26 @@ async fn admin_list_tenants(
         Ok(tenants) => (StatusCode::OK, Json(tenants)).into_response(),
         Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError { error: "failed to load tenants".into() })).into_response(),
     }
+}
+
+#[derive(Debug, Serialize)]
+struct AdminCheckResponse {
+    is_admin: bool,
+}
+
+async fn admin_check(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    method: Method,
+    uri: Uri,
+) -> Response {
+    let pubkey = match extract_auth_pubkey(&headers, &method, &uri) {
+        Ok(pubkey) => pubkey,
+        Err(_) => return unauthorized(),
+    };
+
+    let is_admin = state.admin_pubkeys.contains(&pubkey);
+    (StatusCode::OK, Json(AdminCheckResponse { is_admin })).into_response()
 }
 
 async fn admin_get_tenant(

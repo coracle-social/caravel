@@ -1,5 +1,8 @@
 use std::env;
 use std::path::Path;
+use std::str::FromStr;
+
+use nostr_sdk::nostr::key::PublicKey;
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -31,7 +34,7 @@ impl Config {
         let admin_pubkeys = env::var("PLATFORM_ADMIN_PUBKEYS")
             .unwrap_or_default()
             .split(',')
-            .map(|v| v.trim().to_string())
+            .filter_map(normalize_pubkey)
             .filter(|v| !v.is_empty())
             .collect::<Vec<_>>();
         let zooid_api_url =
@@ -71,6 +74,18 @@ impl Config {
             platform_picture,
             platform_messaging_relays,
         }
+    }
+}
+
+fn normalize_pubkey(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    match PublicKey::from_str(trimmed) {
+        Ok(pubkey) => Some(pubkey.to_hex()),
+        Err(_) => Some(trimmed.to_lowercase()),
     }
 }
 

@@ -15,7 +15,7 @@ import AdminRelays from "./pages/admin/AdminRelays"
 import AdminRelayDetail from "./pages/admin/AdminRelayDetail"
 import AdminRelayEdit from "./pages/admin/AdminRelayEdit"
 import { useActiveAccount } from "./lib/nostr"
-import { adminListTenants } from "./lib/api"
+import { adminCheck as fetchAdminCheck } from "./lib/api"
 
 function Layout(props: { children?: any }) {
   const location = useLocation()
@@ -54,10 +54,7 @@ export default function App() {
       const account = useActiveAccount()
       const [adminCheck] = createResource(
         () => account()?.id,
-        async () => {
-          await adminListTenants()
-          return true
-        },
+        () => fetchAdminCheck(),
       )
 
       createEffect(() => {
@@ -68,7 +65,7 @@ export default function App() {
         <Show when={account()}>
           <Show when={!adminCheck.loading} fallback={<div class="max-w-4xl mx-auto px-4 py-8 text-gray-500">Checking admin access...</div>}>
             <Show
-              when={!adminCheck.error}
+              when={!adminCheck.error && !!adminCheck()?.is_admin}
               fallback={<div class="max-w-4xl mx-auto px-4 py-8 text-red-600">You do not have admin access.</div>}
             >
               <Page />

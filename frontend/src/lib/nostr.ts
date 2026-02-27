@@ -1,20 +1,27 @@
 import { createEffect, createSignal, onCleanup } from "solid-js"
 import { EventStore } from "applesauce-core"
 import { getProfilePicture } from "applesauce-core/helpers/profile"
+import { createOutboxMap, selectOptimalRelays, setFallbackRelays } from "applesauce-core/helpers/relay-selection"
+import { includeMailboxes } from "applesauce-core/observable"
 import { RelayPool } from "applesauce-relay"
 import { AccountManager } from "applesauce-accounts"
 import type { IAccount, SerializedAccount } from "applesauce-accounts"
 import { registerCommonAccountTypes } from "applesauce-accounts/accounts"
+import { createEventLoaderForStore } from "applesauce-loaders/loaders"
 import { NostrConnectSigner } from "applesauce-signers"
+import { map, of } from "rxjs"
 
 export const API_URL = import.meta.env.VITE_API_URL
 export const PLATFORM_NAME = import.meta.env.VITE_PLATFORM_NAME || "Caravel"
 
-const PROFILE_RELAYS = ["wss://purplepag.es", "wss://relay.damus.io", "wss://nos.lol"]
-
 export const eventStore = new EventStore()
 export const pool = new RelayPool()
 export const accounts = new AccountManager()
+
+createEventLoaderForStore(eventStore, pool, {
+  lookupRelays: ["wss://purplepag.es/", "wss://relay.damus.io/", "wss://indexer.coracle.social/"],
+  extraRelays: ["wss://relay.damus.io/", "wss://nos.lol/", "wss://relay.primal.net/"],
+})
 
 const ACCOUNTS_STORAGE_KEY = "caravel.accounts"
 const ACTIVE_ACCOUNT_STORAGE_KEY = "caravel.activeAccount"
@@ -79,10 +86,7 @@ export function useProfilePicture(pubkey: () => string | undefined) {
       setPicture(getProfilePicture(profile))
     })
 
-    // Fetch the kind 0 from relays and add to the event store
-    const reqSub = pool.request(PROFILE_RELAYS, { kinds: [0], authors: [pk] }).subscribe(event => {
-      eventStore.add(event)
-    })
+    const reqSub = primeProfiles([pk])
 
     onCleanup(() => {
       profileSub.unsubscribe()
@@ -91,4 +95,36 @@ export function useProfilePicture(pubkey: () => string | undefined) {
   })
 
   return picture
+}
+
+export function primeProfiles(pubkeys: string[]) {
+  const uniquePubkeys = Array.from(new Set(pubkeys.filter(Boolean)))
+  if (uniquePubkeys.length === 0) {
+    return { unsubscribe() {} }
+  }
+
+  const seedRelays = Array.from(pool.relays.keys())
+  const mailboxSeedSub = seedRelays.length
+    ? pool.request(seedRelays, { kinds: [10002], authors: uniquePubkeys }).subscribe((event) => {
+      eventStore.add(event)
+    })
+    : undefined
+
+  const outboxMap$ = of(uniquePubkeys.map((pubkey) => ({ pubkey }))).pipe(
+    includeMailboxes(eventStore),
+    map((pointers) => (seedRelays.length > 0 ? setFallbackRelays(pointers, seedRelays) : pointers)),
+    map((pointers) => selectOptimalRelays(pointers, { maxConnections: 8, maxRelaysPerUser: 3 })),
+    map(createOutboxMap),
+  )
+
+  const profileSub = pool.outboxSubscription(outboxMap$, { kinds: [0] }).subscribe((message) => {
+    if (message !== "EOSE") eventStore.add(message)
+  })
+
+  return {
+    unsubscribe() {
+      profileSub.unsubscribe()
+      mailboxSeedSub?.unsubscribe()
+    },
+  }
 }

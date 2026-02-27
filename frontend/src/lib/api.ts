@@ -124,6 +124,10 @@ export type UpdateRelayInput = {
   plan: string
 }
 
+export type AdminCheck = {
+  is_admin: boolean
+}
+
 export function listTenantRelays() {
   return request<Relay[]>("/tenant/relays")
 }
@@ -177,6 +181,10 @@ export function updateTenantBilling(tenant_nwc_url: string) {
 
 export function adminListTenants() {
   return request<Tenant[]>("/admin/tenants")
+}
+
+export function adminCheck() {
+  return request<AdminCheck>("/admin/check")
 }
 
 export function adminGetTenant(pubkey: string) {

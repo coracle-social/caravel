@@ -163,8 +163,8 @@ export function updateTenantRelay(id: string, input: UpdateRelayInput) {
 }
 
 export function deactivateTenantRelay(id: string) {
-  return request<Relay>(`/tenant/relays/${id}`, {
-    method: "DELETE",
+  return request<Relay>(`/tenant/relays/${id}/deactivate`, {
+    method: "POST",
   })
 }
 
@@ -214,7 +214,7 @@ export function adminUpdateRelay(id: string, input: UpdateRelayInput) {
 }
 
 export function adminDeactivateRelay(id: string) {
-  return request<Relay>(`/admin/relays/${id}`, {
-    method: "DELETE",
+  return request<Relay>(`/admin/relays/${id}/deactivate`, {
+    method: "POST",
   })
 }

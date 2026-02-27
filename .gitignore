@@ -4,3 +4,4 @@ target
 data
 .env
 **/.env
+.playwright-cli

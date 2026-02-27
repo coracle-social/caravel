@@ -5,7 +5,7 @@ use axum::{
     extract::{Path, State},
     http::{HeaderMap, Method, StatusCode, Uri},
     response::{IntoResponse, Response},
-    routing::{get, put},
+    routing::{get, post, put},
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
@@ -29,8 +29,9 @@ pub fn router(state: AppState) -> Router {
         .route("/tenant/relays", get(list_tenant_relays).post(create_tenant_relay))
         .route(
             "/tenant/relays/:id",
-            get(get_tenant_relay).put(update_tenant_relay).delete(deactivate_tenant_relay),
+            get(get_tenant_relay).put(update_tenant_relay),
         )
+        .route("/tenant/relays/:id/deactivate", post(deactivate_tenant_relay))
         .route("/tenant/invoices", get(list_tenant_invoices))
         .route("/tenant/billing", put(update_tenant_billing));
 
@@ -44,8 +45,9 @@ pub fn router(state: AppState) -> Router {
         .route("/admin/relays", get(admin_list_relays))
         .route(
             "/admin/relays/:id",
-            get(admin_get_relay).put(admin_update_relay).delete(admin_deactivate_relay),
-        );
+            get(admin_get_relay).put(admin_update_relay),
+        )
+        .route("/admin/relays/:id/deactivate", post(admin_deactivate_relay));
 
     Router::new()
         .merge(tenant_routes)

@@ -4,6 +4,7 @@ import { adminGetTenant, adminUpdateTenantStatus } from "../../lib/api"
 import BackLink from "../../components/BackLink"
 import PageContainer from "../../components/PageContainer"
 import ResourceState from "../../components/ResourceState"
+import useMinLoading from "../../components/useMinLoading"
 
 export default function AdminTenantDetail() {
   const params = useParams()
@@ -11,6 +12,7 @@ export default function AdminTenantDetail() {
   const [detail, { refetch }] = createResource(tenantId, adminGetTenant)
   const [busy, setBusy] = createSignal(false)
   const [error, setError] = createSignal("")
+  const loading = useMinLoading(() => detail.loading)
 
   async function setStatus(status: string) {
     if (busy()) return
@@ -29,72 +31,74 @@ export default function AdminTenantDetail() {
   return (
     <PageContainer>
       <BackLink href="/admin/tenants" label="Tenants" />
-      <h1 class="text-2xl font-bold text-gray-900 mb-6">Tenant {params.id}</h1>
+      <h1 class="text-2xl font-bold text-gray-900 mb-6 py-4">Tenant {params.id}</h1>
 
       <ResourceState
-        loading={detail.loading}
+        loading={loading()}
         error={detail.error}
         loadingText="Loading tenant..."
         errorText="Failed to load tenant."
         class="mb-4"
       />
 
-      <div class="space-y-6">
-        <section class="bg-white border border-gray-200 rounded-xl p-6">
-          <h2 class="text-lg font-semibold mb-4">Status</h2>
-          <Show when={detail()}>
-            {(d) => (
-              <div class="space-y-3">
-                <p class="text-sm text-gray-700">
-                  Current: <span class="font-medium uppercase tracking-wide">{d().tenant.status}</span>
-                </p>
-                <div class="flex gap-2">
-                  <button
-                    class="py-2 px-4 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 disabled:opacity-50"
-                    onClick={() => void setStatus("active")}
-                    disabled={busy()}
-                  >
-                    Activate
-                  </button>
-                  <button
-                    class="py-2 px-4 border border-red-300 text-red-600 rounded-lg hover:bg-red-50 disabled:opacity-50"
-                    onClick={() => void setStatus("deactivated")}
-                    disabled={busy()}
-                  >
-                    Deactivate
-                  </button>
+      <Show when={!loading()}>
+        <div class="space-y-6">
+          <section class="bg-white border border-gray-200 rounded-xl p-6">
+            <h2 class="text-lg font-semibold mb-4">Status</h2>
+            <Show when={detail()}>
+              {(d) => (
+                <div class="space-y-3">
+                  <p class="text-sm text-gray-700">
+                    Current: <span class="font-medium uppercase tracking-wide">{d().tenant.status}</span>
+                  </p>
+                  <div class="flex gap-2">
+                    <button
+                      class="py-2 px-4 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 disabled:opacity-50"
+                      onClick={() => void setStatus("active")}
+                      disabled={busy()}
+                    >
+                      Activate
+                    </button>
+                    <button
+                      class="py-2 px-4 border border-red-300 text-red-600 rounded-lg hover:bg-red-50 disabled:opacity-50"
+                      onClick={() => void setStatus("deactivated")}
+                      disabled={busy()}
+                    >
+                      Deactivate
+                    </button>
+                  </div>
                 </div>
-              </div>
-            )}
-          </Show>
-        </section>
+              )}
+            </Show>
+          </section>
 
-        <section class="bg-white border border-gray-200 rounded-xl p-6">
-          <h2 class="text-lg font-semibold mb-4">Relays</h2>
-          <Show when={(detail()?.relays.length ?? 0) > 0} fallback={<p class="text-gray-500">No relays.</p>}>
-            <ul class="space-y-3">
-              <For each={detail()?.relays ?? []}>
-                {(relay) => (
-                  <li>
-                    <A href={`/admin/relays/${relay.id}`} class="block rounded-lg border border-gray-200 p-3 hover:border-gray-300">
-                      <div class="flex items-center justify-between gap-2">
-                        <div>
-                          <p class="font-medium text-gray-900">{relay.name}</p>
-                          <p class="text-xs text-gray-500">{relay.subdomain}.spaces.coracle.social</p>
+          <section class="bg-white border border-gray-200 rounded-xl p-6">
+            <h2 class="text-lg font-semibold mb-4">Relays</h2>
+            <Show when={(detail()?.relays.length ?? 0) > 0} fallback={<p class="text-gray-500">No relays.</p>}>
+              <ul class="space-y-3">
+                <For each={detail()?.relays ?? []}>
+                  {(relay) => (
+                    <li>
+                      <A href={`/admin/relays/${relay.id}`} class="block rounded-lg border border-gray-200 p-3 hover:border-gray-300">
+                        <div class="flex items-center justify-between gap-2">
+                          <div>
+                            <p class="font-medium text-gray-900">{relay.name}</p>
+                            <p class="text-xs text-gray-500">{relay.subdomain}.spaces.coracle.social</p>
+                          </div>
+                          <span class="text-xs uppercase tracking-wide text-gray-500">{relay.status}</span>
                         </div>
-                        <span class="text-xs uppercase tracking-wide text-gray-500">{relay.status}</span>
-                      </div>
-                    </A>
-                  </li>
-                )}
-              </For>
-            </ul>
+                      </A>
+                    </li>
+                  )}
+                </For>
+              </ul>
+            </Show>
+          </section>
+          <Show when={error()}>
+            <p class="text-sm text-red-600">{error()}</p>
           </Show>
-        </section>
-        <Show when={error()}>
-          <p class="text-sm text-red-600">{error()}</p>
-        </Show>
-      </div>
+        </div>
+      </Show>
     </PageContainer>
   )
 }

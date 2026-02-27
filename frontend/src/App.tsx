@@ -1,7 +1,7 @@
-import { createEffect, createResource, Show } from "solid-js"
+import { createEffect, Show } from "solid-js"
 import { Router, Route, useLocation, useNavigate } from "@solidjs/router"
 import type { Component } from "solid-js"
-import Navbar from "./components/Navbar"
+import AppShell from "./components/AppShell"
 import Home from "./pages/Home"
 import Login from "./pages/Login"
 import RelayList from "./pages/relays/RelayList"
@@ -9,16 +9,21 @@ import RelayNew from "./pages/relays/RelayNew"
 import RelayDetail from "./pages/relays/RelayDetail"
 import RelayEdit from "./pages/relays/RelayEdit"
 import Account from "./pages/Account"
-import AdminTenants from "./pages/admin/AdminTenants"
+import AdminTenantList from "./pages/admin/AdminTenantList"
 import AdminTenantDetail from "./pages/admin/AdminTenantDetail"
-import AdminRelays from "./pages/admin/AdminRelays"
+import AdminRelayList from "./pages/admin/AdminRelayList"
 import AdminRelayDetail from "./pages/admin/AdminRelayDetail"
 import AdminRelayEdit from "./pages/admin/AdminRelayEdit"
 import { useActiveAccount } from "./lib/nostr"
-import { adminCheck as fetchAdminCheck } from "./lib/api"
 
 function Layout(props: { children?: any }) {
   const location = useLocation()
+  const account = useActiveAccount()
+
+  const usesAppShell = () => {
+    const path = location.pathname
+    return path.startsWith("/relays") || path.startsWith("/account") || path.startsWith("/admin")
+  }
 
   createEffect(() => {
     // Reinitialize Preline components on route change
@@ -28,8 +33,9 @@ function Layout(props: { children?: any }) {
 
   return (
     <div class="min-h-screen bg-gray-50">
-      <Navbar />
-      <main>{props.children}</main>
+      <Show when={account() && usesAppShell()} fallback={<main>{props.children}</main>}>
+        <AppShell>{props.children}</AppShell>
+      </Show>
     </div>
   )
 }
@@ -52,10 +58,6 @@ export default function App() {
     return () => {
       const navigate = useNavigate()
       const account = useActiveAccount()
-      const [adminCheck] = createResource(
-        () => account()?.id,
-        () => fetchAdminCheck(),
-      )
 
       createEffect(() => {
         if (!account()) navigate("/login", { replace: true })
@@ -63,14 +65,7 @@ export default function App() {
 
       return (
         <Show when={account()}>
-          <Show when={!adminCheck.loading} fallback={<div class="max-w-4xl mx-auto px-4 py-8 text-gray-500">Checking admin access...</div>}>
-            <Show
-              when={!adminCheck.error && !!adminCheck()?.is_admin}
-              fallback={<div class="max-w-4xl mx-auto px-4 py-8 text-red-600">You do not have admin access.</div>}
-            >
-              <Page />
-            </Show>
-          </Show>
+          <Page />
         </Show>
       )
     }
@@ -85,9 +80,9 @@ export default function App() {
       <Route path="/relays/:id" component={withTenantAuth(RelayDetail)} />
       <Route path="/relays/:id/edit" component={withTenantAuth(RelayEdit)} />
       <Route path="/account" component={withTenantAuth(Account)} />
-      <Route path="/admin/tenants" component={withAdminAuth(AdminTenants)} />
+      <Route path="/admin/tenants" component={withAdminAuth(AdminTenantList)} />
       <Route path="/admin/tenants/:id" component={withAdminAuth(AdminTenantDetail)} />
-      <Route path="/admin/relays" component={withAdminAuth(AdminRelays)} />
+      <Route path="/admin/relays" component={withAdminAuth(AdminRelayList)} />
       <Route path="/admin/relays/:id" component={withAdminAuth(AdminRelayDetail)} />
       <Route path="/admin/relays/:id/edit" component={withAdminAuth(AdminRelayEdit)} />
     </Router>

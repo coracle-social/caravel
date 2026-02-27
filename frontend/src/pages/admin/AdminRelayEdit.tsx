@@ -7,12 +7,14 @@ import { slugify } from "../../lib/slugify"
 import BackLink from "../../components/BackLink"
 import PageContainer from "../../components/PageContainer"
 import ResourceState from "../../components/ResourceState"
+import useMinLoading from "../../components/useMinLoading"
 
 export default function AdminRelayEdit() {
   const navigate = useNavigate()
   const params = useParams()
   const relayId = () => params.id ?? ""
   const [relay] = createResource(relayId, adminGetRelay)
+  const loading = useMinLoading(() => relay.loading)
 
   const [name, setName] = createSignal("")
   const [subdomain, setSubdomain] = createSignal("")
@@ -55,16 +57,16 @@ export default function AdminRelayEdit() {
   return (
     <PageContainer size="narrow">
       <BackLink href={`/admin/relays/${params.id}`} label="Back" />
-      <h1 class="text-2xl font-bold text-gray-900 mb-6">Edit Relay (Admin)</h1>
+      <h1 class="text-2xl font-bold text-gray-900 mb-6 py-4">Edit Relay (Admin)</h1>
 
       <ResourceState
-        loading={relay.loading}
+        loading={loading()}
         error={relay.error}
         loadingText="Loading relay..."
         errorText="Failed to load relay."
       />
 
-      <Show when={relay() && !relay.loading}>
+      <Show when={relay() && !loading()}>
         <RelayForm
           name={name()}
           setName={setName}

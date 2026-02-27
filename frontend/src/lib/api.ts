@@ -74,6 +74,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     } catch {
       // ignored
     }
+    if (response.status === 403 && path.startsWith("/admin/") && typeof window !== "undefined") {
+      window.location.replace("/relays")
+    }
     throw new ApiError(message, response.status)
   }
 

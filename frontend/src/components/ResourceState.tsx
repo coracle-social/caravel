@@ -1,4 +1,5 @@
 import { Show } from "solid-js"
+import LoadingState from "./LoadingState"
 
 type ResourceStateProps = {
   loading: boolean
@@ -12,10 +13,10 @@ export default function ResourceState(props: ResourceStateProps) {
   return (
     <>
       <Show when={props.loading}>
-        <p class={`text-gray-500 ${props.class ?? ""}`.trim()}>{props.loadingText}</p>
+        <LoadingState message={props.loadingText} class={props.class} />
       </Show>
       <Show when={props.error && !props.loading}>
-        <p class={`text-red-600 ${props.class ?? ""}`.trim()}>{props.errorText}</p>
+        <p class={`text-center text-red-600 ${props.class ?? ""}`.trim()}>{props.errorText}</p>
       </Show>
     </>
   )

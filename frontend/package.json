@@ -21,6 +21,7 @@
     "applesauce-relay": "^5.1.0",
     "applesauce-signers": "^5.1.0",
     "applesauce-wallet-connect": "^5.0.1",
+    "fuse.js": "^7.1.0",
     "preline": "^4.1.1",
     "qr-scanner": "^1.4.2",
     "qrcode": "^1.5.4",

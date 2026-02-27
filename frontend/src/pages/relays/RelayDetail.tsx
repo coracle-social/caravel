@@ -4,6 +4,7 @@ import { deactivateTenantRelay, getTenantRelay } from "../../lib/api"
 import BackLink from "../../components/BackLink"
 import PageContainer from "../../components/PageContainer"
 import ResourceState from "../../components/ResourceState"
+import useMinLoading from "../../components/useMinLoading"
 
 export default function RelayDetail() {
   const params = useParams()
@@ -11,6 +12,7 @@ export default function RelayDetail() {
   const [relay, { refetch }] = createResource(relayId, getTenantRelay)
   const [busy, setBusy] = createSignal(false)
   const [error, setError] = createSignal("")
+  const loading = useMinLoading(() => relay.loading)
 
   async function handleDeactivate() {
     if (busy()) return
@@ -31,17 +33,17 @@ export default function RelayDetail() {
       <BackLink href="/relays" label="Relays" />
 
       <ResourceState
-        loading={relay.loading}
+        loading={loading()}
         error={relay.error}
         loadingText="Loading relay..."
         errorText="Failed to load relay."
         class="mb-4"
       />
 
-      <Show when={relay()}>
+      <Show when={!loading() && relay()}>
         {(loadedRelay) => (
           <div class="mb-6">
-            <h1 class="text-2xl font-bold text-gray-900">{loadedRelay().name}</h1>
+            <h1 class="text-2xl font-bold text-gray-900 py-4">{loadedRelay().name}</h1>
             <p class="mt-1 text-sm text-gray-500">https://{loadedRelay().subdomain}.spaces.coracle.social</p>
             <Show when={loadedRelay().description.trim()}>
               <p class="mt-3 text-gray-700">{loadedRelay().description}</p>

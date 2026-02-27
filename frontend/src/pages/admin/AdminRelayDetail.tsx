@@ -4,6 +4,7 @@ import { adminDeactivateRelay, adminGetRelay } from "../../lib/api"
 import BackLink from "../../components/BackLink"
 import PageContainer from "../../components/PageContainer"
 import ResourceState from "../../components/ResourceState"
+import useMinLoading from "../../components/useMinLoading"
 
 export default function AdminRelayDetail() {
   const params = useParams()
@@ -11,6 +12,7 @@ export default function AdminRelayDetail() {
   const [relay, { refetch }] = createResource(relayId, adminGetRelay)
   const [busy, setBusy] = createSignal(false)
   const [error, setError] = createSignal("")
+  const loading = useMinLoading(() => relay.loading)
 
   async function handleDeactivate() {
     if (busy()) return
@@ -31,17 +33,17 @@ export default function AdminRelayDetail() {
       <BackLink href="/admin/relays" label="Relays" />
 
       <ResourceState
-        loading={relay.loading}
+        loading={loading()}
         error={relay.error}
         loadingText="Loading relay..."
         errorText="Failed to load relay."
         class="mb-4"
       />
 
-      <Show when={relay()}>
+      <Show when={!loading() && relay()}>
         {(r) => (
           <div class="mb-6">
-            <h1 class="text-2xl font-bold text-gray-900 mb-1">{r().name}</h1>
+            <h1 class="text-2xl font-bold text-gray-900 mb-1 py-4">{r().name}</h1>
             <p class="text-sm text-gray-500">{r().subdomain}.spaces.coracle.social</p>
             <p class="text-sm text-gray-500 mt-2 break-all">Tenant: {r().tenant}</p>
             <p class="text-sm text-gray-700 mt-2">Plan: <span class="uppercase">{r().plan}</span></p>

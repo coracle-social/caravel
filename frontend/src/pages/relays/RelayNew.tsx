@@ -1,6 +1,7 @@
 import { Show, createSignal } from "solid-js"
 import { useNavigate } from "@solidjs/router"
 import { createTenantRelay } from "../../lib/api"
+import { slugify } from "../../lib/slugify"
 
 const PLANS = [
   { id: "free", label: "Free", price: 0, members: "Up to 10", blossom: false, livekit: false },
@@ -9,16 +10,6 @@ const PLANS = [
 ] as const
 
 type PlanId = (typeof PLANS)[number]["id"]
-
-function slugify(s: string) {
-  return s
-    .toLowerCase()
-    .trim()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-}
 
 export default function RelayNew() {
   const navigate = useNavigate()

@@ -1,6 +1,9 @@
 import { useParams, A } from "@solidjs/router"
 import { createResource, createSignal, For, Show } from "solid-js"
 import { adminGetTenant, adminUpdateTenantStatus } from "../../lib/api"
+import BackLink from "../../components/BackLink"
+import PageContainer from "../../components/PageContainer"
+import ResourceState from "../../components/ResourceState"
 
 export default function AdminTenantDetail() {
   const params = useParams()
@@ -24,18 +27,17 @@ export default function AdminTenantDetail() {
   }
 
   return (
-    <div class="max-w-4xl mx-auto px-4 py-8">
-      <div class="flex items-center gap-2 mb-6">
-        <A href="/admin/tenants" class="text-gray-500 hover:text-gray-700">← Tenants</A>
-      </div>
+    <PageContainer>
+      <BackLink href="/admin/tenants" label="Tenants" />
       <h1 class="text-2xl font-bold text-gray-900 mb-6">Tenant {params.id}</h1>
 
-      <Show when={detail.loading}>
-        <p class="text-gray-500 mb-4">Loading tenant...</p>
-      </Show>
-      <Show when={detail.error && !detail.loading}>
-        <p class="text-red-600 mb-4">Failed to load tenant.</p>
-      </Show>
+      <ResourceState
+        loading={detail.loading}
+        error={detail.error}
+        loadingText="Loading tenant..."
+        errorText="Failed to load tenant."
+        class="mb-4"
+      />
 
       <div class="space-y-6">
         <section class="bg-white border border-gray-200 rounded-xl p-6">
@@ -93,6 +95,6 @@ export default function AdminTenantDetail() {
           <p class="text-sm text-red-600">{error()}</p>
         </Show>
       </div>
-    </div>
+    </PageContainer>
   )
 }

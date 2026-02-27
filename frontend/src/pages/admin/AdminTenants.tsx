@@ -3,6 +3,8 @@ import { createEffect, createMemo, createResource, createSignal, For, onCleanup,
 import { getProfilePicture } from "applesauce-core/helpers/profile"
 import { adminListTenants } from "../../lib/api"
 import { eventStore, primeProfiles } from "../../lib/nostr"
+import PageContainer from "../../components/PageContainer"
+import ResourceState from "../../components/ResourceState"
 
 function shortenPubkey(pubkey: string) {
   if (pubkey.length <= 16) return pubkey
@@ -48,7 +50,7 @@ export default function AdminTenants() {
   })
 
   return (
-    <div class="max-w-4xl mx-auto px-4 py-8">
+    <PageContainer>
       <h1 class="text-2xl font-bold text-gray-900 mb-6">Tenants</h1>
       <input
         type="search"
@@ -58,12 +60,12 @@ export default function AdminTenants() {
         class="w-full border border-gray-300 rounded-lg px-3 py-2 mb-6 focus:outline-none focus:ring-2 focus:ring-blue-500"
       />
 
-      <Show when={tenants.loading}>
-        <p class="text-gray-500">Loading tenants...</p>
-      </Show>
-      <Show when={tenants.error && !tenants.loading}>
-        <p class="text-red-600">Failed to load tenants.</p>
-      </Show>
+      <ResourceState
+        loading={tenants.loading}
+        error={tenants.error}
+        loadingText="Loading tenants..."
+        errorText="Failed to load tenants."
+      />
       <Show when={(filtered().length ?? 0) > 0} fallback={<p class="text-gray-500">No tenants found.</p>}>
         <ul class="space-y-3">
           <For each={filtered()}>
@@ -96,6 +98,6 @@ export default function AdminTenants() {
           </For>
         </ul>
       </Show>
-    </div>
+    </PageContainer>
   )
 }

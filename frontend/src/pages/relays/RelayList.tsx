@@ -1,6 +1,8 @@
 import { A } from "@solidjs/router"
 import { createMemo, createResource, createSignal, For, Show } from "solid-js"
 import { listTenantRelays } from "../../lib/api"
+import PageContainer from "../../components/PageContainer"
+import ResourceState from "../../components/ResourceState"
 
 export default function RelayList() {
   const [relays] = createResource(listTenantRelays)
@@ -20,7 +22,7 @@ export default function RelayList() {
   })
 
   return (
-    <div class="max-w-4xl mx-auto px-4 py-8">
+    <PageContainer>
       <div class="flex items-center justify-between mb-6">
         <h1 class="text-2xl font-bold text-gray-900">My Relays</h1>
         <A
@@ -53,13 +55,12 @@ export default function RelayList() {
         </select>
       </div>
 
-      <Show when={relays.loading}>
-        <p class="text-gray-500">Loading relays...</p>
-      </Show>
-
-      <Show when={relays.error && !relays.loading}>
-        <p class="text-red-600">Failed to load relays.</p>
-      </Show>
+      <ResourceState
+        loading={relays.loading}
+        error={relays.error}
+        loadingText="Loading relays..."
+        errorText="Failed to load relays."
+      />
 
       <Show when={(filtered().length ?? 0) > 0} fallback={<p class="text-gray-500">No relays match your filters.</p>}>
         <ul class="space-y-3">
@@ -83,6 +84,6 @@ export default function RelayList() {
           </For>
         </ul>
       </Show>
-    </div>
+    </PageContainer>
   )
 }

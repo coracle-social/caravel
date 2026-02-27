@@ -1,5 +1,7 @@
 import { createMemo, createResource, createSignal, For, Show } from "solid-js"
 import { getTenant, listTenantInvoices, updateTenantBilling } from "../lib/api"
+import PageContainer from "../components/PageContainer"
+import ResourceState from "../components/ResourceState"
 
 export default function Account() {
   const [tenant, { refetch: refetchTenant }] = createResource(getTenant)
@@ -25,7 +27,7 @@ export default function Account() {
   }
 
   return (
-    <div class="max-w-4xl mx-auto px-4 py-8">
+    <PageContainer>
       <h1 class="text-2xl font-bold text-gray-900 mb-6">My Account</h1>
 
       <div class="space-y-6">
@@ -40,9 +42,12 @@ export default function Account() {
               )}
             </Show>
           </div>
-          <Show when={tenant.loading}>
-            <p class="text-gray-500">Loading account...</p>
-          </Show>
+          <ResourceState
+            loading={tenant.loading}
+            error={undefined}
+            loadingText="Loading account..."
+            errorText=""
+          />
         </section>
 
         <section class="bg-white border border-gray-200 rounded-xl p-6">
@@ -106,6 +111,6 @@ export default function Account() {
           </Show>
         </section>
       </div>
-    </div>
+    </PageContainer>
   )
 }

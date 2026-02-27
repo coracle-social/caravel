@@ -1,6 +1,9 @@
 import { useParams, A } from "@solidjs/router"
 import { createResource, createSignal, Show } from "solid-js"
 import { adminDeactivateRelay, adminGetRelay } from "../../lib/api"
+import BackLink from "../../components/BackLink"
+import PageContainer from "../../components/PageContainer"
+import ResourceState from "../../components/ResourceState"
 
 export default function AdminRelayDetail() {
   const params = useParams()
@@ -24,17 +27,16 @@ export default function AdminRelayDetail() {
   }
 
   return (
-    <div class="max-w-4xl mx-auto px-4 py-8">
-      <div class="flex items-center gap-2 mb-6">
-        <A href="/admin/relays" class="text-gray-500 hover:text-gray-700">← Relays</A>
-      </div>
+    <PageContainer>
+      <BackLink href="/admin/relays" label="Relays" />
 
-      <Show when={relay.loading}>
-        <p class="text-gray-500 mb-4">Loading relay...</p>
-      </Show>
-      <Show when={relay.error && !relay.loading}>
-        <p class="text-red-600 mb-4">Failed to load relay.</p>
-      </Show>
+      <ResourceState
+        loading={relay.loading}
+        error={relay.error}
+        loadingText="Loading relay..."
+        errorText="Failed to load relay."
+        class="mb-4"
+      />
 
       <Show when={relay()}>
         {(r) => (
@@ -69,6 +71,6 @@ export default function AdminRelayDetail() {
       <Show when={error()}>
         <p class="mt-3 text-sm text-red-600">{error()}</p>
       </Show>
-    </div>
+    </PageContainer>
   )
 }

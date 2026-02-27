@@ -1,6 +1,8 @@
 import { A } from "@solidjs/router"
 import { createMemo, createResource, createSignal, For, Show } from "solid-js"
 import { adminListRelays } from "../../lib/api"
+import PageContainer from "../../components/PageContainer"
+import ResourceState from "../../components/ResourceState"
 
 export default function AdminRelays() {
   const [query, setQuery] = createSignal("")
@@ -19,7 +21,7 @@ export default function AdminRelays() {
   })
 
   return (
-    <div class="max-w-4xl mx-auto px-4 py-8">
+    <PageContainer>
       <h1 class="text-2xl font-bold text-gray-900 mb-6">All Relays</h1>
       <input
         type="search"
@@ -29,12 +31,12 @@ export default function AdminRelays() {
         class="w-full border border-gray-300 rounded-lg px-3 py-2 mb-6 focus:outline-none focus:ring-2 focus:ring-blue-500"
       />
 
-      <Show when={relays.loading}>
-        <p class="text-gray-500">Loading relays...</p>
-      </Show>
-      <Show when={relays.error && !relays.loading}>
-        <p class="text-red-600">Failed to load relays.</p>
-      </Show>
+      <ResourceState
+        loading={relays.loading}
+        error={relays.error}
+        loadingText="Loading relays..."
+        errorText="Failed to load relays."
+      />
       <Show when={(filtered().length ?? 0) > 0} fallback={<p class="text-gray-500">No relays found.</p>}>
         <ul class="space-y-3">
           <For each={filtered()}>
@@ -55,6 +57,6 @@ export default function AdminRelays() {
           </For>
         </ul>
       </Show>
-    </div>
+    </PageContainer>
   )
 }

@@ -51,7 +51,7 @@ export default function RelayNew() {
 
   return (
     <div class="max-w-2xl mx-auto px-4 py-8">
-      <h1 class="text-2xl font-bold text-gray-900 mb-6 py-4">New Relay</h1>
+      <h1 class="text-2xl font-bold text-gray-900 mb-6 py-2">New Relay</h1>
       <form onSubmit={handleSubmit} class="space-y-6">
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">Relay Name</label>

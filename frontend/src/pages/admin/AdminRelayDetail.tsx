@@ -43,7 +43,7 @@ export default function AdminRelayDetail() {
       <Show when={!loading() && relay()}>
         {(r) => (
           <div class="mb-6">
-            <h1 class="text-2xl font-bold text-gray-900 mb-1 py-4">{r().name}</h1>
+            <h1 class="text-2xl font-bold text-gray-900 mb-1 py-2">{r().name}</h1>
             <p class="text-sm text-gray-500">{r().subdomain}.spaces.coracle.social</p>
             <p class="text-sm text-gray-500 mt-2 break-all">Tenant: {r().tenant}</p>
             <p class="text-sm text-gray-700 mt-2">Plan: <span class="uppercase">{r().plan}</span></p>

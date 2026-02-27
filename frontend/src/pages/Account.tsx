@@ -38,7 +38,7 @@ export default function Account() {
 
   return (
     <PageContainer>
-      <h1 class="text-2xl font-bold text-gray-900 mb-6 py-4">My Account</h1>
+      <h1 class="text-2xl font-bold text-gray-900 mb-6 py-2">My Account</h1>
 
       <div class="space-y-6">
         <section class="bg-white border border-gray-200 rounded-xl p-6">

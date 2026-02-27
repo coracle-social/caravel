@@ -5,7 +5,7 @@ export default function Home() {
     <div class="min-h-screen bg-white">
       {/* Hero */}
       <div class="max-w-4xl mx-auto px-4 py-24 text-center">
-        <h1 class="text-2xl font-bold text-gray-900 mb-4 py-4">
+        <h1 class="text-2xl font-bold text-gray-900 mb-4 py-2">
           Host Your Own Nostr Community Relay
         </h1>
         <p class="text-xl text-gray-600 mb-8 max-w-2xl mx-auto">

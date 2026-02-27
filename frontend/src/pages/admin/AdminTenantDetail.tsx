@@ -31,7 +31,7 @@ export default function AdminTenantDetail() {
   return (
     <PageContainer>
       <BackLink href="/admin/tenants" label="Tenants" />
-      <h1 class="text-2xl font-bold text-gray-900 mb-6 py-4">Tenant {params.id}</h1>
+      <h1 class="text-2xl font-bold text-gray-900 mb-6 py-2">Tenant {params.id}</h1>
 
       <ResourceState
         loading={loading()}

@@ -68,7 +68,7 @@ export default function AdminTenantList() {
 
   return (
     <PageContainer>
-      <h1 class="text-2xl font-bold text-gray-900 mb-6 py-4">Tenants</h1>
+      <h1 class="text-2xl font-bold text-gray-900 mb-6 py-2">Tenants</h1>
       <div class="relative mb-6">
         <span class="pointer-events-none absolute inset-y-0 left-3 flex items-center text-gray-400">
           <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">

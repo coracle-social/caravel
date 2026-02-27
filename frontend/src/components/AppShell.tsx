@@ -100,7 +100,7 @@ export default function AppShell(props: { children?: any }) {
     if (searchTransitionTimer) window.clearTimeout(searchTransitionTimer)
     setSearchOpen(true)
     setSearchEntered(false)
-    window.requestAnimationFrame(() => setSearchEntered(true))
+    searchTransitionTimer = window.setTimeout(() => setSearchEntered(true), 10)
   }
 
   const closeSearchModal = () => {
@@ -159,7 +159,7 @@ export default function AppShell(props: { children?: any }) {
       </div>
 
       <nav class="fixed inset-x-0 bottom-0 z-20 border-t border-gray-200 bg-white md:hidden">
-        <div class="mx-auto flex h-16 max-w-md items-center justify-between px-6">
+        <div class="flex h-16 items-center justify-between px-6">
           <div class="flex items-center gap-3">
             <button
               type="button"
@@ -192,7 +192,7 @@ export default function AppShell(props: { children?: any }) {
           onClick={closeSearchModal}
         >
           <div
-            class={`max-h-[80vh] w-full overflow-hidden rounded-t-2xl bg-white transition-all duration-200 ${searchEntered() ? "translate-y-0 opacity-100" : "translate-y-4 opacity-0"}`}
+            class={`min-h-[40vh] max-h-[80vh] w-full overflow-hidden rounded-t-2xl bg-white transition-all duration-200 ${searchEntered() ? "translate-y-0 opacity-100" : "translate-y-16 opacity-0"}`}
             onClick={(e) => e.stopPropagation()}
           >
             <div class="border-b border-gray-200 p-4">

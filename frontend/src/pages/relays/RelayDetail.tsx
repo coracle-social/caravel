@@ -43,7 +43,7 @@ export default function RelayDetail() {
       <Show when={!loading() && relay()}>
         {(loadedRelay) => (
           <div class="mb-6">
-            <h1 class="text-2xl font-bold text-gray-900 py-4">{loadedRelay().name}</h1>
+            <h1 class="text-2xl font-bold text-gray-900 py-2">{loadedRelay().name}</h1>
             <p class="mt-1 text-sm text-gray-500">https://{loadedRelay().subdomain}.spaces.coracle.social</p>
             <Show when={loadedRelay().description.trim()}>
               <p class="mt-3 text-gray-700">{loadedRelay().description}</p>

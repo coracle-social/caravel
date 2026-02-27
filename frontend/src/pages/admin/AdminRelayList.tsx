@@ -27,7 +27,7 @@ export default function AdminRelayList() {
   return (
     <PageContainer>
       <div class="mb-6">
-        <h1 class="text-2xl font-bold text-gray-900 py-4">Relays</h1>
+        <h1 class="text-2xl font-bold text-gray-900 py-2">Relays</h1>
       </div>
       <div class="relative mb-6">
         <span class="pointer-events-none absolute inset-y-0 left-3 flex items-center text-gray-400">

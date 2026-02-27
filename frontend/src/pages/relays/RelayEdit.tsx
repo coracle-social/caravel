@@ -57,7 +57,7 @@ export default function RelayEdit() {
   return (
     <PageContainer size="narrow">
       <BackLink href={`/relays/${params.id}`} label="Back" />
-      <h1 class="text-2xl font-bold text-gray-900 mb-6 py-4">Edit Relay</h1>
+      <h1 class="text-2xl font-bold text-gray-900 mb-6 py-2">Edit Relay</h1>
 
       <ResourceState
         loading={loading()}

@@ -57,7 +57,7 @@ export default function AdminRelayEdit() {
   return (
     <PageContainer size="narrow">
       <BackLink href={`/admin/relays/${params.id}`} label="Back" />
-      <h1 class="text-2xl font-bold text-gray-900 mb-6 py-4">Edit Relay (Admin)</h1>
+      <h1 class="text-2xl font-bold text-gray-900 mb-6 py-2">Edit Relay (Admin)</h1>
 
       <ResourceState
         loading={loading()}

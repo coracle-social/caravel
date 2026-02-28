@@ -1,15 +1,15 @@
-FROM node:20-alpine AS build
+FROM node:20-slim
+
+RUN npm install -g bun
 
 WORKDIR /app
 
 COPY package.json bun.lock ./
-RUN npm install -g bun && bun install
+RUN bun install
 
 COPY . .
 RUN bun run build
 
-FROM nginx:1.27-alpine
+EXPOSE 3000
 
-COPY --from=build /app/dist /usr/share/nginx/html
-
-EXPOSE 80
+CMD ["npx", "serve", "dist", "-s"]

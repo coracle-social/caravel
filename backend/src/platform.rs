@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use nostr_sdk::prelude::*;
 
 pub async fn publish_platform_identity(

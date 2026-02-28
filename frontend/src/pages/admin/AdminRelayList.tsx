@@ -52,7 +52,7 @@ export default function AdminRelayList() {
         errorText="Failed to load relays."
       />
       <Show when={!loading()}>
-        <Show when={(filtered().length ?? 0) > 0} fallback={<p class="text-gray-500">No relays found.</p>}>
+        <Show when={(filtered().length ?? 0) > 0} fallback={<p class="py-20 text-center text-gray-500">No relays found.</p>}>
           <ul class="space-y-3">
             <For each={filtered()}>
               {(relay) => (

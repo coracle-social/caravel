@@ -1,6 +1,6 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use chrono::{DateTime, Months, Utc};
-use tokio::time::{sleep, Duration};
+use tokio::time::{Duration, sleep};
 use uuid::Uuid;
 
 use crate::models::{Invoice, NewInvoice, NewInvoiceItem, Relay, Tenant};
@@ -8,7 +8,7 @@ use crate::notifications::Nip17Notifier;
 use crate::repo::Repo;
 
 use nostr_sdk::nips::nip47::{self, MakeInvoiceRequest, NostrWalletConnectURI, PayInvoiceRequest};
-use nostr_sdk::{Client, Filter, Kind, Keys, Timestamp};
+use nostr_sdk::{Client, Filter, Keys, Kind, Timestamp};
 
 #[derive(Clone)]
 pub struct BillingService {
@@ -18,11 +18,7 @@ pub struct BillingService {
 }
 
 impl BillingService {
-    pub fn new(
-        repo: Repo,
-        notifier: Nip17Notifier,
-        platform_nwc_url: String,
-    ) -> Self {
+    pub fn new(repo: Repo, notifier: Nip17Notifier, platform_nwc_url: String) -> Self {
         Self {
             repo,
             notifier,
@@ -88,7 +84,9 @@ impl BillingService {
             invoice: invoice_str.clone(),
         };
 
-        self.repo.create_invoice_with_items(&invoice, &items).await?;
+        self.repo
+            .create_invoice_with_items(&invoice, &items)
+            .await?;
 
         if tenant.tenant_nwc_url.trim().is_empty() {
             self.send_invoice_dm(tenant, &invoice, period_start, period_end)
@@ -130,7 +128,9 @@ impl BillingService {
             return Ok(());
         }
 
-        self.repo.update_tenant_status(&tenant.pubkey, "suspended").await?;
+        self.repo
+            .update_tenant_status(&tenant.pubkey, "suspended")
+            .await?;
         self.repo.suspend_relays_for_tenant(&tenant.pubkey).await?;
         Ok(())
     }
@@ -154,7 +154,9 @@ impl BillingService {
     async fn pay_invoice(&self, tenant_nwc_url: &str, invoice: &str) -> Result<()> {
         let uri = NostrWalletConnectURI::parse(tenant_nwc_url)?;
         let request = nip47::Request::pay_invoice(PayInvoiceRequest::new(invoice));
-        self.send_nwc_request(&uri, request).await?.to_pay_invoice()?;
+        self.send_nwc_request(&uri, request)
+            .await?
+            .to_pay_invoice()?;
         Ok(())
     }
 

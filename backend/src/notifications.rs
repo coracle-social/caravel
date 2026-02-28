@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use nostr_sdk::prelude::*;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -16,7 +16,9 @@ pub struct Nip17Notifier {
 impl Nip17Notifier {
     pub async fn new(platform_secret: String, relays: Vec<String>) -> Result<Self> {
         if platform_secret.trim().is_empty() {
-            return Err(anyhow!("PLATFORM_SECRET is required for NIP-17 notifications"));
+            return Err(anyhow!(
+                "PLATFORM_SECRET is required for NIP-17 notifications"
+            ));
         }
 
         let keys = Keys::parse(&platform_secret)?;

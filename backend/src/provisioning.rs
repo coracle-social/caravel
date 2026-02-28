@@ -1,12 +1,12 @@
-use anyhow::{anyhow, Result};
-use rand::rngs::OsRng;
+use anyhow::{Result, anyhow};
 use rand::RngCore;
+use rand::rngs::OsRng;
 use reqwest::Client;
 use serde::Serialize;
 
+use nostr_sdk::nostr::Keys;
 use nostr_sdk::nostr::nips::nip98::{HttpData, HttpMethod};
 use nostr_sdk::nostr::types::url::Url;
-use nostr_sdk::nostr::Keys;
 
 use crate::models::NewRelay;
 
@@ -54,7 +54,12 @@ impl Provisioner {
         if !res.status().is_success() {
             let status = res.status();
             let body = res.text().await.unwrap_or_default();
-            return Err(anyhow!("zooid provisioning failed for {}: {} {}", url, status, body));
+            return Err(anyhow!(
+                "zooid provisioning failed for {}: {} {}",
+                url,
+                status,
+                body
+            ));
         }
 
         Ok(())

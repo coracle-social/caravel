@@ -79,7 +79,7 @@ export default function RelayList() {
       />
 
       <Show when={!loading()}>
-        <Show when={(filtered().length ?? 0) > 0} fallback={<p class="text-gray-500">No relays match your filters.</p>}>
+        <Show when={(filtered().length ?? 0) > 0} fallback={<p class="py-20 text-center text-gray-500">No relays found.</p>}>
           <ul class="space-y-3">
             <For each={filtered()}>
               {(relay) => (

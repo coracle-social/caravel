@@ -1,5 +1,7 @@
 use anyhow::Result;
-use sqlx::{migrate::Migrator, sqlite::SqliteConnectOptions, sqlite::SqlitePoolOptions, SqlitePool};
+use sqlx::{
+    SqlitePool, migrate::Migrator, sqlite::SqliteConnectOptions, sqlite::SqlitePoolOptions,
+};
 use std::fs;
 use std::path::Path;
 use std::str::FromStr;

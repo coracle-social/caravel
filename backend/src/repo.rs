@@ -2,7 +2,8 @@ use anyhow::Result;
 use sqlx::{Sqlite, SqlitePool, Transaction};
 
 use crate::models::{
-    Invoice, InvoiceItem, NewInvoice, NewInvoiceItem, NewRelay, NewTenant, Relay, Tenant, UpdateRelay,
+    Invoice, InvoiceItem, NewInvoice, NewInvoiceItem, NewRelay, NewTenant, Relay, Tenant,
+    UpdateRelay,
 };
 
 #[derive(Clone)]
@@ -16,14 +17,12 @@ impl Repo {
     }
 
     pub async fn create_tenant(&self, tenant: &NewTenant) -> Result<()> {
-        sqlx::query(
-            "INSERT INTO tenants (pubkey, status, tenant_nwc_url) VALUES (?, ?, ?)",
-        )
-        .bind(&tenant.pubkey)
-        .bind(&tenant.status)
-        .bind(&tenant.tenant_nwc_url)
-        .execute(&self.pool)
-        .await?;
+        sqlx::query("INSERT INTO tenants (pubkey, status, tenant_nwc_url) VALUES (?, ?, ?)")
+            .bind(&tenant.pubkey)
+            .bind(&tenant.status)
+            .bind(&tenant.tenant_nwc_url)
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 
@@ -123,10 +122,12 @@ impl Repo {
     }
 
     pub async fn suspend_relays_for_tenant(&self, tenant: &str) -> Result<()> {
-        sqlx::query("UPDATE relays SET status = 'suspended' WHERE tenant = ? AND status = 'active'")
-            .bind(tenant)
-            .execute(&self.pool)
-            .await?;
+        sqlx::query(
+            "UPDATE relays SET status = 'suspended' WHERE tenant = ? AND status = 'active'",
+        )
+        .bind(tenant)
+        .execute(&self.pool)
+        .await?;
         Ok(())
     }
 

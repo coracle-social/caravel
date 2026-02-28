@@ -1,13 +1,13 @@
-use anyhow::{anyhow, Result};
-use base64::engine::general_purpose;
+use anyhow::{Result, anyhow};
 use base64::Engine;
+use base64::engine::general_purpose;
 use std::str::FromStr;
 
+use nostr_sdk::JsonUtil;
 use nostr_sdk::nostr::key::PublicKey;
 use nostr_sdk::nostr::nips::nip98::HttpMethod;
 use nostr_sdk::nostr::types::url::Url;
 use nostr_sdk::nostr::{Alphabet, Event, Kind, SingleLetterTag, TagKind, TagStandard};
-use nostr_sdk::JsonUtil;
 
 pub fn verify_nip98(auth_header: &str, url: &str, method: &str) -> Result<PublicKey> {
     let url = Url::parse(url)?;

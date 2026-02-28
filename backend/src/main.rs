@@ -12,14 +12,14 @@ mod repo;
 use std::net::SocketAddr;
 
 use anyhow::Result;
-use axum::{routing::get, Router};
+use axum::{Router, routing::get};
 use tokio::net::TcpListener;
 use tower_http::cors::CorsLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
+use crate::billing::BillingService;
 use crate::config::Config;
 use crate::db::init_pool;
-use crate::billing::BillingService;
 use crate::notifications::Nip17Notifier;
 use crate::platform::publish_platform_identity;
 use crate::provisioning::Provisioner;
@@ -48,12 +48,12 @@ async fn main() -> Result<()> {
         &config.platform_messaging_relays,
     )
     .await?;
-    let notifier = Nip17Notifier::new(config.platform_secret.clone(), config.indexer_relays.clone()).await?;
-    let billing = BillingService::new(
-        repo.clone(),
-        notifier,
-        config.platform_nwc_url.clone(),
-    );
+    let notifier = Nip17Notifier::new(
+        config.platform_secret.clone(),
+        config.indexer_relays.clone(),
+    )
+    .await?;
+    let billing = BillingService::new(repo.clone(), notifier, config.platform_nwc_url.clone());
     tokio::spawn(billing.run());
     let provisioner = Provisioner::new(
         config.zooid_api_url.clone(),

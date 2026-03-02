@@ -1,59 +1,358 @@
 import { A } from "@solidjs/router"
 
+function CheckIcon() {
+  return (
+    <svg class="w-4 h-4 text-blue-500 shrink-0 mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M20 6L9 17l-5-5" />
+    </svg>
+  )
+}
+
+function ExternalLinkIcon() {
+  return (
+    <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" />
+      <path d="M15 3h6v6" />
+      <path d="M10 14L21 3" />
+    </svg>
+  )
+}
+
 export default function Home() {
   return (
-    <div class="min-h-screen bg-white">
-      {/* Hero */}
-      <div class="max-w-4xl mx-auto px-4 py-24 text-center">
-        <h1 class="text-2xl font-bold text-gray-900 mb-4 py-2">
-          Host Your Own Nostr Community Relay
-        </h1>
-        <p class="text-xl text-gray-600 mb-8 max-w-2xl mx-auto">
-          Spin up a private, managed Nostr relay for your community in minutes.
-          Full control over membership, access, and policies.
-        </p>
-        <A
-          href="/relays/new"
-          class="inline-block py-3 px-8 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition-colors"
-        >
-          Get Started
-        </A>
-      </div>
+    <div class="min-h-screen bg-white text-gray-900 overflow-x-hidden">
 
-      {/* Pricing */}
-      <div class="max-w-4xl mx-auto px-4 pb-24">
-        <h2 class="text-2xl font-bold text-center text-gray-900 mb-12">Pricing</h2>
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <div class="border border-gray-200 rounded-xl p-6">
-            <h3 class="text-xl font-bold mb-2">Free</h3>
-            <p class="text-3xl font-bold mb-4">0 <span class="text-sm font-normal text-gray-500">sats/mo</span></p>
-            <ul class="space-y-2 text-gray-600">
-              <li>Up to 10 members</li>
-              <li class="line-through text-gray-400">Blossom storage</li>
-              <li class="line-through text-gray-400">LiveKit video</li>
-            </ul>
+      {/* ── Nav ── */}
+      <nav class="sticky top-0 z-20 bg-white/80 backdrop-blur border-b border-gray-100">
+        <div class="max-w-5xl mx-auto px-6 h-14 flex items-center justify-between">
+          <div class="flex items-center gap-2 font-bold text-gray-900">
+            <img src="/caravel.png" alt="Caravel" class="w-7 h-7 rounded" />
+            Caravel
           </div>
-          <div class="border-2 border-blue-600 rounded-xl p-6 relative">
-            <span class="absolute -top-3 left-1/2 -translate-x-1/2 bg-blue-600 text-white text-xs font-semibold px-3 py-1 rounded-full">Popular</span>
-            <h3 class="text-xl font-bold mb-2">Basic</h3>
-            <p class="text-3xl font-bold mb-4">10,000 <span class="text-sm font-normal text-gray-500">sats/mo</span></p>
-            <ul class="space-y-2 text-gray-600">
-              <li>Up to 100 members</li>
-              <li>Blossom storage</li>
-              <li>LiveKit video</li>
-            </ul>
+          <A
+            href="/login"
+            class="text-sm font-medium text-gray-600 hover:text-gray-900 transition-colors"
+          >
+            Sign in
+          </A>
+        </div>
+      </nav>
+
+      {/* ── Hero ── */}
+      <section class="relative overflow-hidden">
+        {/* Background decorations */}
+        <div class="absolute inset-0 bg-[radial-gradient(ellipse_80%_50%_at_50%_-10%,rgba(59,130,246,0.12),transparent)]" />
+        <div class="absolute top-20 left-1/2 -translate-x-1/2 w-[600px] h-[600px] bg-blue-50 rounded-full blur-3xl opacity-60 pointer-events-none" />
+
+        <div class="relative max-w-5xl mx-auto px-6 pt-24 pb-28 text-center">
+          <div class="inline-flex items-center gap-2 rounded-full border border-blue-200 bg-blue-50 px-4 py-1.5 text-xs font-semibold text-blue-700 mb-8">
+            <span class="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse" />
+            Nostr-native relay hosting
           </div>
-          <div class="border border-gray-200 rounded-xl p-6">
-            <h3 class="text-xl font-bold mb-2">Growth</h3>
-            <p class="text-3xl font-bold mb-4">50,000 <span class="text-sm font-normal text-gray-500">sats/mo</span></p>
-            <ul class="space-y-2 text-gray-600">
-              <li>Unlimited members</li>
-              <li>Blossom storage</li>
-              <li>LiveKit video</li>
-            </ul>
+
+          <h1 class="text-5xl sm:text-6xl font-extrabold tracking-tight text-gray-900 mb-6 leading-tight">
+            Your community,<br />
+            <span class="text-blue-600">your relay.</span>
+          </h1>
+
+          <p class="text-xl text-gray-500 mb-10 max-w-2xl mx-auto leading-relaxed">
+            Spin up a private, managed Nostr relay for your community in minutes.
+            Full control over membership, access, and policies — no DevOps required.
+          </p>
+
+          <div class="flex flex-col sm:flex-row items-center justify-center gap-4">
+            <A
+              href="/relays/new"
+              class="inline-flex items-center gap-2 py-3 px-8 bg-blue-600 text-white font-semibold rounded-xl hover:bg-blue-700 active:scale-95 transition-all shadow-lg shadow-blue-200"
+            >
+              Get started free
+              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7" /></svg>
+            </A>
+            <A
+              href="/login"
+              class="inline-flex items-center gap-2 py-3 px-8 border border-gray-200 text-gray-700 font-semibold rounded-xl hover:bg-gray-50 transition-all"
+            >
+              Sign in
+            </A>
           </div>
         </div>
-      </div>
+      </section>
+
+      {/* ── Features ── */}
+      <section class="bg-gray-50 border-y border-gray-100">
+        <div class="max-w-5xl mx-auto px-6 py-20">
+          <h2 class="text-3xl font-bold text-center text-gray-900 mb-4">Everything you need</h2>
+          <p class="text-center text-gray-500 mb-14 max-w-xl mx-auto">
+            Caravel takes care of the infrastructure so you can focus on building your community.
+          </p>
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+            {[
+              {
+                icon: (
+                  <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="2" y="3" width="20" height="14" rx="2" />
+                    <path d="M8 21h8M12 17v4" />
+                  </svg>
+                ),
+                title: "Managed hosting",
+                body: "We handle uptime, backups, and updates. Your relay stays online so your community never misses a beat.",
+              },
+              {
+                icon: (
+                  <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="8" r="4" />
+                    <path d="M6 20v-2a6 6 0 0112 0v2" />
+                  </svg>
+                ),
+                title: "Membership control",
+                body: "Approve members with Nostr pubkeys. Keep your space invite-only or open — you decide.",
+              },
+              {
+                icon: (
+                  <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                  </svg>
+                ),
+                title: "Access policies",
+                body: "Fine-grained write and read permissions. Moderate content without touching any server config.",
+              },
+              {
+                icon: (
+                  <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                    <ellipse cx="12" cy="5" rx="9" ry="3" />
+                    <path d="M21 12c0 1.66-4.03 3-9 3S3 13.66 3 12" />
+                    <path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5" />
+                  </svg>
+                ),
+                title: "Blossom storage",
+                body: "Attach media files to your relay with integrated Blossom server support on paid plans.",
+              },
+              {
+                icon: (
+                  <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                    <polygon points="23 7 16 12 23 17 23 7" />
+                    <rect x="1" y="5" width="15" height="14" rx="2" />
+                  </svg>
+                ),
+                title: "LiveKit video",
+                body: "Built-in video room support via LiveKit. Host voice and video calls directly within your community.",
+              },
+              {
+                icon: (
+                  <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
+                  </svg>
+                ),
+                title: "Pay with sats",
+                body: "Lightning-native billing. No credit cards, no bank accounts — just sats, straight from your wallet.",
+              },
+            ].map(({ icon, title, body }) => (
+              <div class="bg-white rounded-2xl border border-gray-200 p-6 hover:border-blue-200 hover:shadow-sm transition-all">
+                <div class="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center mb-4">
+                  {icon}
+                </div>
+                <h3 class="font-semibold text-gray-900 mb-1">{title}</h3>
+                <p class="text-sm text-gray-500 leading-relaxed">{body}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ── Connect ── */}
+      <section class="max-w-5xl mx-auto px-6 py-20">
+        <div class="text-center mb-14">
+          <h2 class="text-3xl font-bold text-gray-900 mb-4">Connect with your community</h2>
+          <p class="text-gray-500 max-w-xl mx-auto">
+            Once your relay is live, these Nostr-native platforms let your members connect,
+            chat, and collaborate — all powered by your relay.
+          </p>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {/* Flotilla */}
+          <a
+            href="https://flotilla.social"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="group flex flex-col gap-5 rounded-2xl border border-gray-200 bg-white p-8 hover:border-blue-300 hover:shadow-md transition-all"
+          >
+            <div class="flex items-start justify-between gap-4">
+              <div class="flex items-center gap-3">
+                <div class="w-12 h-12 rounded-2xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white font-bold text-xl shadow-md shadow-blue-200">
+                  F
+                </div>
+                <div>
+                  <h3 class="text-lg font-bold text-gray-900 group-hover:text-blue-600 transition-colors">Flotilla</h3>
+                  <p class="text-xs text-gray-400">flotilla.social</p>
+                </div>
+              </div>
+              <span class="text-gray-300 group-hover:text-blue-400 transition-colors mt-1">
+                <ExternalLinkIcon />
+              </span>
+            </div>
+            <p class="text-sm text-gray-600 leading-relaxed">
+              A community platform built on Nostr. Flotilla gives your members channels,
+              threads, and a rich social experience — all connected to your relay.
+            </p>
+            <div class="space-y-2">
+              {["Nostr-native channels & threads", "Works directly with your relay", "Open source & self-sovereign"].map(f => (
+                <div class="flex items-start gap-2 text-sm text-gray-600">
+                  <CheckIcon />
+                  {f}
+                </div>
+              ))}
+            </div>
+            <div class="mt-auto pt-2">
+              <span class="inline-flex items-center gap-1.5 text-sm font-semibold text-blue-600">
+                Visit flotilla.social <ExternalLinkIcon />
+              </span>
+            </div>
+          </a>
+
+          {/* Chachi */}
+          <a
+            href="https://chachi.chat"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="group flex flex-col gap-5 rounded-2xl border border-gray-200 bg-white p-8 hover:border-purple-300 hover:shadow-md transition-all"
+          >
+            <div class="flex items-start justify-between gap-4">
+              <div class="flex items-center gap-3">
+                <div class="w-12 h-12 rounded-2xl bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center text-white font-bold text-xl shadow-md shadow-purple-200">
+                  C
+                </div>
+                <div>
+                  <h3 class="text-lg font-bold text-gray-900 group-hover:text-purple-600 transition-colors">Chachi</h3>
+                  <p class="text-xs text-gray-400">chachi.chat</p>
+                </div>
+              </div>
+              <span class="text-gray-300 group-hover:text-purple-400 transition-colors mt-1">
+                <ExternalLinkIcon />
+              </span>
+            </div>
+            <p class="text-sm text-gray-600 leading-relaxed">
+              A group chat app built on top of Nostr. Chachi makes it easy for your community
+              to have real-time conversations, all flowing through your own relay.
+            </p>
+            <div class="space-y-2">
+              {["Real-time group messaging", "Bring your own relay", "No accounts — just your Nostr key"].map(f => (
+                <div class="flex items-start gap-2 text-sm text-gray-600">
+                  <CheckIcon />
+                  {f}
+                </div>
+              ))}
+            </div>
+            <div class="mt-auto pt-2">
+              <span class="inline-flex items-center gap-1.5 text-sm font-semibold text-purple-600">
+                Visit chachi.chat <ExternalLinkIcon />
+              </span>
+            </div>
+          </a>
+        </div>
+      </section>
+
+      {/* ── Pricing ── */}
+      <section class="bg-gray-50 border-y border-gray-100">
+        <div class="max-w-5xl mx-auto px-6 py-20">
+          <h2 class="text-3xl font-bold text-center text-gray-900 mb-4">Simple pricing</h2>
+          <p class="text-center text-gray-500 mb-14 max-w-lg mx-auto">
+            Pay in sats. Upgrade or cancel any time.
+          </p>
+
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-6 items-start">
+            {/* Free */}
+            <div class="bg-white rounded-2xl border border-gray-200 p-8">
+              <h3 class="text-lg font-bold text-gray-900 mb-1">Free</h3>
+              <p class="text-sm text-gray-400 mb-6">Get started, no commitment.</p>
+              <div class="mb-8">
+                <span class="text-4xl font-extrabold text-gray-900">0</span>
+                <span class="text-sm text-gray-400 ml-1">sats / mo</span>
+              </div>
+              <ul class="space-y-3 mb-8 text-sm text-gray-600">
+                <li class="flex items-start gap-2"><CheckIcon />Up to 10 members</li>
+                <li class="flex items-start gap-2 text-gray-300"><span class="w-4 h-4 shrink-0 mt-0.5 flex items-center justify-center"><svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12" /></svg></span>Blossom storage</li>
+                <li class="flex items-start gap-2 text-gray-300"><span class="w-4 h-4 shrink-0 mt-0.5 flex items-center justify-center"><svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12" /></svg></span>LiveKit video</li>
+              </ul>
+              <A href="/relays/new" class="block text-center py-2.5 px-4 rounded-xl border border-gray-200 text-sm font-semibold text-gray-700 hover:bg-gray-50 transition-colors">
+                Get started
+              </A>
+            </div>
+
+            {/* Basic */}
+            <div class="bg-white rounded-2xl border-2 border-blue-600 p-8 relative shadow-lg shadow-blue-100">
+              <span class="absolute -top-3.5 left-1/2 -translate-x-1/2 bg-blue-600 text-white text-xs font-bold px-4 py-1 rounded-full tracking-wide">
+                POPULAR
+              </span>
+              <h3 class="text-lg font-bold text-gray-900 mb-1">Basic</h3>
+              <p class="text-sm text-gray-400 mb-6">For growing communities.</p>
+              <div class="mb-8">
+                <span class="text-4xl font-extrabold text-gray-900">10K</span>
+                <span class="text-sm text-gray-400 ml-1">sats / mo</span>
+              </div>
+              <ul class="space-y-3 mb-8 text-sm text-gray-600">
+                <li class="flex items-start gap-2"><CheckIcon />Up to 100 members</li>
+                <li class="flex items-start gap-2"><CheckIcon />Blossom storage</li>
+                <li class="flex items-start gap-2"><CheckIcon />LiveKit video</li>
+              </ul>
+              <A href="/relays/new" class="block text-center py-2.5 px-4 rounded-xl bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 transition-colors">
+                Get started
+              </A>
+            </div>
+
+            {/* Growth */}
+            <div class="bg-white rounded-2xl border border-gray-200 p-8">
+              <h3 class="text-lg font-bold text-gray-900 mb-1">Growth</h3>
+              <p class="text-sm text-gray-400 mb-6">For large-scale communities.</p>
+              <div class="mb-8">
+                <span class="text-4xl font-extrabold text-gray-900">50K</span>
+                <span class="text-sm text-gray-400 ml-1">sats / mo</span>
+              </div>
+              <ul class="space-y-3 mb-8 text-sm text-gray-600">
+                <li class="flex items-start gap-2"><CheckIcon />Unlimited members</li>
+                <li class="flex items-start gap-2"><CheckIcon />Blossom storage</li>
+                <li class="flex items-start gap-2"><CheckIcon />LiveKit video</li>
+              </ul>
+              <A href="/relays/new" class="block text-center py-2.5 px-4 rounded-xl border border-gray-200 text-sm font-semibold text-gray-700 hover:bg-gray-50 transition-colors">
+                Get started
+              </A>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ── CTA ── */}
+      <section class="relative overflow-hidden">
+        <div class="absolute inset-0 bg-[radial-gradient(ellipse_80%_80%_at_50%_120%,rgba(59,130,246,0.10),transparent)]" />
+        <div class="relative max-w-5xl mx-auto px-6 py-28 text-center">
+          <h2 class="text-4xl font-extrabold text-gray-900 mb-4">Ready to launch your relay?</h2>
+          <p class="text-gray-500 mb-10 max-w-lg mx-auto text-lg">
+            Join communities already running on Caravel. Set up in minutes, pay in sats.
+          </p>
+          <A
+            href="/relays/new"
+            class="inline-flex items-center gap-2 py-3 px-10 bg-blue-600 text-white font-semibold rounded-xl hover:bg-blue-700 active:scale-95 transition-all shadow-lg shadow-blue-200 text-lg"
+          >
+            Create your relay
+            <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7" /></svg>
+          </A>
+        </div>
+      </section>
+
+      {/* ── Footer ── */}
+      <footer class="border-t border-gray-100 bg-gray-50">
+        <div class="max-w-5xl mx-auto px-6 py-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-sm text-gray-400">
+          <div class="flex items-center gap-2 font-semibold text-gray-500">
+            <img src="/caravel.png" alt="Caravel" class="w-5 h-5 rounded" />
+            Caravel
+          </div>
+          <p>© {new Date().getFullYear()} Caravel. Built on Nostr.</p>
+          <div class="flex gap-4">
+            <a href="https://flotilla.social" target="_blank" rel="noopener noreferrer" class="hover:text-gray-600 transition-colors">Flotilla</a>
+            <a href="https://chachi.chat" target="_blank" rel="noopener noreferrer" class="hover:text-gray-600 transition-colors">Chachi</a>
+          </div>
+        </div>
+      </footer>
     </div>
   )
 }

@@ -1,6 +1,6 @@
 import { Show, createSignal } from "solid-js"
 import { useNavigate } from "@solidjs/router"
-import { createTenantRelay } from "../../lib/api"
+import { createTenantRelay, type RelayConfig } from "../../lib/api"
 import { slugify } from "../../lib/slugify"
 
 const PLANS = [
@@ -10,6 +10,14 @@ const PLANS = [
 ] as const
 
 type PlanId = (typeof PLANS)[number]["id"]
+
+const DEFAULT_CONFIG: RelayConfig = {
+  policy: { public_join: false, strip_signatures: false },
+  groups: { enabled: true, auto_join: true },
+  management: { enabled: true },
+  blossom: { enabled: false },
+  push: { enabled: true },
+}
 
 export default function RelayNew() {
   const navigate = useNavigate()
@@ -40,6 +48,10 @@ export default function RelayNew() {
         icon: icon().trim(),
         description: description().trim(),
         plan: plan(),
+        config: {
+          ...DEFAULT_CONFIG,
+          blossom: { enabled: plan() !== "free" },
+        },
       })
       navigate(`/relays/${relay.id}`)
     } catch (e) {

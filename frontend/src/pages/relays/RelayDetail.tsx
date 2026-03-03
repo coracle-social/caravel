@@ -1,6 +1,6 @@
-import { useParams, A } from "@solidjs/router"
-import { createResource, createSignal, Show } from "solid-js"
-import { deactivateTenantRelay, getTenantRelay } from "../../lib/api"
+import { useParams } from "@solidjs/router"
+import { createMemo, createResource, createSignal, Show } from "solid-js"
+import { deactivateTenantRelay, getRelayMemberCount, getTenantRelay, updateTenantRelay, type RelayConfig } from "../../lib/api"
 import BackLink from "../../components/BackLink"
 import PageContainer from "../../components/PageContainer"
 import RelayDetailCard from "../../components/RelayDetailCard"
@@ -10,10 +10,15 @@ import useMinLoading from "../../components/useMinLoading"
 export default function RelayDetail() {
   const params = useParams()
   const relayId = () => params.id ?? ""
-  const [relay, { refetch }] = createResource(relayId, getTenantRelay)
+  const [relay, { refetch, mutate }] = createResource(relayId, getTenantRelay)
+  const relayUrl = createMemo(() => {
+    const subdomain = relay()?.subdomain
+    return subdomain ? `wss://${subdomain}.spaces.coracle.social` : undefined
+  })
+  const [memberCount] = createResource(relayUrl, async (url) => getRelayMemberCount(url))
   const [busy, setBusy] = createSignal(false)
   const [error, setError] = createSignal("")
-  const loading = useMinLoading(() => relay.loading)
+  const loading = useMinLoading(() => relay.loading && !relay())
 
   async function handleDeactivate() {
     if (busy()) return
@@ -27,6 +32,104 @@ export default function RelayDetail() {
     } finally {
       setBusy(false)
     }
+  }
+
+  function withDefaults(config?: RelayConfig): RelayConfig {
+    return {
+      policy: {
+        public_join: config?.policy.public_join ?? false,
+        strip_signatures: config?.policy.strip_signatures ?? false,
+      },
+      groups: {
+        enabled: config?.groups.enabled ?? true,
+        auto_join: config?.groups.auto_join ?? true,
+      },
+      management: {
+        enabled: config?.management.enabled ?? true,
+      },
+      blossom: {
+        enabled: config?.blossom.enabled ?? (relay()?.plan !== "free"),
+      },
+      push: {
+        enabled: config?.push.enabled ?? true,
+      },
+    }
+  }
+
+  async function updateFlags(nextConfig: RelayConfig, previousConfig: RelayConfig) {
+    const current = relay()
+    if (!current) return
+
+    setError("")
+    mutate({ ...current, config: nextConfig })
+
+    try {
+      await updateTenantRelay(relayId(), {
+        name: current.name,
+        subdomain: current.subdomain,
+        icon: current.icon,
+        description: current.description,
+        config: nextConfig,
+      })
+      await refetch()
+    } catch (e) {
+      mutate({ ...current, config: previousConfig })
+      setError(e instanceof Error ? e.message : "Failed to update relay settings")
+    }
+  }
+
+  function togglePublicJoin() {
+    const config = withDefaults(relay()?.config)
+    const nextConfig = {
+      ...config,
+      policy: { ...config.policy, public_join: !config.policy.public_join },
+    }
+    void updateFlags(nextConfig, config)
+  }
+
+  function toggleStripSignatures() {
+    const config = withDefaults(relay()?.config)
+    const nextConfig = {
+      ...config,
+      policy: { ...config.policy, strip_signatures: !config.policy.strip_signatures },
+    }
+    void updateFlags(nextConfig, config)
+  }
+
+  function toggleGroups() {
+    const config = withDefaults(relay()?.config)
+    const nextConfig = {
+      ...config,
+      groups: { ...config.groups, enabled: !config.groups.enabled },
+    }
+    void updateFlags(nextConfig, config)
+  }
+
+  function toggleManagement() {
+    const config = withDefaults(relay()?.config)
+    const nextConfig = {
+      ...config,
+      management: { enabled: !config.management.enabled },
+    }
+    void updateFlags(nextConfig, config)
+  }
+
+  function toggleMediaStorage() {
+    const config = withDefaults(relay()?.config)
+    const nextConfig = {
+      ...config,
+      blossom: { enabled: !config.blossom.enabled },
+    }
+    void updateFlags(nextConfig, config)
+  }
+
+  function togglePushNotifications() {
+    const config = withDefaults(relay()?.config)
+    const nextConfig = {
+      ...config,
+      push: { enabled: !config.push.enabled },
+    }
+    void updateFlags(nextConfig, config)
   }
 
   return (
@@ -44,26 +147,22 @@ export default function RelayDetail() {
       <Show when={!loading() && relay()}>
         {(r) => (
           <div class="mb-6">
-            <RelayDetailCard relay={r()} />
+            <RelayDetailCard
+              relay={r()}
+              currentMembers={memberCount()}
+              editHref={`/relays/${params.id}/edit`}
+              onDeactivate={handleDeactivate}
+              deactivating={busy()}
+              onTogglePublicJoin={togglePublicJoin}
+              onToggleStripSignatures={toggleStripSignatures}
+              onToggleGroups={toggleGroups}
+              onToggleManagement={toggleManagement}
+              onToggleMediaStorage={toggleMediaStorage}
+              onTogglePushNotifications={togglePushNotifications}
+            />
           </div>
         )}
       </Show>
-
-      <div class="flex gap-3">
-        <A
-          href={`/relays/${params.id}/edit`}
-          class="py-2 px-4 border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors"
-        >
-          Edit
-        </A>
-        <button
-          class="py-2 px-4 border border-red-300 text-red-600 font-medium rounded-lg hover:bg-red-50 transition-colors disabled:opacity-50"
-          onClick={handleDeactivate}
-          disabled={busy()}
-        >
-          {busy() ? "Deactivating..." : "Deactivate"}
-        </button>
-      </div>
       <Show when={error()}>
         <p class="mt-3 text-sm text-red-600">{error()}</p>
       </Show>

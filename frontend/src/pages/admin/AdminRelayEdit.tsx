@@ -2,7 +2,6 @@ import { useNavigate, useParams } from "@solidjs/router"
 import { Show, createEffect, createResource, createSignal } from "solid-js"
 import { adminGetRelay, adminUpdateRelay, type RelayConfig } from "../../lib/api"
 import RelayForm from "../../components/RelayForm"
-import { RELAY_PLAN_IDS, type RelayPlanId } from "../../lib/relayPlans"
 import { slugify } from "../../lib/slugify"
 import BackLink from "../../components/BackLink"
 import PageContainer from "../../components/PageContainer"
@@ -28,8 +27,6 @@ export default function AdminRelayEdit() {
   const [subdomain, setSubdomain] = createSignal("")
   const [icon, setIcon] = createSignal("")
   const [description, setDescription] = createSignal("")
-  const [plan, setPlan] = createSignal<RelayPlanId>("free")
-  const [config, setConfig] = createSignal<RelayConfig>(DEFAULT_CONFIG)
   const [error, setError] = createSignal("")
   const [submitting, setSubmitting] = createSignal(false)
 
@@ -40,8 +37,6 @@ export default function AdminRelayEdit() {
     setSubdomain(data.subdomain)
     setIcon(data.icon)
     setDescription(data.description)
-    setPlan(RELAY_PLAN_IDS.includes(data.plan as RelayPlanId) ? (data.plan as RelayPlanId) : "free")
-    setConfig(data.config ?? DEFAULT_CONFIG)
   })
 
   async function handleSubmit(e: Event) {
@@ -54,8 +49,7 @@ export default function AdminRelayEdit() {
         subdomain: slugify(subdomain()),
         icon: icon().trim(),
         description: description().trim(),
-        plan: plan(),
-        config: config(),
+        config: relay()?.config ?? DEFAULT_CONFIG,
       })
       navigate(`/admin/relays/${relayId()}`)
     } catch (e) {
@@ -87,11 +81,6 @@ export default function AdminRelayEdit() {
           setIcon={setIcon}
           description={description()}
           setDescription={setDescription}
-          plan={plan()}
-          setPlan={setPlan}
-          plans={RELAY_PLAN_IDS}
-          config={config()}
-          setConfig={setConfig}
           onSubmit={handleSubmit}
           submitting={submitting()}
           error={error()}

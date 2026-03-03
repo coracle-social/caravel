@@ -1,4 +1,5 @@
 import { accounts, API_URL } from "./nostr"
+import { Relay as NostrRelay, RelayManagement } from "applesauce-relay"
 
 type NostrTag = string[]
 
@@ -146,7 +147,6 @@ export type UpdateRelayInput = {
   subdomain: string
   icon: string
   description: string
-  plan: string
   config: RelayConfig
 }
 
@@ -244,4 +244,18 @@ export function adminDeactivateRelay(id: string) {
   return request<Relay>(`/admin/relays/${id}/deactivate`, {
     method: "POST",
   })
+}
+
+export async function getRelayMemberCount(relayUrl: string): Promise<number | undefined> {
+  const signer = getActiveSigner()
+  const management = new RelayManagement(new NostrRelay(relayUrl), signer)
+
+  try {
+    const members = await management.listAllowedPubkeys()
+    return members.length
+  } catch {
+    // ignore and fall back to unknown member count
+  }
+
+  return undefined
 }

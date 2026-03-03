@@ -321,7 +321,6 @@ struct UpdateRelayRequest {
     subdomain: String,
     icon: String,
     description: String,
-    plan: String,
     config: Option<RelayConfig>,
 }
 
@@ -363,7 +362,7 @@ async fn update_tenant_relay(
         subdomain: payload.subdomain.clone(),
         icon: payload.icon,
         description: payload.description,
-        plan: payload.plan,
+        plan: existing.plan,
         status: existing.status,
         config: payload.config,
     };
@@ -760,7 +759,7 @@ async fn admin_update_relay(
         subdomain: payload.subdomain.clone(),
         icon: payload.icon,
         description: payload.description,
-        plan: payload.plan,
+        plan: existing.plan,
         status: existing.status,
         config: payload.config,
     };

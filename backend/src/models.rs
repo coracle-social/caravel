@@ -1,5 +1,14 @@
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RelayConfig {
+    pub policy: Option<serde_json::Value>,
+    pub groups: Option<serde_json::Value>,
+    pub management: Option<serde_json::Value>,
+    pub blossom: Option<serde_json::Value>,
+    pub push: Option<serde_json::Value>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Tenant {
     pub pubkey: String,
@@ -14,7 +23,7 @@ pub struct NewTenant {
     pub tenant_nwc_url: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Relay {
     pub id: String,
     pub tenant: String,
@@ -25,31 +34,7 @@ pub struct Relay {
     pub description: String,
     pub plan: String,
     pub status: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NewRelay {
-    pub id: String,
-    pub tenant: String,
-    pub name: String,
-    pub subdomain: String,
-    pub schema: String,
-    pub icon: String,
-    pub description: String,
-    pub plan: String,
-    pub status: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UpdateRelay {
-    pub id: String,
-    pub name: String,
-    pub subdomain: String,
-    pub schema: String,
-    pub icon: String,
-    pub description: String,
-    pub plan: String,
-    pub status: String,
+    pub config: Option<RelayConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]

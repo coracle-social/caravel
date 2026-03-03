@@ -1,6 +1,6 @@
 import { useNavigate, useParams } from "@solidjs/router"
 import { Show, createEffect, createResource, createSignal } from "solid-js"
-import { getTenantRelay, updateTenantRelay } from "../../lib/api"
+import { getTenantRelay, updateTenantRelay, type RelayConfig } from "../../lib/api"
 import RelayForm from "../../components/RelayForm"
 import { RELAY_PLAN_IDS, type RelayPlanId } from "../../lib/relayPlans"
 import { slugify } from "../../lib/slugify"
@@ -8,6 +8,14 @@ import BackLink from "../../components/BackLink"
 import PageContainer from "../../components/PageContainer"
 import ResourceState from "../../components/ResourceState"
 import useMinLoading from "../../components/useMinLoading"
+
+const DEFAULT_CONFIG: RelayConfig = {
+  policy: { public_join: false, strip_signatures: false },
+  groups: { enabled: false, auto_join: false },
+  management: { enabled: false },
+  blossom: { enabled: false },
+  push: { enabled: false },
+}
 
 export default function RelayEdit() {
   const navigate = useNavigate()
@@ -21,6 +29,7 @@ export default function RelayEdit() {
   const [icon, setIcon] = createSignal("")
   const [description, setDescription] = createSignal("")
   const [plan, setPlan] = createSignal<RelayPlanId>("free")
+  const [config, setConfig] = createSignal<RelayConfig>(DEFAULT_CONFIG)
   const [error, setError] = createSignal("")
   const [submitting, setSubmitting] = createSignal(false)
 
@@ -32,6 +41,7 @@ export default function RelayEdit() {
     setIcon(data.icon)
     setDescription(data.description)
     setPlan(RELAY_PLAN_IDS.includes(data.plan as RelayPlanId) ? (data.plan as RelayPlanId) : "free")
+    setConfig(data.config ?? DEFAULT_CONFIG)
   })
 
   async function handleSubmit(e: Event) {
@@ -45,6 +55,7 @@ export default function RelayEdit() {
         icon: icon().trim(),
         description: description().trim(),
         plan: plan(),
+        config: config(),
       })
       navigate(`/relays/${relayId()}`)
     } catch (e) {
@@ -79,6 +90,8 @@ export default function RelayEdit() {
           plan={plan()}
           setPlan={setPlan}
           plans={RELAY_PLAN_IDS}
+          config={config()}
+          setConfig={setConfig}
           onSubmit={handleSubmit}
           submitting={submitting()}
           error={error()}

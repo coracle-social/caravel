@@ -87,6 +87,27 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>
 }
 
+export type RelayConfig = {
+  policy: {
+    public_join: boolean
+    strip_signatures: boolean
+  }
+  groups: {
+    enabled: boolean
+    auto_join: boolean
+  }
+  management: {
+    enabled: boolean
+
+  }
+  blossom: {
+    enabled: boolean
+  }
+  push: {
+    enabled: boolean
+  }
+}
+
 export type Relay = {
   id: string
   tenant: string
@@ -97,6 +118,7 @@ export type Relay = {
   description: string
   plan: string
   status: string
+  config: RelayConfig
 }
 
 export type Tenant = {
@@ -125,6 +147,7 @@ export type UpdateRelayInput = {
   icon: string
   description: string
   plan: string
+  config: RelayConfig
 }
 
 export type AdminCheck = {
@@ -145,6 +168,7 @@ export type CreateRelayInput = {
   icon: string
   description: string
   plan: string
+  config: RelayConfig
 }
 
 export function createTenantRelay(input: CreateRelayInput) {

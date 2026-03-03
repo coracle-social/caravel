@@ -1,10 +1,26 @@
 use anyhow::Result;
-use sqlx::{Sqlite, SqlitePool, Transaction};
+use sqlx::{Row, Sqlite, SqlitePool, Transaction};
 
 use crate::models::{
-    Invoice, InvoiceItem, NewInvoice, NewInvoiceItem, NewRelay, NewTenant, Relay, Tenant,
-    UpdateRelay,
+    Invoice, InvoiceItem, NewInvoice, NewInvoiceItem, NewTenant, Relay, Tenant,
 };
+
+fn relay_from_row(row: sqlx::sqlite::SqliteRow) -> Relay {
+    let config_json: Option<String> = row.get("config");
+    let config = config_json.and_then(|s| serde_json::from_str(&s).ok());
+    Relay {
+        id: row.get("id"),
+        tenant: row.get("tenant"),
+        name: row.get("name"),
+        subdomain: row.get("subdomain"),
+        schema: row.get("schema"),
+        icon: row.get("icon"),
+        description: row.get("description"),
+        plan: row.get("plan"),
+        status: row.get("status"),
+        config,
+    }
+}
 
 #[derive(Clone)]
 pub struct Repo {
@@ -75,10 +91,20 @@ impl Repo {
         Ok(())
     }
 
-    pub async fn create_relay(&self, relay: &NewRelay) -> Result<()> {
+    pub async fn upsert_relay(&self, relay: &Relay) -> Result<()> {
+        let config_json = relay.config.as_ref().map(serde_json::to_string).transpose()?;
         sqlx::query(
-            "INSERT INTO relays (id, tenant, name, subdomain, schema, icon, description, plan, status)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO relays (id, tenant, name, subdomain, schema, icon, description, plan, status, config)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(id) DO UPDATE SET
+               name = excluded.name,
+               subdomain = excluded.subdomain,
+               schema = excluded.schema,
+               icon = excluded.icon,
+               description = excluded.description,
+               plan = excluded.plan,
+               status = excluded.status,
+               config = excluded.config",
         )
         .bind(&relay.id)
         .bind(&relay.tenant)
@@ -89,24 +115,7 @@ impl Repo {
         .bind(&relay.description)
         .bind(&relay.plan)
         .bind(&relay.status)
-        .execute(&self.pool)
-        .await?;
-        Ok(())
-    }
-
-    pub async fn update_relay(&self, relay: &UpdateRelay) -> Result<()> {
-        sqlx::query(
-            "UPDATE relays SET name = ?, subdomain = ?, schema = ?, icon = ?, description = ?, plan = ?, status = ?
-             WHERE id = ?",
-        )
-        .bind(&relay.name)
-        .bind(&relay.subdomain)
-        .bind(&relay.schema)
-        .bind(&relay.icon)
-        .bind(&relay.description)
-        .bind(&relay.plan)
-        .bind(&relay.status)
-        .bind(&relay.id)
+        .bind(config_json)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -132,32 +141,32 @@ impl Repo {
     }
 
     pub async fn get_relay(&self, id: &str) -> Result<Option<Relay>> {
-        let relay = sqlx::query_as::<_, Relay>(
-            "SELECT id, tenant, name, subdomain, schema, icon, description, plan, status FROM relays WHERE id = ?",
+        let row = sqlx::query(
+            "SELECT id, tenant, name, subdomain, schema, icon, description, plan, status, config FROM relays WHERE id = ?",
         )
         .bind(id)
         .fetch_optional(&self.pool)
         .await?;
-        Ok(relay)
+        Ok(row.map(relay_from_row))
     }
 
     pub async fn list_relays_by_tenant(&self, tenant: &str) -> Result<Vec<Relay>> {
-        let relays = sqlx::query_as::<_, Relay>(
-            "SELECT id, tenant, name, subdomain, schema, icon, description, plan, status FROM relays WHERE tenant = ? ORDER BY name",
+        let rows = sqlx::query(
+            "SELECT id, tenant, name, subdomain, schema, icon, description, plan, status, config FROM relays WHERE tenant = ? ORDER BY name",
         )
         .bind(tenant)
         .fetch_all(&self.pool)
         .await?;
-        Ok(relays)
+        Ok(rows.into_iter().map(relay_from_row).collect())
     }
 
     pub async fn list_relays(&self) -> Result<Vec<Relay>> {
-        let relays = sqlx::query_as::<_, Relay>(
-            "SELECT id, tenant, name, subdomain, schema, icon, description, plan, status FROM relays ORDER BY name",
+        let rows = sqlx::query(
+            "SELECT id, tenant, name, subdomain, schema, icon, description, plan, status, config FROM relays ORDER BY name",
         )
         .fetch_all(&self.pool)
         .await?;
-        Ok(relays)
+        Ok(rows.into_iter().map(relay_from_row).collect())
     }
 
     pub async fn create_invoice_with_items(

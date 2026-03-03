@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::auth::verify_nip98;
-use crate::models::{NewRelay, NewTenant, Relay, UpdateRelay};
+use crate::models::{NewTenant, Relay, RelayConfig};
 use crate::provisioning::Provisioner;
 use crate::repo::Repo;
 
@@ -211,6 +211,7 @@ struct CreateRelayRequest {
     icon: String,
     description: String,
     plan: String,
+    config: Option<RelayConfig>,
 }
 
 async fn create_tenant_relay(
@@ -241,7 +242,7 @@ async fn create_tenant_relay(
             .into_response();
     }
 
-    let relay = NewRelay {
+    let relay = Relay {
         id: Uuid::new_v4().to_string(),
         tenant: pubkey.clone(),
         name: payload.name,
@@ -251,9 +252,10 @@ async fn create_tenant_relay(
         description: payload.description,
         plan: payload.plan,
         status: "pending".to_string(),
+        config: payload.config,
     };
 
-    if let Err(err) = state.repo.create_relay(&relay).await {
+    if let Err(err) = state.repo.upsert_relay(&relay).await {
         if is_unique_subdomain_violation(&err) {
             return (
                 StatusCode::CONFLICT,
@@ -273,7 +275,17 @@ async fn create_tenant_relay(
             .into_response();
     }
 
-    spawn_provisioning_worker(state.repo.clone(), state.provisioner.clone(), relay.clone());
+    if let Err(err) = state.provisioner.sync_relay(&relay, true).await {
+        tracing::error!(relay_id = relay.id, error = %err, "zooid create failed");
+        let _ = state.repo.update_relay_status(&relay.id, "provisioning_failed").await;
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiError { error: format!("failed to provision relay: {err}") }),
+        )
+            .into_response();
+    }
+
+    let _ = state.repo.update_relay_status(&relay.id, "active").await;
 
     (StatusCode::CREATED, Json(relay)).into_response()
 }
@@ -311,6 +323,7 @@ struct UpdateRelayRequest {
     icon: String,
     description: String,
     plan: String,
+    config: Option<RelayConfig>,
 }
 
 async fn update_tenant_relay(
@@ -344,8 +357,9 @@ async fn update_tenant_relay(
         return forbidden();
     }
 
-    let updated = UpdateRelay {
+    let relay = Relay {
         id: existing.id,
+        tenant: existing.tenant,
         name: payload.name,
         subdomain: payload.subdomain.clone(),
         schema: payload.subdomain.replace('-', "_"),
@@ -353,9 +367,10 @@ async fn update_tenant_relay(
         description: payload.description,
         plan: payload.plan,
         status: existing.status,
+        config: payload.config,
     };
 
-    if let Err(err) = state.repo.update_relay(&updated).await {
+    if let Err(err) = state.repo.upsert_relay(&relay).await {
         if is_unique_subdomain_violation(&err) {
             return (
                 StatusCode::CONFLICT,
@@ -375,7 +390,16 @@ async fn update_tenant_relay(
             .into_response();
     }
 
-    (StatusCode::OK, Json(updated)).into_response()
+    if let Err(err) = state.provisioner.sync_relay(&relay, false).await {
+        tracing::error!(relay_id = relay.id, error = %err, "zooid patch failed");
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiError { error: format!("failed to update relay config: {err}") }),
+        )
+            .into_response();
+    }
+
+    (StatusCode::OK, Json(relay)).into_response()
 }
 
 async fn deactivate_tenant_relay(
@@ -408,18 +432,13 @@ async fn deactivate_tenant_relay(
         return forbidden();
     }
 
-    let updated = UpdateRelay {
-        id: existing.id,
-        name: existing.name,
-        subdomain: existing.subdomain.clone(),
-        schema: existing.subdomain.replace('-', "_"),
-        icon: existing.icon,
-        description: existing.description,
-        plan: existing.plan,
+    let relay = Relay {
         status: "deactivated".to_string(),
+        config: None,
+        ..existing
     };
 
-    if let Err(_) = state.repo.update_relay(&updated).await {
+    if let Err(_) = state.repo.upsert_relay(&relay).await {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ApiError {
@@ -429,7 +448,7 @@ async fn deactivate_tenant_relay(
             .into_response();
     }
 
-    (StatusCode::OK, Json(updated)).into_response()
+    (StatusCode::OK, Json(relay)).into_response()
 }
 
 async fn list_tenant_invoices(
@@ -734,8 +753,9 @@ async fn admin_update_relay(
         }
     };
 
-    let updated = UpdateRelay {
+    let relay = Relay {
         id: existing.id,
+        tenant: existing.tenant,
         name: payload.name,
         subdomain: payload.subdomain.clone(),
         schema: payload.subdomain.replace('-', "_"),
@@ -743,9 +763,10 @@ async fn admin_update_relay(
         description: payload.description,
         plan: payload.plan,
         status: existing.status,
+        config: payload.config,
     };
 
-    if let Err(err) = state.repo.update_relay(&updated).await {
+    if let Err(err) = state.repo.upsert_relay(&relay).await {
         if is_unique_subdomain_violation(&err) {
             return (
                 StatusCode::CONFLICT,
@@ -765,7 +786,16 @@ async fn admin_update_relay(
             .into_response();
     }
 
-    (StatusCode::OK, Json(updated)).into_response()
+    if let Err(err) = state.provisioner.sync_relay(&relay, false).await {
+        tracing::error!(relay_id = relay.id, error = %err, "zooid patch failed");
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiError { error: format!("failed to update relay config: {err}") }),
+        )
+            .into_response();
+    }
+
+    (StatusCode::OK, Json(relay)).into_response()
 }
 
 async fn admin_deactivate_relay(
@@ -798,18 +828,13 @@ async fn admin_deactivate_relay(
         }
     };
 
-    let updated = UpdateRelay {
-        id: existing.id,
-        name: existing.name,
-        subdomain: existing.subdomain.clone(),
-        schema: existing.subdomain.replace('-', "_"),
-        icon: existing.icon,
-        description: existing.description,
-        plan: existing.plan,
+    let relay = Relay {
         status: "deactivated".to_string(),
+        config: None,
+        ..existing
     };
 
-    if let Err(_) = state.repo.update_relay(&updated).await {
+    if let Err(_) = state.repo.upsert_relay(&relay).await {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ApiError {
@@ -819,25 +844,7 @@ async fn admin_deactivate_relay(
             .into_response();
     }
 
-    (StatusCode::OK, Json(updated)).into_response()
+    (StatusCode::OK, Json(relay)).into_response()
 }
 
-fn spawn_provisioning_worker(repo: Repo, provisioner: Provisioner, relay: NewRelay) {
-    tokio::spawn(async move {
-        tracing::info!(relay_id = relay.id, "provisioning worker started");
-        if let Err(err) = provisioner.provision_relay(&relay).await {
-            tracing::error!(relay_id = relay.id, error = %err, "provisioning failed");
-            if let Err(err) = repo
-                .update_relay_status(&relay.id, "provisioning_failed")
-                .await
-            {
-                tracing::error!(relay_id = relay.id, error = %err, "failed to update relay status");
-            }
-            return;
-        }
 
-        if let Err(err) = repo.update_relay_status(&relay.id, "active").await {
-            tracing::error!(relay_id = relay.id, error = %err, "failed to update relay status");
-        }
-    });
-}

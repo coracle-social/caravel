@@ -3,6 +3,7 @@ import { createResource, createSignal, Show } from "solid-js"
 import { deactivateTenantRelay, getTenantRelay } from "../../lib/api"
 import BackLink from "../../components/BackLink"
 import PageContainer from "../../components/PageContainer"
+import RelayDetailCard from "../../components/RelayDetailCard"
 import ResourceState from "../../components/ResourceState"
 import useMinLoading from "../../components/useMinLoading"
 
@@ -41,13 +42,9 @@ export default function RelayDetail() {
       />
 
       <Show when={!loading() && relay()}>
-        {(loadedRelay) => (
+        {(r) => (
           <div class="mb-6">
-            <h1 class="text-2xl font-bold text-gray-900 py-2">{loadedRelay().name}</h1>
-            <p class="mt-1 text-sm text-gray-500">https://{loadedRelay().subdomain}.spaces.coracle.social</p>
-            <Show when={loadedRelay().description.trim()}>
-              <p class="mt-3 text-gray-700">{loadedRelay().description}</p>
-            </Show>
+            <RelayDetailCard relay={r()} />
           </div>
         )}
       </Show>

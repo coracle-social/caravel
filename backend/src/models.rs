@@ -6,6 +6,7 @@ pub struct RelayConfig {
     pub groups: Option<serde_json::Value>,
     pub management: Option<serde_json::Value>,
     pub blossom: Option<serde_json::Value>,
+    pub livekit: Option<serde_json::Value>,
     pub push: Option<serde_json::Value>,
 }
 

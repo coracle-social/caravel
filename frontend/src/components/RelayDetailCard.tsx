@@ -84,6 +84,7 @@ type RelayDetailCardProps = {
   onToggleGroups?: () => void
   onToggleManagement?: () => void
   onToggleMediaStorage?: () => void
+  onToggleLivekitSupport?: () => void
   onTogglePushNotifications?: () => void
 }
 
@@ -246,7 +247,7 @@ export default function RelayDetailCard(props: RelayDetailCardProps) {
             />
           </Show>
         </ToggleField>
-        <ToggleField label="Audio Rooms">
+        <ToggleField label="LiveKit support">
           <Show
             when={r().plan !== "free"}
             fallback={
@@ -260,7 +261,7 @@ export default function RelayDetailCard(props: RelayDetailCardProps) {
           >
             <ToggleButton
               enabled={cfg()?.livekit.enabled ?? true}
-              onToggle={props.onToggleMediaStorage}
+              onToggle={props.onToggleLivekitSupport}
             />
           </Show>
         </ToggleField>

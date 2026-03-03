@@ -45,6 +45,9 @@ export default function AdminRelayDetail() {
       blossom: {
         enabled: config?.blossom.enabled ?? (relay()?.plan !== "free"),
       },
+      livekit: {
+        enabled: config?.livekit.enabled ?? (relay()?.plan !== "free"),
+      },
       push: {
         enabled: config?.push.enabled ?? true,
       },
@@ -131,6 +134,15 @@ export default function AdminRelayDetail() {
     void updateFlags(nextConfig, config)
   }
 
+  function toggleLivekitSupport() {
+    const config = withDefaults(relay()?.config)
+    const nextConfig = {
+      ...config,
+      livekit: { enabled: !config.livekit.enabled },
+    }
+    void updateFlags(nextConfig, config)
+  }
+
   return (
     <PageContainer>
       <BackLink href="/admin/relays" label="Relays" />
@@ -157,6 +169,7 @@ export default function AdminRelayDetail() {
               onToggleGroups={toggleGroups}
               onToggleManagement={toggleManagement}
               onToggleMediaStorage={toggleMediaStorage}
+              onToggleLivekitSupport={toggleLivekitSupport}
               onTogglePushNotifications={togglePushNotifications}
             />
           </div>

@@ -104,6 +104,9 @@ export type RelayConfig = {
   blossom: {
     enabled: boolean
   }
+  livekit: {
+    enabled: boolean
+  }
   push: {
     enabled: boolean
   }

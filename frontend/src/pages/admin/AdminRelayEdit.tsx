@@ -13,6 +13,7 @@ const DEFAULT_CONFIG: RelayConfig = {
   groups: { enabled: false, auto_join: false },
   management: { enabled: false },
   blossom: { enabled: false },
+  livekit: { enabled: false },
   push: { enabled: false },
 }
 

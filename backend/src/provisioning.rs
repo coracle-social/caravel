@@ -42,6 +42,7 @@ impl Provisioner {
         let url = format!("{}/relay/{}", self.base_url.trim_end_matches('/'), relay.id);
 
         let blossom_default = relay.plan != "free";
+        let livekit_default = relay.plan != "free";
         let cfg = relay.config.as_ref();
         let host = format!("{}.{}", relay.subdomain, self.relay_domain);
         let secret = generate_secret_hex();
@@ -71,6 +72,9 @@ impl Provisioner {
             },
             "blossom": {
                 "enabled": cfg_bool(cfg, |c| &c.blossom, "enabled", blossom_default),
+            },
+            "livekit": {
+                "enabled": cfg_bool(cfg, |c| &c.livekit, "enabled", livekit_default),
             },
             "roles": {
                 "member": { "pubkeys": [], "can_invite": true, "can_manage": false }
@@ -102,6 +106,7 @@ impl Provisioner {
         let url = format!("{}/relay/{}", self.base_url.trim_end_matches('/'), relay.id);
         let host = format!("{}.{}", relay.subdomain, self.relay_domain);
         let blossom_default = relay.plan != "free";
+        let livekit_default = relay.plan != "free";
         let cfg = relay.config.as_ref();
         let patch = json!({
             "host": host,
@@ -126,6 +131,9 @@ impl Provisioner {
             },
             "blossom": {
                 "enabled": cfg_bool(cfg, |c| &c.blossom, "enabled", blossom_default),
+            },
+            "livekit": {
+                "enabled": cfg_bool(cfg, |c| &c.livekit, "enabled", livekit_default),
             },
         });
         let auth = self.build_auth_header(&url, HttpMethod::PATCH).await?;

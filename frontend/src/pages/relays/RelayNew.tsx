@@ -16,6 +16,7 @@ const DEFAULT_CONFIG: RelayConfig = {
   groups: { enabled: true, auto_join: true },
   management: { enabled: true },
   blossom: { enabled: false },
+  livekit: { enabled: false },
   push: { enabled: true },
 }
 
@@ -51,6 +52,7 @@ export default function RelayNew() {
         config: {
           ...DEFAULT_CONFIG,
           blossom: { enabled: plan() !== "free" },
+          livekit: { enabled: plan() !== "free" },
         },
       })
       navigate(`/relays/${relay.id}`)

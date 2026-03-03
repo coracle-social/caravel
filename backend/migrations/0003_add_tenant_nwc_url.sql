@@ -1,1 +1,0 @@
-ALTER TABLE tenants ADD COLUMN tenant_nwc_url TEXT NOT NULL DEFAULT "";

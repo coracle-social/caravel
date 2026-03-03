@@ -29,7 +29,6 @@ pub struct Relay {
     pub tenant: String,
     pub name: String,
     pub subdomain: String,
-    pub schema: String,
     pub icon: String,
     pub description: String,
     pub plan: String,

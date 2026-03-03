@@ -13,7 +13,6 @@ fn relay_from_row(row: sqlx::sqlite::SqliteRow) -> Relay {
         tenant: row.get("tenant"),
         name: row.get("name"),
         subdomain: row.get("subdomain"),
-        schema: row.get("schema"),
         icon: row.get("icon"),
         description: row.get("description"),
         plan: row.get("plan"),
@@ -94,12 +93,11 @@ impl Repo {
     pub async fn upsert_relay(&self, relay: &Relay) -> Result<()> {
         let config_json = relay.config.as_ref().map(serde_json::to_string).transpose()?;
         sqlx::query(
-            "INSERT INTO relays (id, tenant, name, subdomain, schema, icon, description, plan, status, config)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "INSERT INTO relays (id, tenant, name, subdomain, icon, description, plan, status, config)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(id) DO UPDATE SET
                name = excluded.name,
                subdomain = excluded.subdomain,
-               schema = excluded.schema,
                icon = excluded.icon,
                description = excluded.description,
                plan = excluded.plan,
@@ -110,7 +108,6 @@ impl Repo {
         .bind(&relay.tenant)
         .bind(&relay.name)
         .bind(&relay.subdomain)
-        .bind(&relay.schema)
         .bind(&relay.icon)
         .bind(&relay.description)
         .bind(&relay.plan)
@@ -142,7 +139,7 @@ impl Repo {
 
     pub async fn get_relay(&self, id: &str) -> Result<Option<Relay>> {
         let row = sqlx::query(
-            "SELECT id, tenant, name, subdomain, schema, icon, description, plan, status, config FROM relays WHERE id = ?",
+            "SELECT id, tenant, name, subdomain, icon, description, plan, status, config FROM relays WHERE id = ?",
         )
         .bind(id)
         .fetch_optional(&self.pool)
@@ -152,7 +149,7 @@ impl Repo {
 
     pub async fn list_relays_by_tenant(&self, tenant: &str) -> Result<Vec<Relay>> {
         let rows = sqlx::query(
-            "SELECT id, tenant, name, subdomain, schema, icon, description, plan, status, config FROM relays WHERE tenant = ? ORDER BY name",
+            "SELECT id, tenant, name, subdomain, icon, description, plan, status, config FROM relays WHERE tenant = ? ORDER BY name",
         )
         .bind(tenant)
         .fetch_all(&self.pool)
@@ -162,7 +159,7 @@ impl Repo {
 
     pub async fn list_relays(&self) -> Result<Vec<Relay>> {
         let rows = sqlx::query(
-            "SELECT id, tenant, name, subdomain, schema, icon, description, plan, status, config FROM relays ORDER BY name",
+            "SELECT id, tenant, name, subdomain, icon, description, plan, status, config FROM relays ORDER BY name",
         )
         .fetch_all(&self.pool)
         .await?;

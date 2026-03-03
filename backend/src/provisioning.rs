@@ -2,7 +2,6 @@ use anyhow::{Result, anyhow};
 use rand::RngCore;
 use rand::rngs::OsRng;
 use reqwest::Client;
-use serde::Serialize;
 use serde_json::{Value, json};
 
 use nostr_sdk::nostr::Keys;
@@ -36,49 +35,113 @@ impl Provisioner {
         })
     }
 
-    /// Create or update a relay in zooid.
+    /// Create a relay in zooid.
     ///
-    /// On creation, POSTs the full config (including a generated secret and host).
-    /// On update, PATCHes only the mutable fields (info + config sections).
-    pub async fn sync_relay(&self, relay: &Relay, is_new: bool) -> Result<()> {
+    /// POSTs the full config (including a generated secret and host).
+    pub async fn create_relay(&self, relay: &Relay) -> Result<()> {
         let url = format!("{}/relay/{}", self.base_url.trim_end_matches('/'), relay.id);
 
-        if is_new {
-            let host = format!("{}.{}", relay.subdomain, self.relay_domain);
-            let secret = generate_secret_hex();
-            let payload = build_full_config(relay, host, secret);
-            let auth = self.build_auth_header(&url, HttpMethod::POST).await?;
+        let blossom_default = relay.plan != "free";
+        let cfg = relay.config.as_ref();
+        let host = format!("{}.{}", relay.subdomain, self.relay_domain);
+        let secret = generate_secret_hex();
+        let payload = json!({
+            "host": host,
+            "schema": relay.id,
+            "secret": secret,
+            "info": {
+                "name": relay.name,
+                "icon": relay.icon,
+                "pubkey": relay.tenant,
+                "description": relay.description,
+            },
+            "policy": {
+                "public_join": cfg_bool(cfg, |c| &c.policy, "public_join", false),
+                "strip_signatures": cfg_bool(cfg, |c| &c.policy, "strip_signatures", false),
+            },
+            "groups": {
+                "enabled": cfg_bool(cfg, |c| &c.groups, "enabled", true),
+                "auto_join": cfg_bool(cfg, |c| &c.groups, "auto_join", true),
+            },
+            "push": {
+                "enabled": cfg_bool(cfg, |c| &c.push, "enabled", true),
+            },
+            "management": {
+                "enabled": cfg_bool(cfg, |c| &c.management, "enabled", true),
+            },
+            "blossom": {
+                "enabled": cfg_bool(cfg, |c| &c.blossom, "enabled", blossom_default),
+            },
+            "roles": {
+                "member": { "pubkeys": [], "can_invite": true, "can_manage": false }
+            },
+        });
+        let auth = self.build_auth_header(&url, HttpMethod::POST).await?;
 
-            let res = self
-                .client
-                .post(&url)
-                .header(reqwest::header::AUTHORIZATION, auth)
-                .json(&payload)
-                .send()
-                .await?;
+        let res = self
+            .client
+            .post(&url)
+            .header(reqwest::header::AUTHORIZATION, auth)
+            .json(&payload)
+            .send()
+            .await?;
 
-            if !res.status().is_success() {
-                let status = res.status();
-                let body = res.text().await.unwrap_or_default();
-                return Err(anyhow!("zooid create failed: {} {}", status, body));
-            }
-        } else {
-            let patch = build_patch(relay);
-            let auth = self.build_auth_header(&url, HttpMethod::PATCH).await?;
+        if !res.status().is_success() {
+            let status = res.status();
+            let body = res.text().await.unwrap_or_default();
+            return Err(anyhow!("zooid create failed: {} {}", status, body));
+        }
 
-            let res = self
-                .client
-                .patch(&url)
-                .header(reqwest::header::AUTHORIZATION, auth)
-                .json(&patch)
-                .send()
-                .await?;
+        Ok(())
+    }
 
-            if !res.status().is_success() {
-                let status = res.status();
-                let body = res.text().await.unwrap_or_default();
-                return Err(anyhow!("zooid patch failed: {} {}", status, body));
-            }
+    /// Update a relay in zooid.
+    ///
+    /// PATCHes only the mutable fields (info + config sections).
+    pub async fn update_relay(&self, relay: &Relay) -> Result<()> {
+        let url = format!("{}/relay/{}", self.base_url.trim_end_matches('/'), relay.id);
+        let host = format!("{}.{}", relay.subdomain, self.relay_domain);
+        let blossom_default = relay.plan != "free";
+        let cfg = relay.config.as_ref();
+        let patch = json!({
+            "host": host,
+            "info": {
+                "name": relay.name,
+                "icon": relay.icon,
+                "description": relay.description,
+            },
+            "policy": {
+                "public_join": cfg_bool(cfg, |c| &c.policy, "public_join", false),
+                "strip_signatures": cfg_bool(cfg, |c| &c.policy, "strip_signatures", false),
+            },
+            "groups": {
+                "enabled": cfg_bool(cfg, |c| &c.groups, "enabled", true),
+                "auto_join": cfg_bool(cfg, |c| &c.groups, "auto_join", true),
+            },
+            "push": {
+                "enabled": cfg_bool(cfg, |c| &c.push, "enabled", true),
+            },
+            "management": {
+                "enabled": cfg_bool(cfg, |c| &c.management, "enabled", true),
+            },
+            "blossom": {
+                "enabled": cfg_bool(cfg, |c| &c.blossom, "enabled", blossom_default),
+            },
+        });
+        let auth = self.build_auth_header(&url, HttpMethod::PATCH).await?;
+
+        let res = self
+            .client
+            .patch(&url)
+            .header(reqwest::header::AUTHORIZATION, auth)
+            .json(&patch)
+            .send()
+            .await?;
+
+        if !res.status().is_success() {
+            let status = res.status();
+            let body = res.text().await.unwrap_or_default();
+            return Err(anyhow!("zooid patch failed: {} {}", status, body));
         }
 
         Ok(())
@@ -90,75 +153,6 @@ impl Provisioner {
         let header = data.to_authorization(&self.admin_keys).await?;
         Ok(header)
     }
-}
-
-/// Builds the full zooid config payload for relay creation (POST).
-fn build_full_config(relay: &Relay, host: String, secret: String) -> Value {
-    let blossom_default = relay.plan != "free";
-    let cfg = relay.config.as_ref();
-
-    json!({
-        "host": host,
-        "schema": relay.schema,
-        "secret": secret,
-        "info": {
-            "name": relay.name,
-            "icon": relay.icon,
-            "pubkey": relay.tenant,
-            "description": relay.description,
-        },
-        "policy": {
-            "public_join": cfg_bool(cfg, |c| &c.policy, "public_join", false),
-            "strip_signatures": cfg_bool(cfg, |c| &c.policy, "strip_signatures", false),
-        },
-        "groups": {
-            "enabled": cfg_bool(cfg, |c| &c.groups, "enabled", true),
-            "auto_join": cfg_bool(cfg, |c| &c.groups, "auto_join", true),
-        },
-        "push": {
-            "enabled": cfg_bool(cfg, |c| &c.push, "enabled", true),
-        },
-        "management": {
-            "enabled": cfg_bool(cfg, |c| &c.management, "enabled", true),
-        },
-        "blossom": {
-            "enabled": cfg_bool(cfg, |c| &c.blossom, "enabled", blossom_default),
-        },
-        "roles": {
-            "member": { "pubkeys": [], "can_invite": true, "can_manage": false }
-        },
-    })
-}
-
-/// Builds the partial zooid patch payload for relay updates (PATCH).
-fn build_patch(relay: &Relay) -> Value {
-    let blossom_default = relay.plan != "free";
-    let cfg = relay.config.as_ref();
-
-    json!({
-        "info": {
-            "name": relay.name,
-            "icon": relay.icon,
-            "description": relay.description,
-        },
-        "policy": {
-            "public_join": cfg_bool(cfg, |c| &c.policy, "public_join", false),
-            "strip_signatures": cfg_bool(cfg, |c| &c.policy, "strip_signatures", false),
-        },
-        "groups": {
-            "enabled": cfg_bool(cfg, |c| &c.groups, "enabled", true),
-            "auto_join": cfg_bool(cfg, |c| &c.groups, "auto_join", true),
-        },
-        "push": {
-            "enabled": cfg_bool(cfg, |c| &c.push, "enabled", true),
-        },
-        "management": {
-            "enabled": cfg_bool(cfg, |c| &c.management, "enabled", true),
-        },
-        "blossom": {
-            "enabled": cfg_bool(cfg, |c| &c.blossom, "enabled", blossom_default),
-        },
-    })
 }
 
 fn cfg_bool(

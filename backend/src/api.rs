@@ -9,7 +9,6 @@ use axum::{
     routing::{get, post, put},
 };
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 use crate::auth::verify_nip98;
 use crate::models::{NewTenant, Relay, RelayConfig};
@@ -242,12 +241,12 @@ async fn create_tenant_relay(
             .into_response();
     }
 
+    let id = payload.subdomain.replace('-', "_");
     let relay = Relay {
-        id: Uuid::new_v4().to_string(),
+        id: id.clone(),
         tenant: pubkey.clone(),
         name: payload.name,
         subdomain: payload.subdomain.clone(),
-        schema: payload.subdomain.replace('-', "_"),
         icon: payload.icon,
         description: payload.description,
         plan: payload.plan,
@@ -275,7 +274,7 @@ async fn create_tenant_relay(
             .into_response();
     }
 
-    if let Err(err) = state.provisioner.sync_relay(&relay, true).await {
+    if let Err(err) = state.provisioner.create_relay(&relay).await {
         tracing::error!(relay_id = relay.id, error = %err, "zooid create failed");
         let _ = state.repo.update_relay_status(&relay.id, "provisioning_failed").await;
         return (
@@ -362,7 +361,6 @@ async fn update_tenant_relay(
         tenant: existing.tenant,
         name: payload.name,
         subdomain: payload.subdomain.clone(),
-        schema: payload.subdomain.replace('-', "_"),
         icon: payload.icon,
         description: payload.description,
         plan: payload.plan,
@@ -390,14 +388,16 @@ async fn update_tenant_relay(
             .into_response();
     }
 
-    if let Err(err) = state.provisioner.sync_relay(&relay, false).await {
+    if let Err(err) = state.provisioner.update_relay(&relay).await {
         tracing::error!(relay_id = relay.id, error = %err, "zooid patch failed");
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiError { error: format!("failed to update relay config: {err}") }),
+            Json(ApiError { error: format!("failed to provision relay: {err}") }),
         )
             .into_response();
     }
+
+    let _ = state.repo.update_relay_status(&relay.id, "active").await;
 
     (StatusCode::OK, Json(relay)).into_response()
 }
@@ -758,7 +758,6 @@ async fn admin_update_relay(
         tenant: existing.tenant,
         name: payload.name,
         subdomain: payload.subdomain.clone(),
-        schema: payload.subdomain.replace('-', "_"),
         icon: payload.icon,
         description: payload.description,
         plan: payload.plan,
@@ -786,7 +785,7 @@ async fn admin_update_relay(
             .into_response();
     }
 
-    if let Err(err) = state.provisioner.sync_relay(&relay, false).await {
+    if let Err(err) = state.provisioner.update_relay(&relay).await {
         tracing::error!(relay_id = relay.id, error = %err, "zooid patch failed");
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -846,5 +845,3 @@ async fn admin_deactivate_relay(
 
     (StatusCode::OK, Json(relay)).into_response()
 }
-
-

@@ -171,6 +171,8 @@ export default function AdminRelayDetail() {
               onToggleMediaStorage={toggleMediaStorage}
               onToggleLivekitSupport={toggleLivekitSupport}
               onTogglePushNotifications={togglePushNotifications}
+              enforcePlanLimits={false}
+              showPlanActions={false}
             />
           </div>
         )}

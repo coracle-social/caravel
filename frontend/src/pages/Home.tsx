@@ -1,4 +1,5 @@
 import { A } from "@solidjs/router"
+import PricingTable from "../components/PricingTable"
 
 function CheckIcon() {
   return (
@@ -260,64 +261,7 @@ export default function Home() {
             Pay in sats. Upgrade or cancel any time.
           </p>
 
-          <div class="grid grid-cols-1 md:grid-cols-3 gap-6 items-start">
-            {/* Free */}
-            <div class="bg-white rounded-2xl border border-gray-200 p-8">
-              <h3 class="text-lg font-bold text-gray-900 mb-1">Free</h3>
-              <p class="text-sm text-gray-400 mb-6">Get started, no commitment.</p>
-              <div class="mb-8">
-                <span class="text-4xl font-extrabold text-gray-900">0</span>
-                <span class="text-sm text-gray-400 ml-1">sats / mo</span>
-              </div>
-              <ul class="space-y-3 mb-8 text-sm text-gray-600">
-                <li class="flex items-start gap-2"><CheckIcon />Up to 10 members</li>
-                <li class="flex items-start gap-2 text-gray-300"><span class="w-4 h-4 shrink-0 mt-0.5 flex items-center justify-center"><svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12" /></svg></span>Blossom storage</li>
-                <li class="flex items-start gap-2 text-gray-300"><span class="w-4 h-4 shrink-0 mt-0.5 flex items-center justify-center"><svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12" /></svg></span>LiveKit video</li>
-              </ul>
-              <A href="/relays/new" class="block text-center py-2.5 px-4 rounded-xl border border-gray-200 text-sm font-semibold text-gray-700 hover:bg-gray-50 transition-colors">
-                Get started
-              </A>
-            </div>
-
-            {/* Basic */}
-            <div class="bg-white rounded-2xl border-2 border-blue-600 p-8 relative shadow-lg shadow-blue-100">
-              <span class="absolute -top-3.5 left-1/2 -translate-x-1/2 bg-blue-600 text-white text-xs font-bold px-4 py-1 rounded-full tracking-wide">
-                POPULAR
-              </span>
-              <h3 class="text-lg font-bold text-gray-900 mb-1">Basic</h3>
-              <p class="text-sm text-gray-400 mb-6">For growing communities.</p>
-              <div class="mb-8">
-                <span class="text-4xl font-extrabold text-gray-900">10K</span>
-                <span class="text-sm text-gray-400 ml-1">sats / mo</span>
-              </div>
-              <ul class="space-y-3 mb-8 text-sm text-gray-600">
-                <li class="flex items-start gap-2"><CheckIcon />Up to 100 members</li>
-                <li class="flex items-start gap-2"><CheckIcon />Blossom storage</li>
-                <li class="flex items-start gap-2"><CheckIcon />LiveKit video</li>
-              </ul>
-              <A href="/relays/new" class="block text-center py-2.5 px-4 rounded-xl bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 transition-colors">
-                Get started
-              </A>
-            </div>
-
-            {/* Growth */}
-            <div class="bg-white rounded-2xl border border-gray-200 p-8">
-              <h3 class="text-lg font-bold text-gray-900 mb-1">Growth</h3>
-              <p class="text-sm text-gray-400 mb-6">For large-scale communities.</p>
-              <div class="mb-8">
-                <span class="text-4xl font-extrabold text-gray-900">50K</span>
-                <span class="text-sm text-gray-400 ml-1">sats / mo</span>
-              </div>
-              <ul class="space-y-3 mb-8 text-sm text-gray-600">
-                <li class="flex items-start gap-2"><CheckIcon />Unlimited members</li>
-                <li class="flex items-start gap-2"><CheckIcon />Blossom storage</li>
-                <li class="flex items-start gap-2"><CheckIcon />LiveKit video</li>
-              </ul>
-              <A href="/relays/new" class="block text-center py-2.5 px-4 rounded-xl border border-gray-200 text-sm font-semibold text-gray-700 hover:bg-gray-50 transition-colors">
-                Get started
-              </A>
-            </div>
-          </div>
+          <PricingTable ctaHref="/relays/new" />
         </div>
       </section>
 

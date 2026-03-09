@@ -9,6 +9,7 @@ use axum::{
     routing::{get, post, put},
 };
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::auth::verify_nip98;
 use crate::models::{NewTenant, Relay, RelayConfig};
@@ -33,6 +34,7 @@ pub fn router(state: AppState) -> Router {
             "/tenant/relays/:id",
             get(get_tenant_relay).put(update_tenant_relay),
         )
+        .route("/tenant/relays/:id/plan", put(update_tenant_relay_plan))
         .route(
             "/tenant/relays/:id/deactivate",
             post(deactivate_tenant_relay),
@@ -399,6 +401,115 @@ async fn update_tenant_relay(
     let _ = state.repo.update_relay_status(&relay.id, "active").await;
 
     (StatusCode::OK, Json(relay)).into_response()
+}
+
+#[derive(Debug, Deserialize)]
+struct UpdateRelayPlanRequest {
+    plan: String,
+}
+
+async fn update_tenant_relay_plan(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    method: Method,
+    uri: Uri,
+    Path(id): Path<String>,
+    Json(payload): Json<UpdateRelayPlanRequest>,
+) -> Response {
+    let pubkey = match extract_auth_pubkey(&headers, &method, &uri) {
+        Ok(pubkey) => pubkey,
+        Err(_) => return unauthorized(),
+    };
+
+    let plan = payload.plan.trim().to_lowercase();
+    if !matches!(plan.as_str(), "free" | "basic" | "growth") {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(ApiError {
+                error: "invalid plan".into(),
+            }),
+        )
+            .into_response();
+    }
+
+    let existing = match state.repo.get_relay(&id).await {
+        Ok(Some(relay)) => relay,
+        Ok(None) => return not_found(),
+        Err(_) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiError {
+                    error: "failed to load relay".into(),
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    if existing.tenant != pubkey {
+        return forbidden();
+    }
+
+    let mut relay = Relay {
+        plan,
+        ..existing
+    };
+
+    if relay.plan == "free" {
+        relay.config = Some(disable_paid_features(relay.config));
+    }
+
+    if let Err(_) = state.repo.upsert_relay(&relay).await {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiError {
+                error: "failed to update relay plan".into(),
+            }),
+        )
+            .into_response();
+    }
+
+    if let Err(err) = state.provisioner.update_relay(&relay).await {
+        tracing::error!(relay_id = relay.id, error = %err, "zooid patch failed");
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiError {
+                error: format!("failed to provision relay: {err}"),
+            }),
+        )
+            .into_response();
+    }
+
+    let _ = state.repo.update_relay_status(&relay.id, "active").await;
+
+    (StatusCode::OK, Json(relay)).into_response()
+}
+
+fn disable_paid_features(config: Option<RelayConfig>) -> RelayConfig {
+    let mut cfg = config.unwrap_or_else(empty_relay_config);
+    set_config_bool(&mut cfg.blossom, "enabled", false);
+    set_config_bool(&mut cfg.livekit, "enabled", false);
+    cfg
+}
+
+fn empty_relay_config() -> RelayConfig {
+    RelayConfig {
+        policy: None,
+        groups: None,
+        management: None,
+        blossom: None,
+        livekit: None,
+        push: None,
+    }
+}
+
+fn set_config_bool(section: &mut Option<Value>, key: &str, enabled: bool) {
+    let mut object = section
+        .take()
+        .and_then(|value| value.as_object().cloned())
+        .unwrap_or_default();
+    object.insert(key.to_string(), Value::Bool(enabled));
+    *section = Some(Value::Object(object));
 }
 
 async fn deactivate_tenant_relay(

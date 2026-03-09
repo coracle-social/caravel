@@ -1,6 +1,7 @@
 import { useParams } from "@solidjs/router"
 import { createMemo, createResource, createSignal, Show } from "solid-js"
-import { deactivateTenantRelay, getRelayMemberCount, getTenantRelay, updateTenantRelay, type RelayConfig } from "../../lib/api"
+import { deactivateTenantRelay, getRelayMemberCount, getTenantRelay, updateTenantRelay, updateTenantRelayPlan, type RelayConfig } from "../../lib/api"
+import type { RelayPlanId } from "../../lib/relayPlans"
 import BackLink from "../../components/BackLink"
 import PageContainer from "../../components/PageContainer"
 import RelayDetailCard from "../../components/RelayDetailCard"
@@ -144,6 +145,31 @@ export default function RelayDetail() {
     void updateFlags(nextConfig, config)
   }
 
+  async function handleUpdatePlan(plan: RelayPlanId) {
+    const current = relay()
+    if (!current) return
+
+    const previous = current
+    setError("")
+
+    const nextConfig = withDefaults(current.config)
+    if (plan === "free") {
+      nextConfig.blossom = { enabled: false }
+      nextConfig.livekit = { enabled: false }
+    }
+
+    mutate({ ...current, plan, config: nextConfig })
+
+    try {
+      await updateTenantRelayPlan(relayId(), plan)
+      await refetch()
+    } catch (e) {
+      mutate(previous)
+      setError(e instanceof Error ? e.message : "Failed to update relay plan")
+      throw e
+    }
+  }
+
   return (
     <PageContainer>
       <BackLink href="/relays" label="Relays" />
@@ -172,6 +198,7 @@ export default function RelayDetail() {
               onToggleMediaStorage={toggleMediaStorage}
               onToggleLivekitSupport={toggleLivekitSupport}
               onTogglePushNotifications={togglePushNotifications}
+              onUpdatePlan={handleUpdatePlan}
             />
           </div>
         )}

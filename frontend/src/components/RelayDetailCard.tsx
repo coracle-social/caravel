@@ -2,6 +2,9 @@ import { A } from "@solidjs/router"
 import { Show, createEffect, createSignal, onCleanup } from "solid-js"
 import type { Relay } from "../lib/api"
 import menuDotsIcon from "../assets/menu-dots-2.svg"
+import Modal from "./Modal"
+import PricingTable from "./PricingTable"
+import { RELAY_PLAN_IDS, type RelayPlanId } from "../lib/relayPlans"
 
 function Field(props: { label: string; children: any }) {
   return (
@@ -53,7 +56,7 @@ function ToggleButton(props: {
 function DetailSection(props: { title: string; children: any }) {
   return (
     <div>
-      <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">{props.title}</h3>
+      <h3 class="text-sm font-semibold uppercase tracking-wider mb-6">{props.title}</h3>
       <dl class="grid lg:grid-cols-2 gap-x-32 gap-y-4">
         {props.children}
       </dl>
@@ -64,7 +67,7 @@ function DetailSection(props: { title: string; children: any }) {
 function MembershipSection(props: { title: string; children: any }) {
   return (
     <div>
-      <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">{props.title}</h3>
+      <h3 class="text-sm font-semibold uppercase tracking-wider mb-6">{props.title}</h3>
       <dl class="grid gap-x-6 gap-y-4 sm:grid-cols-2">
         {props.children}
       </dl>
@@ -86,12 +89,20 @@ type RelayDetailCardProps = {
   onToggleMediaStorage?: () => void
   onToggleLivekitSupport?: () => void
   onTogglePushNotifications?: () => void
+  onUpdatePlan?: (plan: RelayPlanId) => Promise<void>
+  updatingPlan?: boolean
+  enforcePlanLimits?: boolean
+  showPlanActions?: boolean
 }
 
 export default function RelayDetailCard(props: RelayDetailCardProps) {
   const r = () => props.relay
   const cfg = () => r().config
   const [menuOpen, setMenuOpen] = createSignal(false)
+  const [planModalOpen, setPlanModalOpen] = createSignal(false)
+  const [selectedPlan, setSelectedPlan] = createSignal<RelayPlanId>("free")
+  const [planError, setPlanError] = createSignal("")
+  const [submittingPlan, setSubmittingPlan] = createSignal(false)
   let menuContainerRef: HTMLDivElement | undefined
 
   const memberLimitByPlan: Record<string, string> = {
@@ -102,6 +113,32 @@ export default function RelayDetailCard(props: RelayDetailCardProps) {
 
   const memberLimitLabel = () => memberLimitByPlan[r().plan] ?? "?"
   const isTopTier = () => r().plan === "growth"
+  const planLimited = () => (props.enforcePlanLimits ?? true) && r().plan === "free"
+  const showPlanActions = () => props.showPlanActions ?? true
+
+  createEffect(() => {
+    if (!planModalOpen()) return
+    const current = RELAY_PLAN_IDS.find((id) => id === r().plan) ?? "free"
+    setSelectedPlan(current)
+    setPlanError("")
+  })
+
+  const canSubmitPlan = () => selectedPlan() !== r().plan
+
+  async function handlePlanContinue() {
+    if (!props.onUpdatePlan || submittingPlan() || !canSubmitPlan()) return
+    setPlanError("")
+    setSubmittingPlan(true)
+
+    try {
+      await props.onUpdatePlan(selectedPlan())
+      setPlanModalOpen(false)
+    } catch (e) {
+      setPlanError(e instanceof Error ? e.message : "Failed to update plan")
+    } finally {
+      setSubmittingPlan(false)
+    }
+  }
 
   createEffect(() => {
     if (!menuOpen()) return
@@ -231,14 +268,29 @@ export default function RelayDetailCard(props: RelayDetailCardProps) {
         </ToggleField>
         <ToggleField label="Media storage">
           <Show
-            when={r().plan !== "free"}
+            when={!planLimited()}
             fallback={
-              <A
-                href={props.editHref ?? "#"}
-                class="inline-flex items-center rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-100"
-              >
-                Upgrade Plan
-              </A>
+              <Show when={showPlanActions()} fallback={<ToggleButton enabled={cfg()?.blossom.enabled ?? false} onToggle={props.onToggleMediaStorage} />}>
+                <Show
+                  when={props.onUpdatePlan}
+                  fallback={
+                    <A
+                      href={props.editHref ?? "#"}
+                      class="inline-flex items-center rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-100"
+                    >
+                      Upgrade Plan
+                    </A>
+                  }
+                >
+                  <button
+                    type="button"
+                    class="inline-flex items-center rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-100"
+                    onClick={() => setPlanModalOpen(true)}
+                  >
+                    Update Plan
+                  </button>
+                </Show>
+              </Show>
             }
           >
             <ToggleButton
@@ -249,14 +301,29 @@ export default function RelayDetailCard(props: RelayDetailCardProps) {
         </ToggleField>
         <ToggleField label="LiveKit support">
           <Show
-            when={r().plan !== "free"}
+            when={!planLimited()}
             fallback={
-              <A
-                href={props.editHref ?? "#"}
-                class="inline-flex items-center rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-100"
-              >
-                Upgrade Plan
-              </A>
+              <Show when={showPlanActions()} fallback={<ToggleButton enabled={cfg()?.livekit.enabled ?? false} onToggle={props.onToggleLivekitSupport} />}>
+                <Show
+                  when={props.onUpdatePlan}
+                  fallback={
+                    <A
+                      href={props.editHref ?? "#"}
+                      class="inline-flex items-center rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-100"
+                    >
+                      Upgrade Plan
+                    </A>
+                  }
+                >
+                  <button
+                    type="button"
+                    class="inline-flex items-center rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-100"
+                    onClick={() => setPlanModalOpen(true)}
+                  >
+                    Update Plan
+                  </button>
+                </Show>
+              </Show>
             }
           >
             <ToggleButton
@@ -281,17 +348,69 @@ export default function RelayDetailCard(props: RelayDetailCardProps) {
             <span class="font-mono text-xs break-all">{r().tenant}</span>
           </Field>
         </Show>
-        <Show when={!isTopTier() && props.editHref}>
+        <Show when={props.editHref && showPlanActions()}>
           <Field label=" ">
-            <A
-              href={props.editHref!}
-              class="inline-flex items-center rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-100"
+            <Show
+              when={props.onUpdatePlan}
+              fallback={
+                <Show
+                  when={!isTopTier()}
+                  fallback={<span />}
+                >
+                  <A
+                    href={props.editHref!}
+                    class="inline-flex items-center rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-100"
+                  >
+                    Upgrade Plan
+                  </A>
+                </Show>
+              }
             >
-              Upgrade Plan
-            </A>
+              <button
+                type="button"
+                class="inline-flex items-center rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-100"
+                onClick={() => setPlanModalOpen(true)}
+              >
+                Update Plan
+              </button>
+            </Show>
           </Field>
         </Show>
       </MembershipSection>
+
+      <Modal
+        open={planModalOpen()}
+        onClose={() => setPlanModalOpen(false)}
+        wrapperClass="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-4"
+        panelClass="w-full max-w-5xl max-h-[90vh] overflow-y-auto rounded-2xl bg-white"
+      >
+        <div class="p-6 sm:p-8">
+          <h2 class="text-2xl font-bold text-gray-900 mb-2">Update plan</h2>
+          <p class="text-sm text-gray-500 mb-8">Choose the plan you want for this relay.</p>
+
+          <PricingTable
+            selectable
+            compactOnMobile
+            selectedPlan={selectedPlan()}
+            onSelect={setSelectedPlan}
+          />
+
+          <Show when={planError()}>
+            <p class="mt-4 text-sm text-red-600">{planError()}</p>
+          </Show>
+
+          <div class="mt-8">
+            <button
+              type="button"
+              onClick={() => void handlePlanContinue()}
+              disabled={!canSubmitPlan() || submittingPlan() || !!props.updatingPlan}
+              class="w-full py-3 rounded-xl bg-blue-600 text-white font-semibold hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {submittingPlan() || props.updatingPlan ? "Updating..." : "Continue"}
+            </button>
+          </div>
+        </div>
+      </Modal>
     </div>
   )
 }

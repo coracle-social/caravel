@@ -192,6 +192,13 @@ export function updateTenantRelay(id: string, input: UpdateRelayInput) {
   })
 }
 
+export function updateTenantRelayPlan(id: string, plan: string) {
+  return request<Relay>(`/tenant/relays/${id}/plan`, {
+    method: "PUT",
+    body: JSON.stringify({ plan }),
+  })
+}
+
 export function deactivateTenantRelay(id: string) {
   return request<Relay>(`/tenant/relays/${id}/deactivate`, {
     method: "POST",

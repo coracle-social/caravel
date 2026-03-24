@@ -86,7 +86,7 @@ This is ready to be used by API routes.
 The backend runs an in-process billing loop that:
 
 - Generates monthly invoices (using `NWC_URL`)
-- Uses the tenant’s `tenant_nwc_url` for recurring pull payments (if set)
+- Uses the tenant’s `nwc_url` for recurring pull payments (if set)
 - Sends NIP-17 DMs with invoices when recurring is off
 - Sends NIP-17 DMs on successful payment when recurring is on
 

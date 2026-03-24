@@ -174,7 +174,6 @@ fn cfg_bool(
         .unwrap_or(default)
 }
 
-
 fn generate_secret_hex() -> String {
     let mut bytes = [0u8; 32];
     OsRng.fill_bytes(&mut bytes);

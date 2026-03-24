@@ -12,7 +12,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::auth::verify_nip98;
-use crate::models::{NewTenant, Relay, RelayConfig};
+use crate::billing::now_ts;
+use crate::models::{Relay, RelayConfig, Tenant};
 use crate::provisioning::Provisioner;
 use crate::repo::Repo;
 
@@ -62,6 +63,8 @@ pub fn router(state: AppState) -> Router {
         .with_state(state)
 }
 
+// ── error helpers ─────────────────────────────────────────────────────────────
+
 #[derive(Debug, Serialize)]
 struct ApiError {
     error: String,
@@ -103,15 +106,23 @@ fn not_found() -> Response {
         .into_response()
 }
 
+fn internal_error(msg: &str) -> Response {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(ApiError {
+            error: msg.to_string(),
+        }),
+    )
+        .into_response()
+}
+
 fn is_unique_subdomain_violation(err: &anyhow::Error) -> bool {
     let Some(sqlx_err) = err.downcast_ref::<sqlx::Error>() else {
         return false;
     };
-
     let sqlx::Error::Database(db_err) = sqlx_err else {
         return false;
     };
-
     db_err.message().contains("relays.subdomain")
         || db_err.message().contains("relays_subdomain_unique")
 }
@@ -136,10 +147,25 @@ fn extract_auth_pubkey(headers: &HeaderMap, method: &Method, uri: &Uri) -> Resul
         .path_and_query()
         .map(|v| v.as_str())
         .unwrap_or(uri.path());
-    let url = format!("{}://{}{}", scheme, host, path);
+    let url = format!("{scheme}://{host}{path}");
     let pubkey = verify_nip98(auth_header, &url, method.as_str())?;
     Ok(pubkey.to_hex())
 }
+
+fn new_tenant(pubkey: &str) -> Tenant {
+    let now = now_ts();
+    Tenant {
+        pubkey: pubkey.to_string(),
+        status: "active".to_string(),
+        nwc_url: String::new(),
+        created_at: now,
+        billing_anchor_at: now,
+        stripe_customer_id: String::new(),
+        stripe_subscription_id: String::new(),
+    }
+}
+
+// ── tenant routes ─────────────────────────────────────────────────────────────
 
 async fn get_tenant(
     State(state): State<AppState>,
@@ -148,37 +174,20 @@ async fn get_tenant(
     uri: Uri,
 ) -> Response {
     let pubkey = match extract_auth_pubkey(&headers, &method, &uri) {
-        Ok(pubkey) => pubkey,
+        Ok(p) => p,
         Err(_) => return unauthorized(),
     };
 
     match state.repo.get_tenant(&pubkey).await {
         Ok(Some(tenant)) => (StatusCode::OK, Json(tenant)).into_response(),
         Ok(None) => {
-            let tenant = NewTenant {
-                pubkey: pubkey.clone(),
-                status: "active".to_string(),
-                tenant_nwc_url: "".to_string(),
-            };
-            if state.repo.create_tenant(&tenant).await.is_ok() {
-                (StatusCode::OK, Json(tenant)).into_response()
-            } else {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ApiError {
-                        error: "failed to create tenant".into(),
-                    }),
-                )
-                    .into_response()
+            let tenant = new_tenant(&pubkey);
+            match state.repo.create_tenant(&tenant).await {
+                Ok(()) => (StatusCode::OK, Json(tenant)).into_response(),
+                Err(_) => internal_error("failed to create tenant"),
             }
         }
-        Err(_) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiError {
-                error: "failed to load tenant".into(),
-            }),
-        )
-            .into_response(),
+        Err(_) => internal_error("failed to load tenant"),
     }
 }
 
@@ -189,19 +198,13 @@ async fn list_tenant_relays(
     uri: Uri,
 ) -> Response {
     let pubkey = match extract_auth_pubkey(&headers, &method, &uri) {
-        Ok(pubkey) => pubkey,
+        Ok(p) => p,
         Err(_) => return unauthorized(),
     };
 
     match state.repo.list_relays_by_tenant(&pubkey).await {
         Ok(relays) => (StatusCode::OK, Json(relays)).into_response(),
-        Err(_) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiError {
-                error: "failed to load relays".into(),
-            }),
-        )
-            .into_response(),
+        Err(_) => internal_error("failed to load relays"),
     }
 }
 
@@ -223,35 +226,37 @@ async fn create_tenant_relay(
     Json(payload): Json<CreateRelayRequest>,
 ) -> Response {
     let pubkey = match extract_auth_pubkey(&headers, &method, &uri) {
-        Ok(pubkey) => pubkey,
+        Ok(p) => p,
         Err(_) => return unauthorized(),
     };
 
-    let tenant = NewTenant {
-        pubkey: pubkey.clone(),
-        status: "active".to_string(),
-        tenant_nwc_url: "".to_string(),
-    };
-
-    if let Err(_) = state.repo.create_tenant_if_missing(&tenant).await {
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiError {
-                error: "failed to ensure tenant".into(),
-            }),
-        )
-            .into_response();
+    if state
+        .repo
+        .create_tenant_if_missing(&new_tenant(&pubkey))
+        .await
+        .is_err()
+    {
+        return internal_error("failed to ensure tenant");
     }
 
-    let id = payload.subdomain.replace('-', "_");
+    let now = now_ts();
+
+    // If this is the tenant's first paid relay, reset the billing anchor
+    if payload.plan != "free"
+        && let Ok(0) = state.repo.count_billable_relays(&pubkey).await
+    {
+        let _ = state.repo.reset_billing_anchor(&pubkey, now).await;
+    }
+
+    let relay_id = payload.subdomain.replace('-', "_");
     let relay = Relay {
-        id: id.clone(),
+        id: relay_id.clone(),
         tenant: pubkey.clone(),
         name: payload.name,
         subdomain: payload.subdomain.clone(),
         icon: payload.icon,
         description: payload.description,
-        plan: payload.plan,
+        plan: payload.plan.clone(),
         status: "pending".to_string(),
         config: payload.config,
     };
@@ -266,28 +271,38 @@ async fn create_tenant_relay(
             )
                 .into_response();
         }
-
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiError {
-                error: "failed to create relay".into(),
-            }),
-        )
-            .into_response();
+        return internal_error("failed to create relay");
     }
 
     if let Err(err) = state.provisioner.create_relay(&relay).await {
-        tracing::error!(relay_id = relay.id, error = %err, "zooid create failed");
-        let _ = state.repo.update_relay_status(&relay.id, "provisioning_failed").await;
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiError { error: format!("failed to provision relay: {err}") }),
-        )
-            .into_response();
+        tracing::error!(relay_id, error = %err, "zooid create failed");
+        let _ = state
+            .repo
+            .update_relay_status(&relay_id, "provisioning_failed")
+            .await;
+        return internal_error(&format!("failed to provision relay: {err}"));
     }
 
-    let _ = state.repo.update_relay_status(&relay.id, "active").await;
+    // Transition to active and write the provisioned lifecycle event
+    if let Err(err) = state
+        .repo
+        .transition_relay(
+            &relay_id,
+            &pubkey,
+            &payload.plan,
+            "active",
+            "provisioned",
+            now,
+        )
+        .await
+    {
+        tracing::error!(relay_id, error = %err, "lifecycle event write failed");
+    }
 
+    let relay = Relay {
+        status: "active".to_string(),
+        ..relay
+    };
     (StatusCode::CREATED, Json(relay)).into_response()
 }
 
@@ -299,7 +314,7 @@ async fn get_tenant_relay(
     Path(id): Path<String>,
 ) -> Response {
     let pubkey = match extract_auth_pubkey(&headers, &method, &uri) {
-        Ok(pubkey) => pubkey,
+        Ok(p) => p,
         Err(_) => return unauthorized(),
     };
 
@@ -307,13 +322,7 @@ async fn get_tenant_relay(
         Ok(Some(relay)) if relay.tenant == pubkey => (StatusCode::OK, Json(relay)).into_response(),
         Ok(Some(_)) => forbidden(),
         Ok(None) => not_found(),
-        Err(_) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiError {
-                error: "failed to load relay".into(),
-            }),
-        )
-            .into_response(),
+        Err(_) => internal_error("failed to load relay"),
     }
 }
 
@@ -335,22 +344,14 @@ async fn update_tenant_relay(
     Json(payload): Json<UpdateRelayRequest>,
 ) -> Response {
     let pubkey = match extract_auth_pubkey(&headers, &method, &uri) {
-        Ok(pubkey) => pubkey,
+        Ok(p) => p,
         Err(_) => return unauthorized(),
     };
 
     let existing = match state.repo.get_relay(&id).await {
         Ok(Some(relay)) => relay,
         Ok(None) => return not_found(),
-        Err(_) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiError {
-                    error: "failed to load relay".into(),
-                }),
-            )
-                .into_response();
-        }
+        Err(_) => return internal_error("failed to load relay"),
     };
 
     if existing.tenant != pubkey {
@@ -358,15 +359,12 @@ async fn update_tenant_relay(
     }
 
     let relay = Relay {
-        id: existing.id,
-        tenant: existing.tenant,
         name: payload.name,
-        subdomain: payload.subdomain.clone(),
+        subdomain: payload.subdomain,
         icon: payload.icon,
         description: payload.description,
-        plan: existing.plan,
-        status: existing.status,
         config: payload.config,
+        ..existing
     };
 
     if let Err(err) = state.repo.upsert_relay(&relay).await {
@@ -379,27 +377,15 @@ async fn update_tenant_relay(
             )
                 .into_response();
         }
-
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiError {
-                error: "failed to update relay".into(),
-            }),
-        )
-            .into_response();
+        return internal_error("failed to update relay");
     }
 
     if let Err(err) = state.provisioner.update_relay(&relay).await {
         tracing::error!(relay_id = relay.id, error = %err, "zooid patch failed");
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiError { error: format!("failed to provision relay: {err}") }),
-        )
-            .into_response();
+        return internal_error(&format!("failed to provision relay: {err}"));
     }
 
     let _ = state.repo.update_relay_status(&relay.id, "active").await;
-
     (StatusCode::OK, Json(relay)).into_response()
 }
 
@@ -417,12 +403,12 @@ async fn update_tenant_relay_plan(
     Json(payload): Json<UpdateRelayPlanRequest>,
 ) -> Response {
     let pubkey = match extract_auth_pubkey(&headers, &method, &uri) {
-        Ok(pubkey) => pubkey,
+        Ok(p) => p,
         Err(_) => return unauthorized(),
     };
 
-    let plan = payload.plan.trim().to_lowercase();
-    if !matches!(plan.as_str(), "free" | "basic" | "growth") {
+    let new_plan = payload.plan.trim().to_lowercase();
+    if !matches!(new_plan.as_str(), "free" | "basic" | "growth") {
         return (
             StatusCode::BAD_REQUEST,
             Json(ApiError {
@@ -435,81 +421,57 @@ async fn update_tenant_relay_plan(
     let existing = match state.repo.get_relay(&id).await {
         Ok(Some(relay)) => relay,
         Ok(None) => return not_found(),
-        Err(_) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiError {
-                    error: "failed to load relay".into(),
-                }),
-            )
-                .into_response();
-        }
+        Err(_) => return internal_error("failed to load relay"),
     };
 
     if existing.tenant != pubkey {
         return forbidden();
     }
 
+    // No-op if plan unchanged
+    if existing.plan == new_plan {
+        return (StatusCode::OK, Json(existing)).into_response();
+    }
+
+    let now = now_ts();
+
+    // If switching to the first paid plan, reset billing anchor
+    if new_plan != "free"
+        && existing.plan == "free"
+        && let Ok(0) = state.repo.count_billable_relays(&pubkey).await
+    {
+        let _ = state.repo.reset_billing_anchor(&pubkey, now).await;
+    }
+
     let mut relay = Relay {
-        plan,
+        plan: new_plan.clone(),
         ..existing
     };
-
     if relay.plan == "free" {
         relay.config = Some(disable_paid_features(relay.config));
     }
 
-    if let Err(_) = state.repo.upsert_relay(&relay).await {
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiError {
-                error: "failed to update relay plan".into(),
-            }),
-        )
-            .into_response();
+    if state.repo.upsert_relay(&relay).await.is_err() {
+        return internal_error("failed to update relay plan");
     }
 
     if let Err(err) = state.provisioner.update_relay(&relay).await {
         tracing::error!(relay_id = relay.id, error = %err, "zooid patch failed");
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiError {
-                error: format!("failed to provision relay: {err}"),
-            }),
-        )
-            .into_response();
+        return internal_error(&format!("failed to provision relay: {err}"));
     }
 
     let _ = state.repo.update_relay_status(&relay.id, "active").await;
 
-    (StatusCode::OK, Json(relay)).into_response()
-}
-
-fn disable_paid_features(config: Option<RelayConfig>) -> RelayConfig {
-    let mut cfg = config.unwrap_or_else(empty_relay_config);
-    set_config_bool(&mut cfg.blossom, "enabled", false);
-    set_config_bool(&mut cfg.livekit, "enabled", false);
-    cfg
-}
-
-fn empty_relay_config() -> RelayConfig {
-    RelayConfig {
-        policy: None,
-        groups: None,
-        management: None,
-        blossom: None,
-        livekit: None,
-        push: None,
+    // Write a plan-change lifecycle event so billing can split by tier
+    if let Err(err) = state
+        .repo
+        .transition_relay(&relay.id, &pubkey, &new_plan, "active", "provisioned", now)
+        .await
+    {
+        tracing::warn!(relay_id = relay.id, error = %err, "plan-change lifecycle event failed");
     }
-}
 
-fn set_config_bool(section: &mut Option<Value>, key: &str, enabled: bool) {
-    let mut object = section
-        .take()
-        .and_then(|value| value.as_object().cloned())
-        .unwrap_or_default();
-    object.insert(key.to_string(), Value::Bool(enabled));
-    *section = Some(Value::Object(object));
+    (StatusCode::OK, Json(relay)).into_response()
 }
 
 async fn deactivate_tenant_relay(
@@ -520,26 +482,35 @@ async fn deactivate_tenant_relay(
     Path(id): Path<String>,
 ) -> Response {
     let pubkey = match extract_auth_pubkey(&headers, &method, &uri) {
-        Ok(pubkey) => pubkey,
+        Ok(p) => p,
         Err(_) => return unauthorized(),
     };
 
     let existing = match state.repo.get_relay(&id).await {
         Ok(Some(relay)) => relay,
         Ok(None) => return not_found(),
-        Err(_) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiError {
-                    error: "failed to load relay".into(),
-                }),
-            )
-                .into_response();
-        }
+        Err(_) => return internal_error("failed to load relay"),
     };
 
     if existing.tenant != pubkey {
         return forbidden();
+    }
+
+    let now = now_ts();
+    if state
+        .repo
+        .transition_relay(
+            &id,
+            &pubkey,
+            &existing.plan,
+            "deactivated",
+            "deactivated",
+            now,
+        )
+        .await
+        .is_err()
+    {
+        return internal_error("failed to deactivate relay");
     }
 
     let relay = Relay {
@@ -547,17 +518,6 @@ async fn deactivate_tenant_relay(
         config: None,
         ..existing
     };
-
-    if let Err(_) = state.repo.upsert_relay(&relay).await {
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiError {
-                error: "failed to deactivate relay".into(),
-            }),
-        )
-            .into_response();
-    }
-
     (StatusCode::OK, Json(relay)).into_response()
 }
 
@@ -568,25 +528,19 @@ async fn list_tenant_invoices(
     uri: Uri,
 ) -> Response {
     let pubkey = match extract_auth_pubkey(&headers, &method, &uri) {
-        Ok(pubkey) => pubkey,
+        Ok(p) => p,
         Err(_) => return unauthorized(),
     };
 
     match state.repo.list_invoices_by_tenant(&pubkey).await {
         Ok(invoices) => (StatusCode::OK, Json(invoices)).into_response(),
-        Err(_) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiError {
-                error: "failed to load invoices".into(),
-            }),
-        )
-            .into_response(),
+        Err(_) => internal_error("failed to load invoices"),
     }
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 struct UpdateTenantBillingRequest {
-    tenant_nwc_url: String,
+    nwc_url: String,
 }
 
 async fn update_tenant_billing(
@@ -597,53 +551,21 @@ async fn update_tenant_billing(
     Json(payload): Json<UpdateTenantBillingRequest>,
 ) -> Response {
     let pubkey = match extract_auth_pubkey(&headers, &method, &uri) {
-        Ok(pubkey) => pubkey,
+        Ok(p) => p,
         Err(_) => return unauthorized(),
     };
 
-    if let Err(_) = state
+    match state
         .repo
-        .update_tenant_nwc_url(&pubkey, &payload.tenant_nwc_url)
+        .update_tenant_nwc_url(&pubkey, &payload.nwc_url)
         .await
     {
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiError {
-                error: "failed to update billing".into(),
-            }),
-        )
-            .into_response();
-    }
-
-    (StatusCode::OK, Json(payload)).into_response()
-}
-
-async fn admin_list_tenants(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    method: Method,
-    uri: Uri,
-) -> Response {
-    let pubkey = match extract_auth_pubkey(&headers, &method, &uri) {
-        Ok(pubkey) => pubkey,
-        Err(_) => return unauthorized(),
-    };
-
-    if !state.admin_pubkeys.contains(&pubkey) {
-        return forbidden();
-    }
-
-    match state.repo.list_tenants().await {
-        Ok(tenants) => (StatusCode::OK, Json(tenants)).into_response(),
-        Err(_) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiError {
-                error: "failed to load tenants".into(),
-            }),
-        )
-            .into_response(),
+        Ok(()) => (StatusCode::OK, Json(payload)).into_response(),
+        Err(_) => internal_error("failed to update billing"),
     }
 }
+
+// ── admin routes ──────────────────────────────────────────────────────────────
 
 #[derive(Debug, Serialize)]
 struct AdminCheckResponse {
@@ -657,12 +579,30 @@ async fn admin_check(
     uri: Uri,
 ) -> Response {
     let pubkey = match extract_auth_pubkey(&headers, &method, &uri) {
-        Ok(pubkey) => pubkey,
+        Ok(p) => p,
         Err(_) => return unauthorized(),
     };
-
     let is_admin = state.admin_pubkeys.contains(&pubkey);
     (StatusCode::OK, Json(AdminCheckResponse { is_admin })).into_response()
+}
+
+async fn admin_list_tenants(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    method: Method,
+    uri: Uri,
+) -> Response {
+    let pubkey = match extract_auth_pubkey(&headers, &method, &uri) {
+        Ok(p) => p,
+        Err(_) => return unauthorized(),
+    };
+    if !state.admin_pubkeys.contains(&pubkey) {
+        return forbidden();
+    }
+    match state.repo.list_tenants().await {
+        Ok(tenants) => (StatusCode::OK, Json(tenants)).into_response(),
+        Err(_) => internal_error("failed to load tenants"),
+    }
 }
 
 async fn admin_get_tenant(
@@ -673,44 +613,26 @@ async fn admin_get_tenant(
     Path(pubkey): Path<String>,
 ) -> Response {
     let admin = match extract_auth_pubkey(&headers, &method, &uri) {
-        Ok(pubkey) => pubkey,
+        Ok(p) => p,
         Err(_) => return unauthorized(),
     };
-
     if !state.admin_pubkeys.contains(&admin) {
         return forbidden();
     }
 
     let tenant = match state.repo.get_tenant(&pubkey).await {
-        Ok(Some(tenant)) => tenant,
+        Ok(Some(t)) => t,
         Ok(None) => return not_found(),
-        Err(_) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiError {
-                    error: "failed to load tenant".into(),
-                }),
-            )
-                .into_response();
-        }
+        Err(_) => return internal_error("failed to load tenant"),
     };
-
     let relays = match state.repo.list_relays_by_tenant(&pubkey).await {
-        Ok(relays) => relays,
-        Err(_) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiError {
-                    error: "failed to load relays".into(),
-                }),
-            )
-                .into_response();
-        }
+        Ok(r) => r,
+        Err(_) => return internal_error("failed to load relays"),
     };
 
     #[derive(Serialize)]
     struct TenantDetail {
-        tenant: crate::models::Tenant,
+        tenant: Tenant,
         relays: Vec<Relay>,
     }
 
@@ -731,49 +653,34 @@ async fn admin_update_tenant_status(
     Json(payload): Json<UpdateTenantStatusRequest>,
 ) -> Response {
     let admin = match extract_auth_pubkey(&headers, &method, &uri) {
-        Ok(pubkey) => pubkey,
+        Ok(p) => p,
         Err(_) => return unauthorized(),
     };
-
     if !state.admin_pubkeys.contains(&admin) {
         return forbidden();
     }
 
     let tenant = match state.repo.get_tenant(&pubkey).await {
-        Ok(Some(tenant)) => tenant,
+        Ok(Some(t)) => t,
         Ok(None) => return not_found(),
-        Err(_) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiError {
-                    error: "failed to load tenant".into(),
-                }),
-            )
-                .into_response();
-        }
+        Err(_) => return internal_error("failed to load tenant"),
     };
 
-    if let Err(_) = state
+    match state
         .repo
         .update_tenant_status(&tenant.pubkey, &payload.status)
         .await
     {
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiError {
-                error: "failed to update tenant".into(),
+        Ok(()) => (
+            StatusCode::OK,
+            Json(Tenant {
+                status: payload.status,
+                ..tenant
             }),
         )
-            .into_response();
+            .into_response(),
+        Err(_) => internal_error("failed to update tenant"),
     }
-
-    let updated = NewTenant {
-        pubkey: tenant.pubkey,
-        status: payload.status,
-        tenant_nwc_url: tenant.tenant_nwc_url,
-    };
-
-    (StatusCode::OK, Json(updated)).into_response()
 }
 
 async fn admin_list_relays(
@@ -783,23 +690,15 @@ async fn admin_list_relays(
     uri: Uri,
 ) -> Response {
     let admin = match extract_auth_pubkey(&headers, &method, &uri) {
-        Ok(pubkey) => pubkey,
+        Ok(p) => p,
         Err(_) => return unauthorized(),
     };
-
     if !state.admin_pubkeys.contains(&admin) {
         return forbidden();
     }
-
     match state.repo.list_relays().await {
         Ok(relays) => (StatusCode::OK, Json(relays)).into_response(),
-        Err(_) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiError {
-                error: "failed to load relays".into(),
-            }),
-        )
-            .into_response(),
+        Err(_) => internal_error("failed to load relays"),
     }
 }
 
@@ -811,24 +710,16 @@ async fn admin_get_relay(
     Path(id): Path<String>,
 ) -> Response {
     let admin = match extract_auth_pubkey(&headers, &method, &uri) {
-        Ok(pubkey) => pubkey,
+        Ok(p) => p,
         Err(_) => return unauthorized(),
     };
-
     if !state.admin_pubkeys.contains(&admin) {
         return forbidden();
     }
-
     match state.repo.get_relay(&id).await {
         Ok(Some(relay)) => (StatusCode::OK, Json(relay)).into_response(),
         Ok(None) => not_found(),
-        Err(_) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiError {
-                error: "failed to load relay".into(),
-            }),
-        )
-            .into_response(),
+        Err(_) => internal_error("failed to load relay"),
     }
 }
 
@@ -841,10 +732,9 @@ async fn admin_update_relay(
     Json(payload): Json<UpdateRelayRequest>,
 ) -> Response {
     let admin = match extract_auth_pubkey(&headers, &method, &uri) {
-        Ok(pubkey) => pubkey,
+        Ok(p) => p,
         Err(_) => return unauthorized(),
     };
-
     if !state.admin_pubkeys.contains(&admin) {
         return forbidden();
     }
@@ -852,27 +742,16 @@ async fn admin_update_relay(
     let existing = match state.repo.get_relay(&id).await {
         Ok(Some(relay)) => relay,
         Ok(None) => return not_found(),
-        Err(_) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiError {
-                    error: "failed to load relay".into(),
-                }),
-            )
-                .into_response();
-        }
+        Err(_) => return internal_error("failed to load relay"),
     };
 
     let relay = Relay {
-        id: existing.id,
-        tenant: existing.tenant,
         name: payload.name,
-        subdomain: payload.subdomain.clone(),
+        subdomain: payload.subdomain,
         icon: payload.icon,
         description: payload.description,
-        plan: existing.plan,
-        status: existing.status,
         config: payload.config,
+        ..existing
     };
 
     if let Err(err) = state.repo.upsert_relay(&relay).await {
@@ -885,23 +764,12 @@ async fn admin_update_relay(
             )
                 .into_response();
         }
-
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiError {
-                error: "failed to update relay".into(),
-            }),
-        )
-            .into_response();
+        return internal_error("failed to update relay");
     }
 
     if let Err(err) = state.provisioner.update_relay(&relay).await {
         tracing::error!(relay_id = relay.id, error = %err, "zooid patch failed");
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiError { error: format!("failed to update relay config: {err}") }),
-        )
-            .into_response();
+        return internal_error(&format!("failed to update relay config: {err}"));
     }
 
     (StatusCode::OK, Json(relay)).into_response()
@@ -915,10 +783,9 @@ async fn admin_deactivate_relay(
     Path(id): Path<String>,
 ) -> Response {
     let admin = match extract_auth_pubkey(&headers, &method, &uri) {
-        Ok(pubkey) => pubkey,
+        Ok(p) => p,
         Err(_) => return unauthorized(),
     };
-
     if !state.admin_pubkeys.contains(&admin) {
         return forbidden();
     }
@@ -926,32 +793,55 @@ async fn admin_deactivate_relay(
     let existing = match state.repo.get_relay(&id).await {
         Ok(Some(relay)) => relay,
         Ok(None) => return not_found(),
-        Err(_) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiError {
-                    error: "failed to load relay".into(),
-                }),
-            )
-                .into_response();
-        }
+        Err(_) => return internal_error("failed to load relay"),
     };
+
+    let now = now_ts();
+    if state
+        .repo
+        .transition_relay(
+            &id,
+            &existing.tenant,
+            &existing.plan,
+            "deactivated",
+            "deactivated",
+            now,
+        )
+        .await
+        .is_err()
+    {
+        return internal_error("failed to deactivate relay");
+    }
 
     let relay = Relay {
         status: "deactivated".to_string(),
         config: None,
         ..existing
     };
-
-    if let Err(_) = state.repo.upsert_relay(&relay).await {
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiError {
-                error: "failed to deactivate relay".into(),
-            }),
-        )
-            .into_response();
-    }
-
     (StatusCode::OK, Json(relay)).into_response()
+}
+
+// ── relay config helpers ──────────────────────────────────────────────────────
+
+fn disable_paid_features(config: Option<RelayConfig>) -> RelayConfig {
+    let mut cfg = config.unwrap_or(RelayConfig {
+        policy: None,
+        groups: None,
+        management: None,
+        blossom: None,
+        livekit: None,
+        push: None,
+    });
+    set_config_bool(&mut cfg.blossom, "enabled", false);
+    set_config_bool(&mut cfg.livekit, "enabled", false);
+    cfg
+}
+
+fn set_config_bool(section: &mut Option<Value>, key: &str, enabled: bool) {
+    let mut obj = section
+        .take()
+        .and_then(|v| v.as_object().cloned())
+        .unwrap_or_default();
+    obj.insert(key.to_string(), Value::Bool(enabled));
+    *section = Some(Value::Object(obj));
 }

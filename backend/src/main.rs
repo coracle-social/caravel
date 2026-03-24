@@ -80,12 +80,11 @@ async fn main() -> Result<()> {
 }
 
 fn ensure_sqlite_dir(database_url: &str) -> Result<()> {
-    if let Some(path) = database_url.strip_prefix("sqlite://") {
-        if let Some(dir) = std::path::Path::new(path).parent() {
-            if !dir.as_os_str().is_empty() {
-                std::fs::create_dir_all(dir)?;
-            }
-        }
+    if let Some(path) = database_url.strip_prefix("sqlite://")
+        && let Some(dir) = std::path::Path::new(path).parent()
+        && !dir.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(dir)?;
     }
     Ok(())
 }

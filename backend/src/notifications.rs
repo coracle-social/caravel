@@ -63,10 +63,10 @@ impl Nip17Notifier {
 
     async fn fetch_dm_relays(&self, recipient: &str) -> Result<Vec<String>> {
         let mut cache = self.cache.lock().await;
-        if let Some(entry) = cache.get(recipient) {
-            if entry.fetched_at.elapsed() < Duration::from_secs(300) {
-                return Ok(entry.relays.clone());
-            }
+        if let Some(entry) = cache.get(recipient)
+            && entry.fetched_at.elapsed() < Duration::from_secs(300)
+        {
+            return Ok(entry.relays.clone());
         }
 
         let pubkey = PublicKey::parse(recipient)?;
@@ -79,12 +79,10 @@ impl Nip17Notifier {
         let mut relays = Vec::new();
         if let Some(event) = events.into_iter().max_by_key(|event| event.created_at) {
             for tag in event.tags.iter() {
-                if let Some(first) = tag.as_slice().get(0) {
-                    if first == "relay" {
-                        if let Some(value) = tag.as_slice().get(1) {
-                            relays.push(value.to_string());
-                        }
-                    }
+                if tag.as_slice().first().is_some_and(|t| t == "relay")
+                    && let Some(value) = tag.as_slice().get(1)
+                {
+                    relays.push(value.to_string());
                 }
             }
         }

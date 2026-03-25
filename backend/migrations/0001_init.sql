@@ -1,18 +1,18 @@
-CREATE TABLE IF NOT EXISTS activities (
+CREATE TABLE IF NOT EXISTS activity (
   id TEXT PRIMARY KEY,
   created_at INTEGER NOT NULL,
   activity_type TEXT NOT NULL,
   identifier TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS tenants (
+CREATE TABLE IF NOT EXISTS tenant (
   pubkey TEXT PRIMARY KEY,
   nwc_url TEXT NOT NULL DEFAULT '',
   created_at INTEGER NOT NULL,
   billing_anchor INTEGER NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS relays (
+CREATE TABLE IF NOT EXISTS relay (
   id TEXT PRIMARY KEY,
   tenant TEXT NOT NULL,
   schema TEXT NOT NULL,
@@ -30,10 +30,10 @@ CREATE TABLE IF NOT EXISTS relays (
   blossom_enabled INTEGER NOT NULL DEFAULT 0,
   livekit_enabled INTEGER NOT NULL DEFAULT 0,
   push_enabled INTEGER NOT NULL DEFAULT 1,
-  FOREIGN KEY (tenant) REFERENCES tenants(pubkey)
+  FOREIGN KEY (tenant) REFERENCES tenant(pubkey)
 );
 
-CREATE TABLE IF NOT EXISTS invoices (
+CREATE TABLE IF NOT EXISTS invoice (
   id TEXT PRIMARY KEY,
   tenant TEXT NOT NULL,
   status TEXT NOT NULL,
@@ -46,14 +46,14 @@ CREATE TABLE IF NOT EXISTS invoices (
   bolt11 TEXT NOT NULL,
   period_start INTEGER NOT NULL,
   period_end INTEGER NOT NULL,
-  FOREIGN KEY (tenant) REFERENCES tenants(pubkey)
+  FOREIGN KEY (tenant) REFERENCES tenant(pubkey)
 );
 
-CREATE TABLE IF NOT EXISTS invoice_items (
+CREATE TABLE IF NOT EXISTS invoice_item (
   id TEXT PRIMARY KEY,
   invoice TEXT NOT NULL,
   relay TEXT NOT NULL,
   sats INTEGER NOT NULL,
-  FOREIGN KEY (invoice) REFERENCES invoices(id),
-  FOREIGN KEY (relay) REFERENCES relays(id)
+  FOREIGN KEY (invoice) REFERENCES invoice(id),
+  FOREIGN KEY (relay) REFERENCES relay(id)
 );

@@ -43,7 +43,7 @@ impl Repo {
 
     async fn log_activity(&self, activity_type: &str, identifier: &str) -> Result<()> {
         sqlx::query(
-            "INSERT INTO activities (id, created_at, activity_type, identifier)
+            "INSERT INTO activity (id, created_at, activity_type, identifier)
              VALUES (?, strftime('%s','now'), ?, ?)",
         )
         .bind(uuid::Uuid::new_v4().to_string())
@@ -57,7 +57,7 @@ impl Repo {
     pub async fn list_tenants(&self) -> Result<Vec<Tenant>> {
         let rows = sqlx::query_as::<_, Tenant>(
             "SELECT pubkey, nwc_url, created_at, billing_anchor
-             FROM tenants
+             FROM tenant
              ORDER BY pubkey",
         )
         .fetch_all(&self.pool)
@@ -68,7 +68,7 @@ impl Repo {
     pub async fn get_tenant(&self, pubkey: &str) -> Result<Option<Tenant>> {
         let row = sqlx::query_as::<_, Tenant>(
             "SELECT pubkey, nwc_url, created_at, billing_anchor
-             FROM tenants
+             FROM tenant
              WHERE pubkey = ?",
         )
         .bind(pubkey)
@@ -81,7 +81,7 @@ impl Repo {
         let mut tx = self.pool.begin().await?;
 
         sqlx::query(
-            "INSERT INTO tenants (pubkey, nwc_url, created_at, billing_anchor)
+            "INSERT INTO tenant (pubkey, nwc_url, created_at, billing_anchor)
              VALUES (?, ?, ?, ?)",
         )
         .bind(&tenant.pubkey)
@@ -92,7 +92,7 @@ impl Repo {
         .await?;
 
         sqlx::query(
-            "INSERT INTO activities (id, created_at, activity_type, identifier)
+            "INSERT INTO activity (id, created_at, activity_type, identifier)
              VALUES (?, strftime('%s','now'), 'tenant_created', ?)",
         )
         .bind(uuid::Uuid::new_v4().to_string())
@@ -107,14 +107,14 @@ impl Repo {
     pub async fn update_tenant_billing_anchor(&self, pubkey: &str, billing_anchor: i64) -> Result<()> {
         let mut tx = self.pool.begin().await?;
 
-        sqlx::query("UPDATE tenants SET billing_anchor = ? WHERE pubkey = ?")
+        sqlx::query("UPDATE tenant SET billing_anchor = ? WHERE pubkey = ?")
             .bind(billing_anchor)
             .bind(pubkey)
             .execute(&mut *tx)
             .await?;
 
         sqlx::query(
-            "INSERT INTO activities (id, created_at, activity_type, identifier)
+            "INSERT INTO activity (id, created_at, activity_type, identifier)
              VALUES (?, strftime('%s','now'), 'tenant_billing_anchor_updated', ?)",
         )
         .bind(uuid::Uuid::new_v4().to_string())
@@ -129,14 +129,14 @@ impl Repo {
     pub async fn update_tenant_nwc_url(&self, pubkey: &str, nwc_url: &str) -> Result<()> {
         let mut tx = self.pool.begin().await?;
 
-        sqlx::query("UPDATE tenants SET nwc_url = ? WHERE pubkey = ?")
+        sqlx::query("UPDATE tenant SET nwc_url = ? WHERE pubkey = ?")
             .bind(nwc_url)
             .bind(pubkey)
             .execute(&mut *tx)
             .await?;
 
         sqlx::query(
-            "INSERT INTO activities (id, created_at, activity_type, identifier)
+            "INSERT INTO activity (id, created_at, activity_type, identifier)
              VALUES (?, strftime('%s','now'), 'tenant_billing_updated', ?)",
         )
         .bind(uuid::Uuid::new_v4().to_string())
@@ -156,7 +156,7 @@ impl Repo {
                         policy_public_join, policy_strip_signatures,
                         groups_enabled, management_enabled, blossom_enabled,
                         livekit_enabled, push_enabled
-                 FROM relays
+                 FROM relay
                  WHERE tenant = ?
                  ORDER BY id",
             )
@@ -170,7 +170,7 @@ impl Repo {
                         policy_public_join, policy_strip_signatures,
                         groups_enabled, management_enabled, blossom_enabled,
                         livekit_enabled, push_enabled
-                 FROM relays
+                 FROM relay
                  ORDER BY id",
             )
             .fetch_all(&self.pool)
@@ -186,7 +186,7 @@ impl Repo {
                     policy_public_join, policy_strip_signatures,
                     groups_enabled, management_enabled, blossom_enabled,
                     livekit_enabled, push_enabled
-             FROM relays
+             FROM relay
              WHERE id = ?",
         )
         .bind(id)
@@ -199,7 +199,7 @@ impl Repo {
         let mut tx = self.pool.begin().await?;
 
         sqlx::query(
-            "INSERT INTO relays (
+            "INSERT INTO relay (
                 id, tenant, schema, subdomain, plan, status, sync_error,
                 info_name, info_icon, info_description,
                 policy_public_join, policy_strip_signatures,
@@ -227,7 +227,7 @@ impl Repo {
         .await?;
 
         sqlx::query(
-            "INSERT INTO activities (id, created_at, activity_type, identifier)
+            "INSERT INTO activity (id, created_at, activity_type, identifier)
              VALUES (?, strftime('%s','now'), 'relay_created', ?)",
         )
         .bind(uuid::Uuid::new_v4().to_string())
@@ -243,7 +243,7 @@ impl Repo {
         let mut tx = self.pool.begin().await?;
 
         sqlx::query(
-            "UPDATE relays
+            "UPDATE relay
              SET tenant = ?, schema = ?, subdomain = ?, plan = ?, status = ?, sync_error = ?,
                  info_name = ?, info_icon = ?, info_description = ?,
                  policy_public_join = ?, policy_strip_signatures = ?,
@@ -272,7 +272,7 @@ impl Repo {
         .await?;
 
         sqlx::query(
-            "INSERT INTO activities (id, created_at, activity_type, identifier)
+            "INSERT INTO activity (id, created_at, activity_type, identifier)
              VALUES (?, strftime('%s','now'), 'relay_updated', ?)",
         )
         .bind(uuid::Uuid::new_v4().to_string())
@@ -287,13 +287,13 @@ impl Repo {
     pub async fn deactivate_relay(&self, relay: &Relay) -> Result<()> {
         let mut tx = self.pool.begin().await?;
 
-        sqlx::query("UPDATE relays SET status = 'inactive' WHERE id = ?")
+        sqlx::query("UPDATE relay SET status = 'inactive' WHERE id = ?")
             .bind(&relay.id)
             .execute(&mut *tx)
             .await?;
 
         sqlx::query(
-            "INSERT INTO activities (id, created_at, activity_type, identifier)
+            "INSERT INTO activity (id, created_at, activity_type, identifier)
              VALUES (?, strftime('%s','now'), 'relay_deactivated', ?)",
         )
         .bind(uuid::Uuid::new_v4().to_string())
@@ -308,13 +308,13 @@ impl Repo {
     pub async fn activate_relay(&self, relay: &Relay) -> Result<()> {
         let mut tx = self.pool.begin().await?;
 
-        sqlx::query("UPDATE relays SET status = 'active' WHERE id = ?")
+        sqlx::query("UPDATE relay SET status = 'active' WHERE id = ?")
             .bind(&relay.id)
             .execute(&mut *tx)
             .await?;
 
         sqlx::query(
-            "INSERT INTO activities (id, created_at, activity_type, identifier)
+            "INSERT INTO activity (id, created_at, activity_type, identifier)
              VALUES (?, strftime('%s','now'), 'relay_activated', ?)",
         )
         .bind(uuid::Uuid::new_v4().to_string())
@@ -329,14 +329,14 @@ impl Repo {
     pub async fn fail_relay_sync(&self, relay: &Relay, sync_error: String) -> Result<()> {
         let mut tx = self.pool.begin().await?;
 
-        sqlx::query("UPDATE relays SET status = 'inactive', sync_error = ? WHERE id = ?")
+        sqlx::query("UPDATE relay SET status = 'inactive', sync_error = ? WHERE id = ?")
             .bind(&sync_error)
             .bind(&relay.id)
             .execute(&mut *tx)
             .await?;
 
         sqlx::query(
-            "INSERT INTO activities (id, created_at, activity_type, identifier)
+            "INSERT INTO activity (id, created_at, activity_type, identifier)
              VALUES (?, strftime('%s','now'), 'relay_sync_failed', ?)",
         )
         .bind(uuid::Uuid::new_v4().to_string())
@@ -352,7 +352,7 @@ impl Repo {
         let mut tx = self.pool.begin().await?;
 
         sqlx::query(
-            "INSERT INTO invoices (
+            "INSERT INTO invoice (
                 id, tenant, status, created_at, attempted_at, error, closed_at,
                 sent_at, paid_at, bolt11, period_start, period_end
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -373,7 +373,7 @@ impl Repo {
         .await?;
 
         for item in invoice_items {
-            sqlx::query("INSERT INTO invoice_items (id, invoice, relay, sats) VALUES (?, ?, ?, ?)")
+            sqlx::query("INSERT INTO invoice_item (id, invoice, relay, sats) VALUES (?, ?, ?, ?)")
                 .bind(&item.id)
                 .bind(&item.invoice)
                 .bind(&item.relay)
@@ -383,7 +383,7 @@ impl Repo {
         }
 
         sqlx::query(
-            "INSERT INTO activities (id, created_at, activity_type, identifier)
+            "INSERT INTO activity (id, created_at, activity_type, identifier)
              VALUES (?, strftime('%s','now'), 'invoice_created', ?)",
         )
         .bind(uuid::Uuid::new_v4().to_string())
@@ -400,7 +400,7 @@ impl Repo {
             sqlx::query_as::<_, Invoice>(
                 "SELECT id, tenant, status, created_at, attempted_at, error, closed_at,
                         sent_at, paid_at, bolt11, period_start, period_end
-                 FROM invoices
+                 FROM invoice
                  WHERE tenant = ?
                  ORDER BY created_at DESC",
             )
@@ -411,7 +411,7 @@ impl Repo {
             sqlx::query_as::<_, Invoice>(
                 "SELECT id, tenant, status, created_at, attempted_at, error, closed_at,
                         sent_at, paid_at, bolt11, period_start, period_end
-                 FROM invoices
+                 FROM invoice
                  ORDER BY created_at DESC",
             )
             .fetch_all(&self.pool)
@@ -424,7 +424,7 @@ impl Repo {
         let mut tx = self.pool.begin().await?;
 
         sqlx::query(
-            "UPDATE invoices
+            "UPDATE invoice
              SET status = 'paid', paid_at = strftime('%s','now'), error = ''
              WHERE id = ?",
         )
@@ -433,7 +433,7 @@ impl Repo {
         .await?;
 
         sqlx::query(
-            "INSERT INTO activities (id, created_at, activity_type, identifier)
+            "INSERT INTO activity (id, created_at, activity_type, identifier)
              VALUES (?, strftime('%s','now'), 'invoice_paid', ?)",
         )
         .bind(uuid::Uuid::new_v4().to_string())
@@ -449,7 +449,7 @@ impl Repo {
         let mut tx = self.pool.begin().await?;
 
         sqlx::query(
-            "UPDATE invoices
+            "UPDATE invoice
              SET attempted_at = strftime('%s','now'), error = COALESCE(?, error)
              WHERE id = ?",
         )
@@ -459,7 +459,7 @@ impl Repo {
         .await?;
 
         sqlx::query(
-            "INSERT INTO activities (id, created_at, activity_type, identifier)
+            "INSERT INTO activity (id, created_at, activity_type, identifier)
              VALUES (?, strftime('%s','now'), 'invoice_attempted', ?)",
         )
         .bind(uuid::Uuid::new_v4().to_string())
@@ -474,13 +474,13 @@ impl Repo {
     pub async fn mark_invoice_sent(&self, invoice_id: &str) -> Result<()> {
         let mut tx = self.pool.begin().await?;
 
-        sqlx::query("UPDATE invoices SET sent_at = strftime('%s','now') WHERE id = ?")
+        sqlx::query("UPDATE invoice SET sent_at = strftime('%s','now') WHERE id = ?")
             .bind(invoice_id)
             .execute(&mut *tx)
             .await?;
 
         sqlx::query(
-            "INSERT INTO activities (id, created_at, activity_type, identifier)
+            "INSERT INTO activity (id, created_at, activity_type, identifier)
              VALUES (?, strftime('%s','now'), 'invoice_sent', ?)",
         )
         .bind(uuid::Uuid::new_v4().to_string())
@@ -496,7 +496,7 @@ impl Repo {
         let mut tx = self.pool.begin().await?;
 
         sqlx::query(
-            "UPDATE invoices
+            "UPDATE invoice
              SET status = 'closed', closed_at = strftime('%s','now')
              WHERE id = ?",
         )
@@ -505,7 +505,7 @@ impl Repo {
         .await?;
 
         sqlx::query(
-            "INSERT INTO activities (id, created_at, activity_type, identifier)
+            "INSERT INTO activity (id, created_at, activity_type, identifier)
              VALUES (?, strftime('%s','now'), 'invoice_closed', ?)",
         )
         .bind(uuid::Uuid::new_v4().to_string())
@@ -521,17 +521,17 @@ impl Repo {
         let rows = if let Some(tenant_pubkey) = tenant {
             sqlx::query_as::<_, Activity>(
                 "SELECT a.id, a.created_at, a.activity_type, a.identifier
-                 FROM activities a
+                 FROM activity a
                  WHERE a.created_at > ?
                    AND (
                      a.activity_type IN ('tenant_created', 'tenant_billing_anchor_updated')
                      AND a.identifier = ?
                      OR EXISTS (
-                       SELECT 1 FROM relays r
+                        SELECT 1 FROM relay r
                        WHERE r.id = a.identifier AND r.tenant = ?
                      )
                      OR EXISTS (
-                       SELECT 1 FROM invoices i
+                        SELECT 1 FROM invoice i
                        WHERE i.id = a.identifier AND i.tenant = ?
                      )
                    )
@@ -546,7 +546,7 @@ impl Repo {
         } else {
             sqlx::query_as::<_, Activity>(
                 "SELECT id, created_at, activity_type, identifier
-                 FROM activities
+                 FROM activity
                  WHERE created_at > ?
                  ORDER BY created_at, id",
             )
@@ -560,7 +560,7 @@ impl Repo {
     pub async fn get_invoice_items(&self, invoice_id: &str) -> Result<Vec<InvoiceItem>> {
         let rows = sqlx::query_as::<_, InvoiceItem>(
             "SELECT id, invoice, relay, sats
-             FROM invoice_items
+             FROM invoice_item
              WHERE invoice = ?",
         )
         .bind(invoice_id)
@@ -571,7 +571,7 @@ impl Repo {
 
     pub async fn total_active_paid_relays_for_tenant(&self, tenant: &str) -> Result<i64> {
         let count = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM relays
+            "SELECT COUNT(*) FROM relay
              WHERE tenant = ? AND status = 'active' AND plan != 'free'",
         )
         .bind(tenant)
@@ -582,7 +582,7 @@ impl Repo {
 
     pub async fn total_pending_invoices_for_tenant(&self, tenant: &str) -> Result<i64> {
         let count = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM invoices
+            "SELECT COUNT(*) FROM invoice
              WHERE tenant = ? AND status = 'pending'",
         )
         .bind(tenant)

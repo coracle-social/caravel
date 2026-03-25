@@ -10,6 +10,7 @@ Notes:
 
 - All public write methods should be run in a transaction so they're atomic
 - All writes should be accompanied by an activity log entry of `(activity_type, identifier)`
+- Database table names are singular: `activity`, `tenant`, `relay`, `invoice`, `invoice_item`
 
 ## `pub fn new() -> Self`
 
@@ -75,7 +76,7 @@ Notes:
 
 ## `pub fn create_invoice(&self, invoice: &Invoice, invoice_items: [&InvoiceItem]) -> Result<()>`
 
-- Saves invoice and invoice_items
+- Saves an `invoice` row and related `invoice_item` rows
 - Logs activity as `(invoice_created, invoice_id)`
 
 ## `pub fn list_invoices(tenant_id: Option<&str>) -> Result<Vec<Invoice>>`

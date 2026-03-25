@@ -4,19 +4,22 @@ Repo is a wrapper around a sqlite pool which implements methods related to datab
 
 Members:
 
-- `database_url: String` - the location of the sqlite database, from `DATABASE_URL`
 - `pool: sqlx::SqlitePool` - a sqlite connection pool
 
 Notes:
 
-- All public methods should be run in a transaction so they're atomic
+- All public write methods should be run in a transaction so they're atomic
 - All writes should be accompanied by an activity log entry of `(activity_type, identifier)`
 
 ## `pub fn new() -> Self`
 
-- Reads environment and populates members
-- Ensures that any directories referred to in `self.database_url` exist
+- Reads `DATABASE_URL` from environment
+- Ensures that any directories referred to in `DATABASE_URL` exist
 - Initializes its sqlx `pool`
+
+## `pub fn migrate(&self) -> Result<()>`
+
+- Runs migrations found in the `migrations` directory.
 
 ## `pub fn list_tenants(&self) -> Result<Vec<Tenant>>`
 

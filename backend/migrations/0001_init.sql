@@ -1,92 +1,59 @@
+CREATE TABLE IF NOT EXISTS activities (
+  id TEXT PRIMARY KEY,
+  created_at INTEGER NOT NULL,
+  activity_type TEXT NOT NULL,
+  identifier TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS tenants (
   pubkey TEXT PRIMARY KEY,
-  status TEXT NOT NULL,
-  nwc_url TEXT NOT NULL DEFAULT "",
-  created_at INTEGER NOT NULL DEFAULT (UNIXEPOCH()),
-  billing_anchor_at INTEGER NOT NULL DEFAULT (UNIXEPOCH()),
-  stripe_customer_id TEXT NOT NULL DEFAULT '',
-  stripe_subscription_id TEXT NOT NULL DEFAULT ''
+  nwc_url TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL,
+  billing_anchor INTEGER NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS relays (
   id TEXT PRIMARY KEY,
   tenant TEXT NOT NULL,
-  name TEXT NOT NULL,
+  schema TEXT NOT NULL,
   subdomain TEXT NOT NULL UNIQUE,
-  description TEXT NOT NULL,
   plan TEXT NOT NULL,
   status TEXT NOT NULL,
-  icon TEXT NOT NULL DEFAULT "",
-  config TEXT,
+  sync_error TEXT NOT NULL DEFAULT '',
+  info_name TEXT NOT NULL DEFAULT '',
+  info_icon TEXT NOT NULL DEFAULT '',
+  info_description TEXT NOT NULL DEFAULT '',
+  policy_public_join INTEGER NOT NULL DEFAULT 0,
+  policy_strip_signatures INTEGER NOT NULL DEFAULT 0,
+  groups_enabled INTEGER NOT NULL DEFAULT 1,
+  management_enabled INTEGER NOT NULL DEFAULT 1,
+  blossom_enabled INTEGER NOT NULL DEFAULT 0,
+  livekit_enabled INTEGER NOT NULL DEFAULT 0,
+  push_enabled INTEGER NOT NULL DEFAULT 1,
   FOREIGN KEY (tenant) REFERENCES tenants(pubkey)
 );
 
 CREATE TABLE IF NOT EXISTS invoices (
   id TEXT PRIMARY KEY,
   tenant TEXT NOT NULL,
-  amount INTEGER NOT NULL,
   status TEXT NOT NULL,
   created_at INTEGER NOT NULL,
+  attempted_at INTEGER NOT NULL DEFAULT 0,
+  error TEXT NOT NULL DEFAULT '',
+  closed_at INTEGER NOT NULL DEFAULT 0,
+  sent_at INTEGER NOT NULL DEFAULT 0,
+  paid_at INTEGER NOT NULL DEFAULT 0,
   bolt11 TEXT NOT NULL,
   period_start INTEGER NOT NULL,
   period_end INTEGER NOT NULL,
   FOREIGN KEY (tenant) REFERENCES tenants(pubkey)
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS invoices_tenant_period_unique
-  ON invoices (tenant, period_start, period_end);
-
 CREATE TABLE IF NOT EXISTS invoice_items (
   id TEXT PRIMARY KEY,
   invoice TEXT NOT NULL,
   relay TEXT NOT NULL,
-  amount INTEGER NOT NULL,
-  period_start INTEGER NOT NULL,
-  period_end INTEGER NOT NULL,
+  sats INTEGER NOT NULL,
   FOREIGN KEY (invoice) REFERENCES invoices(id),
   FOREIGN KEY (relay) REFERENCES relays(id)
 );
-
-CREATE TABLE IF NOT EXISTS plans (
-  id TEXT PRIMARY KEY,
-  sats_per_month INTEGER NOT NULL
-);
-
-INSERT OR IGNORE INTO plans (id, sats_per_month) VALUES
-  ('free',   0),
-  ('basic',  10000),
-  ('growth', 50000);
-
-CREATE TABLE IF NOT EXISTS relay_lifecycle_events (
-  id TEXT PRIMARY KEY,
-  relay TEXT NOT NULL,
-  tenant TEXT NOT NULL,
-  event_type TEXT NOT NULL,
-  plan TEXT NOT NULL,
-  created_at INTEGER NOT NULL,
-  FOREIGN KEY (relay) REFERENCES relays(id),
-  FOREIGN KEY (tenant) REFERENCES tenants(pubkey)
-);
-
-CREATE INDEX IF NOT EXISTS relay_lifecycle_events_relay_idx
-  ON relay_lifecycle_events (relay, created_at);
-
-CREATE INDEX IF NOT EXISTS relay_lifecycle_events_tenant_idx
-  ON relay_lifecycle_events (tenant, created_at);
-
-CREATE TABLE IF NOT EXISTS invoice_attempts (
-  id TEXT PRIMARY KEY,
-  invoice TEXT NOT NULL,
-  run_id TEXT NOT NULL,
-  method TEXT NOT NULL,
-  outcome TEXT NOT NULL,
-  error TEXT NOT NULL DEFAULT '',
-  created_at INTEGER NOT NULL,
-  FOREIGN KEY (invoice) REFERENCES invoices(id)
-);
-
-CREATE INDEX IF NOT EXISTS invoice_attempts_invoice_idx
-  ON invoice_attempts (invoice, created_at);
-
-CREATE INDEX IF NOT EXISTS invoice_attempts_run_id_idx
-  ON invoice_attempts (run_id);

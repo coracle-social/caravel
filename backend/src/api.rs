@@ -1,341 +1,494 @@
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
+use base64::Engine;
 use axum::{
     Json, Router,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{HeaderMap, Method, StatusCode, Uri},
     response::{IntoResponse, Response},
     routing::{get, post, put},
 };
+use nostr_sdk::{Event, JsonUtil, Kind};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use tower_http::cors::{AllowOrigin, CorsLayer};
 
-use crate::auth::verify_nip98;
-use crate::billing::now_ts;
-use crate::models::{Relay, RelayConfig, Tenant};
-use crate::provisioning::Provisioner;
+use crate::models::{Relay, Tenant};
 use crate::repo::Repo;
 
 #[derive(Clone)]
-pub struct AppState {
-    pub repo: Repo,
-    pub admin_pubkeys: Arc<Vec<String>>,
-    pub provisioner: Provisioner,
+pub struct Api {
+    host: String,
+    port: u16,
+    admins: Vec<String>,
+    origins: Vec<String>,
+    repo: Repo,
 }
 
-pub fn router(state: AppState) -> Router {
-    let tenant_routes = Router::new()
-        .route("/tenant", get(get_tenant))
-        .route(
-            "/tenant/relays",
-            get(list_tenant_relays).post(create_tenant_relay),
-        )
-        .route(
-            "/tenant/relays/:id",
-            get(get_tenant_relay).put(update_tenant_relay),
-        )
-        .route("/tenant/relays/:id/plan", put(update_tenant_relay_plan))
-        .route(
-            "/tenant/relays/:id/deactivate",
-            post(deactivate_tenant_relay),
-        )
-        .route("/tenant/invoices", get(list_tenant_invoices))
-        .route("/tenant/billing", put(update_tenant_billing));
-
-    let admin_routes = Router::new()
-        .route("/admin/check", get(admin_check))
-        .route("/admin/tenants", get(admin_list_tenants))
-        .route(
-            "/admin/tenants/:pubkey",
-            get(admin_get_tenant).put(admin_update_tenant_status),
-        )
-        .route("/admin/relays", get(admin_list_relays))
-        .route(
-            "/admin/relays/:id",
-            get(admin_get_relay).put(admin_update_relay),
-        )
-        .route("/admin/relays/:id/deactivate", post(admin_deactivate_relay));
-
-    Router::new()
-        .merge(tenant_routes)
-        .merge(admin_routes)
-        .with_state(state)
+#[derive(Clone)]
+struct AppState {
+    api: Arc<Api>,
 }
 
-// ── error helpers ─────────────────────────────────────────────────────────────
+#[derive(Serialize)]
+struct OkResponse<T: Serialize> {
+    data: T,
+    code: &'static str,
+}
 
-#[derive(Debug, Serialize)]
-struct ApiError {
+#[derive(Serialize)]
+struct ErrorResponse {
     error: String,
+    code: String,
 }
 
-impl IntoResponse for ApiError {
-    fn into_response(self) -> Response {
-        (StatusCode::BAD_REQUEST, Json(self)).into_response()
+impl Api {
+    pub fn new(repo: Repo) -> Self {
+        let host = std::env::var("HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
+        let port = std::env::var("PORT")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(3000);
+        let admins = std::env::var("ADMINS")
+            .unwrap_or_default()
+            .split(',')
+            .map(|v| v.trim().to_lowercase())
+            .filter(|v| !v.is_empty())
+            .collect();
+        let origins = std::env::var("ALLOW_ORIGINS")
+            .unwrap_or_default()
+            .split(',')
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+            .collect();
+        Self {
+            host,
+            port,
+            admins,
+            origins,
+            repo,
+        }
+    }
+
+    pub async fn serve(&self) -> Result<()> {
+        let state = AppState {
+            api: Arc::new(self.clone()),
+        };
+
+        let app = Router::new()
+            .route("/tenants", get(list_tenants).post(create_tenant))
+            .route("/tenants/:pubkey", get(get_tenant))
+            .route("/tenants/:pubkey/billing", put(update_tenant_billing))
+            .route("/relays", get(list_relays).post(create_relay))
+            .route("/relays/:id", get(get_relay).put(update_relay))
+            .route("/relays/:id/deactivate", post(deactivate_relay))
+            .route("/invoices", get(list_invoices))
+            .with_state(state)
+            .layer(self.cors_layer());
+
+        let listener = tokio::net::TcpListener::bind(format!("{}:{}", self.host, self.port)).await?;
+        axum::serve(listener, app).await?;
+        Ok(())
+    }
+
+    fn cors_layer(&self) -> CorsLayer {
+        if self.origins.is_empty() {
+            CorsLayer::permissive()
+        } else {
+            let origins = self
+                .origins
+                .iter()
+                .filter_map(|o| o.parse::<axum::http::HeaderValue>().ok())
+                .collect::<Vec<_>>();
+            CorsLayer::new().allow_origin(AllowOrigin::list(origins))
+        }
+    }
+
+    fn is_admin(&self, pubkey: &str) -> bool {
+        self.admins.iter().any(|a| a == pubkey)
+    }
+
+    fn is_tenant(&self, authorized_pubkey: &str, tenant_pubkey: &str) -> bool {
+        authorized_pubkey == tenant_pubkey
     }
 }
 
-fn unauthorized() -> Response {
+fn ok<T: Serialize>(status: StatusCode, data: T) -> Response {
+    (status, Json(OkResponse { data, code: "ok" })).into_response()
+}
+
+fn err(status: StatusCode, code: &str, message: &str) -> Response {
     (
-        StatusCode::UNAUTHORIZED,
-        Json(ApiError {
-            error: "unauthorized".into(),
+        status,
+        Json(ErrorResponse {
+            error: message.to_string(),
+            code: code.to_string(),
         }),
     )
         .into_response()
 }
 
-fn forbidden() -> Response {
-    (
-        StatusCode::FORBIDDEN,
-        Json(ApiError {
-            error: "forbidden".into(),
-        }),
-    )
-        .into_response()
+fn now_ts() -> i64 {
+    chrono::Utc::now().timestamp()
 }
 
-fn not_found() -> Response {
-    (
-        StatusCode::NOT_FOUND,
-        Json(ApiError {
-            error: "not found".into(),
-        }),
-    )
-        .into_response()
+fn parse_bool_default(value: i64, default: i64) -> i64 {
+    if value == 0 || value == 1 {
+        value
+    } else {
+        default
+    }
 }
 
-fn internal_error(msg: &str) -> Response {
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(ApiError {
-            error: msg.to_string(),
-        }),
-    )
-        .into_response()
+fn prepare_relay(mut relay: Relay) -> anyhow::Result<Relay> {
+    if !relay
+        .subdomain
+        .chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+    {
+        return Err(anyhow!("invalid-subdomain"));
+    }
+
+    if relay.plan == "free" && relay.blossom_enabled == 1 {
+        return Err(anyhow!("premium-feature"));
+    }
+    if relay.plan == "free" && relay.livekit_enabled == 1 {
+        return Err(anyhow!("premium-feature"));
+    }
+
+    if relay.schema.is_empty() {
+        relay.schema = format!("{}_{}", relay.subdomain.replace('-', "_"), relay.id);
+    }
+    if relay.status.is_empty() {
+        relay.status = "new".to_string();
+    }
+    relay.sync_error = relay.sync_error;
+    relay.policy_public_join = parse_bool_default(relay.policy_public_join, 0);
+    relay.policy_strip_signatures = parse_bool_default(relay.policy_strip_signatures, 0);
+    relay.groups_enabled = parse_bool_default(relay.groups_enabled, 1);
+    relay.management_enabled = parse_bool_default(relay.management_enabled, 1);
+    relay.blossom_enabled = parse_bool_default(relay.blossom_enabled, if relay.plan == "free" { 0 } else { 1 });
+    relay.livekit_enabled = parse_bool_default(relay.livekit_enabled, if relay.plan == "free" { 0 } else { 1 });
+    relay.push_enabled = parse_bool_default(relay.push_enabled, 1);
+
+    Ok(relay)
 }
 
-fn is_unique_subdomain_violation(err: &anyhow::Error) -> bool {
-    let Some(sqlx_err) = err.downcast_ref::<sqlx::Error>() else {
-        return false;
-    };
+fn map_unique_error(err: &anyhow::Error) -> Option<&'static str> {
+    let sqlx_err = err.downcast_ref::<sqlx::Error>()?;
     let sqlx::Error::Database(db_err) = sqlx_err else {
-        return false;
+        return None;
     };
-    db_err.message().contains("relays.subdomain")
-        || db_err.message().contains("relays_subdomain_unique")
+    if db_err.message().contains("pubkey") {
+        return Some("pubkey-exists");
+    }
+    if db_err.message().contains("subdomain") {
+        return Some("subdomain-exists");
+    }
+    None
 }
 
-fn extract_auth_pubkey(headers: &HeaderMap, method: &Method, uri: &Uri) -> Result<String> {
-    let auth_header = headers
+fn auth_fail_response(e: anyhow::Error) -> Response {
+    err(StatusCode::UNAUTHORIZED, "unauthorized", &e.to_string())
+}
+
+fn extract_auth_pubkey(headers: &HeaderMap, method: &Method, _uri: &Uri, host: &str) -> Result<String> {
+    let auth = headers
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .ok_or_else(|| anyhow!("missing authorization header"))?;
+    if !auth.starts_with("Nostr ") {
+        return Err(anyhow!("authorization must use Nostr scheme"));
+    }
 
-    let host = headers
-        .get(axum::http::header::HOST)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or_default();
+    let (_, b64) = auth
+        .split_once(' ')
+        .ok_or_else(|| anyhow!("malformed authorization header"))?;
+    let bytes = base64::engine::general_purpose::STANDARD.decode(b64)?;
+    let json = String::from_utf8(bytes)?;
+    let event = Event::from_json(json)?;
 
-    let scheme = headers
-        .get("x-forwarded-proto")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("http");
+    if event.kind != Kind::HttpAuth {
+        return Err(anyhow!("invalid nip98 kind"));
+    }
+    event.verify()?;
 
-    let path = uri
-        .path_and_query()
-        .map(|v| v.as_str())
-        .unwrap_or(uri.path());
-    let url = format!("{scheme}://{host}{path}");
-    let pubkey = verify_nip98(auth_header, &url, method.as_str())?;
-    Ok(pubkey.to_hex())
+    let expected_host = host;
+    let want_m = method.as_str();
+
+    let mut got_u = None::<String>;
+    let mut got_m = None::<String>;
+    for tag in event.tags.iter() {
+        let values = tag.as_slice();
+        if values.len() >= 2 {
+            if values[0] == "u" {
+                got_u = Some(values[1].to_string());
+            } else if values[0] == "method" {
+                got_m = Some(values[1].to_string());
+            }
+        }
+    }
+
+    let Some(got_u) = got_u else {
+        return Err(anyhow!("missing u tag"));
+    };
+    let Some(got_m) = got_m else {
+        return Err(anyhow!("missing method tag"));
+    };
+
+    if !expected_host.is_empty() && !got_u.contains(expected_host) {
+        return Err(anyhow!("authorization host mismatch"));
+    }
+    if got_m != want_m {
+        return Err(anyhow!("authorization method mismatch"));
+    }
+
+    Ok(event.pubkey.to_hex())
 }
 
-fn new_tenant(pubkey: &str) -> Tenant {
-    let now = now_ts();
-    Tenant {
-        pubkey: pubkey.to_string(),
-        status: "active".to_string(),
-        nwc_url: String::new(),
-        created_at: now,
-        billing_anchor_at: now,
-        stripe_customer_id: String::new(),
-        stripe_subscription_id: String::new(),
+#[derive(Deserialize)]
+struct TenantParam {
+    tenant: Option<String>,
+}
+
+#[derive(Deserialize, Serialize)]
+struct UpdateTenantBillingRequest {
+    nwc_url: String,
+}
+
+#[derive(Deserialize)]
+struct CreateRelayRequest {
+    tenant: String,
+    subdomain: String,
+    plan: String,
+    info_name: Option<String>,
+    info_icon: Option<String>,
+    info_description: Option<String>,
+    policy_public_join: Option<i64>,
+    policy_strip_signatures: Option<i64>,
+    groups_enabled: Option<i64>,
+    management_enabled: Option<i64>,
+    blossom_enabled: Option<i64>,
+    livekit_enabled: Option<i64>,
+    push_enabled: Option<i64>,
+}
+
+#[derive(Deserialize)]
+struct UpdateRelayRequest {
+    subdomain: Option<String>,
+    plan: Option<String>,
+    info_name: Option<String>,
+    info_icon: Option<String>,
+    info_description: Option<String>,
+    policy_public_join: Option<i64>,
+    policy_strip_signatures: Option<i64>,
+    groups_enabled: Option<i64>,
+    management_enabled: Option<i64>,
+    blossom_enabled: Option<i64>,
+    livekit_enabled: Option<i64>,
+    push_enabled: Option<i64>,
+}
+
+async fn list_tenants(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    method: Method,
+    uri: Uri,
+) -> Response {
+    let pubkey = match extract_auth_pubkey(&headers, &method, &uri, &state.api.host) {
+        Ok(v) => v,
+        Err(e) => return auth_fail_response(e),
+    };
+    if !state.api.is_admin(&pubkey) {
+        return err(StatusCode::FORBIDDEN, "forbidden", "admin required");
+    }
+    match state.api.repo.list_tenants().await {
+        Ok(tenants) => ok(StatusCode::OK, tenants),
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, "internal", &e.to_string()),
     }
 }
-
-// ── tenant routes ─────────────────────────────────────────────────────────────
 
 async fn get_tenant(
     State(state): State<AppState>,
     headers: HeaderMap,
     method: Method,
     uri: Uri,
+    Path(pubkey): Path<String>,
 ) -> Response {
-    let pubkey = match extract_auth_pubkey(&headers, &method, &uri) {
-        Ok(p) => p,
-        Err(_) => return unauthorized(),
+    let auth = match extract_auth_pubkey(&headers, &method, &uri, &state.api.host) {
+        Ok(v) => v,
+        Err(e) => return auth_fail_response(e),
+    };
+    if !(state.api.is_admin(&auth) || state.api.is_tenant(&auth, &pubkey)) {
+        return err(StatusCode::FORBIDDEN, "forbidden", "not authorized");
+    }
+    match state.api.repo.get_tenant(&pubkey).await {
+        Ok(Some(tenant)) => ok(StatusCode::OK, tenant),
+        Ok(None) => err(StatusCode::NOT_FOUND, "not-found", "tenant not found"),
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, "internal", &e.to_string()),
+    }
+}
+
+async fn create_tenant(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    method: Method,
+    uri: Uri,
+) -> Response {
+    let pubkey = match extract_auth_pubkey(&headers, &method, &uri, &state.api.host) {
+        Ok(v) => v,
+        Err(e) => return auth_fail_response(e),
     };
 
-    match state.repo.get_tenant(&pubkey).await {
-        Ok(Some(tenant)) => (StatusCode::OK, Json(tenant)).into_response(),
-        Ok(None) => {
-            let tenant = new_tenant(&pubkey);
-            match state.repo.create_tenant(&tenant).await {
-                Ok(()) => (StatusCode::OK, Json(tenant)).into_response(),
-                Err(_) => internal_error("failed to create tenant"),
+    let tenant = Tenant {
+        pubkey: pubkey.clone(),
+        nwc_url: String::new(),
+        created_at: now_ts(),
+        billing_anchor: now_ts(),
+    };
+
+    match state.api.repo.create_tenant(&tenant).await {
+        Ok(()) => ok(StatusCode::CREATED, tenant),
+        Err(e) => {
+            if matches!(map_unique_error(&e), Some("pubkey-exists")) {
+                err(StatusCode::UNPROCESSABLE_ENTITY, "pubkey-exists", "tenant already exists")
+            } else {
+                err(StatusCode::INTERNAL_SERVER_ERROR, "internal", &e.to_string())
             }
         }
-        Err(_) => internal_error("failed to load tenant"),
     }
 }
 
-async fn list_tenant_relays(
+async fn list_relays(
     State(state): State<AppState>,
     headers: HeaderMap,
     method: Method,
     uri: Uri,
+    Query(query): Query<TenantParam>,
 ) -> Response {
-    let pubkey = match extract_auth_pubkey(&headers, &method, &uri) {
-        Ok(p) => p,
-        Err(_) => return unauthorized(),
+    let auth = match extract_auth_pubkey(&headers, &method, &uri, &state.api.host) {
+        Ok(v) => v,
+        Err(e) => return auth_fail_response(e),
     };
 
-    match state.repo.list_relays_by_tenant(&pubkey).await {
-        Ok(relays) => (StatusCode::OK, Json(relays)).into_response(),
-        Err(_) => internal_error("failed to load relays"),
-    }
-}
-
-#[derive(Debug, Deserialize)]
-struct CreateRelayRequest {
-    name: String,
-    subdomain: String,
-    icon: String,
-    description: String,
-    plan: String,
-    config: Option<RelayConfig>,
-}
-
-async fn create_tenant_relay(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    method: Method,
-    uri: Uri,
-    Json(payload): Json<CreateRelayRequest>,
-) -> Response {
-    let pubkey = match extract_auth_pubkey(&headers, &method, &uri) {
-        Ok(p) => p,
-        Err(_) => return unauthorized(),
-    };
-
-    if state
-        .repo
-        .create_tenant_if_missing(&new_tenant(&pubkey))
-        .await
-        .is_err()
-    {
-        return internal_error("failed to ensure tenant");
-    }
-
-    let now = now_ts();
-
-    // If this is the tenant's first paid relay, reset the billing anchor
-    if payload.plan != "free"
-        && let Ok(0) = state.repo.count_billable_relays(&pubkey).await
-    {
-        let _ = state.repo.reset_billing_anchor(&pubkey, now).await;
-    }
-
-    let relay_id = payload.subdomain.replace('-', "_");
-    let relay = Relay {
-        id: relay_id.clone(),
-        tenant: pubkey.clone(),
-        name: payload.name,
-        subdomain: payload.subdomain.clone(),
-        icon: payload.icon,
-        description: payload.description,
-        plan: payload.plan.clone(),
-        status: "pending".to_string(),
-        config: payload.config,
-    };
-
-    if let Err(err) = state.repo.upsert_relay(&relay).await {
-        if is_unique_subdomain_violation(&err) {
-            return (
-                StatusCode::CONFLICT,
-                Json(ApiError {
-                    error: "subdomain already exists".into(),
-                }),
-            )
-                .into_response();
+    let tenant_filter = if state.api.is_admin(&auth) {
+        query.tenant.as_deref()
+    } else {
+        if state.api.repo.get_tenant(&auth).await.ok().flatten().is_none() {
+            return err(StatusCode::FORBIDDEN, "forbidden", "tenant required");
         }
-        return internal_error("failed to create relay");
-    }
-
-    if let Err(err) = state.provisioner.create_relay(&relay).await {
-        tracing::error!(relay_id, error = %err, "zooid create failed");
-        let _ = state
-            .repo
-            .update_relay_status(&relay_id, "provisioning_failed")
-            .await;
-        return internal_error(&format!("failed to provision relay: {err}"));
-    }
-
-    // Transition to active and write the provisioned lifecycle event
-    if let Err(err) = state
-        .repo
-        .transition_relay(
-            &relay_id,
-            &pubkey,
-            &payload.plan,
-            "active",
-            "provisioned",
-            now,
-        )
-        .await
-    {
-        tracing::error!(relay_id, error = %err, "lifecycle event write failed");
-    }
-
-    let relay = Relay {
-        status: "active".to_string(),
-        ..relay
+        if query.tenant.is_some() {
+            return err(
+                StatusCode::BAD_REQUEST,
+                "tenant-query-not-allowed",
+                "tenant query is not allowed for tenant users",
+            );
+        }
+        Some(auth.as_str())
     };
-    (StatusCode::CREATED, Json(relay)).into_response()
+
+    match state.api.repo.list_relays(tenant_filter).await {
+        Ok(relays) => ok(StatusCode::OK, relays),
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, "internal", &e.to_string()),
+    }
 }
 
-async fn get_tenant_relay(
+async fn get_relay(
     State(state): State<AppState>,
     headers: HeaderMap,
     method: Method,
     uri: Uri,
     Path(id): Path<String>,
 ) -> Response {
-    let pubkey = match extract_auth_pubkey(&headers, &method, &uri) {
-        Ok(p) => p,
-        Err(_) => return unauthorized(),
+    let auth = match extract_auth_pubkey(&headers, &method, &uri, &state.api.host) {
+        Ok(v) => v,
+        Err(e) => return auth_fail_response(e),
     };
 
-    match state.repo.get_relay(&id).await {
-        Ok(Some(relay)) if relay.tenant == pubkey => (StatusCode::OK, Json(relay)).into_response(),
-        Ok(Some(_)) => forbidden(),
-        Ok(None) => not_found(),
-        Err(_) => internal_error("failed to load relay"),
+    let relay = match state.api.repo.get_relay(&id).await {
+        Ok(Some(r)) => r,
+        Ok(None) => return err(StatusCode::NOT_FOUND, "not-found", "relay not found"),
+        Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, "internal", &e.to_string()),
+    };
+
+    if !(state.api.is_admin(&auth) || state.api.is_tenant(&auth, &relay.tenant)) {
+        return err(StatusCode::FORBIDDEN, "forbidden", "not authorized");
+    }
+
+    ok(StatusCode::OK, relay)
+}
+
+async fn create_relay(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    method: Method,
+    uri: Uri,
+    Json(payload): Json<CreateRelayRequest>,
+) -> Response {
+    let auth = match extract_auth_pubkey(&headers, &method, &uri, &state.api.host) {
+        Ok(v) => v,
+        Err(e) => return auth_fail_response(e),
+    };
+
+    if !(state.api.is_admin(&auth) || state.api.is_tenant(&auth, &payload.tenant)) {
+        return err(StatusCode::FORBIDDEN, "forbidden", "not authorized");
+    }
+
+    let mut relay = Relay {
+        id: uuid::Uuid::new_v4().to_string(),
+        tenant: payload.tenant,
+        schema: String::new(),
+        subdomain: payload.subdomain,
+        plan: payload.plan,
+        status: "new".to_string(),
+        sync_error: String::new(),
+        info_name: payload.info_name.unwrap_or_default(),
+        info_icon: payload.info_icon.unwrap_or_default(),
+        info_description: payload.info_description.unwrap_or_default(),
+        policy_public_join: payload.policy_public_join.unwrap_or(0),
+        policy_strip_signatures: payload.policy_strip_signatures.unwrap_or(0),
+        groups_enabled: payload.groups_enabled.unwrap_or(1),
+        management_enabled: payload.management_enabled.unwrap_or(1),
+        blossom_enabled: payload.blossom_enabled.unwrap_or(0),
+        livekit_enabled: payload.livekit_enabled.unwrap_or(0),
+        push_enabled: payload.push_enabled.unwrap_or(1),
+    };
+
+    relay = match prepare_relay(relay) {
+        Ok(r) => r,
+        Err(e) if e.to_string() == "premium-feature" => {
+            return err(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "premium-feature",
+                "feature requires a paid plan",
+            );
+        }
+        Err(_) => {
+            return err(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "invalid-relay",
+                "relay validation failed",
+            );
+        }
+    };
+
+    match state.api.repo.create_relay(&relay).await {
+        Ok(()) => ok(StatusCode::CREATED, relay),
+        Err(e) => {
+            if matches!(map_unique_error(&e), Some("subdomain-exists")) {
+                err(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "subdomain-exists",
+                    "subdomain already exists",
+                )
+            } else {
+                err(StatusCode::INTERNAL_SERVER_ERROR, "internal", &e.to_string())
+            }
+        }
     }
 }
 
-#[derive(Debug, Deserialize)]
-struct UpdateRelayRequest {
-    name: String,
-    subdomain: String,
-    icon: String,
-    description: String,
-    config: Option<RelayConfig>,
-}
-
-async fn update_tenant_relay(
+async fn update_relay(
     State(state): State<AppState>,
     headers: HeaderMap,
     method: Method,
@@ -343,204 +496,152 @@ async fn update_tenant_relay(
     Path(id): Path<String>,
     Json(payload): Json<UpdateRelayRequest>,
 ) -> Response {
-    let pubkey = match extract_auth_pubkey(&headers, &method, &uri) {
-        Ok(p) => p,
-        Err(_) => return unauthorized(),
+    let auth = match extract_auth_pubkey(&headers, &method, &uri, &state.api.host) {
+        Ok(v) => v,
+        Err(e) => return auth_fail_response(e),
     };
 
-    let existing = match state.repo.get_relay(&id).await {
-        Ok(Some(relay)) => relay,
-        Ok(None) => return not_found(),
-        Err(_) => return internal_error("failed to load relay"),
+    let mut relay = match state.api.repo.get_relay(&id).await {
+        Ok(Some(r)) => r,
+        Ok(None) => return err(StatusCode::NOT_FOUND, "not-found", "relay not found"),
+        Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, "internal", &e.to_string()),
     };
 
-    if existing.tenant != pubkey {
-        return forbidden();
+    if !(state.api.is_admin(&auth) || state.api.is_tenant(&auth, &relay.tenant)) {
+        return err(StatusCode::FORBIDDEN, "forbidden", "not authorized");
     }
 
-    let relay = Relay {
-        name: payload.name,
-        subdomain: payload.subdomain,
-        icon: payload.icon,
-        description: payload.description,
-        config: payload.config,
-        ..existing
-    };
+    if let Some(v) = payload.subdomain {
+        relay.subdomain = v;
+    }
+    if let Some(v) = payload.plan {
+        relay.plan = v;
+    }
+    if let Some(v) = payload.info_name {
+        relay.info_name = v;
+    }
+    if let Some(v) = payload.info_icon {
+        relay.info_icon = v;
+    }
+    if let Some(v) = payload.info_description {
+        relay.info_description = v;
+    }
+    if let Some(v) = payload.policy_public_join {
+        relay.policy_public_join = v;
+    }
+    if let Some(v) = payload.policy_strip_signatures {
+        relay.policy_strip_signatures = v;
+    }
+    if let Some(v) = payload.groups_enabled {
+        relay.groups_enabled = v;
+    }
+    if let Some(v) = payload.management_enabled {
+        relay.management_enabled = v;
+    }
+    if let Some(v) = payload.blossom_enabled {
+        relay.blossom_enabled = v;
+    }
+    if let Some(v) = payload.livekit_enabled {
+        relay.livekit_enabled = v;
+    }
+    if let Some(v) = payload.push_enabled {
+        relay.push_enabled = v;
+    }
 
-    if let Err(err) = state.repo.upsert_relay(&relay).await {
-        if is_unique_subdomain_violation(&err) {
-            return (
-                StatusCode::CONFLICT,
-                Json(ApiError {
-                    error: "subdomain already exists".into(),
-                }),
-            )
-                .into_response();
+    relay = match prepare_relay(relay) {
+        Ok(r) => r,
+        Err(e) if e.to_string() == "premium-feature" => {
+            return err(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "premium-feature",
+                "feature requires a paid plan",
+            );
         }
-        return internal_error("failed to update relay");
-    }
-
-    if let Err(err) = state.provisioner.update_relay(&relay).await {
-        tracing::error!(relay_id = relay.id, error = %err, "zooid patch failed");
-        return internal_error(&format!("failed to provision relay: {err}"));
-    }
-
-    let _ = state.repo.update_relay_status(&relay.id, "active").await;
-    (StatusCode::OK, Json(relay)).into_response()
-}
-
-#[derive(Debug, Deserialize)]
-struct UpdateRelayPlanRequest {
-    plan: String,
-}
-
-async fn update_tenant_relay_plan(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    method: Method,
-    uri: Uri,
-    Path(id): Path<String>,
-    Json(payload): Json<UpdateRelayPlanRequest>,
-) -> Response {
-    let pubkey = match extract_auth_pubkey(&headers, &method, &uri) {
-        Ok(p) => p,
-        Err(_) => return unauthorized(),
+        Err(_) => {
+            return err(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "invalid-relay",
+                "relay validation failed",
+            );
+        }
     };
 
-    let new_plan = payload.plan.trim().to_lowercase();
-    if !matches!(new_plan.as_str(), "free" | "basic" | "growth") {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(ApiError {
-                error: "invalid plan".into(),
-            }),
-        )
-            .into_response();
+    match state.api.repo.update_relay(&relay).await {
+        Ok(()) => ok(StatusCode::OK, relay),
+        Err(e) => {
+            if matches!(map_unique_error(&e), Some("subdomain-exists")) {
+                err(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "subdomain-exists",
+                    "subdomain already exists",
+                )
+            } else {
+                err(StatusCode::INTERNAL_SERVER_ERROR, "internal", &e.to_string())
+            }
+        }
     }
-
-    let existing = match state.repo.get_relay(&id).await {
-        Ok(Some(relay)) => relay,
-        Ok(None) => return not_found(),
-        Err(_) => return internal_error("failed to load relay"),
-    };
-
-    if existing.tenant != pubkey {
-        return forbidden();
-    }
-
-    // No-op if plan unchanged
-    if existing.plan == new_plan {
-        return (StatusCode::OK, Json(existing)).into_response();
-    }
-
-    let now = now_ts();
-
-    // If switching to the first paid plan, reset billing anchor
-    if new_plan != "free"
-        && existing.plan == "free"
-        && let Ok(0) = state.repo.count_billable_relays(&pubkey).await
-    {
-        let _ = state.repo.reset_billing_anchor(&pubkey, now).await;
-    }
-
-    let mut relay = Relay {
-        plan: new_plan.clone(),
-        ..existing
-    };
-    if relay.plan == "free" {
-        relay.config = Some(disable_paid_features(relay.config));
-    }
-
-    if state.repo.upsert_relay(&relay).await.is_err() {
-        return internal_error("failed to update relay plan");
-    }
-
-    if let Err(err) = state.provisioner.update_relay(&relay).await {
-        tracing::error!(relay_id = relay.id, error = %err, "zooid patch failed");
-        return internal_error(&format!("failed to provision relay: {err}"));
-    }
-
-    let _ = state.repo.update_relay_status(&relay.id, "active").await;
-
-    // Write a plan-change lifecycle event so billing can split by tier
-    if let Err(err) = state
-        .repo
-        .transition_relay(&relay.id, &pubkey, &new_plan, "active", "provisioned", now)
-        .await
-    {
-        tracing::warn!(relay_id = relay.id, error = %err, "plan-change lifecycle event failed");
-    }
-
-    (StatusCode::OK, Json(relay)).into_response()
 }
 
-async fn deactivate_tenant_relay(
+async fn deactivate_relay(
     State(state): State<AppState>,
     headers: HeaderMap,
     method: Method,
     uri: Uri,
     Path(id): Path<String>,
 ) -> Response {
-    let pubkey = match extract_auth_pubkey(&headers, &method, &uri) {
-        Ok(p) => p,
-        Err(_) => return unauthorized(),
+    let auth = match extract_auth_pubkey(&headers, &method, &uri, &state.api.host) {
+        Ok(v) => v,
+        Err(e) => return auth_fail_response(e),
     };
 
-    let existing = match state.repo.get_relay(&id).await {
-        Ok(Some(relay)) => relay,
-        Ok(None) => return not_found(),
-        Err(_) => return internal_error("failed to load relay"),
+    let relay = match state.api.repo.get_relay(&id).await {
+        Ok(Some(r)) => r,
+        Ok(None) => return err(StatusCode::NOT_FOUND, "not-found", "relay not found"),
+        Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, "internal", &e.to_string()),
     };
 
-    if existing.tenant != pubkey {
-        return forbidden();
+    if !(state.api.is_admin(&auth) || state.api.is_tenant(&auth, &relay.tenant)) {
+        return err(StatusCode::FORBIDDEN, "forbidden", "not authorized");
     }
 
-    let now = now_ts();
-    if state
-        .repo
-        .transition_relay(
-            &id,
-            &pubkey,
-            &existing.plan,
-            "deactivated",
-            "deactivated",
-            now,
-        )
-        .await
-        .is_err()
-    {
-        return internal_error("failed to deactivate relay");
+    match state.api.repo.deactivate_relay(&relay).await {
+        Ok(()) => ok(StatusCode::OK, ()),
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, "internal", &e.to_string()),
     }
-
-    let relay = Relay {
-        status: "deactivated".to_string(),
-        config: None,
-        ..existing
-    };
-    (StatusCode::OK, Json(relay)).into_response()
 }
 
-async fn list_tenant_invoices(
+async fn list_invoices(
     State(state): State<AppState>,
     headers: HeaderMap,
     method: Method,
     uri: Uri,
+    Query(query): Query<TenantParam>,
 ) -> Response {
-    let pubkey = match extract_auth_pubkey(&headers, &method, &uri) {
-        Ok(p) => p,
-        Err(_) => return unauthorized(),
+    let auth = match extract_auth_pubkey(&headers, &method, &uri, &state.api.host) {
+        Ok(v) => v,
+        Err(e) => return auth_fail_response(e),
     };
 
-    match state.repo.list_invoices_by_tenant(&pubkey).await {
-        Ok(invoices) => (StatusCode::OK, Json(invoices)).into_response(),
-        Err(_) => internal_error("failed to load invoices"),
-    }
-}
+    let tenant_filter = if state.api.is_admin(&auth) {
+        query.tenant.as_deref()
+    } else {
+        if state.api.repo.get_tenant(&auth).await.ok().flatten().is_none() {
+            return err(StatusCode::FORBIDDEN, "forbidden", "tenant required");
+        }
+        if query.tenant.is_some() {
+            return err(
+                StatusCode::BAD_REQUEST,
+                "tenant-query-not-allowed",
+                "tenant query is not allowed for tenant users",
+            );
+        }
+        Some(auth.as_str())
+    };
 
-#[derive(Debug, Deserialize, Serialize)]
-struct UpdateTenantBillingRequest {
-    nwc_url: String,
+    match state.api.repo.list_invoices(tenant_filter).await {
+        Ok(invoices) => ok(StatusCode::OK, invoices),
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, "internal", &e.to_string()),
+    }
 }
 
 async fn update_tenant_billing(
@@ -548,300 +649,25 @@ async fn update_tenant_billing(
     headers: HeaderMap,
     method: Method,
     uri: Uri,
+    Path(pubkey): Path<String>,
     Json(payload): Json<UpdateTenantBillingRequest>,
 ) -> Response {
-    let pubkey = match extract_auth_pubkey(&headers, &method, &uri) {
-        Ok(p) => p,
-        Err(_) => return unauthorized(),
+    let auth = match extract_auth_pubkey(&headers, &method, &uri, &state.api.host) {
+        Ok(v) => v,
+        Err(e) => return auth_fail_response(e),
     };
 
+    if !(state.api.is_admin(&auth) || state.api.is_tenant(&auth, &pubkey)) {
+        return err(StatusCode::FORBIDDEN, "forbidden", "not authorized");
+    }
+
     match state
+        .api
         .repo
         .update_tenant_nwc_url(&pubkey, &payload.nwc_url)
         .await
     {
-        Ok(()) => (StatusCode::OK, Json(payload)).into_response(),
-        Err(_) => internal_error("failed to update billing"),
+        Ok(()) => ok(StatusCode::OK, payload),
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, "internal", &e.to_string()),
     }
-}
-
-// ── admin routes ──────────────────────────────────────────────────────────────
-
-#[derive(Debug, Serialize)]
-struct AdminCheckResponse {
-    is_admin: bool,
-}
-
-async fn admin_check(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    method: Method,
-    uri: Uri,
-) -> Response {
-    let pubkey = match extract_auth_pubkey(&headers, &method, &uri) {
-        Ok(p) => p,
-        Err(_) => return unauthorized(),
-    };
-    let is_admin = state.admin_pubkeys.contains(&pubkey);
-    (StatusCode::OK, Json(AdminCheckResponse { is_admin })).into_response()
-}
-
-async fn admin_list_tenants(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    method: Method,
-    uri: Uri,
-) -> Response {
-    let pubkey = match extract_auth_pubkey(&headers, &method, &uri) {
-        Ok(p) => p,
-        Err(_) => return unauthorized(),
-    };
-    if !state.admin_pubkeys.contains(&pubkey) {
-        return forbidden();
-    }
-    match state.repo.list_tenants().await {
-        Ok(tenants) => (StatusCode::OK, Json(tenants)).into_response(),
-        Err(_) => internal_error("failed to load tenants"),
-    }
-}
-
-async fn admin_get_tenant(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    method: Method,
-    uri: Uri,
-    Path(pubkey): Path<String>,
-) -> Response {
-    let admin = match extract_auth_pubkey(&headers, &method, &uri) {
-        Ok(p) => p,
-        Err(_) => return unauthorized(),
-    };
-    if !state.admin_pubkeys.contains(&admin) {
-        return forbidden();
-    }
-
-    let tenant = match state.repo.get_tenant(&pubkey).await {
-        Ok(Some(t)) => t,
-        Ok(None) => return not_found(),
-        Err(_) => return internal_error("failed to load tenant"),
-    };
-    let relays = match state.repo.list_relays_by_tenant(&pubkey).await {
-        Ok(r) => r,
-        Err(_) => return internal_error("failed to load relays"),
-    };
-
-    #[derive(Serialize)]
-    struct TenantDetail {
-        tenant: Tenant,
-        relays: Vec<Relay>,
-    }
-
-    (StatusCode::OK, Json(TenantDetail { tenant, relays })).into_response()
-}
-
-#[derive(Debug, Deserialize)]
-struct UpdateTenantStatusRequest {
-    status: String,
-}
-
-async fn admin_update_tenant_status(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    method: Method,
-    uri: Uri,
-    Path(pubkey): Path<String>,
-    Json(payload): Json<UpdateTenantStatusRequest>,
-) -> Response {
-    let admin = match extract_auth_pubkey(&headers, &method, &uri) {
-        Ok(p) => p,
-        Err(_) => return unauthorized(),
-    };
-    if !state.admin_pubkeys.contains(&admin) {
-        return forbidden();
-    }
-
-    let tenant = match state.repo.get_tenant(&pubkey).await {
-        Ok(Some(t)) => t,
-        Ok(None) => return not_found(),
-        Err(_) => return internal_error("failed to load tenant"),
-    };
-
-    match state
-        .repo
-        .update_tenant_status(&tenant.pubkey, &payload.status)
-        .await
-    {
-        Ok(()) => (
-            StatusCode::OK,
-            Json(Tenant {
-                status: payload.status,
-                ..tenant
-            }),
-        )
-            .into_response(),
-        Err(_) => internal_error("failed to update tenant"),
-    }
-}
-
-async fn admin_list_relays(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    method: Method,
-    uri: Uri,
-) -> Response {
-    let admin = match extract_auth_pubkey(&headers, &method, &uri) {
-        Ok(p) => p,
-        Err(_) => return unauthorized(),
-    };
-    if !state.admin_pubkeys.contains(&admin) {
-        return forbidden();
-    }
-    match state.repo.list_relays().await {
-        Ok(relays) => (StatusCode::OK, Json(relays)).into_response(),
-        Err(_) => internal_error("failed to load relays"),
-    }
-}
-
-async fn admin_get_relay(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    method: Method,
-    uri: Uri,
-    Path(id): Path<String>,
-) -> Response {
-    let admin = match extract_auth_pubkey(&headers, &method, &uri) {
-        Ok(p) => p,
-        Err(_) => return unauthorized(),
-    };
-    if !state.admin_pubkeys.contains(&admin) {
-        return forbidden();
-    }
-    match state.repo.get_relay(&id).await {
-        Ok(Some(relay)) => (StatusCode::OK, Json(relay)).into_response(),
-        Ok(None) => not_found(),
-        Err(_) => internal_error("failed to load relay"),
-    }
-}
-
-async fn admin_update_relay(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    method: Method,
-    uri: Uri,
-    Path(id): Path<String>,
-    Json(payload): Json<UpdateRelayRequest>,
-) -> Response {
-    let admin = match extract_auth_pubkey(&headers, &method, &uri) {
-        Ok(p) => p,
-        Err(_) => return unauthorized(),
-    };
-    if !state.admin_pubkeys.contains(&admin) {
-        return forbidden();
-    }
-
-    let existing = match state.repo.get_relay(&id).await {
-        Ok(Some(relay)) => relay,
-        Ok(None) => return not_found(),
-        Err(_) => return internal_error("failed to load relay"),
-    };
-
-    let relay = Relay {
-        name: payload.name,
-        subdomain: payload.subdomain,
-        icon: payload.icon,
-        description: payload.description,
-        config: payload.config,
-        ..existing
-    };
-
-    if let Err(err) = state.repo.upsert_relay(&relay).await {
-        if is_unique_subdomain_violation(&err) {
-            return (
-                StatusCode::CONFLICT,
-                Json(ApiError {
-                    error: "subdomain already exists".into(),
-                }),
-            )
-                .into_response();
-        }
-        return internal_error("failed to update relay");
-    }
-
-    if let Err(err) = state.provisioner.update_relay(&relay).await {
-        tracing::error!(relay_id = relay.id, error = %err, "zooid patch failed");
-        return internal_error(&format!("failed to update relay config: {err}"));
-    }
-
-    (StatusCode::OK, Json(relay)).into_response()
-}
-
-async fn admin_deactivate_relay(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    method: Method,
-    uri: Uri,
-    Path(id): Path<String>,
-) -> Response {
-    let admin = match extract_auth_pubkey(&headers, &method, &uri) {
-        Ok(p) => p,
-        Err(_) => return unauthorized(),
-    };
-    if !state.admin_pubkeys.contains(&admin) {
-        return forbidden();
-    }
-
-    let existing = match state.repo.get_relay(&id).await {
-        Ok(Some(relay)) => relay,
-        Ok(None) => return not_found(),
-        Err(_) => return internal_error("failed to load relay"),
-    };
-
-    let now = now_ts();
-    if state
-        .repo
-        .transition_relay(
-            &id,
-            &existing.tenant,
-            &existing.plan,
-            "deactivated",
-            "deactivated",
-            now,
-        )
-        .await
-        .is_err()
-    {
-        return internal_error("failed to deactivate relay");
-    }
-
-    let relay = Relay {
-        status: "deactivated".to_string(),
-        config: None,
-        ..existing
-    };
-    (StatusCode::OK, Json(relay)).into_response()
-}
-
-// ── relay config helpers ──────────────────────────────────────────────────────
-
-fn disable_paid_features(config: Option<RelayConfig>) -> RelayConfig {
-    let mut cfg = config.unwrap_or(RelayConfig {
-        policy: None,
-        groups: None,
-        management: None,
-        blossom: None,
-        livekit: None,
-        push: None,
-    });
-    set_config_bool(&mut cfg.blossom, "enabled", false);
-    set_config_bool(&mut cfg.livekit, "enabled", false);
-    cfg
-}
-
-fn set_config_bool(section: &mut Option<Value>, key: &str, enabled: bool) {
-    let mut obj = section
-        .take()
-        .and_then(|v| v.as_object().cloned())
-        .unwrap_or_default();
-    obj.insert(key.to_string(), Value::Bool(enabled));
-    *section = Some(Value::Object(obj));
 }

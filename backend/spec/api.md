@@ -12,7 +12,7 @@ Members:
 
 Notes:
 
-- Authentication is done using NIP 98
+- Authentication is done using NIP 98 comparing `u` to `self.host`, not the incoming request
 - Each route is responsible for authorization using `self.is_admin(pubkey)` or `self.is_tenant(authorized_pubkey, tenant_pubkey)`
 - Successful API responses should be of the form `{data, code: "ok"}` with an appropriate http status code.
 - Unsuccessful API responses should be of the form `{error, code}` with an appropriate http status code. `code` is a short error code (e.g. `duplicate-subdomain`) and `error` is a human-readable error message.

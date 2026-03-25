@@ -69,11 +69,11 @@ Invoices are generated at the end of a tenant's monthly billing period. The bill
 - `status` - `pending|paid|closed`
 - `amount` is derived as the sum of associated invoice item `sats` values (not stored as a separate source of truth)
 - `created_at` - unix timestamp for when the invoice was created
-- `attempted_at` - unix timestamp for when collection was last attempted
+- `attempted_at` - nullable unix timestamp for when collection was last attempted
 - `error` - optional human-readable error from the last failed collection attempt
-- `closed_at` - unix timestamp for when the invoice was closed
-- `sent_at` - unix timestamp for when the invoice was sent via DM
-- `paid_at` - unix timestamp for when the invoice was paid
+- `closed_at` - nullable unix timestamp for when the invoice was closed
+- `sent_at` - nullable unix timestamp for when the invoice was sent via DM
+- `paid_at` - nullable unix timestamp for when the invoice was paid
 - `bolt11` - a BOLT 11 lightning invoice that can be used to pay the invoice
 - `period_start` - unix timestamp for period start
 - `period_end` - unix timestamp for period end

@@ -1,15 +1,15 @@
-import { createEffect, createMemo, createResource, createSignal, For, Show } from "solid-js"
+import { createEffect, createMemo, createSignal, For, Show } from "solid-js"
 import { useNavigate } from "@solidjs/router"
-import { getTenant, listTenantInvoices, updateTenantBilling } from "../lib/api"
 import PageContainer from "../components/PageContainer"
 import LoadingState from "../components/LoadingState"
 import useMinLoading from "../components/useMinLoading"
 import { accounts, persistAccounts } from "../lib/nostr"
+import { updateActiveTenantBilling, useTenant, useTenantInvoices } from "../lib/hooks"
 
 export default function Account() {
   const navigate = useNavigate()
-  const [tenant, { refetch: refetchTenant }] = createResource(getTenant)
-  const [invoices] = createResource(listTenantInvoices)
+  const [tenant, { refetch: refetchTenant }] = useTenant()
+  const [invoices] = useTenantInvoices()
   const [nwcUrl, setNwcUrl] = createSignal("")
   const [saving, setSaving] = createSignal(false)
   const [error, setError] = createSignal("")
@@ -30,7 +30,7 @@ export default function Account() {
     setSaving(true)
     try {
       const next = nwcUrl().trim()
-      await updateTenantBilling(next)
+      await updateActiveTenantBilling(next)
       await refetchTenant()
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to update billing")

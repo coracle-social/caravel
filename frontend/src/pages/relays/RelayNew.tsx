@@ -1,7 +1,7 @@
 import { Show, createSignal } from "solid-js"
 import { useNavigate } from "@solidjs/router"
-import { createTenantRelay } from "../../lib/api"
 import { slugify } from "../../lib/slugify"
+import { createRelayForActiveTenant } from "../../lib/hooks"
 
 const PLANS = [
   { id: "free", label: "Free", price: 0, members: "Up to 10", blossom: false, livekit: false },
@@ -34,7 +34,7 @@ export default function RelayNew() {
     setSubmitting(true)
 
     try {
-      const relay = await createTenantRelay({
+      const relay = await createRelayForActiveTenant({
         subdomain: slugify(subdomain()),
         plan: plan(),
         info_name: name().trim(),

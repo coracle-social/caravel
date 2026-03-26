@@ -1,16 +1,16 @@
 import { useParams } from "@solidjs/router"
-import { createResource, createSignal, Show } from "solid-js"
-import { adminDeactivateRelay, adminGetRelay, adminUpdateRelay, type Relay } from "../../lib/api"
+import { createSignal, Show } from "solid-js"
 import BackLink from "../../components/BackLink"
 import PageContainer from "../../components/PageContainer"
 import RelayDetailCard from "../../components/RelayDetailCard"
 import ResourceState from "../../components/ResourceState"
 import useMinLoading from "../../components/useMinLoading"
+import { deactivateRelayById, updateRelayById, useRelay, type Relay } from "../../lib/hooks"
 
 export default function AdminRelayDetail() {
   const params = useParams()
   const relayId = () => params.id ?? ""
-  const [relay, { refetch, mutate }] = createResource(relayId, adminGetRelay)
+  const [relay, { refetch, mutate }] = useRelay(relayId)
   const [busy, setBusy] = createSignal(false)
   const [error, setError] = createSignal("")
   const loading = useMinLoading(() => relay.loading && !relay())
@@ -20,7 +20,7 @@ export default function AdminRelayDetail() {
     setError("")
     setBusy(true)
     try {
-      await adminDeactivateRelay(relayId())
+      await deactivateRelayById(relayId())
       await refetch()
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to deactivate relay")
@@ -47,7 +47,7 @@ export default function AdminRelayDetail() {
     mutate(next)
 
     try {
-      await adminUpdateRelay(relayId(), next)
+      await updateRelayById(relayId(), next)
       await refetch()
     } catch (e) {
       mutate(previous)

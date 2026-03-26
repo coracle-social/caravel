@@ -1,6 +1,6 @@
 import { A } from "@solidjs/router"
 import { Show, createEffect, createSignal, onCleanup } from "solid-js"
-import type { Relay } from "../lib/api"
+import type { Relay } from "../lib/hooks"
 import menuDotsIcon from "../assets/menu-dots-2.svg"
 import Modal from "./Modal"
 import PricingTable from "./PricingTable"

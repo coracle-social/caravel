@@ -1,13 +1,13 @@
 import { A } from "@solidjs/router"
 import Fuse from "fuse.js"
-import { createMemo, createResource, createSignal, For, Show } from "solid-js"
-import { listTenantRelays } from "../../lib/api"
+import { createMemo, createSignal, For, Show } from "solid-js"
 import PageContainer from "../../components/PageContainer"
 import ResourceState from "../../components/ResourceState"
 import useMinLoading from "../../components/useMinLoading"
+import { useTenantRelays } from "../../lib/hooks"
 
 export default function RelayList() {
-  const [relays] = createResource(listTenantRelays)
+  const [relays] = useTenantRelays()
   const [query, setQuery] = createSignal("")
   const [status, setStatus] = createSignal("all")
   const loading = useMinLoading(() => relays.loading)

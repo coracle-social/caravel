@@ -1,12 +1,12 @@
 import { A } from "@solidjs/router"
 import Fuse from "fuse.js"
-import { createEffect, createMemo, createResource, createSignal, For, onCleanup, Show } from "solid-js"
+import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js"
 import { getProfilePicture } from "applesauce-core/helpers/profile"
-import { adminListTenants } from "../../lib/api"
 import { eventStore, primeProfiles } from "../../lib/nostr"
 import PageContainer from "../../components/PageContainer"
 import ResourceState from "../../components/ResourceState"
 import useMinLoading from "../../components/useMinLoading"
+import { useAdminTenants } from "../../lib/hooks"
 
 function shortenPubkey(pubkey: string) {
   if (pubkey.length <= 16) return pubkey
@@ -15,7 +15,7 @@ function shortenPubkey(pubkey: string) {
 
 export default function AdminTenantList() {
   const [query, setQuery] = createSignal("")
-  const [tenants] = createResource(adminListTenants)
+  const [tenants] = useAdminTenants()
   const [profiles, setProfiles] = createSignal<Record<string, { name?: string, about?: string, nip05?: string, picture?: string }>>({})
   const loading = useMinLoading(() => tenants.loading)
 

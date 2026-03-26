@@ -1,15 +1,15 @@
 import { useParams, A } from "@solidjs/router"
-import { createResource, For, Show } from "solid-js"
-import { adminGetTenant } from "../../lib/api"
+import { For, Show } from "solid-js"
 import BackLink from "../../components/BackLink"
 import PageContainer from "../../components/PageContainer"
 import ResourceState from "../../components/ResourceState"
 import useMinLoading from "../../components/useMinLoading"
+import { useAdminTenantDetail } from "../../lib/hooks"
 
 export default function AdminTenantDetail() {
   const params = useParams()
   const tenantId = () => params.id ?? ""
-  const [detail] = createResource(tenantId, adminGetTenant)
+  const [detail] = useAdminTenantDetail(tenantId)
   const loading = useMinLoading(() => detail.loading)
 
   return (

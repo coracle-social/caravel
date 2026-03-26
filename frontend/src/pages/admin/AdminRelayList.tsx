@@ -1,14 +1,14 @@
 import { A } from "@solidjs/router"
 import Fuse from "fuse.js"
-import { createMemo, createResource, createSignal, For, Show } from "solid-js"
-import { adminListRelays } from "../../lib/api"
+import { createMemo, createSignal, For, Show } from "solid-js"
 import PageContainer from "../../components/PageContainer"
 import ResourceState from "../../components/ResourceState"
 import useMinLoading from "../../components/useMinLoading"
+import { useAdminRelays } from "../../lib/hooks"
 
 export default function AdminRelayList() {
   const [query, setQuery] = createSignal("")
-  const [relays] = createResource(adminListRelays)
+  const [relays] = useAdminRelays()
   const loading = useMinLoading(() => relays.loading)
 
   const filtered = createMemo(() => {

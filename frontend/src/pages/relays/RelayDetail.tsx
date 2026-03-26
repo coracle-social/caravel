@@ -1,17 +1,17 @@
 import { useParams } from "@solidjs/router"
 import { createMemo, createResource, createSignal, Show } from "solid-js"
-import { deactivateTenantRelay, getRelayMemberCount, getTenantRelay, updateTenantRelay, updateTenantRelayPlan, type Relay } from "../../lib/api"
 import type { RelayPlanId } from "../../lib/relayPlans"
 import BackLink from "../../components/BackLink"
 import PageContainer from "../../components/PageContainer"
 import RelayDetailCard from "../../components/RelayDetailCard"
 import ResourceState from "../../components/ResourceState"
 import useMinLoading from "../../components/useMinLoading"
+import { deactivateRelayById, getRelayMemberCount, updateRelayById, updateRelayPlanById, useRelay, type Relay } from "../../lib/hooks"
 
 export default function RelayDetail() {
   const params = useParams()
   const relayId = () => params.id ?? ""
-  const [relay, { refetch, mutate }] = createResource(relayId, getTenantRelay)
+  const [relay, { refetch, mutate }] = useRelay(relayId)
   const relayUrl = createMemo(() => {
     const subdomain = relay()?.subdomain
     return subdomain ? `wss://${subdomain}.spaces.coracle.social` : undefined
@@ -26,7 +26,7 @@ export default function RelayDetail() {
     setError("")
     setBusy(true)
     try {
-      await deactivateTenantRelay(relayId())
+      await deactivateRelayById(relayId())
       await refetch()
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to deactivate relay")
@@ -53,7 +53,7 @@ export default function RelayDetail() {
     mutate(next)
 
     try {
-      await updateTenantRelay(relayId(), next)
+      await updateRelayById(relayId(), next)
       await refetch()
     } catch (e) {
       mutate(previous)
@@ -148,7 +148,7 @@ export default function RelayDetail() {
     mutate(next)
 
     try {
-      await updateTenantRelayPlan(relayId(), plan)
+      await updateRelayPlanById(relayId(), plan)
       await refetch()
     } catch (e) {
       mutate(previous)

@@ -1,18 +1,18 @@
 import { useNavigate, useParams } from "@solidjs/router"
-import { Show, createEffect, createResource, createSignal } from "solid-js"
-import { getTenantRelay, updateTenantRelay } from "../../lib/api"
+import { Show, createEffect, createSignal } from "solid-js"
 import RelayForm from "../../components/RelayForm"
 import { slugify } from "../../lib/slugify"
 import BackLink from "../../components/BackLink"
 import PageContainer from "../../components/PageContainer"
 import ResourceState from "../../components/ResourceState"
 import useMinLoading from "../../components/useMinLoading"
+import { updateRelayById, useRelay } from "../../lib/hooks"
 
 export default function RelayEdit() {
   const navigate = useNavigate()
   const params = useParams()
   const relayId = () => params.id ?? ""
-  const [relay] = createResource(relayId, getTenantRelay)
+  const [relay] = useRelay(relayId)
   const loading = useMinLoading(() => relay.loading)
 
   const [name, setName] = createSignal("")
@@ -36,7 +36,7 @@ export default function RelayEdit() {
     setError("")
     setSubmitting(true)
     try {
-      await updateTenantRelay(relayId(), {
+      await updateRelayById(relayId(), {
         subdomain: slugify(subdomain()),
         info_name: name().trim(),
         info_icon: icon().trim(),

@@ -1,8 +1,8 @@
 import { A, useLocation } from "@solidjs/router"
-import { createEffect, createMemo, createResource, createSignal, For, onCleanup, Show } from "solid-js"
+import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js"
 import Fuse from "fuse.js"
-import { adminCheck as fetchAdminCheck, listTenantRelays, type Relay } from "../lib/api"
 import { eventStore, primeProfiles, useActiveAccount, useProfilePicture } from "../lib/nostr"
+import { useAdminCheck, useTenantRelays, type Relay } from "../lib/hooks"
 import serverIcon from "../assets/server.svg"
 import Modal from "./Modal"
 
@@ -34,8 +34,8 @@ export default function AppShell(props: { children?: any }) {
   const location = useLocation()
   const account = useActiveAccount()
   const picture = useProfilePicture(() => account()?.pubkey)
-  const [adminCheck] = createResource(() => account()?.id, () => fetchAdminCheck())
-  const [tenantRelays] = createResource(() => account()?.id, () => listTenantRelays())
+  const [adminCheck] = useAdminCheck(() => account()?.id)
+  const [tenantRelays] = useTenantRelays()
   const [profile, setProfile] = createSignal<Profile>({})
   const [searchOpen, setSearchOpen] = createSignal(false)
   const [searchQuery, setSearchQuery] = createSignal("")

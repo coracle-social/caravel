@@ -12,3 +12,15 @@
 
 /* Defaults hover styles on all devices */
 @custom-variant hover (&:hover);
+
+/* Brand accent palette (mapped to blue utilities used across the app) */
+@theme {
+  --color-blue-50: #f7f1ec;
+  --color-blue-100: #efdfd2;
+  --color-blue-200: #e2c5ad;
+  --color-blue-300: #d5aa88;
+  --color-blue-400: #ca9469;
+  --color-blue-500: #c18254;
+  --color-blue-600: #c18254;
+  --color-blue-700: #a66d46;
+}

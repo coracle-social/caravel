@@ -134,18 +134,27 @@ Notes:
 - Authorizes admin or invoice owner
 - Return `data` is a single invoice struct from `repo.get_invoice`
 
-# Utility functions
+--- Utilities
 
-## `extract_auth_pubkey(headers: &HeaderMap, method: &Method, uri: &Uri) -> Result<String>`
+## `extract_auth_pubkey(&self, headers: &HeaderMap) -> Result<String>`
 
 - Parses `Authorization` header
 - Validates event kind and signature using `nostr_sdk`
-- Validates event `u` and `method` tags against parameters
-- Returns pubkey if header is valid
+- Validates event `u` against `HOST` (not the request path. Non-standard, but correct)
+- Does not validate `method` tag
+- Returns pubkey if header all checks pass
 
 Refer to https://github.com/nostr-protocol/nips/blob/master/98.md for details. Use `nostr_sdk` functionality where possible.
 
-## `prepare_relay(relay: Relay) -> anyhow::Result<Relay>`
+## `require_admin(&self, authorized_pubkey: &str)`
+
+- Checks whether `authorized_pubkey` is in `self.admins`. If not, returns an forbidden error
+
+## `require_admin_or_tenant(&self, authorized_pubkey: &str, tenant_pubkey: &str)`
+
+- Checks whether `authorized_pubkey` is an admin or matches `tenant_pubkey`
+
+## `prepare_relay(&self, relay: Relay) -> anyhow::Result<Relay>`
 
 - Validate `subdomain`
 - If `plan` is free and `blossom` is enabled, return `premium-feature`

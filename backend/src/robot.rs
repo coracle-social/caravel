@@ -35,9 +35,19 @@ impl Robot {
         let name = std::env::var("ROBOT_NAME").unwrap_or_default();
         let description = std::env::var("ROBOT_DESCRIPTION").unwrap_or_default();
         let picture = std::env::var("ROBOT_PICTURE").unwrap_or_default();
-        let outbox_relays = split_env("ROBOT_OUTBOX_RELAYS");
-        let indexer_relays = split_env("ROBOT_INDEXER_RELAYS");
-        let messaging_relays = split_env("ROBOT_MESSAGING_RELAYS");
+        let outbox_relays = split_relays("ROBOT_OUTBOX_RELAYS");
+        let indexer_relays = split_relays("ROBOT_INDEXER_RELAYS");
+        let messaging_relays = split_relays("ROBOT_MESSAGING_RELAYS");
+
+        if outbox_relays.is_empty() {
+            return Err(anyhow!("ROBOT_OUTBOX_RELAYS is required"));
+        }
+        if indexer_relays.is_empty() {
+            return Err(anyhow!("ROBOT_INDEXER_RELAYS is required"));
+        }
+        if messaging_relays.is_empty() {
+            return Err(anyhow!("ROBOT_MESSAGING_RELAYS is required"));
+        }
 
         let keys = Keys::parse(&secret)?;
         let client = Client::new(keys);
@@ -190,13 +200,25 @@ impl Robot {
     }
 }
 
-fn split_env(key: &str) -> Vec<String> {
+fn split_relays(key: &str) -> Vec<String> {
     std::env::var(key)
         .unwrap_or_default()
         .split(',')
-        .map(|v| v.trim().to_string())
+        .map(|v| normalize_relay_url(v.trim()))
         .filter(|v| !v.is_empty())
         .collect()
+}
+
+fn normalize_relay_url(url: &str) -> String {
+    if url.is_empty() {
+        return String::new();
+    }
+
+    if url.starts_with("ws://") || url.starts_with("wss://") {
+        url.to_string()
+    } else {
+        format!("wss://{url}")
+    }
 }
 
 async fn indexer_client(secret: &str, indexer_relays: &[String]) -> Result<Client> {

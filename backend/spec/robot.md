@@ -15,7 +15,7 @@ Members:
 
 ## `pub fn new() -> Self`
 
-- Reads environment and populates members
+- Reads environment and populates members. Relay urls should be split and normalized.
 - Publishes a `kind 0` nostr profile, a `kind 10002` relay list, and `kind 10050` relay selections using `client`
 
 ## `pub async fn send_dm(&self, recipient: &str, message: &str) -> Result<()>`

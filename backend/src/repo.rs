@@ -382,6 +382,19 @@ impl Repo {
         Ok(rows)
     }
 
+    pub async fn get_invoice(&self, id: &str) -> Result<Option<Invoice>> {
+        let row = sqlx::query_as::<_, Invoice>(
+            "SELECT id, tenant, status, created_at, attempted_at, error, closed_at,
+                    sent_at, paid_at, bolt11, period_start, period_end
+             FROM invoice
+             WHERE id = ?",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
     pub async fn mark_invoice_paid(&self, invoice_id: &str) -> Result<()> {
         let mut tx = self.pool.begin().await?;
 

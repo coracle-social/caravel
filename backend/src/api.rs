@@ -3,7 +3,7 @@ use std::sync::Arc;
 use anyhow::{Result, anyhow};
 use axum::{
     Json, Router,
-    extract::{Path, Query, State},
+    extract::{Path, State},
     http::{HeaderMap, Method, StatusCode, Uri},
     response::{IntoResponse, Response},
     routing::{get, post, put},
@@ -80,11 +80,14 @@ impl Api {
             .route("/plans/:id", get(get_plan))
             .route("/tenants", get(list_tenants).post(create_tenant))
             .route("/tenants/:pubkey", get(get_tenant))
+            .route("/tenants/:pubkey/relays", get(list_tenant_relays))
+            .route("/tenants/:pubkey/invoices", get(list_tenant_invoices))
             .route("/tenants/:pubkey/billing", put(update_tenant_billing))
             .route("/relays", get(list_relays).post(create_relay))
             .route("/relays/:id", get(get_relay).put(update_relay))
             .route("/relays/:id/deactivate", post(deactivate_relay))
             .route("/invoices", get(list_invoices))
+            .route("/invoices/:id", get(get_invoice))
             .with_state(state)
             .layer(self.cors_layer());
 
@@ -259,11 +262,6 @@ fn extract_auth_pubkey(
     Ok(event.pubkey.to_hex())
 }
 
-#[derive(Deserialize)]
-struct TenantParam {
-    tenant: Option<String>,
-}
-
 #[derive(Deserialize, Serialize)]
 struct UpdateTenantBillingRequest {
     nwc_url: String,
@@ -423,43 +421,42 @@ async fn list_relays(
     headers: HeaderMap,
     method: Method,
     uri: Uri,
-    Query(query): Query<TenantParam>,
+) -> Response {
+    let pubkey = match extract_auth_pubkey(&headers, &method, &uri, &state.api.host) {
+        Ok(v) => v,
+        Err(e) => return auth_fail_response(e),
+    };
+    if !state.api.is_admin(&pubkey) {
+        return err(StatusCode::FORBIDDEN, "forbidden", "admin required");
+    }
+
+    match state.api.repo.list_relays().await {
+        Ok(relays) => ok(StatusCode::OK, relays),
+        Err(e) => err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal",
+            &e.to_string(),
+        ),
+    }
+}
+
+async fn list_tenant_relays(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    method: Method,
+    uri: Uri,
+    Path(pubkey): Path<String>,
 ) -> Response {
     let auth = match extract_auth_pubkey(&headers, &method, &uri, &state.api.host) {
         Ok(v) => v,
         Err(e) => return auth_fail_response(e),
     };
 
-    let tenant_filter = if state.api.is_admin(&auth) {
-        query.tenant.as_deref()
-    } else {
-        if state
-            .api
-            .repo
-            .get_tenant(&auth)
-            .await
-            .ok()
-            .flatten()
-            .is_none()
-        {
-            return err(StatusCode::FORBIDDEN, "forbidden", "tenant required");
-        }
-        if query.tenant.is_some() {
-            return err(
-                StatusCode::BAD_REQUEST,
-                "tenant-query-not-allowed",
-                "tenant query is not allowed for tenant users",
-            );
-        }
-        Some(auth.as_str())
-    };
+    if !(state.api.is_admin(&auth) || state.api.is_tenant(&auth, &pubkey)) {
+        return err(StatusCode::FORBIDDEN, "forbidden", "not authorized");
+    }
 
-    let relays = match tenant_filter {
-        Some(tenant) => state.api.repo.list_relays_for_tenant(tenant).await,
-        None => state.api.repo.list_relays().await,
-    };
-
-    match relays {
+    match state.api.repo.list_relays_for_tenant(&pubkey).await {
         Ok(relays) => ok(StatusCode::OK, relays),
         Err(e) => err(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -721,43 +718,16 @@ async fn list_invoices(
     headers: HeaderMap,
     method: Method,
     uri: Uri,
-    Query(query): Query<TenantParam>,
 ) -> Response {
-    let auth = match extract_auth_pubkey(&headers, &method, &uri, &state.api.host) {
+    let pubkey = match extract_auth_pubkey(&headers, &method, &uri, &state.api.host) {
         Ok(v) => v,
         Err(e) => return auth_fail_response(e),
     };
+    if !state.api.is_admin(&pubkey) {
+        return err(StatusCode::FORBIDDEN, "forbidden", "admin required");
+    }
 
-    let tenant_filter = if state.api.is_admin(&auth) {
-        query.tenant.as_deref()
-    } else {
-        if state
-            .api
-            .repo
-            .get_tenant(&auth)
-            .await
-            .ok()
-            .flatten()
-            .is_none()
-        {
-            return err(StatusCode::FORBIDDEN, "forbidden", "tenant required");
-        }
-        if query.tenant.is_some() {
-            return err(
-                StatusCode::BAD_REQUEST,
-                "tenant-query-not-allowed",
-                "tenant query is not allowed for tenant users",
-            );
-        }
-        Some(auth.as_str())
-    };
-
-    let invoices = match tenant_filter {
-        Some(tenant) => state.api.repo.list_invoices_for_tenant(tenant).await,
-        None => state.api.repo.list_invoices().await,
-    };
-
-    match invoices {
+    match state.api.repo.list_invoices().await {
         Ok(invoices) => ok(StatusCode::OK, invoices),
         Err(e) => err(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -765,6 +735,63 @@ async fn list_invoices(
             &e.to_string(),
         ),
     }
+}
+
+async fn list_tenant_invoices(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    method: Method,
+    uri: Uri,
+    Path(pubkey): Path<String>,
+) -> Response {
+    let auth = match extract_auth_pubkey(&headers, &method, &uri, &state.api.host) {
+        Ok(v) => v,
+        Err(e) => return auth_fail_response(e),
+    };
+
+    if !(state.api.is_admin(&auth) || state.api.is_tenant(&auth, &pubkey)) {
+        return err(StatusCode::FORBIDDEN, "forbidden", "not authorized");
+    }
+
+    match state.api.repo.list_invoices_for_tenant(&pubkey).await {
+        Ok(invoices) => ok(StatusCode::OK, invoices),
+        Err(e) => err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal",
+            &e.to_string(),
+        ),
+    }
+}
+
+async fn get_invoice(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    method: Method,
+    uri: Uri,
+    Path(id): Path<String>,
+) -> Response {
+    let auth = match extract_auth_pubkey(&headers, &method, &uri, &state.api.host) {
+        Ok(v) => v,
+        Err(e) => return auth_fail_response(e),
+    };
+
+    let invoice = match state.api.repo.get_invoice(&id).await {
+        Ok(Some(i)) => i,
+        Ok(None) => return err(StatusCode::NOT_FOUND, "not-found", "invoice not found"),
+        Err(e) => {
+            return err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal",
+                &e.to_string(),
+            );
+        }
+    };
+
+    if !(state.api.is_admin(&auth) || state.api.is_tenant(&auth, &invoice.tenant)) {
+        return err(StatusCode::FORBIDDEN, "forbidden", "not authorized");
+    }
+
+    ok(StatusCode::OK, invoice)
 }
 
 async fn update_tenant_billing(

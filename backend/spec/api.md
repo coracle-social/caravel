@@ -62,14 +62,31 @@ Notes:
 - If tenant is a duplicate, return a `422` with `code=pubkey-exists`
 - Return `data` is a single tenant struct. Use HTTP `201`.
 
+## `async fn list_tenant_relays(...) -> Response`
+
+- Serves `GET /tenants/:pubkey/relays`
+- Authorizes admin or matching tenant
+- Return `data` is a list of relay structs from `repo.list_relays_for_tenant`
+
+## `async fn list_tenant_invoices(...) -> Response`
+
+- Serves `GET /tenants/:pubkey/invoices`
+- Authorizes admin or matching tenant
+- Return `data` is a list of invoice structs from `repo.list_invoices_for_tenant`
+
+## `async fn update_tenant_billing(...) -> Response`
+
+- Serves `PUT /tenants/:pubkey/billing`
+- Authorizes admin or matching tenant
+- Updates tenant billing NWC URL using `repo.update_tenant_nwc_url`
+- Return `data` is the submitted billing payload
+
 --- Relay routes
 
 ## `async fn list_relays(...) -> Response`
 
-- Serves `GET /relays?tenant=<pubkey>`
-- Authorizes admin or existing tenants
-- If user is admin, `tenant` query parameter is optional
-- If user is a tenant, `tenant` query parameter is not ok; authenticated `pubkey` is used
+- Serves `GET /relays`
+- Authorizes admin only
 - Return `data` is a list of relay structs from `repo.list_relays`
 
 ## `async fn get_relay(...) -> Response`
@@ -103,22 +120,19 @@ Notes:
 - Deactivates relay using `repo.deactivate_relay`
 - Return `data` is empty
 
---- Billing routes
+--- Invoice routes
 
 ## `async fn list_invoices(...) -> Response`
 
-- Serves `GET /invoices?tenant=<pubkey>`
-- Authorizes admin or existing tenants
-- If user is admin, `tenant` query parameter is optional
-- If user is a tenant, `tenant` query parameter is not ok; authenticated `pubkey` is used
+- Serves `GET /invoices`
+- Authorizes admin only
 - Return `data` is a list of invoice structs from `repo.list_invoices`
 
-## `async fn update_tenant_billing(...) -> Response`
+## `async fn get_invoice(...) -> Response`
 
-- Serves `PUT /tenants/:pubkey/billing`
-- Authorizes admin or matching tenant
-- Updates tenant billing NWC URL using `repo.update_tenant_nwc_url`
-- Return `data` is the submitted billing payload
+- Serves `GET /invoices/:id`
+- Authorizes admin or invoice owner
+- Return `data` is a single invoice struct from `repo.get_invoice`
 
 # Utility functions
 

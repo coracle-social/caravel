@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use anyhow::Result;
-use sqlx::{SqlitePool, sqlite::SqlitePoolOptions};
+use sqlx::{Sqlite, SqlitePool, Transaction, sqlite::SqlitePoolOptions};
 
 use crate::models::{Activity, Invoice, InvoiceItem, Relay, Tenant};
 
@@ -33,15 +33,16 @@ impl Repo {
             .execute(&pool)
             .await?;
 
+        sqlx::migrate!("./migrations").run(&pool).await?;
+
         Ok(Self { pool })
     }
 
-    pub async fn migrate(&self) -> Result<()> {
-        sqlx::migrate!("./migrations").run(&self.pool).await?;
-        Ok(())
-    }
-
-    async fn log_activity(&self, activity_type: &str, identifier: &str) -> Result<()> {
+    async fn insert_activity(
+        tx: &mut Transaction<'_, Sqlite>,
+        activity_type: &str,
+        identifier: &str,
+    ) -> Result<()> {
         sqlx::query(
             "INSERT INTO activity (id, created_at, activity_type, identifier)
              VALUES (?, strftime('%s','now'), ?, ?)",
@@ -49,7 +50,7 @@ impl Repo {
         .bind(uuid::Uuid::new_v4().to_string())
         .bind(activity_type)
         .bind(identifier)
-        .execute(&self.pool)
+        .execute(&mut **tx)
         .await?;
         Ok(())
     }
@@ -91,14 +92,7 @@ impl Repo {
         .execute(&mut *tx)
         .await?;
 
-        sqlx::query(
-            "INSERT INTO activity (id, created_at, activity_type, identifier)
-             VALUES (?, strftime('%s','now'), 'tenant_created', ?)",
-        )
-        .bind(uuid::Uuid::new_v4().to_string())
-        .bind(&tenant.pubkey)
-        .execute(&mut *tx)
-        .await?;
+        Self::insert_activity(&mut tx, "create_tenant", &tenant.pubkey).await?;
 
         tx.commit().await?;
         Ok(())
@@ -113,14 +107,7 @@ impl Repo {
             .execute(&mut *tx)
             .await?;
 
-        sqlx::query(
-            "INSERT INTO activity (id, created_at, activity_type, identifier)
-             VALUES (?, strftime('%s','now'), 'tenant_billing_anchor_updated', ?)",
-        )
-        .bind(uuid::Uuid::new_v4().to_string())
-        .bind(pubkey)
-        .execute(&mut *tx)
-        .await?;
+        Self::insert_activity(&mut tx, "update_tenant_billing_anchor", pubkey).await?;
 
         tx.commit().await?;
         Ok(())
@@ -135,14 +122,7 @@ impl Repo {
             .execute(&mut *tx)
             .await?;
 
-        sqlx::query(
-            "INSERT INTO activity (id, created_at, activity_type, identifier)
-             VALUES (?, strftime('%s','now'), 'tenant_billing_updated', ?)",
-        )
-        .bind(uuid::Uuid::new_v4().to_string())
-        .bind(pubkey)
-        .execute(&mut *tx)
-        .await?;
+        Self::insert_activity(&mut tx, "update_tenant_nwc_url", pubkey).await?;
 
         tx.commit().await?;
         Ok(())
@@ -226,14 +206,7 @@ impl Repo {
         .execute(&mut *tx)
         .await?;
 
-        sqlx::query(
-            "INSERT INTO activity (id, created_at, activity_type, identifier)
-             VALUES (?, strftime('%s','now'), 'relay_created', ?)",
-        )
-        .bind(uuid::Uuid::new_v4().to_string())
-        .bind(&relay.id)
-        .execute(&mut *tx)
-        .await?;
+        Self::insert_activity(&mut tx, "create_relay", &relay.id).await?;
 
         tx.commit().await?;
         Ok(())
@@ -271,14 +244,7 @@ impl Repo {
         .execute(&mut *tx)
         .await?;
 
-        sqlx::query(
-            "INSERT INTO activity (id, created_at, activity_type, identifier)
-             VALUES (?, strftime('%s','now'), 'relay_updated', ?)",
-        )
-        .bind(uuid::Uuid::new_v4().to_string())
-        .bind(&relay.id)
-        .execute(&mut *tx)
-        .await?;
+        Self::insert_activity(&mut tx, "update_relay", &relay.id).await?;
 
         tx.commit().await?;
         Ok(())
@@ -292,14 +258,7 @@ impl Repo {
             .execute(&mut *tx)
             .await?;
 
-        sqlx::query(
-            "INSERT INTO activity (id, created_at, activity_type, identifier)
-             VALUES (?, strftime('%s','now'), 'relay_deactivated', ?)",
-        )
-        .bind(uuid::Uuid::new_v4().to_string())
-        .bind(&relay.id)
-        .execute(&mut *tx)
-        .await?;
+        Self::insert_activity(&mut tx, "deactivate_relay", &relay.id).await?;
 
         tx.commit().await?;
         Ok(())
@@ -313,14 +272,7 @@ impl Repo {
             .execute(&mut *tx)
             .await?;
 
-        sqlx::query(
-            "INSERT INTO activity (id, created_at, activity_type, identifier)
-             VALUES (?, strftime('%s','now'), 'relay_activated', ?)",
-        )
-        .bind(uuid::Uuid::new_v4().to_string())
-        .bind(&relay.id)
-        .execute(&mut *tx)
-        .await?;
+        Self::insert_activity(&mut tx, "activate_relay", &relay.id).await?;
 
         tx.commit().await?;
         Ok(())
@@ -335,14 +287,7 @@ impl Repo {
             .execute(&mut *tx)
             .await?;
 
-        sqlx::query(
-            "INSERT INTO activity (id, created_at, activity_type, identifier)
-             VALUES (?, strftime('%s','now'), 'relay_sync_failed', ?)",
-        )
-        .bind(uuid::Uuid::new_v4().to_string())
-        .bind(&relay.id)
-        .execute(&mut *tx)
-        .await?;
+        Self::insert_activity(&mut tx, "fail_relay_sync", &relay.id).await?;
 
         tx.commit().await?;
         Ok(())
@@ -382,14 +327,7 @@ impl Repo {
                 .await?;
         }
 
-        sqlx::query(
-            "INSERT INTO activity (id, created_at, activity_type, identifier)
-             VALUES (?, strftime('%s','now'), 'invoice_created', ?)",
-        )
-        .bind(uuid::Uuid::new_v4().to_string())
-        .bind(&invoice.id)
-        .execute(&mut *tx)
-        .await?;
+        Self::insert_activity(&mut tx, "create_invoice", &invoice.id).await?;
 
         tx.commit().await?;
         Ok(())
@@ -432,14 +370,7 @@ impl Repo {
         .execute(&mut *tx)
         .await?;
 
-        sqlx::query(
-            "INSERT INTO activity (id, created_at, activity_type, identifier)
-             VALUES (?, strftime('%s','now'), 'invoice_paid', ?)",
-        )
-        .bind(uuid::Uuid::new_v4().to_string())
-        .bind(invoice_id)
-        .execute(&mut *tx)
-        .await?;
+        Self::insert_activity(&mut tx, "mark_invoice_paid", invoice_id).await?;
 
         tx.commit().await?;
         Ok(())
@@ -458,14 +389,7 @@ impl Repo {
         .execute(&mut *tx)
         .await?;
 
-        sqlx::query(
-            "INSERT INTO activity (id, created_at, activity_type, identifier)
-             VALUES (?, strftime('%s','now'), 'invoice_attempted', ?)",
-        )
-        .bind(uuid::Uuid::new_v4().to_string())
-        .bind(invoice_id)
-        .execute(&mut *tx)
-        .await?;
+        Self::insert_activity(&mut tx, "mark_invoice_attempted", invoice_id).await?;
 
         tx.commit().await?;
         Ok(())
@@ -479,14 +403,7 @@ impl Repo {
             .execute(&mut *tx)
             .await?;
 
-        sqlx::query(
-            "INSERT INTO activity (id, created_at, activity_type, identifier)
-             VALUES (?, strftime('%s','now'), 'invoice_sent', ?)",
-        )
-        .bind(uuid::Uuid::new_v4().to_string())
-        .bind(invoice_id)
-        .execute(&mut *tx)
-        .await?;
+        Self::insert_activity(&mut tx, "mark_invoice_sent", invoice_id).await?;
 
         tx.commit().await?;
         Ok(())
@@ -504,14 +421,7 @@ impl Repo {
         .execute(&mut *tx)
         .await?;
 
-        sqlx::query(
-            "INSERT INTO activity (id, created_at, activity_type, identifier)
-             VALUES (?, strftime('%s','now'), 'invoice_closed', ?)",
-        )
-        .bind(uuid::Uuid::new_v4().to_string())
-        .bind(invoice_id)
-        .execute(&mut *tx)
-        .await?;
+        Self::insert_activity(&mut tx, "mark_invoice_closed", invoice_id).await?;
 
         tx.commit().await?;
         Ok(())
@@ -524,7 +434,7 @@ impl Repo {
                  FROM activity a
                  WHERE a.created_at > ?
                    AND (
-                     a.activity_type IN ('tenant_created', 'tenant_billing_anchor_updated')
+                     a.activity_type IN ('create_tenant', 'update_tenant_billing_anchor')
                      AND a.identifier = ?
                      OR EXISTS (
                         SELECT 1 FROM relay r
@@ -601,8 +511,4 @@ impl Repo {
         Ok(sats)
     }
 
-    #[allow(dead_code)]
-    async fn _log_activity_public(&self, activity_type: &str, identifier: &str) -> Result<()> {
-        self.log_activity(activity_type, identifier).await
-    }
 }

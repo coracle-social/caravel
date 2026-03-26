@@ -24,7 +24,6 @@ async fn main() -> Result<()> {
         .init();
 
     let repo = Repo::new().await?;
-    repo.migrate().await?;
     let robot = Robot::new().await?;
     let billing = Billing::new(repo.clone(), robot.clone());
     let infra = Infra::new(repo.clone());

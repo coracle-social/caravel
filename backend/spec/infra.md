@@ -19,6 +19,6 @@ Calls `self.tick` in a loop every 10 seconds.
 
 Iterates over `repo.list_activity` since last run and does the following:
 
-- For any `relay_created|relay_updated` activity, sync relay config to zooid.
-- For any `relay_deactivated` activity, sync relay config to zooid.
+- For any `create_relay|update_relay` activity, sync relay config to zooid.
+- For any `deactivate_relay` activity, sync relay config to zooid.
 - If unsuccessful, call `repo.fail_relay_sync`.

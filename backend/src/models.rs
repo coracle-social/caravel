@@ -11,6 +11,7 @@ pub struct Activity {
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Tenant {
     pub pubkey: String,
+    #[serde(skip_serializing)]
     pub nwc_url: String,
     pub created_at: i64,
     pub billing_anchor: i64,

@@ -42,7 +42,7 @@ impl Billing {
         let since = *since_guard;
         let activity = self.repo.list_activity(&since, None).await?;
         for a in &activity {
-            if matches!(a.activity_type.as_str(), "relay_created" | "relay_updated" | "relay_activated") {
+            if matches!(a.activity_type.as_str(), "create_relay" | "update_relay" | "activate_relay") {
                 self.maybe_reset_anchor_for_first_paid_relay(a).await?;
             }
             *since_guard = (*since_guard).max(a.created_at);
@@ -345,13 +345,13 @@ fn relay_active_hours_in_window(
         }
 
         match event.activity_type.as_str() {
-            "relay_created" | "relay_activated" => {
+            "create_relay" | "activate_relay" => {
                 if !active {
                     active = true;
                     cursor = ts;
                 }
             }
-            "relay_deactivated" | "relay_sync_failed" => {
+            "deactivate_relay" | "fail_relay_sync" => {
                 if active {
                     active = false;
                     secs += (ts - cursor).num_seconds().max(0);

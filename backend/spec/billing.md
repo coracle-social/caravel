@@ -20,7 +20,7 @@ Calls `self.tick` in a loop every hour.
 
 Iterates over `repo.list_activity` since last run and does the following:
 
-- For any `relay_created|relay_updated|relay_activated` activity if this is the first non-free relay for the tenant, update tenant's billing anchor to the time the relay was created.
+- For any `create_relay|update_relay|activate_relay` activity if this is the first non-free relay for the tenant, update tenant's billing anchor to the time the relay was created.
 
 Also iterates over `repo.list_tenants()` and for each tenant calls `self.generate_invoice_if_due(tenant)` and `self.collect_outstanding(tenant)`.
 

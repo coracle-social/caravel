@@ -71,6 +71,12 @@ export type Invoice = {
   period_end: number
 }
 
+export type Identity = {
+  pubkey: string
+  is_admin: boolean
+  is_tenant: boolean
+}
+
 export type CreateRelayInput = {
   tenant?: string
   subdomain: string
@@ -166,6 +172,10 @@ export async function callApi<TRequest = unknown, TResponse = unknown>(
 
 export function listPlans() {
   return callApi<undefined, Plan[]>("GET", "/plans")
+}
+
+export function getIdentity() {
+  return callApi<undefined, Identity>("GET", "/identity")
 }
 
 export function getPlan(id: string) {

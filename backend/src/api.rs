@@ -100,6 +100,7 @@ impl Api {
         };
 
         Router::new()
+            .route("/identity", get(get_identity))
             .route("/plans", get(list_plans))
             .route("/plans/:id", get(get_plan))
             .route("/tenants", get(list_tenants).post(create_tenant))
@@ -292,6 +293,13 @@ struct UpdateTenantBillingRequest {
     nwc_url: String,
 }
 
+#[derive(Serialize)]
+struct IdentityResponse {
+    pubkey: String,
+    is_admin: bool,
+    is_tenant: bool,
+}
+
 #[derive(Deserialize)]
 struct CreateRelayRequest {
     tenant: String,
@@ -349,6 +357,35 @@ async fn list_plans(
     let _ = state.api.extract_auth_pubkey(&headers)?;
 
     Ok(ok(StatusCode::OK, Repo::list_plans()))
+}
+
+async fn get_identity(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> std::result::Result<Response, ApiError> {
+    let pubkey = state.api.extract_auth_pubkey(&headers)?;
+    let is_admin = state.api.admins.iter().any(|a| a == &pubkey);
+
+    let is_tenant = match state.api.repo.get_tenant(&pubkey).await {
+        Ok(Some(_)) => true,
+        Ok(None) => false,
+        Err(e) => {
+            return Ok(err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal",
+                &e.to_string(),
+            ));
+        }
+    };
+
+    Ok(ok(
+        StatusCode::OK,
+        IdentityResponse {
+            pubkey,
+            is_admin,
+            is_tenant,
+        },
+    ))
 }
 
 async fn get_plan(

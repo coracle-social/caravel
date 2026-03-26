@@ -1,8 +1,8 @@
-import { A, useLocation } from "@solidjs/router"
+import { A, useLocation, useNavigate } from "@solidjs/router"
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js"
 import Fuse from "fuse.js"
 import { eventStore, primeProfiles, useActiveAccount, useProfilePicture } from "../lib/nostr"
-import { useAdminCheck, useTenantRelays, type Relay } from "../lib/hooks"
+import { useIdentity, useTenantRelays, type Relay } from "../lib/hooks"
 import serverIcon from "../assets/server.svg"
 import Modal from "./Modal"
 
@@ -32,15 +32,16 @@ function RelayIcon() {
 
 export default function AppShell(props: { children?: any }) {
   const location = useLocation()
+  const navigate = useNavigate()
   const account = useActiveAccount()
   const picture = useProfilePicture(() => account()?.pubkey)
-  const [adminCheck] = useAdminCheck(() => account()?.id)
+  const [identity] = useIdentity(() => account()?.pubkey)
   const [tenantRelays] = useTenantRelays()
   const [profile, setProfile] = createSignal<Profile>({})
   const [searchOpen, setSearchOpen] = createSignal(false)
   const [searchQuery, setSearchQuery] = createSignal("")
 
-  const isAdmin = createMemo(() => !!adminCheck()?.is_admin)
+  const isAdmin = createMemo(() => !!identity()?.is_admin)
   const username = createMemo(() => profile().name || profile().display_name || shortenPubkey(account()?.pubkey))
   const nip05 = createMemo(() => profile().nip05 || "No NIP-05")
   const searchedRelays = createMemo<Relay[]>(() => {
@@ -80,6 +81,12 @@ export default function AppShell(props: { children?: any }) {
       profileSub.unsubscribe()
       primeSub.unsubscribe()
     })
+  })
+
+  createEffect(() => {
+    const currentIdentity = identity()
+    if (!currentIdentity || currentIdentity.is_admin || currentIdentity.is_tenant || location.pathname === "/") return
+    navigate("/", { replace: true })
   })
 
   const myResources = [{ href: "/relays", label: "My Relays" }]

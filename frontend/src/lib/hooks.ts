@@ -1,10 +1,9 @@
 import { createResource } from "solid-js"
 import { Relay as NostrRelay, RelayManagement } from "applesauce-relay"
 import {
-  ApiError,
   createRelay,
-  createTenant,
   deactivateRelay,
+  getIdentity,
   getRelay,
   getTenant,
   listRelays,
@@ -14,11 +13,21 @@ import {
   updateRelay,
   updateTenantBilling,
   type CreateRelayInput,
+  type Identity,
   type Relay,
   type Tenant,
   type UpdateRelayInput,
 } from "./api"
 import { getActivePubkey, getActiveSigner } from "./nostr"
+
+type IdentityCache = {
+  pubkey: string
+  value: Identity
+}
+
+let identityCache: IdentityCache | undefined
+let identityInflight: Promise<Identity> | undefined
+let identityInflightPubkey: string | undefined
 
 function requireActivePubkey() {
   const pubkey = getActivePubkey()
@@ -26,19 +35,39 @@ function requireActivePubkey() {
   return pubkey
 }
 
-async function ensureActiveTenant() {
-  try {
-    await createTenant()
-  } catch (e) {
-    if (e instanceof ApiError && e.status === 422) return
-    throw e
+async function loadIdentity(pubkey?: string) {
+  if (!pubkey) throw new Error("Not logged in")
+
+  if (identityCache?.pubkey === pubkey) {
+    return identityCache.value
   }
+
+  if (identityInflight && identityInflightPubkey === pubkey) {
+    return identityInflight
+  }
+
+  const request = getIdentity().then((identity) => {
+    identityCache = { pubkey, value: identity }
+    return identity
+  }).finally(() => {
+    if (identityInflightPubkey === pubkey) {
+      identityInflight = undefined
+      identityInflightPubkey = undefined
+    }
+  })
+
+  identityInflight = request
+  identityInflightPubkey = pubkey
+  return request
+}
+
+export function useIdentity(source: () => string | undefined) {
+  return createResource(source, loadIdentity)
 }
 
 export function useTenant() {
   return createResource(async () => {
     const pubkey = requireActivePubkey()
-    await ensureActiveTenant()
     return getTenant(pubkey)
   })
 }
@@ -46,7 +75,6 @@ export function useTenant() {
 export function useTenantRelays() {
   return createResource(async () => {
     const pubkey = requireActivePubkey()
-    await ensureActiveTenant()
     return listTenantRelays(pubkey)
   })
 }
@@ -54,7 +82,6 @@ export function useTenantRelays() {
 export function useTenantInvoices() {
   return createResource(async () => {
     const pubkey = requireActivePubkey()
-    await ensureActiveTenant()
     return listTenantInvoices(pubkey)
   })
 }
@@ -78,21 +105,8 @@ export function useAdminTenantDetail(pubkey: () => string) {
   })
 }
 
-export function useAdminCheck(source: () => string | undefined) {
-  return createResource(source, async () => {
-    try {
-      await listTenants()
-      return { is_admin: true }
-    } catch (e) {
-      if (e instanceof ApiError && e.status === 403) return { is_admin: false }
-      throw e
-    }
-  })
-}
-
 export async function createRelayForActiveTenant(input: CreateRelayInput) {
   const pubkey = requireActivePubkey()
-  await ensureActiveTenant()
   return createRelay({ ...input, tenant: pubkey })
 }
 

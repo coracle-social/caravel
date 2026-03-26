@@ -16,6 +16,12 @@ The api allows the frontend to access the database. Most endpoints are authentic
 - Uses `makeAuth` to obtain a NIP 98 authorization header.
 - Calls the backend api and returns the decoded json or throws an `ApiError`.
 
+## `function getIdentity()`
+
+- Calls `GET /identity`
+- Requires authentication
+- Returns `{ pubkey, is_admin, is_tenant }` for the authorized user
+
 ## Plan methods
 
 ## `function listPlans()`

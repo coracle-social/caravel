@@ -1,18 +1,24 @@
 Hooks wrap data access and mutations so pages/components do not call API methods directly.
 
+## `function useIdentity(source)`
+
+- Calls `getIdentity()` for the active pubkey
+- Caches identity in module memory (not localStorage)
+- Returns a Solid `createResource` tuple
+
 ## `function useTenant()`
 
-- Uses `createTenant()` then `getTenant(pubkey)` for the active account
+- Uses `getTenant(pubkey)` for the active account
 - Returns a Solid `createResource` tuple
 
 ## `function useTenantRelays()`
 
-- Uses `createTenant()` then `listTenantRelays(pubkey)` for the active account
+- Uses `listTenantRelays(pubkey)` for the active account
 - Returns a Solid `createResource` tuple
 
 ## `function useTenantInvoices()`
 
-- Uses `createTenant()` then `listTenantInvoices(pubkey)` for the active account
+- Uses `listTenantInvoices(pubkey)` for the active account
 - Returns a Solid `createResource` tuple
 
 ## `function useRelay(relayId)`
@@ -35,15 +41,9 @@ Hooks wrap data access and mutations so pages/components do not call API methods
 - Uses `getTenant(pubkey)` and `listTenantRelays(pubkey)`
 - Returns a Solid `createResource` tuple with `{ tenant, relays }`
 
-## `function useAdminCheck(source)`
-
-- Uses `listTenants()` as an admin capability check
-- Returns `{ is_admin: true }` on success
-- Returns `{ is_admin: false }` on `403`
-
 ## `function createRelayForActiveTenant(input)`
 
-- Uses `createTenant()` then `createRelay({ tenant: activePubkey, ...input })`
+- Uses `createRelay({ tenant: activePubkey, ...input })`
 
 ## `function updateActiveTenantBilling(nwc_url)`
 

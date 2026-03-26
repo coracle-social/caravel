@@ -3,6 +3,14 @@ This file describes the domain model. This description should be translated into
 - Fields marked as private should use `#[serde(skip_serializing)]` in their definition.
 - Fields marked as readonly should use `#[serde(skip_deserializing)]` in their definition.
 
+# Identity
+
+Identity is a description of a user.
+
+- `pubkey` - the user's nostr pubkey
+- `is_admin` - whether the user is an admin
+- `is_tenant` - whether the user has an account
+
 # Activity
 
 Activity is an audit log of all actions performed by a user or a worker process. This allows us to trace history to create invoices, synchronize actions to external services, and debug system behavior.

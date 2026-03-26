@@ -40,6 +40,14 @@ Notes:
 - Return `data` is a single plan struct matching `id`
 - If plan does not exist, return `404` with `code=not-found`
 
+--- Identity routes
+
+## `async fn get_identity(...) -> Response`
+
+- Serves `GET /identity`
+- Authorizes anyone, but must be authorized
+- Return `data` is an `Identity` struct
+
 --- Tenant routes
 
 ## `async fn list_tenants(...) -> Response`

@@ -21,3 +21,6 @@ rand = "0.8"
 hex = "0.4"
 dotenvy = "0.15.7"
 base64 = "0.22"
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }

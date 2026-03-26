@@ -8,25 +8,33 @@ dev:
 dev-frontend:
   cd frontend && bun run dev
 
-build-frontend:
-  cd frontend && bun run build
-
 preview-frontend:
   cd frontend && bun run preview
 
 fmt-backend:
   cd backend && cargo fmt
 
-fmt: fmt-backend
-
 lint-backend:
   cd backend && cargo clippy -- -D warnings
 
-lint: lint-backend
+test-backend:
+  cd backend && cargo test
+
+test-backend-api:
+  cd backend && cargo test api::tests::
 
 build-backend:
   cd backend && cargo build
 
+build-frontend:
+  cd frontend && bun run build
+
+fmt: fmt-backend
+
+lint: lint-backend
+
 build: build-backend build-frontend
 
-check: fmt lint build
+test: test-backend
+
+check: fmt lint build test

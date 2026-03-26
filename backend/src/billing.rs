@@ -42,7 +42,10 @@ impl Billing {
         let since = *since_guard;
         let activity = self.repo.list_activity(&since, None).await?;
         for a in &activity {
-            if matches!(a.activity_type.as_str(), "create_relay" | "update_relay" | "activate_relay") {
+            if matches!(
+                a.activity_type.as_str(),
+                "create_relay" | "update_relay" | "activate_relay"
+            ) {
                 self.maybe_reset_anchor_for_first_paid_relay(a).await?;
             }
             *since_guard = (*since_guard).max(a.created_at);
@@ -83,7 +86,12 @@ impl Billing {
     }
 
     async fn generate_invoice_if_due(&self, tenant: &Tenant) -> Result<()> {
-        if self.repo.total_pending_invoices_for_tenant(&tenant.pubkey).await? > 0 {
+        if self
+            .repo
+            .total_pending_invoices_for_tenant(&tenant.pubkey)
+            .await?
+            > 0
+        {
             return Ok(());
         }
 
@@ -104,12 +112,16 @@ impl Billing {
             return Ok(());
         }
 
-        let usage_events = self.repo.list_activity(&tenant.billing_anchor, Some(&tenant.pubkey)).await?;
+        let usage_events = self
+            .repo
+            .list_activity(&tenant.billing_anchor, Some(&tenant.pubkey))
+            .await?;
         let invoice_id = uuid::Uuid::new_v4().to_string();
         let mut items = Vec::new();
 
         for relay in active_paid_relays {
-            let hours = relay_active_hours_in_window(&relay, &usage_events, period_start, period_end);
+            let hours =
+                relay_active_hours_in_window(&relay, &usage_events, period_start, period_end);
             if hours <= 0 {
                 continue;
             }
@@ -178,7 +190,9 @@ impl Billing {
             }
 
             let mut collected = false;
-            if !tenant.nwc_url.trim().is_empty() && self.pay_invoice_nwc(&tenant.nwc_url, &invoice.bolt11).await {
+            if !tenant.nwc_url.trim().is_empty()
+                && self.pay_invoice_nwc(&tenant.nwc_url, &invoice.bolt11).await
+            {
                 self.repo.mark_invoice_paid(&invoice.id).await?;
                 collected = true;
             }
@@ -256,7 +270,7 @@ impl Billing {
         uri: &nostr_sdk::nips::nip47::NostrWalletConnectURI,
         request: nostr_sdk::nips::nip47::Request,
     ) -> Result<nostr_sdk::nips::nip47::Response> {
-        use nostr_sdk::{Client, Filter, Kind, Keys, Timestamp};
+        use nostr_sdk::{Client, Filter, Keys, Kind, Timestamp};
 
         let app_keys = Keys::new(uri.secret.clone());
         let app_pubkey = app_keys.public_key();

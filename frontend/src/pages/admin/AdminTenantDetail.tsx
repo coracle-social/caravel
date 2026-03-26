@@ -30,13 +30,11 @@ export default function AdminTenantDetail() {
           <section class="bg-white border border-gray-200 rounded-xl p-6">
             <h2 class="text-lg font-semibold mb-4">Status</h2>
             <Show when={detail()}>
-              {(d) => (
-                <div class="space-y-3">
-                  <p class="text-sm text-gray-700">
-                    Current: <span class="font-medium uppercase tracking-wide">tenant</span>
-                  </p>
-                </div>
-              )}
+              <div class="space-y-3">
+                <p class="text-sm text-gray-700">
+                  Current: <span class="font-medium uppercase tracking-wide">tenant</span>
+                </p>
+              </div>
             </Show>
           </section>
 

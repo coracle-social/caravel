@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
-use base64::Engine;
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
@@ -9,6 +8,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{get, post, put},
 };
+use base64::Engine;
 use nostr_sdk::{Event, JsonUtil, Kind};
 use serde::{Deserialize, Serialize};
 use tower_http::cors::{AllowOrigin, CorsLayer};
@@ -86,7 +86,8 @@ impl Api {
             .with_state(state)
             .layer(self.cors_layer());
 
-        let listener = tokio::net::TcpListener::bind(format!("{}:{}", self.host, self.port)).await?;
+        let listener =
+            tokio::net::TcpListener::bind(format!("{}:{}", self.host, self.port)).await?;
         axum::serve(listener, app).await?;
         Ok(())
     }
@@ -162,13 +163,18 @@ fn prepare_relay(mut relay: Relay) -> anyhow::Result<Relay> {
     if relay.status.is_empty() {
         relay.status = "new".to_string();
     }
-    relay.sync_error = relay.sync_error;
     relay.policy_public_join = parse_bool_default(relay.policy_public_join, 0);
     relay.policy_strip_signatures = parse_bool_default(relay.policy_strip_signatures, 0);
     relay.groups_enabled = parse_bool_default(relay.groups_enabled, 1);
     relay.management_enabled = parse_bool_default(relay.management_enabled, 1);
-    relay.blossom_enabled = parse_bool_default(relay.blossom_enabled, if relay.plan == "free" { 0 } else { 1 });
-    relay.livekit_enabled = parse_bool_default(relay.livekit_enabled, if relay.plan == "free" { 0 } else { 1 });
+    relay.blossom_enabled = parse_bool_default(
+        relay.blossom_enabled,
+        if relay.plan == "free" { 0 } else { 1 },
+    );
+    relay.livekit_enabled = parse_bool_default(
+        relay.livekit_enabled,
+        if relay.plan == "free" { 0 } else { 1 },
+    );
     relay.push_enabled = parse_bool_default(relay.push_enabled, 1);
 
     Ok(relay)
@@ -192,7 +198,12 @@ fn auth_fail_response(e: anyhow::Error) -> Response {
     err(StatusCode::UNAUTHORIZED, "unauthorized", &e.to_string())
 }
 
-fn extract_auth_pubkey(headers: &HeaderMap, method: &Method, _uri: &Uri, host: &str) -> Result<String> {
+fn extract_auth_pubkey(
+    headers: &HeaderMap,
+    method: &Method,
+    _uri: &Uri,
+    host: &str,
+) -> Result<String> {
     let auth = headers
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
@@ -304,7 +315,11 @@ async fn list_tenants(
     }
     match state.api.repo.list_tenants().await {
         Ok(tenants) => ok(StatusCode::OK, tenants),
-        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, "internal", &e.to_string()),
+        Err(e) => err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal",
+            &e.to_string(),
+        ),
     }
 }
 
@@ -325,7 +340,11 @@ async fn get_tenant(
     match state.api.repo.get_tenant(&pubkey).await {
         Ok(Some(tenant)) => ok(StatusCode::OK, tenant),
         Ok(None) => err(StatusCode::NOT_FOUND, "not-found", "tenant not found"),
-        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, "internal", &e.to_string()),
+        Err(e) => err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal",
+            &e.to_string(),
+        ),
     }
 }
 
@@ -351,9 +370,17 @@ async fn create_tenant(
         Ok(()) => ok(StatusCode::CREATED, tenant),
         Err(e) => {
             if matches!(map_unique_error(&e), Some("pubkey-exists")) {
-                err(StatusCode::UNPROCESSABLE_ENTITY, "pubkey-exists", "tenant already exists")
+                err(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "pubkey-exists",
+                    "tenant already exists",
+                )
             } else {
-                err(StatusCode::INTERNAL_SERVER_ERROR, "internal", &e.to_string())
+                err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "internal",
+                    &e.to_string(),
+                )
             }
         }
     }
@@ -374,7 +401,15 @@ async fn list_relays(
     let tenant_filter = if state.api.is_admin(&auth) {
         query.tenant.as_deref()
     } else {
-        if state.api.repo.get_tenant(&auth).await.ok().flatten().is_none() {
+        if state
+            .api
+            .repo
+            .get_tenant(&auth)
+            .await
+            .ok()
+            .flatten()
+            .is_none()
+        {
             return err(StatusCode::FORBIDDEN, "forbidden", "tenant required");
         }
         if query.tenant.is_some() {
@@ -389,7 +424,11 @@ async fn list_relays(
 
     match state.api.repo.list_relays(tenant_filter).await {
         Ok(relays) => ok(StatusCode::OK, relays),
-        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, "internal", &e.to_string()),
+        Err(e) => err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal",
+            &e.to_string(),
+        ),
     }
 }
 
@@ -408,7 +447,13 @@ async fn get_relay(
     let relay = match state.api.repo.get_relay(&id).await {
         Ok(Some(r)) => r,
         Ok(None) => return err(StatusCode::NOT_FOUND, "not-found", "relay not found"),
-        Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, "internal", &e.to_string()),
+        Err(e) => {
+            return err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal",
+                &e.to_string(),
+            );
+        }
     };
 
     if !(state.api.is_admin(&auth) || state.api.is_tenant(&auth, &relay.tenant)) {
@@ -482,7 +527,11 @@ async fn create_relay(
                     "subdomain already exists",
                 )
             } else {
-                err(StatusCode::INTERNAL_SERVER_ERROR, "internal", &e.to_string())
+                err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "internal",
+                    &e.to_string(),
+                )
             }
         }
     }
@@ -504,7 +553,13 @@ async fn update_relay(
     let mut relay = match state.api.repo.get_relay(&id).await {
         Ok(Some(r)) => r,
         Ok(None) => return err(StatusCode::NOT_FOUND, "not-found", "relay not found"),
-        Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, "internal", &e.to_string()),
+        Err(e) => {
+            return err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal",
+                &e.to_string(),
+            );
+        }
     };
 
     if !(state.api.is_admin(&auth) || state.api.is_tenant(&auth, &relay.tenant)) {
@@ -576,7 +631,11 @@ async fn update_relay(
                     "subdomain already exists",
                 )
             } else {
-                err(StatusCode::INTERNAL_SERVER_ERROR, "internal", &e.to_string())
+                err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "internal",
+                    &e.to_string(),
+                )
             }
         }
     }
@@ -597,7 +656,13 @@ async fn deactivate_relay(
     let relay = match state.api.repo.get_relay(&id).await {
         Ok(Some(r)) => r,
         Ok(None) => return err(StatusCode::NOT_FOUND, "not-found", "relay not found"),
-        Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, "internal", &e.to_string()),
+        Err(e) => {
+            return err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal",
+                &e.to_string(),
+            );
+        }
     };
 
     if !(state.api.is_admin(&auth) || state.api.is_tenant(&auth, &relay.tenant)) {
@@ -606,7 +671,11 @@ async fn deactivate_relay(
 
     match state.api.repo.deactivate_relay(&relay).await {
         Ok(()) => ok(StatusCode::OK, ()),
-        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, "internal", &e.to_string()),
+        Err(e) => err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal",
+            &e.to_string(),
+        ),
     }
 }
 
@@ -625,7 +694,15 @@ async fn list_invoices(
     let tenant_filter = if state.api.is_admin(&auth) {
         query.tenant.as_deref()
     } else {
-        if state.api.repo.get_tenant(&auth).await.ok().flatten().is_none() {
+        if state
+            .api
+            .repo
+            .get_tenant(&auth)
+            .await
+            .ok()
+            .flatten()
+            .is_none()
+        {
             return err(StatusCode::FORBIDDEN, "forbidden", "tenant required");
         }
         if query.tenant.is_some() {
@@ -640,7 +717,11 @@ async fn list_invoices(
 
     match state.api.repo.list_invoices(tenant_filter).await {
         Ok(invoices) => ok(StatusCode::OK, invoices),
-        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, "internal", &e.to_string()),
+        Err(e) => err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal",
+            &e.to_string(),
+        ),
     }
 }
 
@@ -668,6 +749,10 @@ async fn update_tenant_billing(
         .await
     {
         Ok(()) => ok(StatusCode::OK, payload),
-        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, "internal", &e.to_string()),
+        Err(e) => err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal",
+            &e.to_string(),
+        ),
     }
 }

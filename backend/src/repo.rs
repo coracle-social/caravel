@@ -1,7 +1,11 @@
 use std::path::Path;
+use std::str::FromStr;
 
 use anyhow::Result;
-use sqlx::{Sqlite, SqlitePool, Transaction, sqlite::SqlitePoolOptions};
+use sqlx::{
+    Sqlite, SqlitePool, Transaction,
+    sqlite::{SqliteConnectOptions, SqlitePoolOptions},
+};
 
 use crate::models::{Activity, Invoice, InvoiceItem, Relay, Tenant};
 
@@ -12,8 +16,10 @@ pub struct Repo {
 
 impl Repo {
     pub async fn new() -> Result<Self> {
-        let database_url = std::env::var("DATABASE_URL")
-            .unwrap_or_else(|_| "sqlite://data/caravel.db".to_string());
+        let raw_database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
+            format!("sqlite://{}/data/caravel.db", env!("CARGO_MANIFEST_DIR"))
+        });
+        let database_url = normalize_sqlite_url(&raw_database_url);
 
         if let Some(path) = database_url.strip_prefix("sqlite://")
             && !path.is_empty()
@@ -24,9 +30,11 @@ impl Repo {
             std::fs::create_dir_all(parent)?;
         }
 
+        let connect_options = SqliteConnectOptions::from_str(&database_url)?.create_if_missing(true);
+
         let pool = SqlitePoolOptions::new()
             .max_connections(5)
-            .connect(&database_url)
+            .connect_with(connect_options)
             .await?;
 
         sqlx::query("PRAGMA journal_mode = WAL;")
@@ -118,7 +126,11 @@ impl Repo {
         Ok(())
     }
 
-    pub async fn update_tenant_billing_anchor(&self, pubkey: &str, billing_anchor: i64) -> Result<()> {
+    pub async fn update_tenant_billing_anchor(
+        &self,
+        pubkey: &str,
+        billing_anchor: i64,
+    ) -> Result<()> {
         let mut tx = self.pool.begin().await?;
 
         sqlx::query("UPDATE tenant SET billing_anchor = ? WHERE pubkey = ?")
@@ -284,20 +296,6 @@ impl Repo {
         Ok(())
     }
 
-    pub async fn activate_relay(&self, relay: &Relay) -> Result<()> {
-        let mut tx = self.pool.begin().await?;
-
-        sqlx::query("UPDATE relay SET status = 'active' WHERE id = ?")
-            .bind(&relay.id)
-            .execute(&mut *tx)
-            .await?;
-
-        Self::insert_activity(&mut tx, "activate_relay", "relay", &relay.id).await?;
-
-        tx.commit().await?;
-        Ok(())
-    }
-
     pub async fn fail_relay_sync(&self, relay: &Relay, sync_error: String) -> Result<()> {
         let mut tx = self.pool.begin().await?;
 
@@ -313,7 +311,11 @@ impl Repo {
         Ok(())
     }
 
-    pub async fn create_invoice(&self, invoice: &Invoice, invoice_items: &[InvoiceItem]) -> Result<()> {
+    pub async fn create_invoice(
+        &self,
+        invoice: &Invoice,
+        invoice_items: &[InvoiceItem],
+    ) -> Result<()> {
         let mut tx = self.pool.begin().await?;
 
         sqlx::query(
@@ -396,7 +398,11 @@ impl Repo {
         Ok(())
     }
 
-    pub async fn mark_invoice_attempted(&self, invoice_id: &str, error: Option<&str>) -> Result<()> {
+    pub async fn mark_invoice_attempted(
+        &self,
+        invoice_id: &str,
+        error: Option<&str>,
+    ) -> Result<()> {
         let mut tx = self.pool.begin().await?;
 
         sqlx::query(
@@ -485,17 +491,6 @@ impl Repo {
         Ok(rows)
     }
 
-    pub async fn total_active_paid_relays_for_tenant(&self, tenant: &str) -> Result<i64> {
-        let count = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM relay
-             WHERE tenant = ? AND status = 'active' AND plan != 'free'",
-        )
-        .bind(tenant)
-        .fetch_one(&self.pool)
-        .await?;
-        Ok(count)
-    }
-
     pub async fn total_pending_invoices_for_tenant(&self, tenant: &str) -> Result<i64> {
         let count = sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM invoice
@@ -516,5 +511,16 @@ impl Repo {
         };
         Ok(sats)
     }
+}
 
+fn normalize_sqlite_url(url: &str) -> String {
+    let Some(path) = url.strip_prefix("sqlite://") else {
+        return url.to_string();
+    };
+
+    if path.is_empty() || path == ":memory:" || Path::new(path).is_absolute() {
+        return url.to_string();
+    }
+
+    format!("sqlite://{}/{}", env!("CARGO_MANIFEST_DIR"), path)
 }

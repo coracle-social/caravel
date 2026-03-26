@@ -5,6 +5,15 @@ dev:
   cd frontend && bun dev &
   wait
 
+dev-frontend:
+  cd frontend && bun run dev
+
+build-frontend:
+  cd frontend && bun run build
+
+preview-frontend:
+  cd frontend && bun run preview
+
 fmt-backend:
   cd backend && cargo fmt
 
@@ -18,6 +27,6 @@ lint: lint-backend
 build-backend:
   cd backend && cargo build
 
-build: build-backend
+build: build-backend build-frontend
 
 check: fmt lint build

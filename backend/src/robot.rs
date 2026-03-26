@@ -111,7 +111,9 @@ impl Robot {
             return Err(anyhow!("no outbox relays found for recipient"));
         }
 
-        let dm_relays = self.fetch_messaging_relays_from_outbox(recipient, &outbox).await?;
+        let dm_relays = self
+            .fetch_messaging_relays_from_outbox(recipient, &outbox)
+            .await?;
         if dm_relays.is_empty() {
             return Err(anyhow!("no messaging relays found for recipient"));
         }
@@ -123,7 +125,9 @@ impl Robot {
             client.add_relay(relay).await?;
         }
         client.connect().await;
-        client.send_private_msg(recipient_pubkey, message, []).await?;
+        client
+            .send_private_msg(recipient_pubkey, message, [])
+            .await?;
         Ok(())
     }
 
@@ -135,9 +139,7 @@ impl Robot {
         let pubkey = PublicKey::parse(recipient)?;
         let client = indexer_client(&self.secret, &self.indexer_relays).await?;
         let filter = Filter::new().author(pubkey).kind(Kind::Custom(10002));
-        let events = client
-            .fetch_events(filter, Duration::from_secs(5))
-            .await?;
+        let events = client.fetch_events(filter, Duration::from_secs(5)).await?;
 
         let mut relays = Vec::new();
         if let Some(event) = events.into_iter().max_by_key(|e| e.created_at) {
@@ -171,9 +173,7 @@ impl Robot {
         client.connect().await;
 
         let filter = Filter::new().author(pubkey).kind(Kind::Custom(10050));
-        let events = client
-            .fetch_events(filter, Duration::from_secs(5))
-            .await?;
+        let events = client.fetch_events(filter, Duration::from_secs(5)).await?;
 
         let mut relays = Vec::new();
         if let Some(event) = events.into_iter().max_by_key(|e| e.created_at) {

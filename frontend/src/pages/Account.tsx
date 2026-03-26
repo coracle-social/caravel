@@ -45,11 +45,9 @@ export default function Account() {
           <div class="flex items-center justify-between gap-3">
             <h2 class="text-lg font-semibold text-gray-900">Account Status</h2>
             <Show when={tenant()}>
-              {(t) => (
-                <span class="rounded-full border border-gray-300 bg-gray-100 px-2.5 py-1 text-xs font-medium uppercase tracking-wide text-gray-700">
-                  tenant
-                </span>
-              )}
+              <span class="rounded-full border border-gray-300 bg-gray-100 px-2.5 py-1 text-xs font-medium uppercase tracking-wide text-gray-700">
+                tenant
+              </span>
             </Show>
           </div>
         </section>

@@ -1,8 +1,10 @@
 CREATE TABLE IF NOT EXISTS activity (
   id TEXT PRIMARY KEY,
+  tenant TEXT NOT NULL,
   created_at INTEGER NOT NULL,
   activity_type TEXT NOT NULL,
-  identifier TEXT NOT NULL
+  resource_type TEXT NOT NULL,
+  resource_id TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS tenant (

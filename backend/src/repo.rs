@@ -41,15 +41,35 @@ impl Repo {
     async fn insert_activity(
         tx: &mut Transaction<'_, Sqlite>,
         activity_type: &str,
-        identifier: &str,
+        resource_type: &str,
+        resource_id: &str,
     ) -> Result<()> {
+        let tenant = match resource_type {
+            "tenant" => resource_id.to_string(),
+            "relay" => {
+                sqlx::query_scalar::<_, String>("SELECT tenant FROM relay WHERE id = ?")
+                    .bind(resource_id)
+                    .fetch_one(&mut **tx)
+                    .await?
+            }
+            "invoice" => {
+                sqlx::query_scalar::<_, String>("SELECT tenant FROM invoice WHERE id = ?")
+                    .bind(resource_id)
+                    .fetch_one(&mut **tx)
+                    .await?
+            }
+            _ => anyhow::bail!("unknown resource_type: {}", resource_type),
+        };
+
         sqlx::query(
-            "INSERT INTO activity (id, created_at, activity_type, identifier)
-             VALUES (?, strftime('%s','now'), ?, ?)",
+            "INSERT INTO activity (id, tenant, created_at, activity_type, resource_type, resource_id)
+             VALUES (?, ?, strftime('%s','now'), ?, ?, ?)",
         )
         .bind(uuid::Uuid::new_v4().to_string())
+        .bind(tenant)
         .bind(activity_type)
-        .bind(identifier)
+        .bind(resource_type)
+        .bind(resource_id)
         .execute(&mut **tx)
         .await?;
         Ok(())
@@ -92,7 +112,7 @@ impl Repo {
         .execute(&mut *tx)
         .await?;
 
-        Self::insert_activity(&mut tx, "create_tenant", &tenant.pubkey).await?;
+        Self::insert_activity(&mut tx, "create_tenant", "tenant", &tenant.pubkey).await?;
 
         tx.commit().await?;
         Ok(())
@@ -107,7 +127,7 @@ impl Repo {
             .execute(&mut *tx)
             .await?;
 
-        Self::insert_activity(&mut tx, "update_tenant_billing_anchor", pubkey).await?;
+        Self::insert_activity(&mut tx, "update_tenant_billing_anchor", "tenant", pubkey).await?;
 
         tx.commit().await?;
         Ok(())
@@ -122,7 +142,7 @@ impl Repo {
             .execute(&mut *tx)
             .await?;
 
-        Self::insert_activity(&mut tx, "update_tenant_nwc_url", pubkey).await?;
+        Self::insert_activity(&mut tx, "update_tenant_nwc_url", "tenant", pubkey).await?;
 
         tx.commit().await?;
         Ok(())
@@ -206,7 +226,7 @@ impl Repo {
         .execute(&mut *tx)
         .await?;
 
-        Self::insert_activity(&mut tx, "create_relay", &relay.id).await?;
+        Self::insert_activity(&mut tx, "create_relay", "relay", &relay.id).await?;
 
         tx.commit().await?;
         Ok(())
@@ -244,7 +264,7 @@ impl Repo {
         .execute(&mut *tx)
         .await?;
 
-        Self::insert_activity(&mut tx, "update_relay", &relay.id).await?;
+        Self::insert_activity(&mut tx, "update_relay", "relay", &relay.id).await?;
 
         tx.commit().await?;
         Ok(())
@@ -258,7 +278,7 @@ impl Repo {
             .execute(&mut *tx)
             .await?;
 
-        Self::insert_activity(&mut tx, "deactivate_relay", &relay.id).await?;
+        Self::insert_activity(&mut tx, "deactivate_relay", "relay", &relay.id).await?;
 
         tx.commit().await?;
         Ok(())
@@ -272,7 +292,7 @@ impl Repo {
             .execute(&mut *tx)
             .await?;
 
-        Self::insert_activity(&mut tx, "activate_relay", &relay.id).await?;
+        Self::insert_activity(&mut tx, "activate_relay", "relay", &relay.id).await?;
 
         tx.commit().await?;
         Ok(())
@@ -287,7 +307,7 @@ impl Repo {
             .execute(&mut *tx)
             .await?;
 
-        Self::insert_activity(&mut tx, "fail_relay_sync", &relay.id).await?;
+        Self::insert_activity(&mut tx, "fail_relay_sync", "relay", &relay.id).await?;
 
         tx.commit().await?;
         Ok(())
@@ -327,7 +347,7 @@ impl Repo {
                 .await?;
         }
 
-        Self::insert_activity(&mut tx, "create_invoice", &invoice.id).await?;
+        Self::insert_activity(&mut tx, "create_invoice", "invoice", &invoice.id).await?;
 
         tx.commit().await?;
         Ok(())
@@ -370,7 +390,7 @@ impl Repo {
         .execute(&mut *tx)
         .await?;
 
-        Self::insert_activity(&mut tx, "mark_invoice_paid", invoice_id).await?;
+        Self::insert_activity(&mut tx, "mark_invoice_paid", "invoice", invoice_id).await?;
 
         tx.commit().await?;
         Ok(())
@@ -389,7 +409,7 @@ impl Repo {
         .execute(&mut *tx)
         .await?;
 
-        Self::insert_activity(&mut tx, "mark_invoice_attempted", invoice_id).await?;
+        Self::insert_activity(&mut tx, "mark_invoice_attempted", "invoice", invoice_id).await?;
 
         tx.commit().await?;
         Ok(())
@@ -403,7 +423,7 @@ impl Repo {
             .execute(&mut *tx)
             .await?;
 
-        Self::insert_activity(&mut tx, "mark_invoice_sent", invoice_id).await?;
+        Self::insert_activity(&mut tx, "mark_invoice_sent", "invoice", invoice_id).await?;
 
         tx.commit().await?;
         Ok(())
@@ -421,7 +441,7 @@ impl Repo {
         .execute(&mut *tx)
         .await?;
 
-        Self::insert_activity(&mut tx, "mark_invoice_closed", invoice_id).await?;
+        Self::insert_activity(&mut tx, "mark_invoice_closed", "invoice", invoice_id).await?;
 
         tx.commit().await?;
         Ok(())
@@ -430,32 +450,18 @@ impl Repo {
     pub async fn list_activity(&self, since: &i64, tenant: Option<&str>) -> Result<Vec<Activity>> {
         let rows = if let Some(tenant_pubkey) = tenant {
             sqlx::query_as::<_, Activity>(
-                "SELECT a.id, a.created_at, a.activity_type, a.identifier
-                 FROM activity a
-                 WHERE a.created_at > ?
-                   AND (
-                     a.activity_type IN ('create_tenant', 'update_tenant_billing_anchor')
-                     AND a.identifier = ?
-                     OR EXISTS (
-                        SELECT 1 FROM relay r
-                       WHERE r.id = a.identifier AND r.tenant = ?
-                     )
-                     OR EXISTS (
-                        SELECT 1 FROM invoice i
-                       WHERE i.id = a.identifier AND i.tenant = ?
-                     )
-                   )
-                 ORDER BY a.created_at, a.id",
+                "SELECT id, tenant, created_at, activity_type, resource_type, resource_id
+                 FROM activity
+                 WHERE created_at > ? AND tenant = ?
+                 ORDER BY created_at, id",
             )
             .bind(since)
-            .bind(tenant_pubkey)
-            .bind(tenant_pubkey)
             .bind(tenant_pubkey)
             .fetch_all(&self.pool)
             .await?
         } else {
             sqlx::query_as::<_, Activity>(
-                "SELECT id, created_at, activity_type, identifier
+                "SELECT id, tenant, created_at, activity_type, resource_type, resource_id
                  FROM activity
                  WHERE created_at > ?
                  ORDER BY created_at, id",

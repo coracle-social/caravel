@@ -9,7 +9,7 @@ Members:
 Notes:
 
 - All public write methods should be run in a transaction so they're atomic
-- All writes should be accompanied by an activity log entry of `(activity_type, identifier)`
+- All writes should be accompanied by an activity log entry of `(tenant, activity_type, resource_type, resource_id)`
 - Database table names are singular: `activity`, `tenant`, `relay`, `invoice`, `invoice_item`
 
 ## `pub fn new() -> Self`
@@ -19,9 +19,10 @@ Notes:
 - Initializes its sqlx `pool`
 - Runs migrations found in the `migrations` directory.
 
-## `fn insert_activity(activity_type, identifier) -> Result<()>`
+## `fn insert_activity(activity_type, resource_type, resource_id) -> Result<()>`
 
 - Private helper that inserts one row into `activity`
+- Infers `tenant` from `resource_type` and `resource_id`
 - Used by write methods to avoid repeating audit-log SQL
 
 ## `pub fn list_tenants(&self) -> Result<Vec<Tenant>>`

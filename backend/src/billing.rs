@@ -59,7 +59,7 @@ impl Billing {
     }
 
     async fn maybe_reset_anchor_for_first_paid_relay(&self, activity: &Activity) -> Result<()> {
-        let relay = match self.repo.get_relay(&activity.identifier).await? {
+        let relay = match self.repo.get_relay(&activity.resource_id).await? {
             Some(r) => r,
             None => return Ok(()),
         };
@@ -319,7 +319,7 @@ fn relay_active_hours_in_window(
 
     let mut marks: HashMap<&str, Vec<&Activity>> = HashMap::new();
     for event in events {
-        if event.identifier == relay.id {
+        if event.resource_type == "relay" && event.resource_id == relay.id {
             marks.entry(&relay.id).or_default().push(event);
         }
     }

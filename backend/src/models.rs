@@ -3,9 +3,11 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Activity {
     pub id: String,
+    pub tenant: String,
     pub created_at: i64,
     pub activity_type: String,
-    pub identifier: String,
+    pub resource_type: String,
+    pub resource_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]

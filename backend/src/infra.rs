@@ -48,11 +48,13 @@ impl Infra {
         let activity = self.repo.list_activity(&since, None).await?;
 
         for a in activity {
-            if matches!(
-                a.activity_type.as_str(),
-                "create_relay" | "update_relay" | "deactivate_relay"
-            ) {
-                let Some(relay) = self.repo.get_relay(&a.identifier).await? else {
+            if a.resource_type == "relay"
+                && matches!(
+                    a.activity_type.as_str(),
+                    "create_relay" | "update_relay" | "deactivate_relay"
+                )
+            {
+                let Some(relay) = self.repo.get_relay(&a.resource_id).await? else {
                     continue;
                 };
 

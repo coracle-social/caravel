@@ -8,6 +8,7 @@ This file describes the domain model. This description should be translated into
 Activity is an audit log of all actions performed by a user or a worker process. This allows us to trace history to create invoices, synchronize actions to external services, and debug system behavior.
 
 - `id` - a random activity ID
+- `tenant` - a tenant ID
 - `created_at` - unix timestamp when the activity was created
 - `activity_type` is one of:
   - `create_tenant`
@@ -23,7 +24,8 @@ Activity is an audit log of all actions performed by a user or a worker process.
   - `mark_invoice_attempted`
   - `mark_invoice_sent`
   - `mark_invoice_closed`
-- `identifier` is a string identifying the resource being modified. This id in interpreted depending on what the `activity_type` is.
+- `resource_type` is a string identifying the resource type being modified.
+- `resource_id` is a string identifying the resource id being modified.
 
 # Tenant
 

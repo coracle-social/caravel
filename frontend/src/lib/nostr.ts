@@ -11,6 +11,25 @@ import { createEventLoaderForStore } from "applesauce-loaders/loaders"
 import { NostrConnectSigner } from "applesauce-signers"
 import { map, of } from "rxjs"
 
+type NostrTag = string[]
+
+export type UnsignedEvent = {
+  kind: number
+  content: string
+  created_at: number
+  tags: NostrTag[]
+}
+
+export type SignedEvent = UnsignedEvent & {
+  id: string
+  pubkey: string
+  sig: string
+}
+
+export type EventSigner = {
+  signEvent(event: UnsignedEvent): Promise<SignedEvent>
+}
+
 export const API_URL = import.meta.env.VITE_API_URL
 export const PLATFORM_NAME = import.meta.env.VITE_PLATFORM_NAME || "Caravel"
 
@@ -68,6 +87,16 @@ export function useActiveAccount() {
   const sub = accounts.active$.subscribe(setAccount)
   onCleanup(() => sub.unsubscribe())
   return account
+}
+
+export function getActiveSigner(): EventSigner | undefined {
+  const account = accounts.getActive() as { signer?: EventSigner } | undefined
+  return account?.signer
+}
+
+export function getActivePubkey(): string | undefined {
+  const account = accounts.getActive() as { pubkey?: string } | undefined
+  return account?.pubkey
 }
 
 export function useProfilePicture(pubkey: () => string | undefined) {

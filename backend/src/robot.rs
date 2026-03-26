@@ -11,10 +11,9 @@ pub struct Robot {
     name: String,
     description: String,
     picture: String,
-    outbox_relays: Vec<String>,
-    indexer_relays: Vec<String>,
-    messaging_relays: Vec<String>,
-    client: Client,
+    outbox_client: Client,
+    indexer_client: Client,
+    messaging_client: Client,
     outbox_cache: std::sync::Arc<Mutex<HashMap<String, CacheEntry>>>,
     dm_cache: std::sync::Arc<Mutex<HashMap<String, CacheEntry>>>,
 }
@@ -49,37 +48,33 @@ impl Robot {
             return Err(anyhow!("ROBOT_MESSAGING_RELAYS is required"));
         }
 
-        let keys = Keys::parse(&secret)?;
-        let client = Client::new(keys);
-        for relay in &outbox_relays {
-            client.add_relay(relay).await?;
-        }
-        for relay in &indexer_relays {
-            client.add_relay(relay).await?;
-        }
-        for relay in &messaging_relays {
-            client.add_relay(relay).await?;
-        }
-        client.connect().await;
+        let outbox_client = client_with_relays(&secret, &outbox_relays).await?;
+        let indexer_client = client_with_relays(&secret, &indexer_relays).await?;
+        let messaging_client = client_with_relays(&secret, &messaging_relays).await?;
 
         let robot = Self {
             secret,
             name,
             description,
             picture,
-            outbox_relays,
-            indexer_relays,
-            messaging_relays,
-            client,
+            outbox_client,
+            indexer_client,
+            messaging_client,
             outbox_cache: std::sync::Arc::new(Mutex::new(HashMap::new())),
             dm_cache: std::sync::Arc::new(Mutex::new(HashMap::new())),
         };
 
-        robot.publish_identity().await?;
+        robot
+            .publish_identity(&outbox_relays, &messaging_relays)
+            .await?;
         Ok(robot)
     }
 
-    async fn publish_identity(&self) -> Result<()> {
+    async fn publish_identity(
+        &self,
+        outbox_relays: &[String],
+        messaging_relays: &[String],
+    ) -> Result<()> {
         let mut metadata = Metadata::new();
         if !self.name.is_empty() {
             metadata = metadata.name(&self.name);
@@ -91,25 +86,24 @@ impl Robot {
             metadata = metadata.picture(Url::parse(&self.picture)?);
         }
 
-        self.client
+        self.outbox_client
             .send_event_builder(EventBuilder::metadata(&metadata))
             .await?;
 
-        let outbox_tags = self
-            .outbox_relays
+        let outbox_tags = outbox_relays
             .iter()
             .map(|r| Tag::parse(["r", r.as_str()]))
             .collect::<std::result::Result<Vec<_>, _>>()?;
-        self.client
+        self.outbox_client
             .send_event_builder(EventBuilder::new(Kind::Custom(10002), "").tags(outbox_tags))
             .await?;
 
-        let mut selection_tags = Vec::new();
-        for relay in &self.messaging_relays {
-            selection_tags.push(Tag::parse(["relay", relay.as_str()])?);
-        }
-        self.client
-            .send_event_builder(EventBuilder::new(Kind::Custom(10050), "").tags(selection_tags))
+        let messaging_tags = messaging_relays
+            .iter()
+            .map(|r| Tag::parse(["relay", r.as_str()]))
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        self.indexer_client
+            .send_event_builder(EventBuilder::new(Kind::Custom(10050), "").tags(messaging_tags))
             .await?;
 
         Ok(())
@@ -129,10 +123,9 @@ impl Robot {
         }
 
         let recipient_pubkey = PublicKey::parse(recipient)?;
-        let keys = Keys::parse(&self.secret)?;
-        let client = Client::new(keys);
+        let client = self.messaging_client.clone();
         for relay in dm_relays {
-            client.add_relay(relay).await?;
+            let _ = client.add_relay(relay).await;
         }
         client.connect().await;
         client
@@ -147,9 +140,11 @@ impl Robot {
         }
 
         let pubkey = PublicKey::parse(recipient)?;
-        let client = indexer_client(&self.secret, &self.indexer_relays).await?;
         let filter = Filter::new().author(pubkey).kind(Kind::Custom(10002));
-        let events = client.fetch_events(filter, Duration::from_secs(5)).await?;
+        let events = self
+            .indexer_client
+            .fetch_events(filter, Duration::from_secs(5))
+            .await?;
 
         let mut relays = Vec::new();
         if let Some(event) = events.into_iter().max_by_key(|e| e.created_at) {
@@ -221,10 +216,10 @@ fn normalize_relay_url(url: &str) -> String {
     }
 }
 
-async fn indexer_client(secret: &str, indexer_relays: &[String]) -> Result<Client> {
+async fn client_with_relays(secret: &str, relays: &[String]) -> Result<Client> {
     let keys = Keys::parse(secret)?;
     let client = Client::new(keys);
-    for relay in indexer_relays {
+    for relay in relays {
         client.add_relay(relay).await?;
     }
     client.connect().await;

@@ -16,9 +16,8 @@ pub struct Repo {
 
 impl Repo {
     pub async fn new() -> Result<Self> {
-        let raw_database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-            format!("sqlite://{}/data/caravel.db", env!("CARGO_MANIFEST_DIR"))
-        });
+        let raw_database_url = std::env::var("DATABASE_URL")
+            .unwrap_or_else(|_| format!("sqlite://{}/data/caravel.db", env!("CARGO_MANIFEST_DIR")));
         let database_url = normalize_sqlite_url(&raw_database_url);
 
         if let Some(path) = database_url.strip_prefix("sqlite://")
@@ -30,7 +29,8 @@ impl Repo {
             std::fs::create_dir_all(parent)?;
         }
 
-        let connect_options = SqliteConnectOptions::from_str(&database_url)?.create_if_missing(true);
+        let connect_options =
+            SqliteConnectOptions::from_str(&database_url)?.create_if_missing(true);
 
         let pool = SqlitePoolOptions::new()
             .max_connections(5)

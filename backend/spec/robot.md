@@ -8,15 +8,14 @@ Members:
 - `name: String` - the name of the bot, from `ROBOT_NAME`
 - `description: String` - the description of the bot, from `ROBOT_DESCRIPTION`
 - `picture: String` - the picture URL for the bot, from `ROBOT_PICTURE`
-- `outbox_relays: Vec<String>` - outbox relay URLs, from `ROBOT_OUTBOX_RELAYS`
-- `indexer_relays: Vec<String>` - indexer relay URLs, from `ROBOT_INDEXER_RELAYS`
-- `messaging_relays: Vec<String>` - messaging relay URLs, from `ROBOT_MESSAGING_RELAYS`
-- `client: nostr_sdk::Client`
+- `outbox_client: nostr_sdk::Client` - used for publishing relay lists and metadata, connects to `ROBOT_OUTBOX_RELAYS`
+- `indexer_client: nostr_sdk::Client` - used for publishing relay lists, connects to `ROBOT_INDEXER_RELAYS`
+- `messagins_client: nostr_sdk::Client` - used for sending and receiving dms, connects to `ROBOT_MESSAGING_RELAYS`
 
 ## `pub fn new() -> Self`
 
 - Reads environment and populates members. Relay urls should be split and normalized.
-- Publishes a `kind 0` nostr profile, a `kind 10002` relay list, and `kind 10050` relay selections using `client`
+- Publishes a `kind 0` nostr profile, a `kind 10002` relay list, and `kind 10050` relay selections
 
 ## `pub async fn send_dm(&self, recipient: &str, message: &str) -> Result<()>`
 

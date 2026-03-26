@@ -1,5 +1,6 @@
 import { A } from "@solidjs/router"
 import PricingTable from "../components/PricingTable"
+import { useActiveAccount } from "../lib/nostr"
 
 function CheckIcon() {
   return (
@@ -20,6 +21,8 @@ function ExternalLinkIcon() {
 }
 
 export default function Home() {
+  const account = useActiveAccount()
+
   return (
     <div class="min-h-screen bg-white text-gray-900 overflow-x-hidden">
 
@@ -31,10 +34,10 @@ export default function Home() {
             Caravel
           </div>
           <A
-            href="/login"
+            href={account() ? "/relays" : "/login"}
             class="text-sm font-medium text-gray-600 hover:text-gray-900 transition-colors"
           >
-            Sign in
+            {account() ? "Dashboard" : "Sign in"}
           </A>
         </div>
       </nav>
@@ -70,10 +73,10 @@ export default function Home() {
               <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7" /></svg>
             </A>
             <A
-              href="/login"
+              href={account() ? "/relays" : "/login"}
               class="inline-flex items-center gap-2 py-3 px-8 border border-gray-200 text-gray-700 font-semibold rounded-xl hover:bg-gray-50 transition-all"
             >
-              Sign in
+              {account() ? "Dashboard" : "Sign in"}
             </A>
           </div>
         </div>

@@ -1,10 +1,13 @@
 import { createEffect, createMemo, createResource, createSignal, For, Show } from "solid-js"
+import { useNavigate } from "@solidjs/router"
 import { getTenant, listTenantInvoices, updateTenantBilling } from "../lib/api"
 import PageContainer from "../components/PageContainer"
 import LoadingState from "../components/LoadingState"
 import useMinLoading from "../components/useMinLoading"
+import { accounts, persistAccounts } from "../lib/nostr"
 
 export default function Account() {
+  const navigate = useNavigate()
   const [tenant, { refetch: refetchTenant }] = createResource(getTenant)
   const [invoices] = createResource(listTenantInvoices)
   const [nwcUrl, setNwcUrl] = createSignal("")
@@ -36,9 +39,24 @@ export default function Account() {
     }
   }
 
+  function logout() {
+    accounts.clearActive()
+    persistAccounts()
+    navigate("/")
+  }
+
   return (
     <PageContainer>
-      <h1 class="text-2xl font-bold text-gray-900 mb-6 py-2">My Account</h1>
+      <div class="mb-6 py-2 flex items-center justify-between gap-3">
+        <h1 class="text-2xl font-bold text-gray-900">My Account</h1>
+        <button
+          type="button"
+          onClick={logout}
+          class="py-1.5 px-3 border border-gray-300 text-gray-700 text-sm rounded-lg hover:bg-gray-50 transition-colors"
+        >
+          Log out
+        </button>
+      </div>
 
       <div class="space-y-6">
         <section class="bg-white border border-gray-200 rounded-xl p-6">

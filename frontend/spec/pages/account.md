@@ -6,6 +6,7 @@ The account page lets an authenticated tenant manage billing settings and review
 page(path="/account", auth="required", shell="app")
   header
     title My Account
+    button Log out
 
   section(id="status")
     heading Account Status

@@ -37,7 +37,7 @@ export default function Home() {
             href={account() ? "/relays" : "/login"}
             class="text-sm font-medium text-gray-600 hover:text-gray-900 transition-colors"
           >
-            {account() ? "Dashboard" : "Sign in"}
+            {account() ? "Go to dashboard" : "Sign in"}
           </A>
         </div>
       </nav>
@@ -76,7 +76,7 @@ export default function Home() {
               href={account() ? "/relays" : "/login"}
               class="inline-flex items-center gap-2 py-3 px-8 border border-gray-200 text-gray-700 font-semibold rounded-xl hover:bg-gray-50 transition-all"
             >
-              {account() ? "Dashboard" : "Sign in"}
+              {account() ? "Go to dashboard" : "Sign in"}
             </A>
           </div>
         </div>

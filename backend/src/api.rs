@@ -161,7 +161,7 @@ impl Api {
             .map_err(ApiError::Unauthorized)?;
 
         let mut got_u = None::<String>;
-        for tag in &event.tags {
+        for tag in event.tags.iter() {
             let values = tag.as_slice();
             if values.len() >= 2 && values[0] == "u" {
                 got_u = Some(values[1].to_string());
@@ -173,7 +173,9 @@ impl Api {
         };
 
         if !self.host.is_empty() && !got_u.contains(&self.host) {
-            return Err(ApiError::Unauthorized(anyhow!("authorization host mismatch")));
+            return Err(ApiError::Unauthorized(anyhow!(
+                "authorization host mismatch"
+            )));
         }
 
         Ok(event.pubkey.to_hex())
@@ -192,7 +194,8 @@ impl Api {
         authorized_pubkey: &str,
         tenant_pubkey: &str,
     ) -> std::result::Result<(), ApiError> {
-        if self.admins.iter().any(|a| a == authorized_pubkey) || authorized_pubkey == tenant_pubkey {
+        if self.admins.iter().any(|a| a == authorized_pubkey) || authorized_pubkey == tenant_pubkey
+        {
             Ok(())
         } else {
             Err(ApiError::Forbidden("not authorized"))

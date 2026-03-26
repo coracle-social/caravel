@@ -481,7 +481,11 @@ impl Repo {
         Ok(rows)
     }
 
-    pub async fn list_activity_for_tenant(&self, tenant: &str, since: &i64) -> Result<Vec<Activity>> {
+    pub async fn list_activity_for_tenant(
+        &self,
+        tenant: &str,
+        since: &i64,
+    ) -> Result<Vec<Activity>> {
         let rows = sqlx::query_as::<_, Activity>(
             "SELECT id, tenant, created_at, activity_type, resource_type, resource_id
              FROM activity

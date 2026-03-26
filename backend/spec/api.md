@@ -27,6 +27,19 @@ Notes:
 - Adds CORS middleware based on `origins`
 - Calls `axum::serve` with a listener
 
+--- Plan routes
+
+## `async fn list_plans(...) -> Response`
+
+- Serves `GET /plans`
+- Return `data` is a list of plan structs from `Repo::list_plans`
+
+## `async fn get_plan(...) -> Response`
+
+- Serves `GET /plans/:id`
+- Return `data` is a single plan struct matching `id`
+- If plan does not exist, return `404` with `code=not-found`
+
 --- Tenant routes
 
 ## `async fn list_tenants(...) -> Response`
@@ -99,6 +112,13 @@ Notes:
 - If user is admin, `tenant` query parameter is optional
 - If user is a tenant, `tenant` query parameter is not ok; authenticated `pubkey` is used
 - Return `data` is a list of invoice structs from `repo.list_invoices`
+
+## `async fn update_tenant_billing(...) -> Response`
+
+- Serves `PUT /tenants/:pubkey/billing`
+- Authorizes admin or matching tenant
+- Updates tenant billing NWC URL using `repo.update_tenant_nwc_url`
+- Return `data` is the submitted billing payload
 
 # Utility functions
 

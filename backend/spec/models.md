@@ -27,6 +27,23 @@ Activity is an audit log of all actions performed by a user or a worker process.
 - `resource_type` is a string identifying the resource type being modified.
 - `resource_id` is a string identifying the resource id being modified.
 
+# Plan
+
+A plan represents a rate charged for relays at a given feature/usage limit. Plans aren't saved to the database, but are simply hardcoded. However, they are exposed through the API so they can be used as a single source of truth.
+
+- `id` - the plan slug
+- `name` - the plan name
+- `sats` - the plan't cost per month
+- `members` - the max number of members a relay can have before needing to upgrade. If empty, membership is not limited.
+- `blossom` - whether blossom media hosting is available on this plan
+- `livekit` - whether livekit audio/video calls are available on this plan
+
+There are three plans available:
+
+- `free` - 0 sats/mo, up to 10 members, no blossom/livekit
+- `basic` - 10k sats/mo, up to 100 members, includes blossom/livekit
+- `growth` - 50k sats/mo, unlimited members, includes blossom/livekit
+
 # Tenant
 
 Tenants are customers of the service, identified by a nostr `pubkey`. Public metadata like name etc are pulled from the nostr network. They also have associated billing information.

@@ -125,7 +125,7 @@ impl Billing {
             if hours <= 0 {
                 continue;
             }
-            let plan_monthly = self.repo.get_relay_plan_amount_sats(&relay.plan).await?;
+            let plan_monthly = self.repo.get_relay_plan_sats(&relay.plan).await?;
             if plan_monthly <= 0 {
                 continue;
             }
@@ -228,7 +228,7 @@ impl Billing {
         Ok(())
     }
 
-    async fn make_bolt11(&self, amount_sats: i64) -> Result<String> {
+    async fn make_bolt11(&self, sats: i64) -> Result<String> {
         if self.nwc_url.trim().is_empty() {
             anyhow::bail!("NWC_URL not configured")
         }
@@ -236,7 +236,7 @@ impl Billing {
         let uri = nostr_sdk::nips::nip47::NostrWalletConnectURI::parse(&self.nwc_url)?;
         let req = nostr_sdk::nips::nip47::Request::make_invoice(
             nostr_sdk::nips::nip47::MakeInvoiceRequest {
-                amount: (amount_sats as u64) * 1_000,
+                amount: (sats as u64) * 1_000,
                 description: Some("Caravel relay invoice".to_string()),
                 description_hash: None,
                 expiry: None,

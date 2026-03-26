@@ -48,6 +48,11 @@ Notes:
 - Updates tenant `nwc_url`
 - Logs activity as `(update_tenant_nwc_url, tenant_id)`
 
+## `pub fn list_plans() -> Vec<Plan>`
+
+- Returns the hardcoded relay plans used by the system (`free`, `basic`, `growth`)
+- This is the source of truth for plan metadata exposed via API
+
 ## `pub fn list_relays(&self, tenant_id: Option<&str>) -> Result<Vec<Relay>>`
 
 - Returns all matching relays
@@ -120,3 +125,8 @@ Notes:
 ## `pub fn list_activity(&self, since: &i64, tenant: Option<&str>) -> Result<Vec<Activity>>`
 
 - Returns all activity occuring after `since` matching `tenant`
+
+## `pub fn get_relay_plan_sats(&self, plan: &str) -> Result<i64>`
+
+- Returns the monthly sats amount for a given plan id
+- Uses `list_plans()` data for consistent pricing logic across API and billing

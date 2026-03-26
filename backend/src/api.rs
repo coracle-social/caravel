@@ -76,6 +76,8 @@ impl Api {
         };
 
         let app = Router::new()
+            .route("/plans", get(list_plans))
+            .route("/plans/:id", get(get_plan))
             .route("/tenants", get(list_tenants).post(create_tenant))
             .route("/tenants/:pubkey", get(get_tenant))
             .route("/tenants/:pubkey/billing", put(update_tenant_billing))
@@ -320,6 +322,36 @@ async fn list_tenants(
             "internal",
             &e.to_string(),
         ),
+    }
+}
+
+async fn list_plans(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    method: Method,
+    uri: Uri,
+) -> Response {
+    if let Err(e) = extract_auth_pubkey(&headers, &method, &uri, &state.api.host) {
+        return auth_fail_response(e);
+    }
+
+    ok(StatusCode::OK, Repo::list_plans())
+}
+
+async fn get_plan(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    method: Method,
+    uri: Uri,
+    Path(id): Path<String>,
+) -> Response {
+    if let Err(e) = extract_auth_pubkey(&headers, &method, &uri, &state.api.host) {
+        return auth_fail_response(e);
+    }
+
+    match Repo::list_plans().into_iter().find(|p| p.id == id) {
+        Some(plan) => ok(StatusCode::OK, plan),
+        None => err(StatusCode::NOT_FOUND, "not-found", "plan not found"),
     }
 }
 

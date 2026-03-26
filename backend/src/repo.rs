@@ -7,7 +7,7 @@ use sqlx::{
     sqlite::{SqliteConnectOptions, SqlitePoolOptions},
 };
 
-use crate::models::{Activity, Invoice, InvoiceItem, Relay, Tenant};
+use crate::models::{Activity, Invoice, InvoiceItem, Plan, Relay, Tenant};
 
 #[derive(Clone)]
 pub struct Repo {
@@ -502,14 +502,42 @@ impl Repo {
         Ok(count)
     }
 
-    pub async fn get_relay_plan_amount_sats(&self, plan: &str) -> Result<i64> {
-        let sats = match plan {
-            "free" => 0,
-            "basic" => 10_000,
-            "growth" => 50_000,
-            _ => 0,
-        };
+    pub async fn get_relay_plan_sats(&self, plan: &str) -> Result<i64> {
+        let sats = Self::list_plans()
+            .into_iter()
+            .find(|p| p.id == plan)
+            .map(|p| p.sats)
+            .unwrap_or(0);
         Ok(sats)
+    }
+
+    pub fn list_plans() -> Vec<Plan> {
+        vec![
+            Plan {
+                id: "free".to_string(),
+                name: "Free".to_string(),
+                sats: 0,
+                members: Some(10),
+                blossom: false,
+                livekit: false,
+            },
+            Plan {
+                id: "basic".to_string(),
+                name: "Basic".to_string(),
+                sats: 10_000,
+                members: Some(100),
+                blossom: true,
+                livekit: true,
+            },
+            Plan {
+                id: "growth".to_string(),
+                name: "Growth".to_string(),
+                sats: 50_000,
+                members: None,
+                blossom: true,
+                livekit: true,
+            },
+        ]
     }
 }
 

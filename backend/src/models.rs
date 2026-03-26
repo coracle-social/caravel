@@ -10,6 +10,16 @@ pub struct Activity {
     pub resource_id: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Plan {
+    pub id: String,
+    pub name: String,
+    pub sats: i64,
+    pub members: Option<i64>,
+    pub blossom: bool,
+    pub livekit: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Tenant {
     pub pubkey: String,

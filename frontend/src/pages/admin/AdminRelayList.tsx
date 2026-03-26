@@ -18,7 +18,7 @@ export default function AdminRelayList() {
     if (!q) return list
 
     return new Fuse(list, {
-      keys: ["name", "subdomain", "tenant"],
+      keys: ["info_name", "subdomain", "tenant"],
       threshold: 0.35,
       ignoreLocation: true,
     }).search(q).map((result) => result.item)
@@ -60,7 +60,7 @@ export default function AdminRelayList() {
                   <A href={`/admin/relays/${relay.id}`} class="block border border-gray-200 rounded-lg p-4 bg-white hover:border-gray-300">
                     <div class="flex items-center justify-between gap-3">
                       <div>
-                        <p class="font-medium text-gray-900">{relay.name}</p>
+                        <p class="font-medium text-gray-900">{relay.info_name || relay.subdomain}</p>
                         <p class="text-xs text-gray-500">{relay.subdomain}.spaces.coracle.social</p>
                         <p class="text-xs text-gray-500 break-all mt-1">Tenant: {relay.tenant}</p>
                       </div>

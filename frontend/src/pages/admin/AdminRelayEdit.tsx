@@ -1,21 +1,12 @@
 import { useNavigate, useParams } from "@solidjs/router"
 import { Show, createEffect, createResource, createSignal } from "solid-js"
-import { adminGetRelay, adminUpdateRelay, type RelayConfig } from "../../lib/api"
+import { adminGetRelay, adminUpdateRelay } from "../../lib/api"
 import RelayForm from "../../components/RelayForm"
 import { slugify } from "../../lib/slugify"
 import BackLink from "../../components/BackLink"
 import PageContainer from "../../components/PageContainer"
 import ResourceState from "../../components/ResourceState"
 import useMinLoading from "../../components/useMinLoading"
-
-const DEFAULT_CONFIG: RelayConfig = {
-  policy: { public_join: false, strip_signatures: false },
-  groups: { enabled: false, auto_join: false },
-  management: { enabled: false },
-  blossom: { enabled: false },
-  livekit: { enabled: false },
-  push: { enabled: false },
-}
 
 export default function AdminRelayEdit() {
   const navigate = useNavigate()
@@ -34,10 +25,10 @@ export default function AdminRelayEdit() {
   createEffect(() => {
     const data = relay()
     if (!data) return
-    setName(data.name)
+    setName(data.info_name)
     setSubdomain(data.subdomain)
-    setIcon(data.icon)
-    setDescription(data.description)
+    setIcon(data.info_icon)
+    setDescription(data.info_description)
   })
 
   async function handleSubmit(e: Event) {
@@ -46,11 +37,10 @@ export default function AdminRelayEdit() {
     setSubmitting(true)
     try {
       await adminUpdateRelay(relayId(), {
-        name: name().trim(),
         subdomain: slugify(subdomain()),
-        icon: icon().trim(),
-        description: description().trim(),
-        config: relay()?.config ?? DEFAULT_CONFIG,
+        info_name: name().trim(),
+        info_icon: icon().trim(),
+        info_description: description().trim(),
       })
       navigate(`/admin/relays/${relayId()}`)
     } catch (e) {

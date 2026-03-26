@@ -115,7 +115,7 @@ export default function AdminTenantList() {
                           <p class="mt-1 text-xs text-gray-500 break-all">{tenant.pubkey}</p>
                         </div>
                       </div>
-                      <p class="text-xs uppercase tracking-wide text-gray-500">{tenant.status}</p>
+                      <p class="text-xs uppercase tracking-wide text-gray-500">tenant</p>
                     </div>
                   </A>
                 </li>

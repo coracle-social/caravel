@@ -17,7 +17,7 @@ export default function RelayList() {
     const q = query().trim()
     const searched = q
       ? new Fuse(list, {
-          keys: ["name", "subdomain"],
+          keys: ["info_name", "subdomain"],
           threshold: 0.35,
           ignoreLocation: true,
         }).search(q).map((result) => result.item)
@@ -90,7 +90,7 @@ export default function RelayList() {
                   >
                     <div class="flex items-center justify-between">
                       <div>
-                        <p class="font-medium text-gray-900">{relay.name}</p>
+                        <p class="font-medium text-gray-900">{relay.info_name || relay.subdomain}</p>
                         <p class="text-sm text-gray-500">https://{relay.subdomain}.spaces.coracle.social</p>
                       </div>
                       <p class="text-xs uppercase tracking-wide text-gray-500">{relay.status}</p>

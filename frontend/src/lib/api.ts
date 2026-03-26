@@ -20,6 +20,11 @@ type EventSigner = {
   signEvent(event: UnsignedEvent): Promise<SignedEvent>
 }
 
+type ApiOk<T> = {
+  data: T
+  code: string
+}
+
 export class ApiError extends Error {
   status: number
 
@@ -34,6 +39,12 @@ function getActiveSigner(): EventSigner {
   const account = accounts.getActive() as { signer?: EventSigner } | undefined
   if (!account?.signer) throw new Error("Not logged in")
   return account.signer
+}
+
+function getActivePubkey(): string {
+  const account = accounts.getActive() as { pubkey?: string } | undefined
+  if (!account?.pubkey) throw new Error("Not logged in")
+  return account.pubkey
 }
 
 async function createNip98Header(url: string, method: string): Promise<string> {
@@ -75,69 +86,63 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     } catch {
       // ignored
     }
-    if (response.status === 403 && path.startsWith("/admin/") && typeof window !== "undefined") {
-      window.location.replace("/relays")
-    }
     throw new ApiError(message, response.status)
   }
 
-  if (response.status === 204) {
-    return undefined as T
-  }
-
-  return response.json() as Promise<T>
+  if (response.status === 204) return undefined as T
+  const body = await response.json() as ApiOk<T>
+  return body.data
 }
 
-export type RelayConfig = {
-  policy: {
-    public_join: boolean
-    strip_signatures: boolean
-  }
-  groups: {
-    enabled: boolean
-    auto_join: boolean
-  }
-  management: {
-    enabled: boolean
-
-  }
-  blossom: {
-    enabled: boolean
-  }
-  livekit: {
-    enabled: boolean
-  }
-  push: {
-    enabled: boolean
+async function ensureTenant() {
+  try {
+    await request<Tenant>("/tenants", { method: "POST" })
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 422) return
+    throw e
   }
 }
 
 export type Relay = {
   id: string
   tenant: string
-  name: string
-  subdomain: string
   schema: string
-  icon: string
-  description: string
+  subdomain: string
   plan: string
   status: string
-  config: RelayConfig
+  sync_error: string
+  info_name: string
+  info_icon: string
+  info_description: string
+  policy_public_join: number
+  policy_strip_signatures: number
+  groups_enabled: number
+  management_enabled: number
+  blossom_enabled: number
+  livekit_enabled: number
+  push_enabled: number
 }
 
 export type Tenant = {
   pubkey: string
-  status: string
-  tenant_nwc_url: string
+  nwc_url: string
+  created_at: number
+  billing_anchor: number
 }
 
 export type Invoice = {
   id: string
   tenant: string
-  amount: number
   status: string
-  created_at: string
-  invoice: string
+  created_at: number
+  attempted_at: number
+  error: string
+  closed_at: number
+  sent_at: number
+  paid_at: number
+  bolt11: string
+  period_start: number
+  period_end: number
 }
 
 export type TenantDetail = {
@@ -145,12 +150,34 @@ export type TenantDetail = {
   relays: Relay[]
 }
 
-export type UpdateRelayInput = {
-  name: string
+export type CreateRelayInput = {
   subdomain: string
-  icon: string
-  description: string
-  config: RelayConfig
+  plan: string
+  info_name?: string
+  info_icon?: string
+  info_description?: string
+  policy_public_join?: number
+  policy_strip_signatures?: number
+  groups_enabled?: number
+  management_enabled?: number
+  blossom_enabled?: number
+  livekit_enabled?: number
+  push_enabled?: number
+}
+
+export type UpdateRelayInput = {
+  subdomain?: string
+  plan?: string
+  info_name?: string
+  info_icon?: string
+  info_description?: string
+  policy_public_join?: number
+  policy_strip_signatures?: number
+  groups_enabled?: number
+  management_enabled?: number
+  blossom_enabled?: number
+  livekit_enabled?: number
+  push_enabled?: number
 }
 
 export type AdminCheck = {
@@ -158,100 +185,101 @@ export type AdminCheck = {
 }
 
 export function listTenantRelays() {
-  return request<Relay[]>("/tenant/relays")
+  return request<Relay[]>("/relays")
 }
 
-export function getTenant() {
-  return request<Tenant>("/tenant")
+export async function getTenant() {
+  const pubkey = getActivePubkey()
+  await ensureTenant()
+  return request<Tenant>(`/tenants/${pubkey}`)
 }
 
-export type CreateRelayInput = {
-  name: string
-  subdomain: string
-  icon: string
-  description: string
-  plan: string
-  config: RelayConfig
-}
-
-export function createTenantRelay(input: CreateRelayInput) {
-  return request<Relay>("/tenant/relays", {
+export async function createTenantRelay(input: CreateRelayInput) {
+  await ensureTenant()
+  return request<Relay>("/relays", {
     method: "POST",
-    body: JSON.stringify(input),
+    body: JSON.stringify({ tenant: getActivePubkey(), ...input }),
   })
 }
 
 export function getTenantRelay(id: string) {
-  return request<Relay>(`/tenant/relays/${id}`)
+  return request<Relay>(`/relays/${id}`)
 }
 
 export function updateTenantRelay(id: string, input: UpdateRelayInput) {
-  return request<Relay>(`/tenant/relays/${id}`, {
+  return request<Relay>(`/relays/${id}`, {
     method: "PUT",
     body: JSON.stringify(input),
   })
 }
 
 export function updateTenantRelayPlan(id: string, plan: string) {
-  return request<Relay>(`/tenant/relays/${id}/plan`, {
-    method: "PUT",
-    body: JSON.stringify({ plan }),
-  })
+  return updateTenantRelay(id, { plan })
 }
 
 export function deactivateTenantRelay(id: string) {
-  return request<Relay>(`/tenant/relays/${id}/deactivate`, {
+  return request<void>(`/relays/${id}/deactivate`, {
     method: "POST",
   })
 }
 
-export function listTenantInvoices() {
-  return request<Invoice[]>("/tenant/invoices")
+export async function listTenantInvoices() {
+  await ensureTenant()
+  return request<Invoice[]>("/invoices")
 }
 
-export function updateTenantBilling(tenant_nwc_url: string) {
-  return request<Tenant>("/tenant/billing", {
+export function updateTenantBilling(nwc_url: string) {
+  return request<{ nwc_url: string }>(`/tenants/${getActivePubkey()}/billing`, {
     method: "PUT",
-    body: JSON.stringify({ tenant_nwc_url }),
+    body: JSON.stringify({ nwc_url }),
   })
 }
 
 export function adminListTenants() {
-  return request<Tenant[]>("/admin/tenants")
+  return request<Tenant[]>("/tenants")
 }
 
-export function adminCheck() {
-  return request<AdminCheck>("/admin/check")
+export async function adminCheck() {
+  try {
+    await request<Tenant[]>("/tenants")
+    return { is_admin: true }
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 403) return { is_admin: false }
+    throw e
+  }
 }
 
-export function adminGetTenant(pubkey: string) {
-  return request<TenantDetail>(`/admin/tenants/${pubkey}`)
+export async function adminGetTenant(pubkey: string) {
+  const [tenant, relays] = await Promise.all([
+    request<Tenant>(`/tenants/${pubkey}`),
+    request<Relay[]>(`/relays?tenant=${encodeURIComponent(pubkey)}`),
+  ])
+  return { tenant, relays }
 }
 
 export function adminUpdateTenantStatus(pubkey: string, status: string) {
-  return request<Tenant>(`/admin/tenants/${pubkey}`, {
-    method: "PUT",
-    body: JSON.stringify({ status }),
-  })
+  void pubkey
+  void status
+  throw new Error("Tenant status updates are not supported by this API")
 }
 
 export function adminListRelays() {
-  return request<Relay[]>("/admin/relays")
+  return request<Relay[]>("/relays")
 }
 
 export function adminGetRelay(id: string) {
-  return request<Relay>(`/admin/relays/${id}`)
+  return request<Relay>(`/relays/${id}`)
 }
 
 export function adminUpdateRelay(id: string, input: UpdateRelayInput) {
-  return request<Relay>(`/admin/relays/${id}`, {
+  return request<Relay>(`/relays/${id}`, {
     method: "PUT",
     body: JSON.stringify(input),
   })
 }
 
 export function adminDeactivateRelay(id: string) {
-  return request<Relay>(`/admin/relays/${id}/deactivate`, {
+  return request<void>(`/relays/${id}/deactivate`, {
     method: "POST",
   })
 }

@@ -13,13 +13,13 @@ export default function Account() {
   const invoicesLoading = useMinLoading(() => invoices.loading)
 
   const hasBillingChanges = createMemo(() => {
-    const current = tenant()?.tenant_nwc_url?.trim() ?? ""
+    const current = tenant()?.nwc_url?.trim() ?? ""
     const next = nwcUrl().trim()
     return current !== next
   })
 
   createEffect(() => {
-    setNwcUrl(tenant()?.tenant_nwc_url ?? "")
+    setNwcUrl(tenant()?.nwc_url ?? "")
   })
 
   async function saveBilling() {
@@ -47,7 +47,7 @@ export default function Account() {
             <Show when={tenant()}>
               {(t) => (
                 <span class="rounded-full border border-gray-300 bg-gray-100 px-2.5 py-1 text-xs font-medium uppercase tracking-wide text-gray-700">
-                  {t().status}
+                  tenant
                 </span>
               )}
             </Show>
@@ -93,11 +93,11 @@ export default function Account() {
                   {(invoice) => (
                     <li class="rounded-lg border border-gray-200 p-3 text-sm text-gray-700">
                       <div class="flex items-center justify-between gap-3">
-                        <span class="font-medium">{invoice.amount.toLocaleString()} sats</span>
+                        <span class="font-medium">—</span>
                         <span class="uppercase text-xs tracking-wide text-gray-500">{invoice.status}</span>
                       </div>
-                      <p class="text-xs text-gray-500 mt-1">{new Date(invoice.created_at).toLocaleString()}</p>
-                      <p class="text-xs mt-2 break-all">{invoice.invoice}</p>
+                      <p class="text-xs text-gray-500 mt-1">{new Date(invoice.created_at * 1000).toLocaleString()}</p>
+                      <p class="text-xs mt-2 break-all">{invoice.bolt11}</p>
                     </li>
                   )}
                 </For>

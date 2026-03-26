@@ -1,6 +1,6 @@
 import { Show, createSignal } from "solid-js"
 import { useNavigate } from "@solidjs/router"
-import { createTenantRelay, type RelayConfig } from "../../lib/api"
+import { createTenantRelay } from "../../lib/api"
 import { slugify } from "../../lib/slugify"
 
 const PLANS = [
@@ -10,15 +10,6 @@ const PLANS = [
 ] as const
 
 type PlanId = (typeof PLANS)[number]["id"]
-
-const DEFAULT_CONFIG: RelayConfig = {
-  policy: { public_join: false, strip_signatures: false },
-  groups: { enabled: true, auto_join: true },
-  management: { enabled: true },
-  blossom: { enabled: false },
-  livekit: { enabled: false },
-  push: { enabled: true },
-}
 
 export default function RelayNew() {
   const navigate = useNavigate()
@@ -44,16 +35,18 @@ export default function RelayNew() {
 
     try {
       const relay = await createTenantRelay({
-        name: name().trim(),
         subdomain: slugify(subdomain()),
-        icon: icon().trim(),
-        description: description().trim(),
         plan: plan(),
-        config: {
-          ...DEFAULT_CONFIG,
-          blossom: { enabled: plan() !== "free" },
-          livekit: { enabled: plan() !== "free" },
-        },
+        info_name: name().trim(),
+        info_icon: icon().trim(),
+        info_description: description().trim(),
+        policy_public_join: 0,
+        policy_strip_signatures: 0,
+        groups_enabled: 1,
+        management_enabled: 1,
+        blossom_enabled: plan() === "free" ? 0 : 1,
+        livekit_enabled: plan() === "free" ? 0 : 1,
+        push_enabled: 1,
       })
       navigate(`/relays/${relay.id}`)
     } catch (e) {

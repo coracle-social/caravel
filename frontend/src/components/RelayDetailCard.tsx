@@ -97,7 +97,11 @@ type RelayDetailCardProps = {
 
 export default function RelayDetailCard(props: RelayDetailCardProps) {
   const r = () => props.relay
-  const cfg = () => r().config
+  const flag = (value: number, fallback: boolean) => {
+    if (value === 0) return false
+    if (value === 1) return true
+    return fallback
+  }
   const [menuOpen, setMenuOpen] = createSignal(false)
   const [planModalOpen, setPlanModalOpen] = createSignal(false)
   const [selectedPlan, setSelectedPlan] = createSignal<RelayPlanId>("free")
@@ -170,19 +174,19 @@ export default function RelayDetailCard(props: RelayDetailCardProps) {
       {/* Header */}
       <div class="flex items-start justify-between gap-4">
         <div class="flex items-start gap-4 min-w-0">
-          <Show when={r().icon}>
-            <img src={r().icon} alt="" class="w-14 h-14 rounded-xl object-cover flex-shrink-0 border border-gray-200" />
+          <Show when={r().info_icon}>
+            <img src={r().info_icon} alt="" class="w-14 h-14 rounded-xl object-cover flex-shrink-0 border border-gray-200" />
           </Show>
           <div class="min-w-0">
-            <h1 class="text-2xl font-bold text-gray-900">{r().name}</h1>
+            <h1 class="text-2xl font-bold text-gray-900">{r().info_name || r().subdomain}</h1>
             <a
               href={`wss://${r().subdomain}.spaces.coracle.social`}
               class="text-sm text-blue-600 hover:underline break-all"
             >
               wss://{r().subdomain}.spaces.coracle.social
             </a>
-            <Show when={r().description.trim()}>
-              <p class="mt-2 text-sm text-gray-600">{r().description}</p>
+            <Show when={r().info_description.trim()}>
+              <p class="mt-2 text-sm text-gray-600">{r().info_description}</p>
             </Show>
           </div>
         </div>
@@ -233,13 +237,13 @@ export default function RelayDetailCard(props: RelayDetailCardProps) {
       <DetailSection title="Policy">
         <ToggleField label="Public join">
           <ToggleButton
-            enabled={cfg()?.policy.public_join ?? false}
+            enabled={flag(r().policy_public_join, false)}
             onToggle={props.onTogglePublicJoin}
           />
         </ToggleField>
         <ToggleField label="Strip signatures">
           <ToggleButton
-            enabled={cfg()?.policy.strip_signatures ?? false}
+            enabled={flag(r().policy_strip_signatures, false)}
             onToggle={props.onToggleStripSignatures}
           />
         </ToggleField>
@@ -250,19 +254,19 @@ export default function RelayDetailCard(props: RelayDetailCardProps) {
       <DetailSection title="Features">
         <ToggleField label="Rooms">
           <ToggleButton
-            enabled={cfg()?.groups.enabled ?? true}
+            enabled={flag(r().groups_enabled, true)}
             onToggle={props.onToggleGroups}
           />
         </ToggleField>
         <ToggleField label="Management API">
           <ToggleButton
-            enabled={cfg()?.management.enabled ?? true}
+            enabled={flag(r().management_enabled, true)}
             onToggle={props.onToggleManagement}
           />
         </ToggleField>
         <ToggleField label="Push notifications">
           <ToggleButton
-            enabled={cfg()?.push.enabled ?? true}
+            enabled={flag(r().push_enabled, true)}
             onToggle={props.onTogglePushNotifications}
           />
         </ToggleField>
@@ -270,7 +274,7 @@ export default function RelayDetailCard(props: RelayDetailCardProps) {
           <Show
             when={!planLimited()}
             fallback={
-              <Show when={showPlanActions()} fallback={<ToggleButton enabled={cfg()?.blossom.enabled ?? false} onToggle={props.onToggleMediaStorage} />}>
+              <Show when={showPlanActions()} fallback={<ToggleButton enabled={flag(r().blossom_enabled, false)} onToggle={props.onToggleMediaStorage} />}>
                 <Show
                   when={props.onUpdatePlan}
                   fallback={
@@ -294,7 +298,7 @@ export default function RelayDetailCard(props: RelayDetailCardProps) {
             }
           >
             <ToggleButton
-              enabled={cfg()?.blossom.enabled ?? true}
+              enabled={flag(r().blossom_enabled, true)}
               onToggle={props.onToggleMediaStorage}
             />
           </Show>
@@ -303,7 +307,7 @@ export default function RelayDetailCard(props: RelayDetailCardProps) {
           <Show
             when={!planLimited()}
             fallback={
-              <Show when={showPlanActions()} fallback={<ToggleButton enabled={cfg()?.livekit.enabled ?? false} onToggle={props.onToggleLivekitSupport} />}>
+              <Show when={showPlanActions()} fallback={<ToggleButton enabled={flag(r().livekit_enabled, false)} onToggle={props.onToggleLivekitSupport} />}>
                 <Show
                   when={props.onUpdatePlan}
                   fallback={
@@ -327,7 +331,7 @@ export default function RelayDetailCard(props: RelayDetailCardProps) {
             }
           >
             <ToggleButton
-              enabled={cfg()?.livekit.enabled ?? true}
+              enabled={flag(r().livekit_enabled, true)}
               onToggle={props.onToggleLivekitSupport}
             />
           </Show>

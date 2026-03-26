@@ -1,6 +1,6 @@
 import { useParams } from "@solidjs/router"
 import { createResource, createSignal, Show } from "solid-js"
-import { adminDeactivateRelay, adminGetRelay, adminUpdateRelay, type RelayConfig } from "../../lib/api"
+import { adminDeactivateRelay, adminGetRelay, adminUpdateRelay, type Relay } from "../../lib/api"
 import BackLink from "../../components/BackLink"
 import PageContainer from "../../components/PageContainer"
 import RelayDetailCard from "../../components/RelayDetailCard"
@@ -29,118 +29,100 @@ export default function AdminRelayDetail() {
     }
   }
 
-  function withDefaults(config?: RelayConfig): RelayConfig {
-    return {
-      policy: {
-        public_join: config?.policy.public_join ?? false,
-        strip_signatures: config?.policy.strip_signatures ?? false,
-      },
-      groups: {
-        enabled: config?.groups.enabled ?? true,
-        auto_join: config?.groups.auto_join ?? true,
-      },
-      management: {
-        enabled: config?.management.enabled ?? true,
-      },
-      blossom: {
-        enabled: config?.blossom.enabled ?? (relay()?.plan !== "free"),
-      },
-      livekit: {
-        enabled: config?.livekit.enabled ?? (relay()?.plan !== "free"),
-      },
-      push: {
-        enabled: config?.push.enabled ?? true,
-      },
-    }
+  function toBool(value: number | undefined, fallback: boolean): boolean {
+    if (value === 0) return false
+    if (value === 1) return true
+    return fallback
   }
 
-  async function updateFlags(nextConfig: RelayConfig, previousConfig: RelayConfig) {
+  function toInt(value: boolean): number {
+    return value ? 1 : 0
+  }
+
+  async function updateRelay(next: Relay, previous: Relay) {
     const current = relay()
     if (!current) return
 
     setError("")
-    const optimisticRelay = {
-      ...current,
-      config: nextConfig,
-    }
-    mutate(optimisticRelay)
+    mutate(next)
 
     try {
-      await adminUpdateRelay(relayId(), {
-        name: current.name,
-        subdomain: current.subdomain,
-        icon: current.icon,
-        description: current.description,
-        config: nextConfig,
-      })
+      await adminUpdateRelay(relayId(), next)
       await refetch()
     } catch (e) {
-      mutate({ ...current, config: previousConfig })
+      mutate(previous)
       setError(e instanceof Error ? e.message : "Failed to update relay settings")
     }
   }
 
   function togglePublicJoin() {
-    const config = withDefaults(relay()?.config)
-    const nextConfig = {
-      ...config,
-      policy: { ...config.policy, public_join: !config.policy.public_join },
+    const current = relay()
+    if (!current) return
+    const next = {
+      ...current,
+      policy_public_join: toInt(!toBool(current.policy_public_join, false)),
     }
-    void updateFlags(nextConfig, config)
+    void updateRelay(next, current)
   }
 
   function toggleStripSignatures() {
-    const config = withDefaults(relay()?.config)
-    const nextConfig = {
-      ...config,
-      policy: { ...config.policy, strip_signatures: !config.policy.strip_signatures },
+    const current = relay()
+    if (!current) return
+    const next = {
+      ...current,
+      policy_strip_signatures: toInt(!toBool(current.policy_strip_signatures, false)),
     }
-    void updateFlags(nextConfig, config)
+    void updateRelay(next, current)
   }
 
   function toggleGroups() {
-    const config = withDefaults(relay()?.config)
-    const nextConfig = {
-      ...config,
-      groups: { ...config.groups, enabled: !config.groups.enabled },
+    const current = relay()
+    if (!current) return
+    const next = {
+      ...current,
+      groups_enabled: toInt(!toBool(current.groups_enabled, true)),
     }
-    void updateFlags(nextConfig, config)
+    void updateRelay(next, current)
   }
 
   function toggleManagement() {
-    const config = withDefaults(relay()?.config)
-    const nextConfig = {
-      ...config,
-      management: { enabled: !config.management.enabled },
+    const current = relay()
+    if (!current) return
+    const next = {
+      ...current,
+      management_enabled: toInt(!toBool(current.management_enabled, true)),
     }
-    void updateFlags(nextConfig, config)
+    void updateRelay(next, current)
   }
 
   function toggleMediaStorage() {
-    const config = withDefaults(relay()?.config)
-    const nextConfig = {
-      ...config,
-      blossom: { enabled: !config.blossom.enabled },
+    const current = relay()
+    if (!current) return
+    const next = {
+      ...current,
+      blossom_enabled: toInt(!toBool(current.blossom_enabled, current.plan !== "free")),
     }
-    void updateFlags(nextConfig, config)
+    void updateRelay(next, current)
   }
 
   function togglePushNotifications() {
-    const config = withDefaults(relay()?.config)
-    const nextConfig = {
-      ...config,
-      push: { enabled: !config.push.enabled },
+    const current = relay()
+    if (!current) return
+    const next = {
+      ...current,
+      push_enabled: toInt(!toBool(current.push_enabled, true)),
     }
-    void updateFlags(nextConfig, config)
+    void updateRelay(next, current)
   }
 
   function toggleLivekitSupport() {
-    const config = withDefaults(relay()?.config)
-    const nextConfig = {
-      ...config,
-      livekit: { enabled: !config.livekit.enabled },
+    const current = relay()
+    if (!current) return
+    const next = {
+      ...current,
+      livekit_enabled: toInt(!toBool(current.livekit_enabled, current.plan !== "free")),
     }
-    void updateFlags(nextConfig, config)
+    void updateRelay(next, current)
   }
 
   return (

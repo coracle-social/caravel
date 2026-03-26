@@ -50,7 +50,7 @@ export default function AppShell(props: { children?: any }) {
     if (!query) return list
 
     const fuse = new Fuse(list, {
-      keys: ["name", "subdomain"],
+      keys: ["info_name", "subdomain"],
       threshold: 0.35,
       ignoreLocation: true,
     })
@@ -224,7 +224,7 @@ export default function AppShell(props: { children?: any }) {
                         class="block rounded-lg border border-gray-200 bg-white p-3"
                         onClick={closeSearchModal}
                       >
-                        <p class="text-sm font-medium text-gray-900">{relay.name}</p>
+                        <p class="text-sm font-medium text-gray-900">{relay.info_name || relay.subdomain}</p>
                         <p class="text-xs text-gray-500">{relay.subdomain}.spaces.coracle.social</p>
                       </A>
                     </li>

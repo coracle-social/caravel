@@ -454,7 +454,12 @@ async fn list_relays(
         Some(auth.as_str())
     };
 
-    match state.api.repo.list_relays(tenant_filter).await {
+    let relays = match tenant_filter {
+        Some(tenant) => state.api.repo.list_relays_for_tenant(tenant).await,
+        None => state.api.repo.list_relays().await,
+    };
+
+    match relays {
         Ok(relays) => ok(StatusCode::OK, relays),
         Err(e) => err(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -747,7 +752,12 @@ async fn list_invoices(
         Some(auth.as_str())
     };
 
-    match state.api.repo.list_invoices(tenant_filter).await {
+    let invoices = match tenant_filter {
+        Some(tenant) => state.api.repo.list_invoices_for_tenant(tenant).await,
+        None => state.api.repo.list_invoices().await,
+    };
+
+    match invoices {
         Ok(invoices) => ok(StatusCode::OK, invoices),
         Err(e) => err(
             StatusCode::INTERNAL_SERVER_ERROR,

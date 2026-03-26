@@ -53,9 +53,13 @@ Notes:
 - Returns the hardcoded relay plans used by the system (`free`, `basic`, `growth`)
 - This is the source of truth for plan metadata exposed via API
 
-## `pub fn list_relays(&self, tenant_id: Option<&str>) -> Result<Vec<Relay>>`
+## `pub fn list_relays(&self) -> Result<Vec<Relay>>`
 
-- Returns all matching relays
+- Returns all relays
+
+## `pub fn list_relays_for_tenant(&self, tenant_id: &str) -> Result<Vec<Relay>>`
+
+- Returns all relays belonging to the given tenant
 
 ## `pub fn get_relay(&self, id: &str) -> Result<Relay>`
 
@@ -82,7 +86,7 @@ Notes:
 - Sets relay status to `active`
 - Logs activity as `(activate_relay, relay_id)`
 
-## `pub fn fail_relay_sync(&self, relay: &Relay, sync_error: String) -> Result<()>`
+## `pub fn fail_relay_sync(&self, relay: &Relay, sync_error: &str) -> Result<()>`
 
 - Sets relay status to `inactive`, sets `sync_error`
 - Logs activity as `(fail_relay_sync, relay_id)`
@@ -92,7 +96,11 @@ Notes:
 - Saves an `invoice` row and related `invoice_item` rows
 - Logs activity as `(create_invoice, invoice_id)`
 
-## `pub fn list_invoices(tenant_id: Option<&str>) -> Result<Vec<Invoice>>`
+## `pub fn list_invoices() -> Result<Vec<Invoice>>`
+
+- Returns all invoices
+
+## `pub fn list_invoices_for_tenant(tenant_id: &str) -> Result<Vec<Invoice>>`
 
 - Returns all matching invoices
 
@@ -103,7 +111,7 @@ Notes:
 - Clears `error` if set
 - Logs activity as `(mark_invoice_paid, invoice_id)`
 
-## `pub fn mark_invoice_attempted(&self, invoice_id: &str, error: Option<&str>) -> Result<()>`
+## `pub fn mark_invoice_attempted(&self, invoice_id: &str, error: &str) -> Result<()>`
 
 - Sets `attempted_at` to now
 - Updates `error` if provided
@@ -122,7 +130,11 @@ Notes:
 - Sets `closed_at` to now
 - Logs activity as `(mark_invoice_closed, invoice_id)`
 
-## `pub fn list_activity(&self, since: &i64, tenant: Option<&str>) -> Result<Vec<Activity>>`
+## `pub fn list_activity(&self, since: &i64) -> Result<Vec<Activity>>`
+
+- Returns all activity occuring after `since`
+
+## `pub fn list_activity_for_tenant(&self, tenant: &str, since: &i64) -> Result<Vec<Activity>>`
 
 - Returns all activity occuring after `since` matching `tenant`
 

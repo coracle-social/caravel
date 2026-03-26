@@ -160,34 +160,35 @@ impl Repo {
         Ok(())
     }
 
-    pub async fn list_relays(&self, tenant_id: Option<&str>) -> Result<Vec<Relay>> {
-        let rows = if let Some(tenant) = tenant_id {
-            sqlx::query_as::<_, Relay>(
-                "SELECT id, tenant, schema, subdomain, plan, status, sync_error,
-                        info_name, info_icon, info_description,
-                        policy_public_join, policy_strip_signatures,
-                        groups_enabled, management_enabled, blossom_enabled,
-                        livekit_enabled, push_enabled
-                 FROM relay
-                 WHERE tenant = ?
-                 ORDER BY id",
-            )
-            .bind(tenant)
-            .fetch_all(&self.pool)
-            .await?
-        } else {
-            sqlx::query_as::<_, Relay>(
-                "SELECT id, tenant, schema, subdomain, plan, status, sync_error,
-                        info_name, info_icon, info_description,
-                        policy_public_join, policy_strip_signatures,
-                        groups_enabled, management_enabled, blossom_enabled,
-                        livekit_enabled, push_enabled
-                 FROM relay
-                 ORDER BY id",
-            )
-            .fetch_all(&self.pool)
-            .await?
-        };
+    pub async fn list_relays(&self) -> Result<Vec<Relay>> {
+        let rows = sqlx::query_as::<_, Relay>(
+            "SELECT id, tenant, schema, subdomain, plan, status, sync_error,
+                    info_name, info_icon, info_description,
+                    policy_public_join, policy_strip_signatures,
+                    groups_enabled, management_enabled, blossom_enabled,
+                    livekit_enabled, push_enabled
+             FROM relay
+             ORDER BY id",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    pub async fn list_relays_for_tenant(&self, tenant_id: &str) -> Result<Vec<Relay>> {
+        let rows = sqlx::query_as::<_, Relay>(
+            "SELECT id, tenant, schema, subdomain, plan, status, sync_error,
+                    info_name, info_icon, info_description,
+                    policy_public_join, policy_strip_signatures,
+                    groups_enabled, management_enabled, blossom_enabled,
+                    livekit_enabled, push_enabled
+             FROM relay
+             WHERE tenant = ?
+             ORDER BY id",
+        )
+        .bind(tenant_id)
+        .fetch_all(&self.pool)
+        .await?;
         Ok(rows)
     }
 
@@ -355,28 +356,29 @@ impl Repo {
         Ok(())
     }
 
-    pub async fn list_invoices(&self, tenant_id: Option<&str>) -> Result<Vec<Invoice>> {
-        let rows = if let Some(tenant) = tenant_id {
-            sqlx::query_as::<_, Invoice>(
-                "SELECT id, tenant, status, created_at, attempted_at, error, closed_at,
-                        sent_at, paid_at, bolt11, period_start, period_end
-                 FROM invoice
-                 WHERE tenant = ?
-                 ORDER BY created_at DESC",
-            )
-            .bind(tenant)
-            .fetch_all(&self.pool)
-            .await?
-        } else {
-            sqlx::query_as::<_, Invoice>(
-                "SELECT id, tenant, status, created_at, attempted_at, error, closed_at,
-                        sent_at, paid_at, bolt11, period_start, period_end
-                 FROM invoice
-                 ORDER BY created_at DESC",
-            )
-            .fetch_all(&self.pool)
-            .await?
-        };
+    pub async fn list_invoices(&self) -> Result<Vec<Invoice>> {
+        let rows = sqlx::query_as::<_, Invoice>(
+            "SELECT id, tenant, status, created_at, attempted_at, error, closed_at,
+                    sent_at, paid_at, bolt11, period_start, period_end
+             FROM invoice
+             ORDER BY created_at DESC",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    pub async fn list_invoices_for_tenant(&self, tenant_id: &str) -> Result<Vec<Invoice>> {
+        let rows = sqlx::query_as::<_, Invoice>(
+            "SELECT id, tenant, status, created_at, attempted_at, error, closed_at,
+                    sent_at, paid_at, bolt11, period_start, period_end
+             FROM invoice
+             WHERE tenant = ?
+             ORDER BY created_at DESC",
+        )
+        .bind(tenant_id)
+        .fetch_all(&self.pool)
+        .await?;
         Ok(rows)
     }
 
@@ -453,29 +455,30 @@ impl Repo {
         Ok(())
     }
 
-    pub async fn list_activity(&self, since: &i64, tenant: Option<&str>) -> Result<Vec<Activity>> {
-        let rows = if let Some(tenant_pubkey) = tenant {
-            sqlx::query_as::<_, Activity>(
-                "SELECT id, tenant, created_at, activity_type, resource_type, resource_id
-                 FROM activity
-                 WHERE created_at > ? AND tenant = ?
-                 ORDER BY created_at, id",
-            )
-            .bind(since)
-            .bind(tenant_pubkey)
-            .fetch_all(&self.pool)
-            .await?
-        } else {
-            sqlx::query_as::<_, Activity>(
-                "SELECT id, tenant, created_at, activity_type, resource_type, resource_id
-                 FROM activity
-                 WHERE created_at > ?
-                 ORDER BY created_at, id",
-            )
-            .bind(since)
-            .fetch_all(&self.pool)
-            .await?
-        };
+    pub async fn list_activity(&self, since: &i64) -> Result<Vec<Activity>> {
+        let rows = sqlx::query_as::<_, Activity>(
+            "SELECT id, tenant, created_at, activity_type, resource_type, resource_id
+             FROM activity
+             WHERE created_at > ?
+             ORDER BY created_at, id",
+        )
+        .bind(since)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    pub async fn list_activity_for_tenant(&self, tenant: &str, since: &i64) -> Result<Vec<Activity>> {
+        let rows = sqlx::query_as::<_, Activity>(
+            "SELECT id, tenant, created_at, activity_type, resource_type, resource_id
+             FROM activity
+             WHERE created_at > ? AND tenant = ?
+             ORDER BY created_at, id",
+        )
+        .bind(since)
+        .bind(tenant)
+        .fetch_all(&self.pool)
+        .await?;
         Ok(rows)
     }
 

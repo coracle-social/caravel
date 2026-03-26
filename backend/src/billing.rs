@@ -40,7 +40,7 @@ impl Billing {
     pub async fn tick(&self) -> Result<()> {
         let mut since_guard = self.last_activity_at.lock().await;
         let since = *since_guard;
-        let activity = self.repo.list_activity(&since, None).await?;
+        let activity = self.repo.list_activity(&since).await?;
         for a in &activity {
             if matches!(
                 a.activity_type.as_str(),
@@ -70,7 +70,7 @@ impl Billing {
             return Ok(());
         }
 
-        let relays = self.repo.list_relays(Some(&relay.tenant)).await?;
+        let relays = self.repo.list_relays_for_tenant(&relay.tenant).await?;
         let paid_active_count = relays
             .into_iter()
             .filter(|r| r.status == "active" && r.plan != "free")
@@ -95,7 +95,7 @@ impl Billing {
             return Ok(());
         }
 
-        let relays = self.repo.list_relays(Some(&tenant.pubkey)).await?;
+        let relays = self.repo.list_relays_for_tenant(&tenant.pubkey).await?;
         let active_paid_relays: Vec<Relay> = relays
             .iter()
             .filter(|r| r.status == "active" && r.plan != "free")
@@ -114,7 +114,7 @@ impl Billing {
 
         let usage_events = self
             .repo
-            .list_activity(&tenant.billing_anchor, Some(&tenant.pubkey))
+            .list_activity_for_tenant(&tenant.pubkey, &tenant.billing_anchor)
             .await?;
         let invoice_id = uuid::Uuid::new_v4().to_string();
         let mut items = Vec::new();
@@ -176,7 +176,7 @@ impl Billing {
     }
 
     async fn collect_outstanding(&self, tenant: &Tenant) -> Result<()> {
-        let invoices = self.repo.list_invoices(Some(&tenant.pubkey)).await?;
+        let invoices = self.repo.list_invoices_for_tenant(&tenant.pubkey).await?;
         let now = now_ts();
 
         for invoice in invoices.into_iter().filter(|i| i.status == "pending") {

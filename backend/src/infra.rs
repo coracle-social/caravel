@@ -45,7 +45,7 @@ impl Infra {
     pub async fn tick(&self) -> Result<()> {
         let mut since_guard = self.last_activity_at.lock().await;
         let since = *since_guard;
-        let activity = self.repo.list_activity(&since, None).await?;
+        let activity = self.repo.list_activity(&since).await?;
 
         for a in activity {
             if a.resource_type == "relay"

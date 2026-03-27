@@ -2,6 +2,7 @@ import { createEffect, createSignal } from "solid-js"
 import type { Relay } from "@/lib/hooks"
 import { slugify } from "@/lib/slugify"
 import { PLANS } from "@/lib/api"
+import { setToastMessage } from "@/components/Toast"
 
 export type RelayFormValues = Pick<Relay, "info_name" | "subdomain" | "info_icon" | "info_description" | "plan">
 
@@ -14,17 +15,22 @@ type RelayFormProps = {
 }
 
 export default function RelayForm(props: RelayFormProps) {
-  const [plan, setPlan] = createSignal(props.initialValues?.plan ?? "")
+  const [plan, setPlan] = createSignal(props.initialValues?.plan ?? PLANS[0].id)
   const [name, setName] = createSignal(props.initialValues?.info_name ?? "")
   const [subdomain, setSubdomain] = createSignal(props.initialValues?.subdomain ?? "")
   const [icon, setIcon] = createSignal(props.initialValues?.info_icon ?? "")
   const [description, setDescription] = createSignal(props.initialValues?.info_description ?? "")
   const [submitting, setSubmitting] = createSignal(false)
-  const [error, setError] = createSignal("")
 
   async function handleSubmit(e: Event) {
     e.preventDefault()
-    setError("")
+
+    if (!plan()) {
+      setToastMessage("Please select a plan")
+      return
+    }
+
+    setToastMessage("")
     setSubmitting(true)
 
     try {
@@ -36,7 +42,7 @@ export default function RelayForm(props: RelayFormProps) {
         info_description: description(),
       })
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to save relay")
+      setToastMessage(e instanceof Error ? e.message : "Failed to save relay")
     } finally {
       setSubmitting(false)
     }
@@ -106,12 +112,11 @@ export default function RelayForm(props: RelayFormProps) {
               <div class="text-sm text-gray-500 mt-1">
                 {p.price === 0 ? "Free" : `${p.price.toLocaleString()} sats/mo`}
               </div>
-              <div class="text-xs text-gray-500 mt-2">{p.members} members</div>
+              <div class="text-xs text-gray-500 mt-2">{p.memberLabel}</div>
             </button>
           ))}
         </div>
       </div>
-      {error() && <p class="text-sm text-red-600">{error()}</p>}
       <button
         type="submit"
         disabled={submitting()}

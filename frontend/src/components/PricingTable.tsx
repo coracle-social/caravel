@@ -1,6 +1,6 @@
 import { A } from "@solidjs/router"
 import { For } from "solid-js"
-import { RELAY_PLANS, type RelayPlanId } from "@/lib/relayPlans"
+import { PLANS, type PlanId } from "@/lib/api"
 
 function CheckIcon() {
   return (
@@ -22,8 +22,8 @@ function XIcon() {
 
 type PricingTableProps = {
   selectable?: boolean
-  selectedPlan?: RelayPlanId
-  onSelect?: (plan: RelayPlanId) => void
+  selectedPlan?: PlanId
+  onSelect?: (plan: PlanId) => void
   ctaHref?: string
   compactOnMobile?: boolean
 }
@@ -31,7 +31,7 @@ type PricingTableProps = {
 export default function PricingTable(props: PricingTableProps) {
   return (
     <div class={`grid items-start ${props.compactOnMobile ? "grid-cols-3 gap-2 sm:grid-cols-1 sm:gap-6 md:grid-cols-3" : "grid-cols-1 md:grid-cols-3 gap-6"}`}>
-      <For each={RELAY_PLANS}>
+      <For each={PLANS}>
         {(plan) => {
           const isPopular = plan.id === "basic"
           const isSelected = () => props.selectable && props.selectedPlan === plan.id

@@ -22,6 +22,7 @@ export default function Home() {
       navigate(`/relays/${relay.id}`)
     } else {
       setDraftRelay(values)
+      setShowRelayModal(false)
       setShowLoginModal(true)
     }
   }

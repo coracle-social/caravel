@@ -1,10 +1,8 @@
 import { A } from "@solidjs/router"
 import { Show, createEffect, createSignal, onCleanup } from "solid-js"
-import type { Relay } from "@/lib/api"
+import type { Relay, PlanId } from "@/lib/api"
 import menuDotsIcon from "@/assets/menu-dots-2.svg"
-import Modal from "@/components/Modal"
 import PricingTable from "@/components/PricingTable"
-import { RELAY_PLAN_IDS, type RelayPlanId } from "@/lib/relayPlans"
 
 function Field(props: { label: string; children: any }) {
   return (
@@ -89,8 +87,7 @@ type RelayDetailCardProps = {
   onToggleMediaStorage?: () => void
   onToggleLivekitSupport?: () => void
   onTogglePushNotifications?: () => void
-  onUpdatePlan?: (plan: RelayPlanId) => Promise<void>
-  updatingPlan?: boolean
+  onUpdatePlan?: (plan: PlanId) => Promise<void>
   enforcePlanLimits?: boolean
   showPlanActions?: boolean
 }
@@ -103,10 +100,8 @@ export default function RelayDetailCard(props: RelayDetailCardProps) {
     return fallback
   }
   const [menuOpen, setMenuOpen] = createSignal(false)
-  const [planModalOpen, setPlanModalOpen] = createSignal(false)
-  const [selectedPlan, setSelectedPlan] = createSignal<RelayPlanId>("free")
-  const [planError, setPlanError] = createSignal("")
-  const [submittingPlan, setSubmittingPlan] = createSignal(false)
+  const [plan, setPlan] = createSignal<PlanId>(props.relay.plan)
+
   let menuContainerRef: HTMLDivElement | undefined
 
   const memberLimitByPlan: Record<string, string> = {
@@ -116,32 +111,12 @@ export default function RelayDetailCard(props: RelayDetailCardProps) {
   }
 
   const memberLimitLabel = () => memberLimitByPlan[r().plan] ?? "?"
-  const isTopTier = () => r().plan === "growth"
   const planLimited = () => (props.enforcePlanLimits ?? true) && r().plan === "free"
   const showPlanActions = () => props.showPlanActions ?? true
 
-  createEffect(() => {
-    if (!planModalOpen()) return
-    const current = RELAY_PLAN_IDS.find((id) => id === r().plan) ?? "free"
-    setSelectedPlan(current)
-    setPlanError("")
-  })
-
-  const canSubmitPlan = () => selectedPlan() !== r().plan
-
-  async function handlePlanContinue() {
-    if (!props.onUpdatePlan || submittingPlan() || !canSubmitPlan()) return
-    setPlanError("")
-    setSubmittingPlan(true)
-
-    try {
-      await props.onUpdatePlan(selectedPlan())
-      setPlanModalOpen(false)
-    } catch (e) {
-      setPlanError(e instanceof Error ? e.message : "Failed to update plan")
-    } finally {
-      setSubmittingPlan(false)
-    }
+  async function changePlan(plan: PlanId) {
+    setPlan(plan)
+    props.onUpdatePlan?.(plan)
   }
 
   createEffect(() => {
@@ -286,13 +261,9 @@ export default function RelayDetailCard(props: RelayDetailCardProps) {
                     </A>
                   }
                 >
-                  <button
-                    type="button"
-                    class="inline-flex items-center rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-100"
-                    onClick={() => setPlanModalOpen(true)}
-                  >
+                  <span class="inline-flex items-center rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-700">
                     Update Plan
-                  </button>
+                  </span>
                 </Show>
               </Show>
             }
@@ -319,13 +290,9 @@ export default function RelayDetailCard(props: RelayDetailCardProps) {
                     </A>
                   }
                 >
-                  <button
-                    type="button"
-                    class="inline-flex items-center rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-100"
-                    onClick={() => setPlanModalOpen(true)}
-                  >
+                  <span class="inline-flex items-center rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-700">
                     Update Plan
-                  </button>
+                  </span>
                 </Show>
               </Show>
             }
@@ -352,69 +319,31 @@ export default function RelayDetailCard(props: RelayDetailCardProps) {
             <span class="font-mono text-xs break-all">{r().tenant}</span>
           </Field>
         </Show>
-        <Show when={props.editHref && showPlanActions()}>
-          <Field label=" ">
-            <Show
-              when={props.onUpdatePlan}
-              fallback={
-                <Show
-                  when={!isTopTier()}
-                  fallback={<span />}
-                >
-                  <A
-                    href={props.editHref!}
-                    class="inline-flex items-center rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-100"
-                  >
-                    Upgrade Plan
-                  </A>
-                </Show>
-              }
-            >
-              <button
-                type="button"
-                class="inline-flex items-center rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-100"
-                onClick={() => setPlanModalOpen(true)}
-              >
-                Update Plan
-              </button>
-            </Show>
-          </Field>
-        </Show>
       </MembershipSection>
 
-      <Modal
-        open={planModalOpen()}
-        onClose={() => setPlanModalOpen(false)}
-        wrapperClass="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-4"
-        panelClass="w-full max-w-5xl max-h-[90vh] overflow-y-auto rounded-2xl bg-white"
-      >
-        <div class="p-6 sm:p-8">
-          <h2 class="text-2xl font-bold text-gray-900 mb-2">Update plan</h2>
-          <p class="text-sm text-gray-500 mb-8">Choose the plan you want for this relay.</p>
+      <Show when={showPlanActions()}>
+        <hr class="border-gray-200" />
 
-          <PricingTable
-            selectable
-            compactOnMobile
-            selectedPlan={selectedPlan()}
-            onSelect={setSelectedPlan}
-          />
-
-          <Show when={planError()}>
-            <p class="mt-4 text-sm text-red-600">{planError()}</p>
+        <DetailSection title="Plan">
+          <Show
+            when={props.onUpdatePlan}
+            fallback={
+              <Field label="Current plan">
+                <span class="capitalize text-gray-900">{r().plan}</span>
+              </Field>
+            }
+          >
+            <div class="lg:col-span-2 space-y-4">
+              <PricingTable
+                selectable
+                compactOnMobile
+                selectedPlan={plan()}
+                onSelect={changePlan}
+              />
+            </div>
           </Show>
-
-          <div class="mt-8">
-            <button
-              type="button"
-              onClick={() => void handlePlanContinue()}
-              disabled={!canSubmitPlan() || submittingPlan() || !!props.updatingPlan}
-              class="w-full py-3 rounded-xl bg-blue-600 text-white font-semibold hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {submittingPlan() || props.updatingPlan ? "Updating..." : "Continue"}
-            </button>
-          </div>
-        </div>
-      </Modal>
+        </DetailSection>
+      </Show>
     </div>
   )
 }

@@ -7,7 +7,7 @@ export default function Navbar() {
   const picture = useProfilePicture(() => account()?.pubkey)
 
   return (
-    <nav class="bg-white border-b border-gray-200">
+    <nav class="fixed inset-0 h-screen bg-white border-b border-gray-200 z-40">
       <div class="max-w-4xl mx-auto px-4 h-14 flex items-center justify-between">
         <A href={account() ? "/relays" : "/"} class="flex items-center gap-2">
           <img src="/caravel.png" alt={PLATFORM_NAME} class="h-8 w-8 rounded-full object-cover" />

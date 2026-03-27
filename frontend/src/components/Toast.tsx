@@ -1,12 +1,8 @@
 import { Show, createEffect, createSignal, onCleanup } from "solid-js"
 
-type ToastProps = {
-  message?: string
-  duration?: number
-  onClear?: () => void
-}
+export const [toastMessage, setToastMessage] = createSignal("")
 
-export default function Toast(props: ToastProps) {
+export default function Toast() {
   const [visible, setVisible] = createSignal(false)
 
   let hideTimer: number | undefined
@@ -26,7 +22,7 @@ export default function Toast(props: ToastProps) {
   }
 
   createEffect(() => {
-    const message = props.message?.trim()
+    const message = toastMessage()?.trim()
     clearTimers()
 
     if (!message) {
@@ -46,11 +42,11 @@ export default function Toast(props: ToastProps) {
     hideTimer = window.setTimeout(() => {
       setVisible(false)
       clearTimer = window.setTimeout(() => {
-        props.onClear?.()
+        setToastMessage("")
         clearTimer = undefined
       }, 250)
       hideTimer = undefined
-    }, props.duration ?? 10_000)
+    }, 10_000)
   })
 
   onCleanup(() => {
@@ -58,7 +54,7 @@ export default function Toast(props: ToastProps) {
   })
 
   return (
-    <Show when={props.message}>
+    <Show when={toastMessage()}>
       <div
         role="alert"
         class="fixed bottom-4 right-4 z-50 max-w-md rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-base text-red-700 shadow-lg transition-all duration-400 ease-out"
@@ -67,7 +63,7 @@ export default function Toast(props: ToastProps) {
           "translate-y-3 opacity-0 scale-95": !visible(),
         }}
       >
-        {props.message}
+        {toastMessage()}
       </div>
     </Show>
   )

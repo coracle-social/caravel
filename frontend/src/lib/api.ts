@@ -32,9 +32,36 @@ export class ApiError extends Error {
 export type Plan = Record<string, unknown>
 
 export const PLANS = [
-  { id: "free", label: "Free", price: 0, members: "Up to 10", blossom: false, livekit: false },
-  { id: "basic", label: "Basic", price: 10_000, members: "Up to 100", blossom: true, livekit: true },
-  { id: "growth", label: "Growth", price: 50_000, members: "Unlimited", blossom: true, livekit: true },
+  {
+    id: "free",
+    label: "Free",
+    subtitle: "Get started, no commitment.",
+    price: 0,
+    priceLabel: "0",
+    memberLabel: "Up to 10 members",
+    blossom: false,
+    livekit: false,
+  },
+  {
+    id: "basic",
+    label: "Basic",
+    subtitle: "For growing communities.",
+    price: 10_000,
+    priceLabel: "10K",
+    memberLabel: "Up to 100 members",
+    blossom: true,
+    livekit: true,
+  },
+  {
+    id: "growth",
+    label: "Growth",
+    subtitle: "For large-scale communities.",
+    price: 50_000,
+    priceLabel: "50K",
+    memberLabel: "Unlimited members",
+    blossom: true,
+    livekit: true,
+  },
 ] as const
 
 export type PlanId = (typeof PLANS)[number]["id"]
@@ -44,7 +71,7 @@ export type Relay = {
   tenant: string
   schema: string
   subdomain: string
-  plan: string
+  plan: PlanId
   status: string
   sync_error: string
   info_name: string

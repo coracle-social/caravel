@@ -1,6 +1,6 @@
 import { useParams } from "@solidjs/router"
 import { createMemo, createResource, createSignal, Show } from "solid-js"
-import type { RelayPlanId } from "@/lib/relayPlans"
+import type { PlanId } from "@/lib/api"
 import BackLink from "@/components/BackLink"
 import PageContainer from "@/components/PageContainer"
 import RelayDetailCard from "@/components/RelayDetailCard"
@@ -131,7 +131,7 @@ export default function RelayDetail() {
     void updateRelay(next, current)
   }
 
-  async function handleUpdatePlan(plan: RelayPlanId) {
+  async function handleUpdatePlan(plan: PlanId) {
     const current = relay()
     if (!current) return
 

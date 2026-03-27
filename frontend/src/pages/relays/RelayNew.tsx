@@ -138,7 +138,7 @@ export default function RelayNew() {
                 <div class="text-sm text-gray-500 mt-1">
                   {p.price === 0 ? "Free" : `${p.price.toLocaleString()} sats/mo`}
                 </div>
-                <div class="text-xs text-gray-500 mt-2">{p.members} members</div>
+                <div class="text-xs text-gray-500 mt-2">{p.memberLabel}</div>
               </button>
             ))}
           </div>

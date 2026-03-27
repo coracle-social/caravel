@@ -2,6 +2,7 @@ import { createEffect, Show } from "solid-js"
 import { Router, Route, useLocation, useNavigate } from "@solidjs/router"
 import type { Component } from "solid-js"
 import AppShell from "@/components/AppShell"
+import Toast from "@/components/Toast"
 import Home from "@/pages/Home"
 import RelayList from "@/pages/relays/RelayList"
 import RelayNew from "@/pages/relays/RelayNew"
@@ -31,6 +32,7 @@ function Layout(props: { children?: any }) {
       <Show when={!identity.loading && identity() && usesAppShell()} fallback={<main>{props.children}</main>}>
         <AppShell>{props.children}</AppShell>
       </Show>
+      <Toast />
     </div>
   )
 }

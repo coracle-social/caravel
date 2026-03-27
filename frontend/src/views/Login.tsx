@@ -5,6 +5,7 @@ import { PasswordSigner } from "applesauce-signers"
 import QrScanner from "qr-scanner"
 import QRCode from "qrcode"
 import { accountManager, identity, PLATFORM_NAME } from "@/lib/state"
+import useMinLoading from "@/components/useMinLoading"
 
 const NIP46_RELAYS = ['wss://bucket.coracle.social', 'wss://ephemeral.snowflare.cc']
 
@@ -46,7 +47,8 @@ type LoginPageProps = LoginProps & Partial<RouteSectionProps<unknown>>
 export default function Login(props: LoginPageProps = {}) {
   const navigate = useNavigate()
   const [tab, setTab] = createSignal<Tab>(window.nostr ? "nip07" : "nip46")
-  const [loading, setLoading] = createSignal(false)
+  const [rawLoading, setRawLoading] = createSignal(false)
+  const loading = useMinLoading(() => rawLoading())
   const [error, setError] = createSignal("")
   const [screen, setScreen] = createSignal<Screen>("tabs")
 
@@ -72,19 +74,19 @@ export default function Login(props: LoginPageProps = {}) {
 
   async function loginWithNip07() {
     setError("")
-    setLoading(true)
+    setRawLoading(true)
     try {
       await completeLogin(await ExtensionAccount.fromExtension())
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to login with extension")
     } finally {
-      setLoading(false)
+      setRawLoading(false)
     }
   }
 
   async function startNostrConnect() {
     setError("")
-    setLoading(true)
+    setRawLoading(true)
 
     try {
       const NostrConnectSigner = await loadNostrConnectSigner()
@@ -110,13 +112,13 @@ export default function Login(props: LoginPageProps = {}) {
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to connect signer")
     } finally {
-      setLoading(false)
+      setRawLoading(false)
     }
   }
 
   async function loginWithBunker() {
     setError("")
-    setLoading(true)
+    setRawLoading(true)
     try {
       const uri = normalizeBunkerUrl(bunkerUrl())
       const NostrConnectSigner = await loadNostrConnectSigner()
@@ -127,13 +129,13 @@ export default function Login(props: LoginPageProps = {}) {
     } catch (e) {
       setError(e instanceof Error ? e.message : "Invalid bunker URL")
     } finally {
-      setLoading(false)
+      setRawLoading(false)
     }
   }
 
   async function loginWithKeyMaterial() {
     setError("")
-    setLoading(true)
+    setRawLoading(true)
     try {
       if (ncryptsecValue().trim()) {
         if (!password().trim()) {
@@ -153,7 +155,7 @@ export default function Login(props: LoginPageProps = {}) {
     } catch (e) {
       setError(e instanceof Error ? e.message : "Invalid key")
     } finally {
-      setLoading(false)
+      setRawLoading(false)
     }
   }
 

@@ -19,10 +19,7 @@ import { identity } from "./lib/hooks"
 function Layout(props: { children?: any }) {
   const location = useLocation()
 
-  const usesAppShell = () => {
-    const path = location.pathname
-    return path.startsWith("/relays") || path.startsWith("/account") || path.startsWith("/admin")
-  }
+  const usesAppShell = () => location.pathname.match(/^\/(relays|account|admin)/)
 
   createEffect(() => {
     // Reinitialize Preline components on route change
@@ -32,7 +29,7 @@ function Layout(props: { children?: any }) {
 
   return (
     <div class="min-h-screen bg-gray-50">
-      <Show when={identity() && usesAppShell()} fallback={<main>{props.children}</main>}>
+      <Show when={!identity.loading && identity() && usesAppShell()} fallback={<main>{props.children}</main>}>
         <AppShell>{props.children}</AppShell>
       </Show>
     </div>
@@ -45,11 +42,11 @@ export default function App() {
       const navigate = useNavigate()
 
       createEffect(() => {
-        if (!condition()) navigate("/", { replace: true })
+        if (!identity.loading && !condition()) navigate("/", { replace: true })
       })
 
       return (
-        <Show when={condition()}>
+        <Show when={!identity.loading && condition()}>
           <Page />
         </Show>
       )

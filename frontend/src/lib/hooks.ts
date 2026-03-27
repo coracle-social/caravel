@@ -66,9 +66,26 @@ registerCommonAccountTypes(accountManager)
 
 export const [account, setAccount] = createSignal<IAccount | undefined>()
 
-export const [identity, setIdentity] = createSignal<Identity | undefined>()
+export const [identity, { refetch: refetchIdentity, mutate: setIdentity }] = createResource(
+  () => account()?.pubkey,
+  pubkey => {
+    if (pubkey) return getIdentity()
+  }
+)
 
 ;(() => {
+  try {
+    accountManager.fromJSON(JSON.parse(localStorage.getItem("caravel.accounts")))
+  } catch {
+    // pass
+  }
+
+  const active = localStorage.getItem("caravel.accounts.active")
+
+  if (active) {
+    accountManager.setActive(active)
+  }
+
   accountManager.active$.subscribe(account => {
     setAccount(account)
 
@@ -76,11 +93,11 @@ export const [identity, setIdentity] = createSignal<Identity | undefined>()
 
     if (account) {
       localStorage.setItem("caravel.accounts.active", account.id)
-      getIdentity().then(setIdentity)
     } else {
       localStorage.removeItem("caravel.accounts.active")
-      setIdentity(undefined)
     }
+
+    refetchIdentity()
   })
 })()
 

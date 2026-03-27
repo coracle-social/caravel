@@ -1,4 +1,3 @@
-import { A } from "@solidjs/router"
 import { For } from "solid-js"
 import { PLANS, type PlanId } from "@/lib/api"
 
@@ -24,13 +23,12 @@ type PricingTableProps = {
   selectable?: boolean
   selectedPlan?: PlanId
   onSelect?: (plan: PlanId) => void
-  ctaHref?: string
-  compactOnMobile?: boolean
+  onCta?: (plan: PlanId) => void
 }
 
 export default function PricingTable(props: PricingTableProps) {
   return (
-    <div class={`grid items-start ${props.compactOnMobile ? "grid-cols-3 gap-2 sm:grid-cols-1 sm:gap-6 md:grid-cols-3" : "grid-cols-1 md:grid-cols-3 gap-6"}`}>
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
       <For each={PLANS}>
         {(plan) => {
           const isPopular = plan.id === "basic"
@@ -43,13 +41,13 @@ export default function PricingTable(props: PricingTableProps) {
                   POPULAR
                 </span>
               )}
-              <h3 class={`font-bold text-gray-900 mb-1 ${props.compactOnMobile ? "text-sm sm:text-lg" : "text-lg"}`}>{plan.label}</h3>
-              <p class={`text-gray-400 mb-6 ${props.compactOnMobile ? "hidden sm:block text-sm" : "text-sm"}`}>{plan.subtitle}</p>
-              <div class={props.compactOnMobile ? "mb-3 sm:mb-8" : "mb-8"}>
-                <span class={`font-extrabold text-gray-900 ${props.compactOnMobile ? "text-xl sm:text-4xl" : "text-4xl"}`}>{plan.priceLabel}</span>
-                <span class={`text-gray-400 ml-1 ${props.compactOnMobile ? "text-[10px] sm:text-sm" : "text-sm"}`}>sats / mo</span>
+              <h3 class="text-lg font-bold text-gray-900 mb-1">{plan.label}</h3>
+              <p class="text-sm text-gray-400 mb-6">{plan.subtitle}</p>
+              <div class="mb-8">
+                <span class="text-4xl font-extrabold text-gray-900">{plan.priceLabel}</span>
+                <span class="text-sm text-gray-400 ml-1">sats / mo</span>
               </div>
-              <ul class={`mb-8 text-sm text-gray-600 ${props.compactOnMobile ? "hidden sm:block space-y-3" : "space-y-3"}`}>
+              <ul class="mb-8 text-sm text-gray-600 space-y-3">
                 <li class="flex items-start gap-2"><CheckIcon />{plan.memberLabel}</li>
                 <li class={`flex items-start gap-2 ${plan.blossom ? "" : "text-gray-300"}`}>
                   {plan.blossom ? <CheckIcon /> : <XIcon />}
@@ -60,26 +58,14 @@ export default function PricingTable(props: PricingTableProps) {
                   LiveKit video
                 </li>
               </ul>
-              {props.compactOnMobile && props.selectable && (
-                <div class="sm:hidden mb-3 text-[10px] text-gray-500 space-y-1">
-                  <div>{plan.memberLabel.replace(" members", "")}</div>
-                  <div class="flex items-center gap-1">
-                    <span class={plan.blossom ? "text-blue-600" : "text-gray-300"}>{plan.blossom ? "✓" : "✕"}</span>
-                    Blossom
-                  </div>
-                  <div class="flex items-center gap-1">
-                    <span class={plan.livekit ? "text-blue-600" : "text-gray-300"}>{plan.livekit ? "✓" : "✕"}</span>
-                    LiveKit
-                  </div>
-                </div>
-              )}
               {!props.selectable && (
-                <A
-                  href={props.ctaHref ?? "/relays/new"}
-                  class={`block text-center rounded-xl font-semibold transition-colors ${props.compactOnMobile ? "py-1.5 px-2 text-[11px] sm:py-2.5 sm:px-4 sm:text-sm" : "py-2.5 px-4 text-sm"} ${isPopular ? "bg-blue-600 text-white hover:bg-blue-700" : "border border-gray-200 text-gray-700 hover:bg-gray-50"}`}
+                <button
+                  type="button"
+                  onClick={() => props.onCta?.(plan.id)}
+                  class={`w-full text-center py-2.5 px-4 text-sm rounded-xl font-semibold transition-colors ${isPopular ? "bg-blue-600 text-white hover:bg-blue-700" : "border border-gray-200 text-gray-700 hover:bg-gray-50"}`}
                 >
                   Get started
-                </A>
+                </button>
               )}
             </>
           )
@@ -89,7 +75,7 @@ export default function PricingTable(props: PricingTableProps) {
               <button
                 type="button"
                 onClick={() => props.onSelect?.(plan.id)}
-                class={`relative w-full bg-white rounded-2xl text-left transition-all ${props.compactOnMobile ? "p-3 sm:p-8" : "p-8"} ${isSelected() ? "border-2 border-blue-600 shadow-lg shadow-blue-100" : "border border-gray-200 hover:border-gray-300"}`}
+                class={`relative w-full bg-white rounded-2xl p-8 text-left transition-all border-2 ${isSelected() ? "border-blue-600 shadow-lg shadow-blue-100" : "border-gray-200 hover:border-gray-300"}`}
               >
                 {card}
               </button>
@@ -97,7 +83,7 @@ export default function PricingTable(props: PricingTableProps) {
           }
 
           return (
-            <div class={`relative bg-white rounded-2xl ${props.compactOnMobile ? "p-3 sm:p-8" : "p-8"} ${isPopular ? "border-2 border-blue-600 shadow-lg shadow-blue-100" : "border border-gray-200"}`}>
+            <div class={`relative bg-white rounded-2xl p-8 ${isPopular ? "border-2 border-blue-600 shadow-lg shadow-blue-100" : "border border-gray-200"}`}>
               {card}
             </div>
           )

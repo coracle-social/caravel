@@ -99,8 +99,8 @@ export default function AppShell(props: { children?: any }) {
   }
 
   return (
-    <div class="min-h-screen bg-gray-50 md:grid md:grid-cols-[260px_minmax(0,1fr)]">
-      <aside class="hidden bg-slate-900 text-white md:flex md:min-h-screen md:flex-col">
+    <div class="min-h-screen bg-gray-50">
+      <aside class="hidden md:flex fixed inset-y-0 left-0 w-[260px] bg-slate-900 text-white flex-col z-10">
         <div class="flex-1 px-4 py-6">
           <h2 class="px-3 text-xs font-semibold uppercase tracking-wider text-white/60">Resources</h2>
           <ul class="mt-2 space-y-1">
@@ -137,7 +137,7 @@ export default function AppShell(props: { children?: any }) {
         </div>
       </aside>
 
-      <div class="min-h-screen pb-20 md:pb-0">
+      <div class="md:pl-[260px] min-h-screen pb-20 md:pb-0">
         <main>{props.children}</main>
       </div>
 

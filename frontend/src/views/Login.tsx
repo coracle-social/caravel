@@ -232,7 +232,7 @@ export default function Login(props: LoginPageProps = {}) {
                 Secure Nostr Login
               </div>
               <div>
-                <h1 class="text-2xl font-semibold text-gray-900 py-2">Welcome back</h1>
+                <h1 class="text-2xl font-semibold text-gray-900 py-2">Welcome!</h1>
                 <p class="mt-3 text-sm leading-6 text-gray-600">
                   Connect your Nostr account to manage relay hosting, billing, and access in one place.
                 </p>

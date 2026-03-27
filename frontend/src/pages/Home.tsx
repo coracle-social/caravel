@@ -1,5 +1,5 @@
 import { A, useNavigate } from "@solidjs/router"
-import { createSignal } from "solid-js"
+import { createSignal, Show } from "solid-js"
 import CheckIcon from "@/components/CheckIcon"
 import ExternalLinkIcon from "@/components/ExternalLinkIcon"
 import PricingTable from "@/components/PricingTable"
@@ -14,6 +14,12 @@ export default function Home() {
   const [showRelayModal, setShowRelayModal] = createSignal(false)
   const [showLoginModal, setShowLoginModal] = createSignal(false)
   const [draftRelay, setDraftRelay] = createSignal<RelayFormValues>()
+  const [initialPlan, setInitialPlan] = createSignal<RelayFormValues["plan"]>("free")
+
+  function openRelayModal(plan: RelayFormValues["plan"] = "free") {
+    setInitialPlan(plan)
+    setShowRelayModal(true)
+  }
 
   async function onRelayFormSubmit(values: RelayFormValues) {
     if (account()) {
@@ -47,18 +53,25 @@ export default function Home() {
             <img src="/caravel.png" alt="Caravel" class="w-7 h-7 rounded" />
             Caravel
           </div>
-          <A
-            href={account() ? "/relays" : "#"}
-            onClick={(e) => {
-              if (!account()) {
-                e.preventDefault()
-                setShowLoginModal(true)
-              }
-            }}
-            class="text-sm font-medium text-gray-600 hover:text-gray-900 transition-colors"
+          <Show
+            when={account()}
+            fallback={
+              <button
+                type="button"
+                onClick={() => setShowLoginModal(true)}
+                class="text-sm font-medium py-1.5 px-4 border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50 transition-colors"
+              >
+                Sign in
+              </button>
+            }
           >
-            {account() ? "Go to dashboard" : "Sign in"}
-          </A>
+            <A
+              href="/relays"
+              class="text-sm font-medium py-1.5 px-4 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+            >
+              Go to dashboard
+            </A>
+          </Show>
         </div>
       </nav>
 
@@ -87,10 +100,10 @@ export default function Home() {
           <div class="flex flex-col sm:flex-row items-center justify-center gap-4">
             <button
               type="button"
-              onClick={() => setShowRelayModal(true)}
-              class="inline-flex items-center gap-2 py-3 px-8 bg-blue-600 text-white font-semibold rounded-xl hover:bg-blue-700 active:scale-95 transition-all shadow-lg shadow-blue-200"
-            >
-              Get started free
+            onClick={() => openRelayModal()}
+            class="inline-flex items-center gap-2 py-3 px-8 bg-blue-600 text-white font-semibold rounded-xl hover:bg-blue-700 active:scale-95 transition-all shadow-lg shadow-blue-200"
+          >
+            Get started free
               <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7" /></svg>
             </button>
             <A
@@ -291,7 +304,7 @@ export default function Home() {
             Pay in sats. Upgrade or cancel any time.
           </p>
 
-          <PricingTable ctaHref="#" />
+          <PricingTable onCta={openRelayModal} />
         </div>
       </section>
 
@@ -305,7 +318,7 @@ export default function Home() {
           </p>
           <button
             type="button"
-            onClick={() => setShowRelayModal(true)}
+            onClick={() => openRelayModal()}
             class="inline-flex items-center gap-2 py-3 px-10 bg-blue-600 text-white font-semibold rounded-xl hover:bg-blue-700 active:scale-95 transition-all shadow-lg shadow-blue-200 text-lg"
           >
             Create your relay
@@ -352,6 +365,7 @@ export default function Home() {
 
         <RelayForm
           syncSubdomainWithName
+          initialValues={{ plan: initialPlan() }}
           onSubmit={onRelayFormSubmit}
           submitLabel="Continue"
           submittingLabel="Creating..."
@@ -361,8 +375,8 @@ export default function Home() {
       <Modal
         open={showLoginModal()}
         onClose={() => setShowLoginModal(false)}
-        wrapperClass="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-        panelClass="w-full max-w-4xl rounded-2xl"
+        wrapperClass="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+        panelClass="w-full max-w-3xl mx-4 rounded-2xl"
       >
         <Login
           inModal

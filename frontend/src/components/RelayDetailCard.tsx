@@ -298,7 +298,6 @@ export default function RelayDetailCard(props: RelayDetailCardProps) {
             <div class="lg:col-span-2 space-y-4">
               <PricingTable
                 selectable
-                compactOnMobile
                 selectedPlan={plan()}
                 onSelect={changePlan}
               />

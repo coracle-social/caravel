@@ -26,6 +26,7 @@ import {
   type CreateRelayInput,
   type Relay,
   type Tenant,
+  type Identity,
   type UpdateRelayInput,
 } from "./api"
 
@@ -139,12 +140,6 @@ export function primeProfiles(pubkeys: string[]) {
       mailboxSeedSub?.unsubscribe()
     },
   }
-}
-
-type Identity = {
-  pubkey: string
-  is_admin: boolean
-  is_tenant: boolean
 }
 
 export const useTenant = () => createResource(() => getTenant(account()!.pubkey))

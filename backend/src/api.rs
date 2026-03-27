@@ -103,7 +103,7 @@ impl Api {
             .route("/identity", get(get_identity))
             .route("/plans", get(list_plans))
             .route("/plans/:id", get(get_plan))
-            .route("/tenants", get(list_tenants).post(create_tenant))
+            .route("/tenants", get(list_tenants))
             .route("/tenants/:pubkey", get(get_tenant))
             .route("/tenants/:pubkey/relays", get(list_tenant_relays))
             .route("/tenants/:pubkey/invoices", get(list_tenant_invoices))
@@ -297,7 +297,6 @@ struct UpdateTenantBillingRequest {
 struct IdentityResponse {
     pubkey: String,
     is_admin: bool,
-    is_tenant: bool,
 }
 
 #[derive(Deserialize)]
@@ -365,10 +364,16 @@ async fn get_identity(
 ) -> std::result::Result<Response, ApiError> {
     let pubkey = state.api.extract_auth_pubkey(&headers)?;
     let is_admin = state.api.admins.iter().any(|a| a == &pubkey);
+    let tenant = Tenant {
+        pubkey: pubkey.clone(),
+        nwc_url: String::new(),
+        created_at: now_ts(),
+        billing_anchor: now_ts(),
+    };
 
-    let is_tenant = match state.api.repo.get_tenant(&pubkey).await {
-        Ok(Some(_)) => true,
-        Ok(None) => false,
+    match state.api.repo.create_tenant(&tenant).await {
+        Ok(()) => true,
+        Err(e) if matches!(map_unique_error(&e), Some("pubkey-exists")) => true,
         Err(e) => {
             return Ok(err(
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -383,7 +388,6 @@ async fn get_identity(
         IdentityResponse {
             pubkey,
             is_admin,
-            is_tenant,
         },
     ))
 }
@@ -417,39 +421,6 @@ async fn get_tenant(
             "internal",
             &e.to_string(),
         )),
-    }
-}
-
-async fn create_tenant(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> std::result::Result<Response, ApiError> {
-    let pubkey = state.api.extract_auth_pubkey(&headers)?;
-
-    let tenant = Tenant {
-        pubkey: pubkey.clone(),
-        nwc_url: String::new(),
-        created_at: now_ts(),
-        billing_anchor: now_ts(),
-    };
-
-    match state.api.repo.create_tenant(&tenant).await {
-        Ok(()) => Ok(ok(StatusCode::CREATED, tenant)),
-        Err(e) => {
-            if matches!(map_unique_error(&e), Some("pubkey-exists")) {
-                Ok(err(
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                    "pubkey-exists",
-                    "tenant already exists",
-                ))
-            } else {
-                Ok(err(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "internal",
-                    &e.to_string(),
-                ))
-            }
-        }
     }
 }
 
@@ -967,20 +938,24 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn create_tenant_and_duplicate_returns_expected_codes() {
+    async fn identity_creates_tenant_if_missing() {
         let repo = test_repo().await;
         let (admin_keys, tenant_keys, _) = keys();
-        let api = make_api(repo, pubkey_hex(&admin_keys));
+        let api = make_api(repo.clone(), pubkey_hex(&admin_keys));
         let auth = auth_header(&tenant_keys, "https://api.test");
+        let tenant_pubkey = pubkey_hex(&tenant_keys);
 
-        let (status, body) = request(&api, "POST", "/tenants", Some(auth.clone()), None).await;
-        assert_eq!(status, StatusCode::CREATED);
+        let (status, body) = request(&api, "GET", "/identity", Some(auth), None).await;
+        assert_eq!(status, StatusCode::OK);
         assert_eq!(body["code"], "ok");
-        assert_eq!(body["data"]["pubkey"], pubkey_hex(&tenant_keys));
+        assert_eq!(body["data"]["pubkey"], tenant_pubkey);
+        assert_eq!(body["data"]["is_admin"], false);
 
-        let (status, body) = request(&api, "POST", "/tenants", Some(auth), None).await;
-        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
-        assert_eq!(body["code"], "pubkey-exists");
+        let tenant = repo
+            .get_tenant(&tenant_pubkey)
+            .await
+            .expect("lookup tenant after identity");
+        assert!(tenant.is_some());
     }
 
     #[tokio::test]

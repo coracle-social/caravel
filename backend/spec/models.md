@@ -9,7 +9,6 @@ Identity is a description of a user.
 
 - `pubkey` - the user's nostr pubkey
 - `is_admin` - whether the user is an admin
-- `is_tenant` - whether the user has an account
 
 # Activity
 

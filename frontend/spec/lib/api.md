@@ -20,7 +20,7 @@ The api allows the frontend to access the database. Most endpoints are authentic
 
 - Calls `GET /identity`
 - Requires authentication
-- Returns `{ pubkey, is_admin, is_tenant }` for the authorized user
+- Returns `{ pubkey, is_admin }` for the authorized user
 
 ## Plan methods
 

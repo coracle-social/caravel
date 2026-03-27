@@ -13,7 +13,7 @@ Members:
 Notes:
 
 - Authentication is done using NIP 98 comparing `u` to `self.host`, not the incoming request
-- Each route is responsible for authorization using `self.is_admin(pubkey)` or `self.is_tenant(authorized_pubkey, tenant_pubkey)`
+- Each route is responsible for authorization using `self.require_admin` or `self.require_admin_or_tenant`
 - Successful API responses should be of the form `{data, code: "ok"}` with an appropriate http status code.
 - Unsuccessful API responses should be of the form `{error, code}` with an appropriate http status code. `code` is a short error code (e.g. `duplicate-subdomain`) and `error` is a human-readable error message.
 
@@ -46,6 +46,7 @@ Notes:
 
 - Serves `GET /identity`
 - Authorizes anyone, but must be authorized
+- If a tenant for the identity doesn't exist, one is created
 - Return `data` is an `Identity` struct
 
 --- Tenant routes
@@ -61,14 +62,6 @@ Notes:
 - Serves `GET /tenants/:pubkey`
 - Authorizes admin or matching tenant
 - Return `data` is a single tenant struct from `repo.get_tenant`
-
-## `async fn create_tenant(...) -> Response`
-
-- Serves `POST /tenants`
-- Authorizes anyone, but must be authorized
-- Creates a new tenant using `repo.create_tenant` based on the authorized pubkey
-- If tenant is a duplicate, return a `422` with `code=pubkey-exists`
-- Return `data` is a single tenant struct. Use HTTP `201`.
 
 ## `async fn list_tenant_relays(...) -> Response`
 

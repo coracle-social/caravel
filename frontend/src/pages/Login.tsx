@@ -1,4 +1,4 @@
-import { Show, createSignal, onCleanup } from "solid-js"
+import { Show, createSignal, createEffect, onCleanup } from "solid-js"
 import { useNavigate } from "@solidjs/router"
 import { ExtensionAccount, NostrConnectAccount, PasswordAccount, PrivateKeyAccount } from "applesauce-accounts/accounts"
 import { PasswordSigner } from "applesauce-signers"
@@ -56,16 +56,9 @@ export default function Login() {
   let scanner: QrScanner | undefined
   let abortController: AbortController | undefined
 
-  async function completeLogin(account: ExtensionAccount | NostrConnectAccount | PrivateKeyAccount | PasswordAccount) {
+  function completeLogin(account: ExtensionAccount | NostrConnectAccount | PrivateKeyAccount | PasswordAccount) {
     accountManager.addAccount(account)
     accountManager.setActive(account)
-
-    const dispose = createEffect(() => {
-      if (identity()) {
-        navigate("/relays")
-        dispose()
-      }
-    })
   }
 
   async function loginWithNip07() {
@@ -195,6 +188,12 @@ export default function Login() {
   function copyUri() {
     void navigator.clipboard.writeText(nostrConnectUri())
   }
+
+  createEffect(() => {
+    if (identity()) {
+      navigate("/relays")
+    }
+  })
 
   onCleanup(() => {
     abortController?.abort()

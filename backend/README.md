@@ -61,7 +61,7 @@ See [spec](spec) for more details
 
 All routes are NIP-98 protected.
 
-- `GET /identity` — get auth identity (`pubkey`, `is_admin`, `is_tenant`)
+- `GET /identity` — get auth identity (`pubkey`, `is_admin`)
 - `GET /tenants` — list tenants (admin)
 - `POST /tenants` — create current auth pubkey as tenant
 - `GET /tenants/:pubkey` — get tenant (admin or same tenant)

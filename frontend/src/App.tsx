@@ -14,7 +14,7 @@ import AdminTenantDetail from "./pages/admin/AdminTenantDetail"
 import AdminRelayList from "./pages/admin/AdminRelayList"
 import AdminRelayDetail from "./pages/admin/AdminRelayDetail"
 import AdminRelayEdit from "./pages/admin/AdminRelayEdit"
-import { account, identity } from "./lib/hooks"
+import { identity } from "./lib/hooks"
 
 function Layout(props: { children?: any }) {
   const location = useLocation()
@@ -32,7 +32,7 @@ function Layout(props: { children?: any }) {
 
   return (
     <div class="min-h-screen bg-gray-50">
-      <Show when={account() && usesAppShell()} fallback={<main>{props.children}</main>}>
+      <Show when={identity() && usesAppShell()} fallback={<main>{props.children}</main>}>
         <AppShell>{props.children}</AppShell>
       </Show>
     </div>
@@ -56,8 +56,8 @@ export default function App() {
     }
   }
 
-  const requireAdmin = (Page: Component) => requireCondition(Page, () => Boolean(account() && identity()?.is_admin))
-  const requireTenant = (Page: Component) => requireCondition(Page, () => Boolean(account() && identity()?.is_tenant))
+  const requireAdmin = (Page: Component) => requireCondition(Page, () => Boolean(identity()?.is_admin))
+  const requireTenant = (Page: Component) => requireCondition(Page, () => Boolean(identity()))
 
   return (
     <Router root={Layout}>

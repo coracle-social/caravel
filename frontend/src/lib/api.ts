@@ -76,7 +76,6 @@ export type Invoice = {
 export type Identity = {
   pubkey: string
   is_admin: boolean
-  is_tenant: boolean
 }
 
 export type CreateRelayInput = {

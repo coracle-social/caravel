@@ -115,6 +115,15 @@ export type Invoice = {
   period_end: number
 }
 
+export type Activity = {
+  id: string
+  tenant: string
+  created_at: number
+  activity_type: string
+  resource_type: string
+  resource_id: string
+}
+
 export type Identity = {
   pubkey: string
   is_admin: boolean
@@ -227,6 +236,10 @@ export function listRelays() {
 
 export function getRelay(id: string) {
   return callApi<undefined, Relay>("GET", `/relays/${id}`)
+}
+
+export function listRelayActivity(id: string) {
+  return callApi<undefined, Activity[]>("GET", `/relays/${id}/activity`)
 }
 
 export function createRelay(input: CreateRelayInput) {

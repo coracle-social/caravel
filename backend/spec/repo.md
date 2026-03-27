@@ -138,6 +138,11 @@ Notes:
 
 - Returns all activity occuring after `since` matching `tenant`
 
+## `pub fn list_activity_for_relay(&self, relay_id: &str) -> Result<Vec<Activity>>`
+
+- Returns all activity where `resource_type = 'relay'` and `resource_id = relay_id`
+- Ordered newest-first
+
 ## `pub fn get_relay_plan_sats(&self, plan: &str) -> Result<i64>`
 
 - Returns the monthly sats amount for a given plan id

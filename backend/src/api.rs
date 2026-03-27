@@ -110,6 +110,7 @@ impl Api {
             .route("/tenants/:pubkey/billing", put(update_tenant_billing))
             .route("/relays", get(list_relays).post(create_relay))
             .route("/relays/:id", get(get_relay).put(update_relay))
+            .route("/relays/:id/activity", get(list_relay_activity))
             .route("/relays/:id/deactivate", post(deactivate_relay))
             .route("/invoices", get(list_invoices))
             .route("/invoices/:id", get(get_invoice))
@@ -470,6 +471,27 @@ async fn get_relay(
     state.api.require_admin_or_tenant(&auth, &relay.tenant)?;
 
     Ok(ok(StatusCode::OK, relay))
+}
+
+async fn list_relay_activity(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> std::result::Result<Response, ApiError> {
+    let auth = state.api.extract_auth_pubkey(&headers)?;
+
+    let relay = match state.api.repo.get_relay(&id).await {
+        Ok(Some(r)) => r,
+        Ok(None) => return Ok(err(StatusCode::NOT_FOUND, "not-found", "relay not found")),
+        Err(e) => return Ok(err(StatusCode::INTERNAL_SERVER_ERROR, "internal", &e.to_string())),
+    };
+
+    state.api.require_admin_or_tenant(&auth, &relay.tenant)?;
+
+    match state.api.repo.list_activity_for_relay(&id).await {
+        Ok(activity) => Ok(ok(StatusCode::OK, activity)),
+        Err(e) => Ok(err(StatusCode::INTERNAL_SERVER_ERROR, "internal", &e.to_string())),
+    }
 }
 
 async fn create_relay(

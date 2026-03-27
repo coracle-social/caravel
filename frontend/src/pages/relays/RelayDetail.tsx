@@ -5,7 +5,8 @@ import PageContainer from "@/components/PageContainer"
 import RelayDetailCard from "@/components/RelayDetailCard"
 import ResourceState from "@/components/ResourceState"
 import useMinLoading from "@/components/useMinLoading"
-import { getRelayMembers, useRelay } from "@/lib/hooks"
+import ActivityFeed from "@/components/ActivityFeed"
+import { getRelayMembers, useRelay, useRelayActivity } from "@/lib/hooks"
 import useRelayToggles from "@/lib/useRelayToggles"
 
 export default function RelayDetail() {
@@ -18,6 +19,7 @@ export default function RelayDetail() {
   })
   const [members] = createResource(relayUrl, getRelayMembers)
   const loading = useMinLoading(() => relay.loading && !relay())
+  const [activity] = useRelayActivity(relayId)
   const { busy, handleDeactivate, handleUpdatePlan, toggles } = useRelayToggles(relayId, relay, { refetch, mutate })
 
   return (
@@ -26,7 +28,7 @@ export default function RelayDetail() {
       <ResourceState loading={loading()} error={relay.error} loadingText="Loading relay..." errorText="Failed to load relay." class="mb-4" />
       <Show when={!loading() && relay()}>
         {(r) => (
-          <div class="mb-6">
+          <div class="space-y-6 mb-6">
             <RelayDetailCard
               relay={r()}
               currentMembers={members.length}
@@ -36,6 +38,7 @@ export default function RelayDetail() {
               onUpdatePlan={handleUpdatePlan}
               {...toggles}
             />
+            <ActivityFeed activity={activity() ?? []} loading={activity.loading} />
           </div>
         )}
       </Show>

@@ -32,11 +32,13 @@ Notes:
 ## `async fn list_plans(...) -> Response`
 
 - Serves `GET /plans`
+- No authentication required
 - Return `data` is a list of plan structs from `Repo::list_plans`
 
 ## `async fn get_plan(...) -> Response`
 
 - Serves `GET /plans/:id`
+- No authentication required
 - Return `data` is a single plan struct matching `id`
 - If plan does not exist, return `404` with `code=not-found`
 
@@ -113,6 +115,12 @@ Notes:
 - Updates the given relay using `repo.update_relay`
 - If relay is a duplicate by subdomain, return a `422` with `code=subdomain-exists`
 - Return `data` is a single relay struct.
+
+## `async fn list_relay_activity(...) -> Response`
+
+- Serves `GET /relays/:id/activity`
+- Authorizes admin or relay owner
+- Return `data` is a list of activity structs from `repo.list_activity_for_relay`
 
 ## `async fn deactivate_relay(...) -> Response`
 

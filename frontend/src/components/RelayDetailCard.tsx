@@ -9,6 +9,25 @@ import ToggleField from "@/components/ToggleField"
 import { setToastMessage } from "@/components/Toast"
 import { plans } from "@/lib/state"
 
+const STATUS_STYLES: Record<string, string> = {
+  active:               "bg-green-50 text-green-700 border-green-200",
+  new:                  "bg-blue-50 text-blue-700 border-blue-200",
+  pending:              "bg-yellow-50 text-yellow-700 border-yellow-200",
+  provisioning_failed:  "bg-red-50 text-red-700 border-red-200",
+  deactivated:          "bg-gray-100 text-gray-500 border-gray-200",
+  suspended:            "bg-orange-50 text-orange-700 border-orange-200",
+}
+
+function StatusBadge(props: { status: string }) {
+  const styles = () => STATUS_STYLES[props.status] ?? "bg-gray-100 text-gray-500 border-gray-200"
+  const label = () => props.status.replace(/_/g, " ")
+  return (
+    <span class={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium capitalize ${styles()}`}>
+      {label()}
+    </span>
+  )
+}
+
 function DetailSection(props: { title: string; children: any }) {
   return (
     <div>
@@ -114,7 +133,10 @@ export default function RelayDetailCard(props: RelayDetailCardProps) {
             <img src={r().info_icon} alt="" class="w-14 h-14 rounded-xl object-cover flex-shrink-0 border border-gray-200" />
           </Show>
           <div class="min-w-0">
-            <h1 class="text-2xl font-bold text-gray-900">{r().info_name || r().subdomain}</h1>
+            <div class="flex items-center gap-3 flex-wrap">
+              <h1 class="text-2xl font-bold text-gray-900">{r().info_name || r().subdomain}</h1>
+              <StatusBadge status={r().status} />
+            </div>
             <a
               href={`wss://${r().subdomain}.spaces.coracle.social`}
               class="text-sm text-blue-600 hover:underline break-all"

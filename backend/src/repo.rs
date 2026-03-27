@@ -499,6 +499,19 @@ impl Repo {
         Ok(rows)
     }
 
+    pub async fn list_activity_for_relay(&self, relay_id: &str) -> Result<Vec<Activity>> {
+        let rows = sqlx::query_as::<_, Activity>(
+            "SELECT id, tenant, created_at, activity_type, resource_type, resource_id
+             FROM activity
+             WHERE resource_type = 'relay' AND resource_id = ?
+             ORDER BY created_at DESC, id DESC",
+        )
+        .bind(relay_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
     pub async fn get_invoice_items(&self, invoice_id: &str) -> Result<Vec<InvoiceItem>> {
         let rows = sqlx::query_as::<_, InvoiceItem>(
             "SELECT id, invoice, relay, sats

@@ -9,12 +9,14 @@ import {
   deactivateRelay,
   getRelay,
   getTenant,
+  listRelayActivity,
   listRelays,
   listTenantInvoices,
   listTenantRelays,
   listTenants,
   updateRelay,
   updateTenantBilling,
+  type Activity,
   type CreateRelayInput,
   type Relay,
   type Tenant,
@@ -88,6 +90,8 @@ export const useTenantInvoices = () => createResource(() => listTenantInvoices(a
 
 export const useRelay = (relayId: () => string) => createResource(relayId, getRelay)
 
+export const useRelayActivity = (relayId: () => string) => createResource(relayId, listRelayActivity)
+
 export const useAdminTenants = () => createResource(listTenants)
 
 export const useAdminRelays = () => createResource(listRelays)
@@ -135,4 +139,4 @@ export async function getRelayMembers(url: string) {
   }
 }
 
-export type { Relay, Tenant }
+export type { Activity, Relay, Tenant }

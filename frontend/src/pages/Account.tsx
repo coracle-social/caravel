@@ -1,13 +1,10 @@
 import { createEffect, createMemo, createSignal, For, Show } from "solid-js"
-import { useNavigate } from "@solidjs/router"
 import PageContainer from "../components/PageContainer"
 import LoadingState from "../components/LoadingState"
 import useMinLoading from "../components/useMinLoading"
-import { accounts, persistAccounts } from "../lib/nostr"
 import { updateActiveTenantBilling, useTenant, useTenantInvoices } from "../lib/hooks"
 
 export default function Account() {
-  const navigate = useNavigate()
   const [tenant, { refetch: refetchTenant }] = useTenant()
   const [invoices] = useTenantInvoices()
   const [nwcUrl, setNwcUrl] = createSignal("")
@@ -40,9 +37,8 @@ export default function Account() {
   }
 
   function logout() {
-    accounts.clearActive()
-    persistAccounts()
-    navigate("/")
+    localStorage.clear()
+    window.location.href = "/"
   }
 
   return (

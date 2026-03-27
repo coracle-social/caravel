@@ -2,11 +2,10 @@ import { A } from "@solidjs/router"
 import Fuse from "fuse.js"
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js"
 import { getProfilePicture } from "applesauce-core/helpers/profile"
-import { eventStore, primeProfiles } from "../../lib/nostr"
 import PageContainer from "../../components/PageContainer"
 import ResourceState from "../../components/ResourceState"
 import useMinLoading from "../../components/useMinLoading"
-import { useAdminTenants } from "../../lib/hooks"
+import { eventStore, primeProfiles, useAdminTenants } from "../../lib/hooks"
 
 function shortenPubkey(pubkey: string) {
   if (pubkey.length <= 16) return pubkey

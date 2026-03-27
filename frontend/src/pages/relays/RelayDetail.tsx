@@ -6,7 +6,7 @@ import PageContainer from "../../components/PageContainer"
 import RelayDetailCard from "../../components/RelayDetailCard"
 import ResourceState from "../../components/ResourceState"
 import useMinLoading from "../../components/useMinLoading"
-import { deactivateRelayById, getRelayMemberCount, updateRelayById, updateRelayPlanById, useRelay, type Relay } from "../../lib/hooks"
+import { deactivateRelayById, getRelayMembers, updateRelayById, updateRelayPlanById, useRelay, type Relay } from "../../lib/hooks"
 
 export default function RelayDetail() {
   const params = useParams()
@@ -16,7 +16,7 @@ export default function RelayDetail() {
     const subdomain = relay()?.subdomain
     return subdomain ? `wss://${subdomain}.spaces.coracle.social` : undefined
   })
-  const [memberCount] = createResource(relayUrl, async (url) => getRelayMemberCount(url))
+  const [members] = createResource(relayUrl, getRelayMembers)
   const [busy, setBusy] = createSignal(false)
   const [error, setError] = createSignal("")
   const loading = useMinLoading(() => relay.loading && !relay())
@@ -174,7 +174,7 @@ export default function RelayDetail() {
           <div class="mb-6">
             <RelayDetailCard
               relay={r()}
-              currentMembers={memberCount()}
+              currentMembers={members.length}
               editHref={`/relays/${params.id}/edit`}
               onDeactivate={handleDeactivate}
               deactivating={busy()}

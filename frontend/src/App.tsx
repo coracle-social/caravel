@@ -14,11 +14,10 @@ import AdminTenantDetail from "./pages/admin/AdminTenantDetail"
 import AdminRelayList from "./pages/admin/AdminRelayList"
 import AdminRelayDetail from "./pages/admin/AdminRelayDetail"
 import AdminRelayEdit from "./pages/admin/AdminRelayEdit"
-import { useActiveAccount } from "./lib/nostr"
+import { account, identity } from "./lib/hooks"
 
 function Layout(props: { children?: any }) {
   const location = useLocation()
-  const account = useActiveAccount()
 
   const usesAppShell = () => {
     const path = location.pathname
@@ -41,50 +40,39 @@ function Layout(props: { children?: any }) {
 }
 
 export default function App() {
-  const withTenantAuth = (Page: Component): Component => {
+  const requireCondition = (Page: Component, condition: () => boolean): Component => {
     return () => {
       const navigate = useNavigate()
-      const account = useActiveAccount()
 
       createEffect(() => {
-        if (!account()) navigate("/login", { replace: true })
-      })
-
-      return <Show when={account()}><Page /></Show>
-    }
-  }
-
-  const withAdminAuth = (Page: Component): Component => {
-    return () => {
-      const navigate = useNavigate()
-      const account = useActiveAccount()
-
-      createEffect(() => {
-        if (!account()) navigate("/login", { replace: true })
+        if (!condition()) navigate("/", { replace: true })
       })
 
       return (
-        <Show when={account()}>
+        <Show when={condition()}>
           <Page />
         </Show>
       )
     }
   }
 
+  const requireAdmin = (Page: Component) => requireCondition(Page, () => Boolean(account() && identity()?.is_admin))
+  const requireTenant = (Page: Component) => requireCondition(Page, () => Boolean(account() && identity()?.is_tenant))
+
   return (
     <Router root={Layout}>
       <Route path="/" component={Home} />
       <Route path="/login" component={Login} />
-      <Route path="/relays" component={withTenantAuth(RelayList)} />
-      <Route path="/relays/new" component={withTenantAuth(RelayNew)} />
-      <Route path="/relays/:id" component={withTenantAuth(RelayDetail)} />
-      <Route path="/relays/:id/edit" component={withTenantAuth(RelayEdit)} />
-      <Route path="/account" component={withTenantAuth(Account)} />
-      <Route path="/admin/tenants" component={withAdminAuth(AdminTenantList)} />
-      <Route path="/admin/tenants/:id" component={withAdminAuth(AdminTenantDetail)} />
-      <Route path="/admin/relays" component={withAdminAuth(AdminRelayList)} />
-      <Route path="/admin/relays/:id" component={withAdminAuth(AdminRelayDetail)} />
-      <Route path="/admin/relays/:id/edit" component={withAdminAuth(AdminRelayEdit)} />
+      <Route path="/relays" component={requireTenant(RelayList)} />
+      <Route path="/relays/new" component={requireTenant(RelayNew)} />
+      <Route path="/relays/:id" component={requireTenant(RelayDetail)} />
+      <Route path="/relays/:id/edit" component={requireTenant(RelayEdit)} />
+      <Route path="/account" component={requireTenant(Account)} />
+      <Route path="/admin/tenants" component={requireAdmin(AdminTenantList)} />
+      <Route path="/admin/tenants/:id" component={requireAdmin(AdminTenantDetail)} />
+      <Route path="/admin/relays" component={requireAdmin(AdminRelayList)} />
+      <Route path="/admin/relays/:id" component={requireAdmin(AdminRelayDetail)} />
+      <Route path="/admin/relays/:id/edit" component={requireAdmin(AdminRelayEdit)} />
     </Router>
   )
 }

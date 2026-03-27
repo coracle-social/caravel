@@ -4,8 +4,7 @@ import { ExtensionAccount, NostrConnectAccount, PasswordAccount, PrivateKeyAccou
 import { PasswordSigner } from "applesauce-signers"
 import QrScanner from "qr-scanner"
 import QRCode from "qrcode"
-import { activateAccount } from "../lib/nostr"
-import { PLATFORM_NAME } from "../lib/nostr"
+import { accountManager, identity, PLATFORM_NAME } from "../lib/hooks"
 
 const NIP46_RELAYS = ['wss://bucket.coracle.social', 'wss://ephemeral.snowflare.cc']
 
@@ -58,8 +57,15 @@ export default function Login() {
   let abortController: AbortController | undefined
 
   async function completeLogin(account: ExtensionAccount | NostrConnectAccount | PrivateKeyAccount | PasswordAccount) {
-    activateAccount(account)
-    navigate("/relays")
+    accountManager.addAccount(account)
+    accountManager.setActive(account)
+
+    const dispose = createEffect(() => {
+      if (identity()) {
+        navigate("/relays")
+        dispose()
+      }
+    })
   }
 
   async function loginWithNip07() {

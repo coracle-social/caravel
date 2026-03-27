@@ -1,5 +1,16 @@
-import { createResource } from "solid-js"
+import { createEffect, createResource, createSignal, onCleanup } from "solid-js"
+import { AccountManager } from "applesauce-accounts"
+import type { IAccount } from "applesauce-accounts"
+import { registerCommonAccountTypes } from "applesauce-accounts/accounts"
+import { EventStore } from "applesauce-core"
+import { getProfilePicture } from "applesauce-core/helpers/profile"
+import { createOutboxMap, selectOptimalRelays, setFallbackRelays } from "applesauce-core/helpers/relay-selection"
+import { includeMailboxes } from "applesauce-core/observable"
+import { createEventLoaderForStore } from "applesauce-loaders/loaders"
 import { Relay as NostrRelay, RelayManagement } from "applesauce-relay"
+import { RelayPool } from "applesauce-relay"
+import { NostrConnectSigner } from "applesauce-signers"
+import { map, of } from "rxjs"
 import {
   createRelay,
   deactivateRelay,
@@ -13,130 +24,162 @@ import {
   updateRelay,
   updateTenantBilling,
   type CreateRelayInput,
-  type Identity,
   type Relay,
   type Tenant,
   type UpdateRelayInput,
 } from "./api"
-import { getActivePubkey, getActiveSigner } from "./nostr"
 
-type IdentityCache = {
+export type UnsignedEvent = {
+  kind: number
+  content: string
+  created_at: number
+  tags: string[][]
+}
+
+export type SignedEvent = UnsignedEvent & {
+  id: string
   pubkey: string
-  value: Identity
+  sig: string
 }
 
-let identityCache: IdentityCache | undefined
-let identityInflight: Promise<Identity> | undefined
-let identityInflightPubkey: string | undefined
-
-function requireActivePubkey() {
-  const pubkey = getActivePubkey()
-  if (!pubkey) throw new Error("Not logged in")
-  return pubkey
+export type EventSigner = {
+  signEvent(event: UnsignedEvent): Promise<SignedEvent>
 }
 
-async function loadIdentity(pubkey?: string) {
-  if (!pubkey) throw new Error("Not logged in")
+export const PLATFORM_NAME = import.meta.env.VITE_PLATFORM_NAME || "Caravel"
 
-  if (identityCache?.pubkey === pubkey) {
-    return identityCache.value
-  }
+export const eventStore = new EventStore()
+export const pool = new RelayPool()
 
-  if (identityInflight && identityInflightPubkey === pubkey) {
-    return identityInflight
-  }
+createEventLoaderForStore(eventStore, pool, {
+  lookupRelays: ["wss://purplepag.es/", "wss://relay.damus.io/", "wss://indexer.coracle.social/"],
+  extraRelays: ["wss://relay.damus.io/", "wss://nos.lol/", "wss://relay.primal.net/"],
+})
 
-  const request = getIdentity().then((identity) => {
-    identityCache = { pubkey, value: identity }
-    return identity
-  }).finally(() => {
-    if (identityInflightPubkey === pubkey) {
-      identityInflight = undefined
-      identityInflightPubkey = undefined
+NostrConnectSigner.subscriptionMethod = pool.subscription.bind(pool)
+NostrConnectSigner.publishMethod = pool.publish.bind(pool)
+
+export const accountManager = new AccountManager()
+
+registerCommonAccountTypes(accountManager)
+
+export const [account, setAccount] = createSignal<IAccount | undefined>()
+
+export const [identity, setIdentity] = createSignal<Identity | undefined>()
+
+;(() => {
+  accountManager.active$.subscribe(account => {
+    setAccount(account)
+
+    localStorage.setItem("caravel.accounts", JSON.stringify(accountManager.toJSON(true)))
+
+    if (account) {
+      localStorage.setItem("caravel.accounts.active", account.id)
+      getIdentity().then(setIdentity)
+    } else {
+      localStorage.removeItem("caravel.accounts.active")
+      setIdentity(undefined)
     }
   })
+})()
 
-  identityInflight = request
-  identityInflightPubkey = pubkey
-  return request
-}
+export function useProfilePicture(pubkey: () => string | undefined) {
+  const [picture, setPicture] = createSignal<string | undefined>()
 
-export function useIdentity(source: () => string | undefined) {
-  return createResource(source, loadIdentity)
-}
+  createEffect(() => {
+    const pk = pubkey()
 
-export function useTenant() {
-  return createResource(async () => {
-    const pubkey = requireActivePubkey()
-    return getTenant(pubkey)
+    if (!pk) {
+      setPicture(undefined)
+      return
+    }
+
+    const profileSub = eventStore.profile(pk).subscribe((profile) => {
+      setPicture(getProfilePicture(profile))
+    })
+
+    const reqSub = primeProfiles([pk])
+
+    onCleanup(() => {
+      profileSub.unsubscribe()
+      reqSub.unsubscribe()
+    })
   })
+
+  return picture
 }
 
-export function useTenantRelays() {
-  return createResource(async () => {
-    const pubkey = requireActivePubkey()
-    return listTenantRelays(pubkey)
+export function primeProfiles(pubkeys: string[]) {
+  const uniquePubkeys = Array.from(new Set(pubkeys.filter(Boolean)))
+  if (uniquePubkeys.length === 0) {
+    return { unsubscribe() {} }
+  }
+
+  const seedRelays = Array.from(pool.relays.keys())
+  const mailboxSeedSub = seedRelays.length
+    ? pool.request(seedRelays, { kinds: [10002], authors: uniquePubkeys }).subscribe((event) => {
+      eventStore.add(event)
+    })
+    : undefined
+
+  const outboxMap$ = of(uniquePubkeys.map((pubkey) => ({ pubkey }))).pipe(
+    includeMailboxes(eventStore),
+    map((pointers) => (seedRelays.length > 0 ? setFallbackRelays(pointers, seedRelays) : pointers)),
+    map((pointers) => selectOptimalRelays(pointers, { maxConnections: 8, maxRelaysPerUser: 3 })),
+    map(createOutboxMap),
+  )
+
+  const profileSub = pool.outboxSubscription(outboxMap$, { kinds: [0] }).subscribe((message) => {
+    if (message !== "EOSE") eventStore.add(message)
   })
+
+  return {
+    unsubscribe() {
+      profileSub.unsubscribe()
+      mailboxSeedSub?.unsubscribe()
+    },
+  }
 }
 
-export function useTenantInvoices() {
-  return createResource(async () => {
-    const pubkey = requireActivePubkey()
-    return listTenantInvoices(pubkey)
-  })
+type Identity = {
+  pubkey: string
+  is_admin: boolean
+  is_tenant: boolean
 }
 
-export function useRelay(relayId: () => string) {
-  return createResource(relayId, getRelay)
-}
+export const useTenant = () => createResource(() => getTenant(account()!.pubkey))
 
-export function useAdminTenants() {
-  return createResource(listTenants)
-}
+export const useTenantRelays = () => createResource(() => listTenantRelays(account()!.pubkey))
 
-export function useAdminRelays() {
-  return createResource(listRelays)
-}
+export const useTenantInvoices = () => createResource(() => listTenantInvoices(account()!.pubkey))
 
-export function useAdminTenantDetail(pubkey: () => string) {
-  return createResource(pubkey, async (id) => {
-    const [tenant, relays] = await Promise.all([getTenant(id), listTenantRelays(id)])
-    return { tenant, relays }
-  })
-}
+export const useRelay = (relayId: () => string) => createResource(relayId, getRelay)
 
-export async function createRelayForActiveTenant(input: CreateRelayInput) {
-  const pubkey = requireActivePubkey()
-  return createRelay({ ...input, tenant: pubkey })
-}
+export const useAdminTenants = () => createResource(listTenants)
 
-export function updateActiveTenantBilling(nwc_url: string) {
-  const pubkey = requireActivePubkey()
-  return updateTenantBilling(pubkey, { nwc_url })
-}
+export const useAdminRelays = () => createResource(listRelays)
 
-export function updateRelayById(id: string, input: UpdateRelayInput) {
-  return updateRelay(id, input)
-}
+export const useAdminTenant = (pubkey: () => string) => createResource(pubkey, getTenant)
 
-export function updateRelayPlanById(id: string, plan: string) {
-  return updateRelay(id, { plan })
-}
+export const useAdminTenantRelays = (pubkey: () => string) => createResource(pubkey, listTenantRelays)
 
-export function deactivateRelayById(id: string) {
-  return deactivateRelay(id)
-}
+export const createRelayForActiveTenant = (input: CreateRelayInput) => createRelay({ ...input, tenant: account()!.pubkey })
 
-export async function getRelayMemberCount(relayUrl: string): Promise<number | undefined> {
-  const signer = getActiveSigner()
-  if (!signer) throw new Error("Not logged in")
+export const updateActiveTenantBilling = (nwc_url: string) => updateTenantBilling(account()!.pubkey, { nwc_url })
 
-  const management = new RelayManagement(new NostrRelay(relayUrl), signer)
+export const updateRelayById = (id: string, input: UpdateRelayInput) => updateRelay(id, input)
+
+export const updateRelayPlanById = (id: string, plan: string) => updateRelay(id, { plan })
+
+export const deactivateRelayById = (id: string) => deactivateRelay(id)
+
+export async function getRelayMembers(url: string) {
+  const management = new RelayManagement(new NostrRelay(url), account()!.signer)
+
   try {
-    const members = await management.listAllowedPubkeys()
-    return members.length
+    return await management.listAllowedPubkeys()
   } catch {
-    return undefined
+    return []
   }
 }
 

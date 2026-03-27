@@ -1,6 +1,6 @@
 import { A } from "@solidjs/router"
 import PricingTable from "../components/PricingTable"
-import { useActiveAccount } from "../lib/nostr"
+import { account } from "../lib/hooks"
 
 function CheckIcon() {
   return (
@@ -21,8 +21,6 @@ function ExternalLinkIcon() {
 }
 
 export default function Home() {
-  const account = useActiveAccount()
-
   return (
     <div class="min-h-screen bg-white text-gray-900 overflow-x-hidden">
 

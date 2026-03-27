@@ -1,9 +1,8 @@
 import { Show } from "solid-js"
 import { A } from "@solidjs/router"
-import { PLATFORM_NAME, useActiveAccount, useProfilePicture } from "../lib/nostr"
+import { PLATFORM_NAME, useProfilePicture, account } from "../lib/hooks"
 
 export default function Navbar() {
-  const account = useActiveAccount()
   const picture = useProfilePicture(() => account()?.pubkey)
 
   return (

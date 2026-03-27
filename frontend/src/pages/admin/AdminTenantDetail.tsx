@@ -4,13 +4,14 @@ import BackLink from "../../components/BackLink"
 import PageContainer from "../../components/PageContainer"
 import ResourceState from "../../components/ResourceState"
 import useMinLoading from "../../components/useMinLoading"
-import { useAdminTenantDetail } from "../../lib/hooks"
+import { useAdminTenant, useAdminTenantRelays } from "../../lib/hooks"
 
 export default function AdminTenantDetail() {
   const params = useParams()
   const tenantId = () => params.id ?? ""
-  const [detail] = useAdminTenantDetail(tenantId)
-  const loading = useMinLoading(() => detail.loading)
+  const [tenant] = useAdminTenant(tenantId)
+  const [relays] = useAdminTenantRelays(tenantId)
+  const loading = useMinLoading(() => tenant.loading || relays.loading)
 
   return (
     <PageContainer>
@@ -19,7 +20,7 @@ export default function AdminTenantDetail() {
 
       <ResourceState
         loading={loading()}
-        error={detail.error}
+        error={tenant.error || relays.error}
         loadingText="Loading tenant..."
         errorText="Failed to load tenant."
         class="mb-4"
@@ -29,7 +30,7 @@ export default function AdminTenantDetail() {
         <div class="space-y-6">
           <section class="bg-white border border-gray-200 rounded-xl p-6">
             <h2 class="text-lg font-semibold mb-4">Status</h2>
-            <Show when={detail()}>
+            <Show when={tenant()}>
               <div class="space-y-3">
                 <p class="text-sm text-gray-700">
                   Current: <span class="font-medium uppercase tracking-wide">tenant</span>
@@ -40,9 +41,9 @@ export default function AdminTenantDetail() {
 
           <section class="bg-white border border-gray-200 rounded-xl p-6">
             <h2 class="text-lg font-semibold mb-4">Relays</h2>
-            <Show when={(detail()?.relays.length ?? 0) > 0} fallback={<p class="text-gray-500">No relays.</p>}>
+            <Show when={(relays()?.length ?? 0) > 0} fallback={<p class="text-gray-500">No relays.</p>}>
               <ul class="space-y-3">
-                <For each={detail()?.relays ?? []}>
+                <For each={relays() ?? []}>
                   {(relay) => (
                     <li>
                       <A href={`/admin/relays/${relay.id}`} class="block rounded-lg border border-gray-200 p-3 hover:border-gray-300">

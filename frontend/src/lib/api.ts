@@ -1,4 +1,6 @@
-import { API_URL, getActivePubkey, getActiveSigner } from "./nostr"
+import { account } from "./hooks"
+
+const API_URL = import.meta.env.VITE_API_URL
 
 type ApiOk<T> = {
   data: T
@@ -108,19 +110,16 @@ export type UpdateRelayInput = {
   push_enabled?: number
 }
 
-export async function makeAuth<T = unknown>(): Promise<string | undefined> {
-  void (undefined as T | undefined)
-
-  const pubkey = getActivePubkey()
-  const signer = getActiveSigner()
-  if (!pubkey || !signer) return undefined
+export async function makeAuth(): Promise<string | undefined> {
+  const current = account()
+  if (!current) return undefined
 
   const now = Date.now()
-  if (authCache && authCache.pubkey === pubkey && authCache.expiresAt > now) {
+  if (authCache && authCache.pubkey === current.pubkey && authCache.expiresAt > now) {
     return authCache.value
   }
 
-  const event = await signer.signEvent({
+  const event = await current.signer.signEvent({
     kind: 27235,
     content: "",
     created_at: Math.floor(now / 1000),
@@ -129,7 +128,7 @@ export async function makeAuth<T = unknown>(): Promise<string | undefined> {
 
   const value = `Nostr ${btoa(JSON.stringify(event))}`
   authCache = {
-    pubkey,
+    pubkey: current.pubkey,
     value,
     expiresAt: now + 10 * 60 * 1000,
   }
@@ -141,7 +140,7 @@ export async function callApi<TRequest = unknown, TResponse = unknown>(
   path: string,
   body?: TRequest,
 ): Promise<TResponse> {
-  const auth = await makeAuth<TRequest>()
+  const auth = await makeAuth()
   const url = new URL(path, API_URL).toString()
 
   const response = await fetch(url, {

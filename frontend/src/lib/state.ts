@@ -6,7 +6,7 @@ import { EventStore } from "applesauce-core"
 import { createEventLoaderForStore } from "applesauce-loaders/loaders"
 import { RelayPool } from "applesauce-relay"
 import { NostrConnectSigner } from "applesauce-signers"
-import { getIdentity } from "@/lib/api"
+import { getIdentity, listPlans, registerAccountGetter, type Plan } from "@/lib/api"
 
 export type UnsignedEvent = {
   kind: number
@@ -43,6 +43,10 @@ export const accountManager = new AccountManager()
 registerCommonAccountTypes(accountManager)
 
 export const [account, setAccount] = createSignal<IAccount | undefined>()
+
+registerAccountGetter(account)
+
+export const [plans] = createResource<Plan[]>(listPlans, { initialValue: [] })
 
 export const [identity, { refetch: refetchIdentity, mutate: setIdentity }] = createResource(
   () => account()?.pubkey,

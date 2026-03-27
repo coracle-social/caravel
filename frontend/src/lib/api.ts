@@ -1,6 +1,10 @@
-import { account } from "@/lib/state"
-
 const API_URL = import.meta.env.VITE_API_URL
+
+// Populated by state.ts after it initializes, breaking the circular dependency
+let getAccount: () => unknown = () => undefined
+export function registerAccountGetter(fn: () => unknown) {
+  getAccount = fn
+}
 
 type ApiOk<T> = {
   data: T
@@ -27,42 +31,16 @@ export class ApiError extends Error {
   }
 }
 
-export type Plan = Record<string, unknown>
+export type Plan = {
+  id: string
+  name: string
+  sats: number
+  members: number | null
+  blossom: boolean
+  livekit: boolean
+}
 
-export const PLANS = [
-  {
-    id: "free",
-    label: "Free",
-    subtitle: "Get started, no commitment.",
-    price: 0,
-    priceLabel: "0",
-    memberLabel: "Up to 10 members",
-    blossom: false,
-    livekit: false,
-  },
-  {
-    id: "basic",
-    label: "Basic",
-    subtitle: "For growing communities.",
-    price: 10_000,
-    priceLabel: "10K",
-    memberLabel: "Up to 100 members",
-    blossom: true,
-    livekit: true,
-  },
-  {
-    id: "growth",
-    label: "Growth",
-    subtitle: "For large-scale communities.",
-    price: 50_000,
-    priceLabel: "50K",
-    memberLabel: "Unlimited members",
-    blossom: true,
-    livekit: true,
-  },
-] as const
-
-export type PlanId = (typeof PLANS)[number]["id"]
+export type PlanId = string
 
 export type Relay = {
   id: string
@@ -145,7 +123,7 @@ export type Identity = {
 let authCache: AuthCache | undefined
 
 export async function makeAuth(): Promise<string | undefined> {
-  const current = account()
+  const current = getAccount() as { pubkey: string; signer: { signEvent: (e: unknown) => Promise<{ pubkey: string; sig: string; [k: string]: unknown }> } } | undefined
   if (!current) return undefined
 
   const now = Date.now()
@@ -203,8 +181,12 @@ export async function callApi<TRequest = unknown, TResponse = unknown>(
   return payload.data
 }
 
-export function listPlans() {
-  return callApi<undefined, Plan[]>("GET", "/plans")
+export async function listPlans(): Promise<Plan[]> {
+  const url = new URL("/plans", API_URL).toString()
+  const response = await fetch(url)
+  if (!response.ok) throw new ApiError(`Failed to load plans (${response.status})`, response.status)
+  const payload = await response.json() as { data: Plan[] }
+  return payload.data
 }
 
 export function getIdentity() {

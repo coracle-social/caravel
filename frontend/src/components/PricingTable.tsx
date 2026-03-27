@@ -1,5 +1,6 @@
 import { For } from "solid-js"
-import { PLANS, type PlanId } from "@/lib/api"
+import type { PlanId } from "@/lib/api"
+import { plans } from "@/lib/state"
 
 function CheckIcon() {
   return (
@@ -19,6 +20,17 @@ function XIcon() {
   )
 }
 
+function priceLabel(sats: number) {
+  if (sats === 0) return "0"
+  if (sats >= 1000) return `${(sats / 1000).toLocaleString()}K`
+  return sats.toLocaleString()
+}
+
+function memberLabel(members: number | null) {
+  if (members === null) return "Unlimited members"
+  return `Up to ${members} members`
+}
+
 type PricingTableProps = {
   selectable?: boolean
   selectedPlan?: PlanId
@@ -29,7 +41,7 @@ type PricingTableProps = {
 export default function PricingTable(props: PricingTableProps) {
   return (
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
-      <For each={PLANS}>
+      <For each={plans()}>
         {(plan) => {
           const isPopular = plan.id === "basic"
           const isSelected = () => props.selectable && props.selectedPlan === plan.id
@@ -41,14 +53,13 @@ export default function PricingTable(props: PricingTableProps) {
                   POPULAR
                 </span>
               )}
-              <h3 class="text-lg font-bold text-gray-900 mb-1">{plan.label}</h3>
-              <p class="text-sm text-gray-400 mb-6">{plan.subtitle}</p>
+              <h3 class="text-lg font-bold text-gray-900 mb-1">{plan.name}</h3>
               <div class="mb-8">
-                <span class="text-4xl font-extrabold text-gray-900">{plan.priceLabel}</span>
+                <span class="text-4xl font-extrabold text-gray-900">{priceLabel(plan.sats)}</span>
                 <span class="text-sm text-gray-400 ml-1">sats / mo</span>
               </div>
               <ul class="mb-8 text-sm text-gray-600 space-y-3">
-                <li class="flex items-start gap-2"><CheckIcon />{plan.memberLabel}</li>
+                <li class="flex items-start gap-2"><CheckIcon />{memberLabel(plan.members)}</li>
                 <li class={`flex items-start gap-2 ${plan.blossom ? "" : "text-gray-300"}`}>
                   {plan.blossom ? <CheckIcon /> : <XIcon />}
                   Blossom storage

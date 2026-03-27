@@ -349,13 +349,8 @@ async fn list_tenants(
     }
 }
 
-async fn list_plans(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> std::result::Result<Response, ApiError> {
-    let _ = state.api.extract_auth_pubkey(&headers)?;
-
-    Ok(ok(StatusCode::OK, Repo::list_plans()))
+async fn list_plans() -> Response {
+    ok(StatusCode::OK, Repo::list_plans())
 }
 
 async fn get_identity(
@@ -392,16 +387,10 @@ async fn get_identity(
     ))
 }
 
-async fn get_plan(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Path(id): Path<String>,
-) -> std::result::Result<Response, ApiError> {
-    let _ = state.api.extract_auth_pubkey(&headers)?;
-
+async fn get_plan(Path(id): Path<String>) -> Response {
     match Repo::list_plans().into_iter().find(|p| p.id == id) {
-        Some(plan) => Ok(ok(StatusCode::OK, plan)),
-        None => Ok(err(StatusCode::NOT_FOUND, "not-found", "plan not found")),
+        Some(plan) => ok(StatusCode::OK, plan),
+        None => err(StatusCode::NOT_FOUND, "not-found", "plan not found"),
     }
 }
 

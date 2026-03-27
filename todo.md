@@ -1,0 +1,6 @@
+- [ ] Show relay status on details page
+- [ ] Show relay activity history on details page (add activity route and repo method to backend spec + implementation)
+- [ ] Infra provisioning isn't happening. At least, the relay's status isn't being updated
+- [ ] If relay is inactive, show "reactivate" instead of "inactivate" in the relay detal menu
+- [ ] Invoices
+- [ ] Stripe

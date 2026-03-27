@@ -1,8 +1,8 @@
-import { createEffect, createSignal } from "solid-js"
+import { createEffect, createMemo, createSignal, For } from "solid-js"
 import type { Relay } from "@/lib/hooks"
 import { slugify } from "@/lib/slugify"
-import { PLANS } from "@/lib/api"
 import { setToastMessage } from "@/components/Toast"
+import { plans } from "@/lib/state"
 
 export type RelayFormValues = Pick<Relay, "info_name" | "subdomain" | "info_icon" | "info_description" | "plan">
 
@@ -15,7 +15,8 @@ type RelayFormProps = {
 }
 
 export default function RelayForm(props: RelayFormProps) {
-  const [plan, setPlan] = createSignal(props.initialValues?.plan ?? PLANS[0].id)
+  const defaultPlanId = createMemo(() => props.initialValues?.plan ?? plans()[0]?.id ?? "free")
+  const [plan, setPlan] = createSignal(defaultPlanId())
   const [name, setName] = createSignal(props.initialValues?.info_name ?? "")
   const [subdomain, setSubdomain] = createSignal(props.initialValues?.subdomain ?? "")
   const [icon, setIcon] = createSignal(props.initialValues?.info_icon ?? "")
@@ -47,6 +48,8 @@ export default function RelayForm(props: RelayFormProps) {
       setSubmitting(false)
     }
   }
+
+  createEffect(() => setPlan(defaultPlanId()))
 
   createEffect(() => {
     if (props.syncSubdomainWithName) {
@@ -98,23 +101,23 @@ export default function RelayForm(props: RelayFormProps) {
       <div>
         <label class="block text-sm font-medium text-gray-700 mb-3">Plan</label>
         <div class="grid grid-cols-3 gap-3">
-          {PLANS.map(p => (
-            <button
-              type="button"
-              onClick={() => setPlan(p.id)}
-              class={`border-2 rounded-xl p-4 text-left transition-colors ${
-                plan() === p.id
-                  ? "border-blue-600 bg-blue-50"
-                  : "border-gray-200 hover:border-gray-300"
-              }`}
-            >
-              <div class="font-bold text-gray-900">{p.label}</div>
-              <div class="text-sm text-gray-500 mt-1">
-                {p.price === 0 ? "Free" : `${p.price.toLocaleString()} sats/mo`}
-              </div>
-              <div class="text-xs text-gray-500 mt-2">{p.memberLabel}</div>
-            </button>
-          ))}
+          <For each={plans()}>
+            {(p) => (
+              <button
+                type="button"
+                onClick={() => setPlan(p.id)}
+                class={`border-2 rounded-xl p-4 text-left transition-colors ${plan() === p.id ? "border-blue-600 bg-blue-50" : "border-gray-200 hover:border-gray-300"}`}
+              >
+                <div class="font-bold text-gray-900">{p.name}</div>
+                <div class="text-sm text-gray-500 mt-1">
+                  {p.sats === 0 ? "Free" : `${p.sats.toLocaleString()} sats/mo`}
+                </div>
+                <div class="text-xs text-gray-500 mt-2">
+                  {p.members === null ? "Unlimited members" : `Up to ${p.members} members`}
+                </div>
+              </button>
+            )}
+          </For>
         </div>
       </div>
       <button

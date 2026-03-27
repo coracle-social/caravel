@@ -7,6 +7,7 @@ import PricingTable from "@/components/PricingTable"
 import ToggleButton from "@/components/ToggleButton"
 import ToggleField from "@/components/ToggleField"
 import { setToastMessage } from "@/components/Toast"
+import { plans } from "@/lib/state"
 
 function DetailSection(props: { title: string; children: any }) {
   return (
@@ -61,13 +62,11 @@ export default function RelayDetailCard(props: RelayDetailCardProps) {
 
   let menuContainerRef: HTMLDivElement | undefined
 
-  const memberLimitByPlan: Record<string, string> = {
-    free: "10",
-    basic: "100",
-    growth: "∞",
+  const memberLimitLabel = () => {
+    const p = plans().find(p => p.id === r().plan)
+    if (!p) return "?"
+    return p.members === null ? "∞" : String(p.members)
   }
-
-  const memberLimitLabel = () => memberLimitByPlan[r().plan] ?? "?"
   const planLimited = () => (props.enforcePlanLimits ?? true) && r().plan === "free"
   const showPlanActions = () => props.showPlanActions ?? true
 

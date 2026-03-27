@@ -19,6 +19,13 @@ Calls `self.tick` in a loop every 10 seconds.
 
 Iterates over `repo.list_activity` since last run and does the following:
 
-- For any `create_relay|update_relay` activity, sync relay config to zooid.
-- For any `deactivate_relay` activity, sync relay config to zooid.
+- For `create_relay` activity, create the relay in zooid via `POST /relay`.
+- For `update_relay` or `deactivate_relay` activity, update the relay in zooid via `PUT /relay/:id`.
+- All other activity types are ignored (e.g. `fail_relay_sync` must not trigger another sync).
 - If unsuccessful, call `repo.fail_relay_sync`.
+
+## `async fn sync_relay(&self, relay: &Relay, is_new: bool)`
+
+- If `is_new`, sends `POST /relay` to create the relay in zooid.
+- Otherwise, sends `PUT /relay/:id` to update it.
+- Passes full relay configuration in the body including host, schema, secret, inactive flag, info, policy, groups, management, blossom, livekit, push, and roles.

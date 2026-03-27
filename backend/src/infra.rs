@@ -33,6 +33,12 @@ impl Infra {
     }
 
     pub async fn start(self) {
+        // Initialize from DB so we don't replay historical activities on restart
+        match self.repo.max_activity_at().await {
+            Ok(ts) => *self.last_activity_at.lock().await = ts,
+            Err(e) => tracing::error!(error = %e, "failed to read max activity timestamp"),
+        }
+
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(10));
         loop {
             interval.tick().await;
@@ -48,17 +54,18 @@ impl Infra {
         let activity = self.repo.list_activity(&since).await?;
 
         for a in activity {
-            if a.resource_type == "relay"
-                && matches!(
-                    a.activity_type.as_str(),
-                    "create_relay" | "update_relay" | "deactivate_relay"
-                )
-            {
+            let sync_type = match a.activity_type.as_str() {
+                "create_relay" => Some(true),
+                "update_relay" | "deactivate_relay" => Some(false),
+                _ => None,
+            };
+
+            if let Some(is_new) = sync_type {
                 let Some(relay) = self.repo.get_relay(&a.resource_id).await? else {
                     continue;
                 };
 
-                if let Err(e) = self.sync_relay(&relay).await {
+                if let Err(e) = self.sync_relay(&relay, is_new).await {
                     tracing::warn!(relay = %relay.id, error = %e, "relay sync failed");
                     self.repo.fail_relay_sync(&relay, e.to_string()).await?;
                 }
@@ -70,9 +77,9 @@ impl Infra {
         Ok(())
     }
 
-    async fn sync_relay(&self, relay: &crate::models::Relay) -> Result<()> {
+    async fn sync_relay(&self, relay: &crate::models::Relay, is_new: bool) -> Result<()> {
         let client = reqwest::Client::new();
-        let url = format!("{}/relay/{}", self.api_url.trim_end_matches('/'), relay.id);
+        let base = self.api_url.trim_end_matches('/');
 
         let host = if self.relay_domain.is_empty() {
             relay.subdomain.clone()
@@ -119,7 +126,12 @@ impl Infra {
             ],
         });
 
-        let response = client.put(url).json(&body).send().await?;
+        let response = if is_new {
+            client.post(format!("{}/relay", base)).json(&body).send().await?
+        } else {
+            client.put(format!("{}/relay/{}", base, relay.id)).json(&body).send().await?
+        };
+
         if !response.status().is_success() {
             anyhow::bail!("zooid sync returned {}", response.status())
         }

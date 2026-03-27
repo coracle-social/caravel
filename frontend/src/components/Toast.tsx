@@ -1,6 +1,14 @@
 import { Show, createEffect, createSignal, onCleanup } from "solid-js"
 
-export const [toastMessage, setToastMessage] = createSignal("")
+type ToastVariant = "error" | "success"
+
+const [toastVariant, setToastVariant] = createSignal<ToastVariant>("error")
+export const [toastMessage, setRawToastMessage] = createSignal("")
+
+export function setToastMessage(message: string, variant: ToastVariant = "error") {
+  setToastVariant(variant)
+  setRawToastMessage(message)
+}
 
 export default function Toast() {
   const [visible, setVisible] = createSignal(false)
@@ -57,10 +65,12 @@ export default function Toast() {
     <Show when={toastMessage()}>
       <div
         role="alert"
-        class="fixed bottom-4 right-4 z-50 max-w-md rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-base text-red-700 shadow-lg transition-all duration-400 ease-out"
+        class="fixed bottom-4 right-4 z-50 max-w-md rounded-xl border px-4 py-3 text-base shadow-lg transition-all duration-400 ease-out"
         classList={{
           "translate-y-0 opacity-100 scale-100": visible(),
           "translate-y-3 opacity-0 scale-95": !visible(),
+          "border-red-200 bg-red-50 text-red-700": toastVariant() === "error",
+          "border-green-200 bg-green-50 text-green-700": toastVariant() === "success",
         }}
       >
         {toastMessage()}

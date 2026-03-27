@@ -17,8 +17,6 @@ type AuthCache = {
   expiresAt: number
 }
 
-let authCache: AuthCache | undefined
-
 export class ApiError extends Error {
   status: number
 
@@ -143,6 +141,8 @@ export type Identity = {
   pubkey: string
   is_admin: boolean
 }
+
+let authCache: AuthCache | undefined
 
 export async function makeAuth(): Promise<string | undefined> {
   const current = account()

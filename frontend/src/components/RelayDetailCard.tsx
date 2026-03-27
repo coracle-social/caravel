@@ -2,54 +2,11 @@ import { A } from "@solidjs/router"
 import { Show, createEffect, createSignal, onCleanup } from "solid-js"
 import type { Relay, PlanId } from "@/lib/api"
 import menuDotsIcon from "@/assets/menu-dots-2.svg"
+import Field from "@/components/Field"
 import PricingTable from "@/components/PricingTable"
-
-function Field(props: { label: string; children: any }) {
-  return (
-    <div>
-      <dt class="text-xs font-medium text-gray-500 uppercase tracking-wide">{props.label}</dt>
-      <dd class="mt-0.5 text-sm text-gray-900">{props.children}</dd>
-    </div>
-  )
-}
-
-function ToggleField(props: { label: string; children: any }) {
-  return (
-    <div class="flex items-center justify-between gap-3">
-      <dt class="text-xs font-medium text-gray-500 uppercase tracking-wide">{props.label}</dt>
-      <dd class="text-sm text-gray-900">{props.children}</dd>
-    </div>
-  )
-}
-
-function ToggleButton(props: {
-  enabled: boolean
-  disabled?: boolean
-  onToggle?: () => void
-  onLabel?: string
-  offLabel?: string
-}) {
-  const label = () => (props.enabled ? (props.onLabel ?? "Enabled") : (props.offLabel ?? "Disabled"))
-
-  return (
-    <div class="inline-flex items-center gap-2">
-      <button
-        type="button"
-        role="switch"
-        aria-checked={props.enabled}
-        aria-label={label()}
-        class={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${props.enabled ? "bg-blue-600" : "bg-gray-300"} disabled:opacity-50`}
-        onClick={props.onToggle}
-        disabled={props.disabled}
-      >
-        <span
-          class={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${props.enabled ? "translate-x-5" : "translate-x-0.5"}`}
-        />
-      </button>
-      <span class={`text-xs font-medium ${props.enabled ? "text-blue-700" : "text-gray-500"}`}>{label()}</span>
-    </div>
-  )
-}
+import ToggleButton from "@/components/ToggleButton"
+import ToggleField from "@/components/ToggleField"
+import { setToastMessage } from "@/components/Toast"
 
 function DetailSection(props: { title: string; children: any }) {
   return (
@@ -116,7 +73,12 @@ export default function RelayDetailCard(props: RelayDetailCardProps) {
 
   async function changePlan(plan: PlanId) {
     setPlan(plan)
-    props.onUpdatePlan?.(plan)
+    try {
+      await props.onUpdatePlan?.(plan)
+      setToastMessage(`Plan updated to ${plan}`, "success")
+    } catch {
+      // error is handled by the caller
+    }
   }
 
   createEffect(() => {

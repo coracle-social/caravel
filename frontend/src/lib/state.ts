@@ -51,7 +51,8 @@ export const [identity, { refetch: refetchIdentity, mutate: setIdentity }] = cre
   }
 )
 
-;(() => {
+// Deferred to avoid circular-import TDZ errors (api.ts <-> state.ts)
+queueMicrotask(() => {
   try {
     accountManager.fromJSON(JSON.parse(localStorage.getItem("caravel.accounts")!))
   } catch {
@@ -77,4 +78,4 @@ export const [identity, { refetch: refetchIdentity, mutate: setIdentity }] = cre
 
     refetchIdentity()
   })
-})()
+})

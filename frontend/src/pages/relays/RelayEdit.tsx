@@ -8,7 +8,8 @@ import ResourceState from "@/components/ResourceState"
 import useMinLoading from "@/components/useMinLoading"
 import { updateRelayById, useRelay } from "@/lib/hooks"
 
-export default function RelayEdit() {
+export default function RelayEdit(props: { basePath?: string; title?: string }) {
+  const basePath = () => props.basePath ?? "/relays"
   const navigate = useNavigate()
   const params = useParams()
   const relayId = () => params.id ?? ""
@@ -22,21 +23,14 @@ export default function RelayEdit() {
       info_icon: values.info_icon.trim(),
       info_description: values.info_description.trim(),
     })
-    navigate(`/relays/${relayId()}`)
+    navigate(`${basePath()}/${relayId()}`)
   }
 
   return (
     <PageContainer size="narrow">
-      <BackLink href={`/relays/${params.id}`} label="Back" />
-      <h1 class="text-2xl font-bold text-gray-900 mb-6 py-2">Edit Relay</h1>
-
-      <ResourceState
-        loading={loading()}
-        error={relay.error}
-        loadingText="Loading relay..."
-        errorText="Failed to load relay."
-      />
-
+      <BackLink href={`${basePath()}/${params.id}`} label="Back" />
+      <h1 class="text-2xl font-bold text-gray-900 mb-6 py-2">{props.title ?? "Edit Relay"}</h1>
+      <ResourceState loading={loading()} error={relay.error} loadingText="Loading relay..." errorText="Failed to load relay." />
       <Show when={relay() && !loading()}>
         <RelayForm
           initialValues={relay()!}

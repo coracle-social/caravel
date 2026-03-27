@@ -5,7 +5,7 @@ import ExternalLinkIcon from "../components/ExternalLinkIcon"
 import PricingTable from "../components/PricingTable"
 import RelayForm, { type RelayFormValues } from "../components/RelayForm"
 import Modal from "../components/Modal"
-import Login from "./Login"
+import Login from "../views/Login"
 import { account, createRelayForActiveTenant } from "../lib/hooks"
 import { slugify } from "../lib/slugify"
 

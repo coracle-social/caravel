@@ -3,7 +3,6 @@ import { Router, Route, useLocation, useNavigate } from "@solidjs/router"
 import type { Component } from "solid-js"
 import AppShell from "./components/AppShell"
 import Home from "./pages/Home"
-import Login from "./pages/Login"
 import RelayList from "./pages/relays/RelayList"
 import RelayNew from "./pages/relays/RelayNew"
 import RelayDetail from "./pages/relays/RelayDetail"
@@ -59,7 +58,6 @@ export default function App() {
   return (
     <Router root={Layout}>
       <Route path="/" component={Home} />
-      <Route path="/login" component={Login} />
       <Route path="/relays" component={requireTenant(RelayList)} />
       <Route path="/relays/new" component={requireTenant(RelayNew)} />
       <Route path="/relays/:id" component={requireTenant(RelayDetail)} />

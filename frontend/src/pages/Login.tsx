@@ -1,5 +1,5 @@
 import { Show, createSignal, createEffect, onCleanup } from "solid-js"
-import { useNavigate } from "@solidjs/router"
+import { useNavigate, type RouteSectionProps } from "@solidjs/router"
 import { ExtensionAccount, NostrConnectAccount, PasswordAccount, PrivateKeyAccount } from "applesauce-accounts/accounts"
 import { PasswordSigner } from "applesauce-signers"
 import QrScanner from "qr-scanner"
@@ -12,6 +12,12 @@ type Tab = "nip07" | "nip46" | "key"
 type Screen = "tabs" | "nip46" | "key"
 type SignerTab = "qr" | "paste"
 type KeyTab = "plaintext" | "encrypted"
+
+type LoginProps = {
+  inModal?: boolean
+  onClose?: () => void
+  onAuthenticated?: () => void | Promise<void>
+}
 
 function normalizeBunkerUrl(value: string): string {
   const trimmed = value.trim()
@@ -35,7 +41,9 @@ async function loadNostrConnectSigner() {
   return import("applesauce-signers").then((m) => m.NostrConnectSigner)
 }
 
-export default function Login() {
+type LoginPageProps = LoginProps & Partial<RouteSectionProps<unknown>>
+
+export default function Login(props: LoginPageProps = {}) {
   const navigate = useNavigate()
   const [tab, setTab] = createSignal<Tab>(window.nostr ? "nip07" : "nip46")
   const [loading, setLoading] = createSignal(false)
@@ -56,9 +64,10 @@ export default function Login() {
   let scanner: QrScanner | undefined
   let abortController: AbortController | undefined
 
-  function completeLogin(account: ExtensionAccount | NostrConnectAccount | PrivateKeyAccount | PasswordAccount) {
+  async function completeLogin(account: ExtensionAccount | NostrConnectAccount | PrivateKeyAccount | PasswordAccount) {
     accountManager.addAccount(account)
     accountManager.setActive(account)
+    await props.onAuthenticated?.()
   }
 
   async function loginWithNip07() {
@@ -190,7 +199,7 @@ export default function Login() {
   }
 
   createEffect(() => {
-    if (identity()) {
+    if (!props.inModal && identity()) {
       navigate("/relays")
     }
   })
@@ -201,9 +210,19 @@ export default function Login() {
   })
 
   return (
-    <div class="min-h-screen bg-gradient-to-br from-gray-50 via-white to-gray-100 flex items-center justify-center p-6">
+    <div class={props.inModal ? "w-full" : "min-h-screen bg-gradient-to-br from-gray-50 via-white to-gray-100 flex items-center justify-center p-6"}>
       <div class="w-full max-w-3xl">
         <div class="relative overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-xl">
+          <Show when={props.inModal && props.onClose}>
+            <button
+              type="button"
+              class="absolute right-4 top-4 z-10 rounded-md p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700"
+              onClick={() => props.onClose?.()}
+              aria-label="Close"
+            >
+              <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12" /></svg>
+            </button>
+          </Show>
           <div class="absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(99,102,241,0.08),_transparent_45%)]" />
           <div class="relative grid gap-8 p-8 md:grid-cols-[1.2fr_1fr] md:p-10">
             <div class="space-y-6">

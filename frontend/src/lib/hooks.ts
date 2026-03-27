@@ -26,7 +26,6 @@ import {
   type CreateRelayInput,
   type Relay,
   type Tenant,
-  type Identity,
   type UpdateRelayInput,
 } from "./api"
 
@@ -75,7 +74,7 @@ export const [identity, { refetch: refetchIdentity, mutate: setIdentity }] = cre
 
 ;(() => {
   try {
-    accountManager.fromJSON(JSON.parse(localStorage.getItem("caravel.accounts")))
+    accountManager.fromJSON(JSON.parse(localStorage.getItem("caravel.accounts")!))
   } catch {
     // pass
   }

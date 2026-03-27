@@ -1,6 +1,6 @@
 import { useNavigate, useParams } from "@solidjs/router"
-import { Show, createEffect, createSignal } from "solid-js"
-import RelayForm from "../../components/RelayForm"
+import { Show, createSignal } from "solid-js"
+import RelayForm, { type RelayFormValues } from "../../components/RelayForm"
 import { slugify } from "../../lib/slugify"
 import BackLink from "../../components/BackLink"
 import PageContainer from "../../components/PageContainer"
@@ -15,32 +15,19 @@ export default function AdminRelayEdit() {
   const [relay] = useRelay(relayId)
   const loading = useMinLoading(() => relay.loading)
 
-  const [name, setName] = createSignal("")
-  const [subdomain, setSubdomain] = createSignal("")
-  const [icon, setIcon] = createSignal("")
-  const [description, setDescription] = createSignal("")
   const [error, setError] = createSignal("")
   const [submitting, setSubmitting] = createSignal(false)
 
-  createEffect(() => {
-    const data = relay()
-    if (!data) return
-    setName(data.info_name)
-    setSubdomain(data.subdomain)
-    setIcon(data.info_icon)
-    setDescription(data.info_description)
-  })
-
-  async function handleSubmit(e: Event) {
+  async function handleSubmit(values: RelayFormValues, e: Event) {
     e.preventDefault()
     setError("")
     setSubmitting(true)
     try {
       await updateRelayById(relayId(), {
-        subdomain: slugify(subdomain()),
-        info_name: name().trim(),
-        info_icon: icon().trim(),
-        info_description: description().trim(),
+        subdomain: slugify(values.subdomain),
+        info_name: values.info_name.trim(),
+        info_icon: values.info_icon.trim(),
+        info_description: values.info_description.trim(),
       })
       navigate(`/admin/relays/${relayId()}`)
     } catch (e) {
@@ -64,14 +51,7 @@ export default function AdminRelayEdit() {
 
       <Show when={relay() && !loading()}>
         <RelayForm
-          name={name()}
-          setName={setName}
-          subdomain={subdomain()}
-          setSubdomain={setSubdomain}
-          icon={icon()}
-          setIcon={setIcon}
-          description={description()}
-          setDescription={setDescription}
+          initialValues={relay()!}
           onSubmit={handleSubmit}
           submitting={submitting()}
           error={error()}

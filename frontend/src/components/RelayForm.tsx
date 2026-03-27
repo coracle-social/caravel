@@ -1,13 +1,18 @@
-type RelayFormProps = {
-  name: string
-  setName: (value: string) => void
+import { createEffect, createSignal } from "solid-js"
+import type { Relay } from "../lib/hooks"
+import { slugify } from "../lib/slugify"
+
+export type RelayFormValues = {
+  info_name: string
   subdomain: string
-  setSubdomain: (value: string) => void
-  icon: string
-  setIcon: (value: string) => void
-  description: string
-  setDescription: (value: string) => void
-  onSubmit: (e: Event) => void
+  info_icon: string
+  info_description: string
+}
+
+type RelayFormProps = {
+  initialValues: Pick<Relay, "info_name" | "subdomain" | "info_icon" | "info_description">
+  syncSubdomainWithName?: boolean
+  onSubmit: (values: RelayFormValues, e: Event) => void | Promise<void>
   submitting: boolean
   error?: string
   submitLabel: string
@@ -15,14 +20,43 @@ type RelayFormProps = {
 }
 
 export default function RelayForm(props: RelayFormProps) {
+  const [name, setName] = createSignal(props.initialValues.info_name)
+  const [subdomain, setSubdomain] = createSignal(props.initialValues.subdomain)
+  const [icon, setIcon] = createSignal(props.initialValues.info_icon)
+  const [description, setDescription] = createSignal(props.initialValues.info_description)
+
+  createEffect(() => {
+    setName(props.initialValues.info_name)
+    setSubdomain(props.initialValues.subdomain)
+    setIcon(props.initialValues.info_icon)
+    setDescription(props.initialValues.info_description)
+  })
+
+  function handleSubmit(e: Event) {
+    e.preventDefault()
+    void props.onSubmit(
+      {
+        info_name: name(),
+        subdomain: subdomain(),
+        info_icon: icon(),
+        info_description: description(),
+      },
+      e,
+    )
+  }
+
   return (
-    <form onSubmit={props.onSubmit} class="space-y-6">
+    <form onSubmit={handleSubmit} class="space-y-6">
       {/* Basic info */}
       <div>
         <label class="block text-sm font-medium text-gray-700 mb-1">Relay Name</label>
         <input
-          value={props.name}
-          onInput={e => props.setName(e.currentTarget.value)}
+          value={name()}
+          onInput={e => {
+            const value = e.currentTarget.value
+            setName(value)
+            if (props.syncSubdomainWithName) setSubdomain(slugify(value))
+          }}
           required
           class="w-full border border-gray-300 rounded-lg px-3 py-2"
         />
@@ -31,8 +65,8 @@ export default function RelayForm(props: RelayFormProps) {
         <label class="block text-sm font-medium text-gray-700 mb-1">Subdomain</label>
         <div class="flex items-center border border-gray-300 rounded-lg overflow-hidden">
           <input
-            value={props.subdomain}
-            onInput={e => props.setSubdomain(e.currentTarget.value)}
+            value={subdomain()}
+            onInput={e => setSubdomain(e.currentTarget.value)}
             required
             class="flex-1 px-3 py-2"
           />
@@ -43,16 +77,16 @@ export default function RelayForm(props: RelayFormProps) {
         <label class="block text-sm font-medium text-gray-700 mb-1">Icon URL</label>
         <input
           type="url"
-          value={props.icon}
-          onInput={e => props.setIcon(e.currentTarget.value)}
+          value={icon()}
+          onInput={e => setIcon(e.currentTarget.value)}
           class="w-full border border-gray-300 rounded-lg px-3 py-2"
         />
       </div>
       <div>
         <label class="block text-sm font-medium text-gray-700 mb-1">Description</label>
         <textarea
-          value={props.description}
-          onInput={e => props.setDescription(e.currentTarget.value)}
+          value={description()}
+          onInput={e => setDescription(e.currentTarget.value)}
           rows={3}
           class="w-full border border-gray-300 rounded-lg px-3 py-2"
         />

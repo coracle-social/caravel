@@ -1,26 +1,89 @@
-import { A } from "@solidjs/router"
+import { A, useNavigate } from "@solidjs/router"
+import { createSignal } from "solid-js"
+import CheckIcon from "../components/CheckIcon"
+import ExternalLinkIcon from "../components/ExternalLinkIcon"
 import PricingTable from "../components/PricingTable"
-import { account } from "../lib/hooks"
-
-function CheckIcon() {
-  return (
-    <svg class="w-4 h-4 text-blue-500 shrink-0 mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M20 6L9 17l-5-5" />
-    </svg>
-  )
-}
-
-function ExternalLinkIcon() {
-  return (
-    <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" />
-      <path d="M15 3h6v6" />
-      <path d="M10 14L21 3" />
-    </svg>
-  )
-}
+import RelayForm, { type RelayFormValues } from "../components/RelayForm"
+import Modal from "../components/Modal"
+import Login from "./Login"
+import { account, createRelayForActiveTenant } from "../lib/hooks"
+import { slugify } from "../lib/slugify"
 
 export default function Home() {
+  const navigate = useNavigate()
+  const [showRelayModal, setShowRelayModal] = createSignal(false)
+  const [showLoginModal, setShowLoginModal] = createSignal(false)
+  const [name, setName] = createSignal("")
+  const [subdomain, setSubdomain] = createSignal("")
+  const [icon, setIcon] = createSignal("")
+  const [description, setDescription] = createSignal("")
+  const [pendingRelay, setPendingRelay] = createSignal(false)
+  const [error, setError] = createSignal("")
+
+  function resetForm() {
+    setName("")
+    setSubdomain("")
+    setIcon("")
+    setDescription("")
+    setError("")
+    setPendingRelay(false)
+  }
+
+  function openRelayFlow() {
+    setError("")
+    setShowRelayModal(true)
+  }
+
+  async function createRelayAndRedirect() {
+    setError("")
+    setPendingRelay(true)
+
+    try {
+      const relay = await createRelayForActiveTenant({
+        subdomain: slugify(subdomain()),
+        plan: "free",
+        info_name: name().trim(),
+        info_icon: icon().trim(),
+        info_description: description().trim(),
+        policy_public_join: 0,
+        policy_strip_signatures: 0,
+        groups_enabled: 1,
+        management_enabled: 1,
+        blossom_enabled: 0,
+        livekit_enabled: 0,
+        push_enabled: 1,
+      })
+
+      setShowLoginModal(false)
+      setShowRelayModal(false)
+      resetForm()
+      navigate(`/relays/${relay.id}`)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to create relay")
+      setShowLoginModal(false)
+      setShowRelayModal(true)
+    } finally {
+      setPendingRelay(false)
+    }
+  }
+
+  async function handleRelaySubmit(values: RelayFormValues, e: Event) {
+    e.preventDefault()
+    setError("")
+    setName(values.info_name)
+    setSubdomain(values.subdomain)
+    setIcon(values.info_icon)
+    setDescription(values.info_description)
+
+    if (account()) {
+      await createRelayAndRedirect()
+      return
+    }
+
+    setShowRelayModal(false)
+    setShowLoginModal(true)
+  }
+
   return (
     <div class="min-h-screen bg-white text-gray-900 overflow-x-hidden">
 
@@ -32,7 +95,13 @@ export default function Home() {
             Caravel
           </div>
           <A
-            href={account() ? "/relays" : "/login"}
+            href={account() ? "/relays" : "#"}
+            onClick={(e) => {
+              if (!account()) {
+                e.preventDefault()
+                setShowLoginModal(true)
+              }
+            }}
             class="text-sm font-medium text-gray-600 hover:text-gray-900 transition-colors"
           >
             {account() ? "Go to dashboard" : "Sign in"}
@@ -63,15 +132,22 @@ export default function Home() {
           </p>
 
           <div class="flex flex-col sm:flex-row items-center justify-center gap-4">
-            <A
-              href="/relays/new"
+            <button
+              type="button"
+              onClick={openRelayFlow}
               class="inline-flex items-center gap-2 py-3 px-8 bg-blue-600 text-white font-semibold rounded-xl hover:bg-blue-700 active:scale-95 transition-all shadow-lg shadow-blue-200"
             >
               Get started free
               <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7" /></svg>
-            </A>
+            </button>
             <A
-              href={account() ? "/relays" : "/login"}
+              href={account() ? "/relays" : "#"}
+              onClick={(e) => {
+                if (!account()) {
+                  e.preventDefault()
+                  setShowLoginModal(true)
+                }
+              }}
               class="inline-flex items-center gap-2 py-3 px-8 border border-gray-200 text-gray-700 font-semibold rounded-xl hover:bg-gray-50 transition-all"
             >
               {account() ? "Go to dashboard" : "Sign in"}
@@ -262,7 +338,7 @@ export default function Home() {
             Pay in sats. Upgrade or cancel any time.
           </p>
 
-          <PricingTable ctaHref="/relays/new" />
+          <PricingTable ctaHref="#" />
         </div>
       </section>
 
@@ -274,13 +350,14 @@ export default function Home() {
           <p class="text-gray-500 mb-10 max-w-lg mx-auto text-lg">
             Join communities already running on Caravel. Set up in minutes, pay in sats.
           </p>
-          <A
-            href="/relays/new"
+          <button
+            type="button"
+            onClick={openRelayFlow}
             class="inline-flex items-center gap-2 py-3 px-10 bg-blue-600 text-white font-semibold rounded-xl hover:bg-blue-700 active:scale-95 transition-all shadow-lg shadow-blue-200 text-lg"
           >
             Create your relay
             <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7" /></svg>
-          </A>
+          </button>
         </div>
       </section>
 
@@ -298,6 +375,72 @@ export default function Home() {
           </div>
         </div>
       </footer>
+
+      <Modal
+        open={showRelayModal()}
+        onClose={() => {
+          if (!pendingRelay()) setShowRelayModal(false)
+        }}
+        wrapperClass="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+        panelClass="w-full max-w-2xl rounded-2xl bg-white p-6 sm:p-8 shadow-2xl"
+      >
+        <div class="mb-6 flex items-start justify-between gap-4">
+          <div>
+            <h3 class="text-xl font-bold text-gray-900">Create your relay</h3>
+            <p class="mt-1 text-sm text-gray-500">Start with a free relay. You can upgrade later.</p>
+          </div>
+          <button
+            type="button"
+            class="rounded-md p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700"
+            onClick={() => {
+              if (!pendingRelay()) setShowRelayModal(false)
+            }}
+            aria-label="Close"
+          >
+            <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12" /></svg>
+          </button>
+        </div>
+
+        <RelayForm
+          initialValues={{
+            info_name: name(),
+            subdomain: subdomain(),
+            info_icon: icon(),
+            info_description: description(),
+          }}
+          syncSubdomainWithName
+          onSubmit={handleRelaySubmit}
+          submitting={pendingRelay()}
+          error={error()}
+          submitLabel="Continue"
+          submittingLabel="Creating..."
+        />
+      </Modal>
+
+      <Modal
+        open={showLoginModal()}
+        onClose={() => {
+          if (!pendingRelay()) setShowLoginModal(false)
+        }}
+        wrapperClass="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+        panelClass="w-full max-w-4xl rounded-2xl"
+      >
+        <Login
+          inModal
+          onClose={() => {
+            if (!pendingRelay()) setShowLoginModal(false)
+          }}
+          onAuthenticated={async () => {
+            if (name().trim() && subdomain().trim()) {
+              await createRelayAndRedirect()
+              return
+            }
+
+            setShowLoginModal(false)
+            navigate("/relays")
+          }}
+        />
+      </Modal>
     </div>
   )
 }

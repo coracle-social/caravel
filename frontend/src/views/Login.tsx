@@ -4,7 +4,7 @@ import { ExtensionAccount, NostrConnectAccount, PasswordAccount, PrivateKeyAccou
 import { PasswordSigner } from "applesauce-signers"
 import QrScanner from "qr-scanner"
 import QRCode from "qrcode"
-import { accountManager, identity, PLATFORM_NAME } from "../lib/hooks"
+import { accountManager, identity, PLATFORM_NAME } from "@/lib/state"
 
 const NIP46_RELAYS = ['wss://bucket.coracle.social', 'wss://ephemeral.snowflare.cc']
 

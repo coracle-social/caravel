@@ -1,12 +1,12 @@
 import { useParams } from "@solidjs/router"
 import { createMemo, createResource, createSignal, Show } from "solid-js"
-import type { RelayPlanId } from "../../lib/relayPlans"
-import BackLink from "../../components/BackLink"
-import PageContainer from "../../components/PageContainer"
-import RelayDetailCard from "../../components/RelayDetailCard"
-import ResourceState from "../../components/ResourceState"
-import useMinLoading from "../../components/useMinLoading"
-import { deactivateRelayById, getRelayMembers, updateRelayById, updateRelayPlanById, useRelay, type Relay } from "../../lib/hooks"
+import type { RelayPlanId } from "@/lib/relayPlans"
+import BackLink from "@/components/BackLink"
+import PageContainer from "@/components/PageContainer"
+import RelayDetailCard from "@/components/RelayDetailCard"
+import ResourceState from "@/components/ResourceState"
+import useMinLoading from "@/components/useMinLoading"
+import { deactivateRelayById, getRelayMembers, updateRelayById, updateRelayPlanById, useRelay, type Relay } from "@/lib/hooks"
 
 export default function RelayDetail() {
   const params = useParams()

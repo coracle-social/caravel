@@ -1,13 +1,14 @@
 import { A, useNavigate } from "@solidjs/router"
 import { createSignal } from "solid-js"
-import CheckIcon from "../components/CheckIcon"
-import ExternalLinkIcon from "../components/ExternalLinkIcon"
-import PricingTable from "../components/PricingTable"
-import RelayForm, { type RelayFormValues } from "../components/RelayForm"
-import Modal from "../components/Modal"
-import Login from "../views/Login"
-import { account, createRelayForActiveTenant } from "../lib/hooks"
-import { slugify } from "../lib/slugify"
+import CheckIcon from "@/components/CheckIcon"
+import ExternalLinkIcon from "@/components/ExternalLinkIcon"
+import PricingTable from "@/components/PricingTable"
+import RelayForm, { type RelayFormValues } from "@/components/RelayForm"
+import Modal from "@/components/Modal"
+import Login from "@/views/Login"
+import { createRelayForActiveTenant } from "@/lib/hooks"
+import { account } from "@/lib/state"
+import { slugify } from "@/lib/slugify"
 
 export default function Home() {
   const navigate = useNavigate()

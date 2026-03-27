@@ -1,6 +1,6 @@
 import { A } from "@solidjs/router"
 import { For } from "solid-js"
-import { RELAY_PLANS, type RelayPlanId } from "../lib/relayPlans"
+import { RELAY_PLANS, type RelayPlanId } from "@/lib/relayPlans"
 
 function CheckIcon() {
   return (

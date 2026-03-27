@@ -1,10 +1,10 @@
 import { useParams, A } from "@solidjs/router"
 import { For, Show } from "solid-js"
-import BackLink from "../../components/BackLink"
-import PageContainer from "../../components/PageContainer"
-import ResourceState from "../../components/ResourceState"
-import useMinLoading from "../../components/useMinLoading"
-import { useAdminTenant, useAdminTenantRelays } from "../../lib/hooks"
+import BackLink from "@/components/BackLink"
+import PageContainer from "@/components/PageContainer"
+import ResourceState from "@/components/ResourceState"
+import useMinLoading from "@/components/useMinLoading"
+import { useAdminTenant, useAdminTenantRelays } from "@/lib/hooks"
 
 export default function AdminTenantDetail() {
   const params = useParams()

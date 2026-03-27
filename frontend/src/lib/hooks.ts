@@ -19,23 +19,8 @@ import {
   type Relay,
   type Tenant,
   type UpdateRelayInput,
-} from "./api"
-import { account, eventStore, pool } from "./state"
-
-export {
-  PLATFORM_NAME,
-  accountManager,
-  account,
-  setAccount,
-  identity,
-  refetchIdentity,
-  setIdentity,
-  eventStore,
-  pool,
-  type EventSigner,
-  type SignedEvent,
-  type UnsignedEvent,
-} from "./state"
+} from "@/lib/api"
+import { account, eventStore, pool } from "@/lib/state"
 
 export function useProfilePicture(pubkey: () => string | undefined) {
   const [picture, setPicture] = createSignal<string | undefined>()

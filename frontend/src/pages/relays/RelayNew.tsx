@@ -1,7 +1,7 @@
 import { Show, createSignal } from "solid-js"
 import { useNavigate } from "@solidjs/router"
-import { slugify } from "../../lib/slugify"
-import { createRelayForActiveTenant } from "../../lib/hooks"
+import { slugify } from "@/lib/slugify"
+import { createRelayForActiveTenant } from "@/lib/hooks"
 
 const PLANS = [
   { id: "free", label: "Free", price: 0, members: "Up to 10", blossom: false, livekit: false },

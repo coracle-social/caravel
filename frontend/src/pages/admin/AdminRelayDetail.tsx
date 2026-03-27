@@ -1,11 +1,11 @@
 import { useParams } from "@solidjs/router"
 import { createSignal, Show } from "solid-js"
-import BackLink from "../../components/BackLink"
-import PageContainer from "../../components/PageContainer"
-import RelayDetailCard from "../../components/RelayDetailCard"
-import ResourceState from "../../components/ResourceState"
-import useMinLoading from "../../components/useMinLoading"
-import { deactivateRelayById, updateRelayById, useRelay, type Relay } from "../../lib/hooks"
+import BackLink from "@/components/BackLink"
+import PageContainer from "@/components/PageContainer"
+import RelayDetailCard from "@/components/RelayDetailCard"
+import ResourceState from "@/components/ResourceState"
+import useMinLoading from "@/components/useMinLoading"
+import { deactivateRelayById, updateRelayById, useRelay, type Relay } from "@/lib/hooks"
 
 export default function AdminRelayDetail() {
   const params = useParams()

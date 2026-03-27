@@ -1,5 +1,5 @@
 import { Show } from "solid-js"
-import LoadingState from "./LoadingState"
+import LoadingState from "@/components/LoadingState"
 
 type ResourceStateProps = {
   loading: boolean

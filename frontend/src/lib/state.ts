@@ -6,7 +6,7 @@ import { EventStore } from "applesauce-core"
 import { createEventLoaderForStore } from "applesauce-loaders/loaders"
 import { RelayPool } from "applesauce-relay"
 import { NostrConnectSigner } from "applesauce-signers"
-import { getIdentity } from "./api"
+import { getIdentity } from "@/lib/api"
 
 export type UnsignedEvent = {
   kind: number

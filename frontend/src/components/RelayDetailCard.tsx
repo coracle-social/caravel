@@ -1,10 +1,10 @@
 import { A } from "@solidjs/router"
 import { Show, createEffect, createSignal, onCleanup } from "solid-js"
-import type { Relay } from "../lib/api"
-import menuDotsIcon from "../assets/menu-dots-2.svg"
-import Modal from "./Modal"
-import PricingTable from "./PricingTable"
-import { RELAY_PLAN_IDS, type RelayPlanId } from "../lib/relayPlans"
+import type { Relay } from "@/lib/api"
+import menuDotsIcon from "@/assets/menu-dots-2.svg"
+import Modal from "@/components/Modal"
+import PricingTable from "@/components/PricingTable"
+import { RELAY_PLAN_IDS, type RelayPlanId } from "@/lib/relayPlans"
 
 function Field(props: { label: string; children: any }) {
   return (

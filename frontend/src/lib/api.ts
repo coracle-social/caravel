@@ -1,4 +1,4 @@
-import { account } from "./hooks"
+import { account } from "@/lib/state"
 
 const API_URL = import.meta.env.VITE_API_URL
 
@@ -51,33 +51,6 @@ export type Relay = {
   push_enabled: number
 }
 
-export type Tenant = {
-  pubkey: string
-  nwc_url: string
-  created_at: number
-  billing_anchor: number
-}
-
-export type Invoice = {
-  id: string
-  tenant: string
-  status: string
-  created_at: number
-  attempted_at: number
-  error: string
-  closed_at: number
-  sent_at: number
-  paid_at: number
-  bolt11: string
-  period_start: number
-  period_end: number
-}
-
-export type Identity = {
-  pubkey: string
-  is_admin: boolean
-}
-
 export type CreateRelayInput = {
   tenant?: string
   subdomain: string
@@ -107,6 +80,33 @@ export type UpdateRelayInput = {
   blossom_enabled?: number
   livekit_enabled?: number
   push_enabled?: number
+}
+
+export type Tenant = {
+  pubkey: string
+  nwc_url: string
+  created_at: number
+  billing_anchor: number
+}
+
+export type Invoice = {
+  id: string
+  tenant: string
+  status: string
+  created_at: number
+  attempted_at: number
+  error: string
+  closed_at: number
+  sent_at: number
+  paid_at: number
+  bolt11: string
+  period_start: number
+  period_end: number
+}
+
+export type Identity = {
+  pubkey: string
+  is_admin: boolean
 }
 
 export async function makeAuth(): Promise<string | undefined> {

@@ -1,9 +1,10 @@
 import { A, useLocation } from "@solidjs/router"
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js"
 import Fuse from "fuse.js"
-import { account, eventStore, identity, primeProfiles, useProfilePicture, useTenantRelays, type Relay } from "../lib/hooks"
-import serverIcon from "../assets/server.svg"
-import Modal from "./Modal"
+import { primeProfiles, useProfilePicture, useTenantRelays, type Relay } from "@/lib/hooks"
+import { account, eventStore, identity } from "@/lib/state"
+import serverIcon from "@/assets/server.svg"
+import Modal from "@/components/Modal"
 
 type Profile = {
   name?: string

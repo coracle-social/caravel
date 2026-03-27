@@ -1,8 +1,8 @@
 import { createEffect, createMemo, createSignal, For, Show } from "solid-js"
-import PageContainer from "../components/PageContainer"
-import LoadingState from "../components/LoadingState"
-import useMinLoading from "../components/useMinLoading"
-import { updateActiveTenantBilling, useTenant, useTenantInvoices } from "../lib/hooks"
+import PageContainer from "@/components/PageContainer"
+import LoadingState from "@/components/LoadingState"
+import useMinLoading from "@/components/useMinLoading"
+import { updateActiveTenantBilling, useTenant, useTenantInvoices } from "@/lib/hooks"
 
 export default function Account() {
   const [tenant, { refetch: refetchTenant }] = useTenant()

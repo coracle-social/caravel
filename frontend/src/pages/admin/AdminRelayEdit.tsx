@@ -1,12 +1,12 @@
 import { useNavigate, useParams } from "@solidjs/router"
 import { Show, createSignal } from "solid-js"
-import RelayForm, { type RelayFormValues } from "../../components/RelayForm"
-import { slugify } from "../../lib/slugify"
-import BackLink from "../../components/BackLink"
-import PageContainer from "../../components/PageContainer"
-import ResourceState from "../../components/ResourceState"
-import useMinLoading from "../../components/useMinLoading"
-import { updateRelayById, useRelay } from "../../lib/hooks"
+import RelayForm, { type RelayFormValues } from "@/components/RelayForm"
+import { slugify } from "@/lib/slugify"
+import BackLink from "@/components/BackLink"
+import PageContainer from "@/components/PageContainer"
+import ResourceState from "@/components/ResourceState"
+import useMinLoading from "@/components/useMinLoading"
+import { updateRelayById, useRelay } from "@/lib/hooks"
 
 export default function AdminRelayEdit() {
   const navigate = useNavigate()

@@ -1,6 +1,6 @@
 import { createEffect, createSignal } from "solid-js"
-import type { Relay } from "../lib/hooks"
-import { slugify } from "../lib/slugify"
+import type { Relay } from "@/lib/hooks"
+import { slugify } from "@/lib/slugify"
 
 export type RelayFormValues = {
   info_name: string

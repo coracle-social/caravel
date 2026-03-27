@@ -31,6 +31,14 @@ export class ApiError extends Error {
 
 export type Plan = Record<string, unknown>
 
+export const PLANS = [
+  { id: "free", label: "Free", price: 0, members: "Up to 10", blossom: false, livekit: false },
+  { id: "basic", label: "Basic", price: 10_000, members: "Up to 100", blossom: true, livekit: true },
+  { id: "growth", label: "Growth", price: 50_000, members: "Unlimited", blossom: true, livekit: true },
+] as const
+
+export type PlanId = (typeof PLANS)[number]["id"]
+
 export type Relay = {
   id: string
   tenant: string

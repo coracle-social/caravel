@@ -8,81 +8,32 @@ import Modal from "@/components/Modal"
 import Login from "@/views/Login"
 import { createRelayForActiveTenant } from "@/lib/hooks"
 import { account } from "@/lib/state"
-import { slugify } from "@/lib/slugify"
 
 export default function Home() {
   const navigate = useNavigate()
   const [showRelayModal, setShowRelayModal] = createSignal(false)
   const [showLoginModal, setShowLoginModal] = createSignal(false)
-  const [name, setName] = createSignal("")
-  const [subdomain, setSubdomain] = createSignal("")
-  const [icon, setIcon] = createSignal("")
-  const [description, setDescription] = createSignal("")
-  const [pendingRelay, setPendingRelay] = createSignal(false)
-  const [error, setError] = createSignal("")
+  const [draftRelay, setDraftRelay] = createSignal<RelayFormValues>()
 
-  function resetForm() {
-    setName("")
-    setSubdomain("")
-    setIcon("")
-    setDescription("")
-    setError("")
-    setPendingRelay(false)
-  }
-
-  function openRelayFlow() {
-    setError("")
-    setShowRelayModal(true)
-  }
-
-  async function createRelayAndRedirect() {
-    setError("")
-    setPendingRelay(true)
-
-    try {
-      const relay = await createRelayForActiveTenant({
-        subdomain: slugify(subdomain()),
-        plan: "free",
-        info_name: name().trim(),
-        info_icon: icon().trim(),
-        info_description: description().trim(),
-        policy_public_join: 0,
-        policy_strip_signatures: 0,
-        groups_enabled: 1,
-        management_enabled: 1,
-        blossom_enabled: 0,
-        livekit_enabled: 0,
-        push_enabled: 1,
-      })
-
-      setShowLoginModal(false)
-      setShowRelayModal(false)
-      resetForm()
-      navigate(`/relays/${relay.id}`)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to create relay")
-      setShowLoginModal(false)
-      setShowRelayModal(true)
-    } finally {
-      setPendingRelay(false)
-    }
-  }
-
-  async function handleRelaySubmit(values: RelayFormValues, e: Event) {
-    e.preventDefault()
-    setError("")
-    setName(values.info_name)
-    setSubdomain(values.subdomain)
-    setIcon(values.info_icon)
-    setDescription(values.info_description)
-
+  async function onRelayFormSubmit(values: RelayFormValues) {
     if (account()) {
-      await createRelayAndRedirect()
-      return
-    }
+      const relay = await createRelayForActiveTenant(values)
 
-    setShowRelayModal(false)
-    setShowLoginModal(true)
+      navigate(`/relays/${relay.id}`)
+    } else {
+      setDraftRelay(values)
+      setShowLoginModal(true)
+    }
+  }
+
+  async function onAuthenticated() {
+    const relay = draftRelay()
+
+    if (relay) {
+      onRelayFormSubmit(relay)
+    } else {
+      navigate("/relays")
+    }
   }
 
   return (
@@ -135,7 +86,7 @@ export default function Home() {
           <div class="flex flex-col sm:flex-row items-center justify-center gap-4">
             <button
               type="button"
-              onClick={openRelayFlow}
+              onClick={() => setShowRelayModal(true)}
               class="inline-flex items-center gap-2 py-3 px-8 bg-blue-600 text-white font-semibold rounded-xl hover:bg-blue-700 active:scale-95 transition-all shadow-lg shadow-blue-200"
             >
               Get started free
@@ -353,7 +304,7 @@ export default function Home() {
           </p>
           <button
             type="button"
-            onClick={openRelayFlow}
+            onClick={() => setShowRelayModal(true)}
             class="inline-flex items-center gap-2 py-3 px-10 bg-blue-600 text-white font-semibold rounded-xl hover:bg-blue-700 active:scale-95 transition-all shadow-lg shadow-blue-200 text-lg"
           >
             Create your relay
@@ -379,9 +330,7 @@ export default function Home() {
 
       <Modal
         open={showRelayModal()}
-        onClose={() => {
-          if (!pendingRelay()) setShowRelayModal(false)
-        }}
+        onClose={() => setShowRelayModal(false)}
         wrapperClass="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
         panelClass="w-full max-w-2xl rounded-2xl bg-white p-6 sm:p-8 shadow-2xl"
       >
@@ -393,9 +342,7 @@ export default function Home() {
           <button
             type="button"
             class="rounded-md p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700"
-            onClick={() => {
-              if (!pendingRelay()) setShowRelayModal(false)
-            }}
+            onClick={() => setShowRelayModal(false)}
             aria-label="Close"
           >
             <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12" /></svg>
@@ -403,16 +350,8 @@ export default function Home() {
         </div>
 
         <RelayForm
-          initialValues={{
-            info_name: name(),
-            subdomain: subdomain(),
-            info_icon: icon(),
-            info_description: description(),
-          }}
           syncSubdomainWithName
-          onSubmit={handleRelaySubmit}
-          submitting={pendingRelay()}
-          error={error()}
+          onSubmit={onRelayFormSubmit}
           submitLabel="Continue"
           submittingLabel="Creating..."
         />
@@ -420,26 +359,14 @@ export default function Home() {
 
       <Modal
         open={showLoginModal()}
-        onClose={() => {
-          if (!pendingRelay()) setShowLoginModal(false)
-        }}
+        onClose={() => setShowLoginModal(false)}
         wrapperClass="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
         panelClass="w-full max-w-4xl rounded-2xl"
       >
         <Login
           inModal
-          onClose={() => {
-            if (!pendingRelay()) setShowLoginModal(false)
-          }}
-          onAuthenticated={async () => {
-            if (name().trim() && subdomain().trim()) {
-              await createRelayAndRedirect()
-              return
-            }
-
-            setShowLoginModal(false)
-            navigate("/relays")
-          }}
+          onClose={() => setShowLoginModal(false)}
+          onAuthenticated={onAuthenticated}
         />
       </Modal>
     </div>

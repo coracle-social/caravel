@@ -1,5 +1,5 @@
 import { useNavigate, useParams } from "@solidjs/router"
-import { Show, createSignal } from "solid-js"
+import { Show } from "solid-js"
 import RelayForm, { type RelayFormValues } from "@/components/RelayForm"
 import { slugify } from "@/lib/slugify"
 import BackLink from "@/components/BackLink"
@@ -15,26 +15,14 @@ export default function RelayEdit() {
   const [relay] = useRelay(relayId)
   const loading = useMinLoading(() => relay.loading)
 
-  const [error, setError] = createSignal("")
-  const [submitting, setSubmitting] = createSignal(false)
-
-  async function handleSubmit(values: RelayFormValues, e: Event) {
-    e.preventDefault()
-    setError("")
-    setSubmitting(true)
-    try {
-      await updateRelayById(relayId(), {
-        subdomain: slugify(values.subdomain),
-        info_name: values.info_name.trim(),
-        info_icon: values.info_icon.trim(),
-        info_description: values.info_description.trim(),
-      })
-      navigate(`/relays/${relayId()}`)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to update relay")
-    } finally {
-      setSubmitting(false)
-    }
+  async function handleSubmit(values: RelayFormValues) {
+    await updateRelayById(relayId(), {
+      subdomain: slugify(values.subdomain),
+      info_name: values.info_name.trim(),
+      info_icon: values.info_icon.trim(),
+      info_description: values.info_description.trim(),
+    })
+    navigate(`/relays/${relayId()}`)
   }
 
   return (
@@ -53,8 +41,6 @@ export default function RelayEdit() {
         <RelayForm
           initialValues={relay()!}
           onSubmit={handleSubmit}
-          submitting={submitting()}
-          error={error()}
           submitLabel="Save Changes"
           submittingLabel="Saving..."
         />

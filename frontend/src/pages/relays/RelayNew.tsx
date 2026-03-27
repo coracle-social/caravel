@@ -2,14 +2,7 @@ import { Show, createSignal } from "solid-js"
 import { useNavigate } from "@solidjs/router"
 import { slugify } from "@/lib/slugify"
 import { createRelayForActiveTenant } from "@/lib/hooks"
-
-const PLANS = [
-  { id: "free", label: "Free", price: 0, members: "Up to 10", blossom: false, livekit: false },
-  { id: "basic", label: "Basic", price: 10_000, members: "Up to 100", blossom: true, livekit: true },
-  { id: "growth", label: "Growth", price: 50_000, members: "Unlimited", blossom: true, livekit: true },
-] as const
-
-type PlanId = (typeof PLANS)[number]["id"]
+import { PLANS, type PlanId } from "@/lib/api"
 
 export default function RelayNew() {
   const navigate = useNavigate()

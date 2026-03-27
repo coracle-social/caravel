@@ -1,63 +1,61 @@
 import { createEffect, createSignal } from "solid-js"
 import type { Relay } from "@/lib/hooks"
 import { slugify } from "@/lib/slugify"
+import { PLANS } from "@/lib/api"
 
-export type RelayFormValues = {
-  info_name: string
-  subdomain: string
-  info_icon: string
-  info_description: string
-}
+export type RelayFormValues = Pick<Relay, "info_name" | "subdomain" | "info_icon" | "info_description" | "plan">
 
 type RelayFormProps = {
-  initialValues: Pick<Relay, "info_name" | "subdomain" | "info_icon" | "info_description">
+  initialValues?: Partial<RelayFormValues>
   syncSubdomainWithName?: boolean
-  onSubmit: (values: RelayFormValues, e: Event) => void | Promise<void>
-  submitting: boolean
-  error?: string
+  onSubmit: (values: RelayFormValues) => Promise<void> | void
   submitLabel: string
   submittingLabel: string
 }
 
 export default function RelayForm(props: RelayFormProps) {
-  const [name, setName] = createSignal(props.initialValues.info_name)
-  const [subdomain, setSubdomain] = createSignal(props.initialValues.subdomain)
-  const [icon, setIcon] = createSignal(props.initialValues.info_icon)
-  const [description, setDescription] = createSignal(props.initialValues.info_description)
+  const [plan, setPlan] = createSignal(props.initialValues?.plan ?? "")
+  const [name, setName] = createSignal(props.initialValues?.info_name ?? "")
+  const [subdomain, setSubdomain] = createSignal(props.initialValues?.subdomain ?? "")
+  const [icon, setIcon] = createSignal(props.initialValues?.info_icon ?? "")
+  const [description, setDescription] = createSignal(props.initialValues?.info_description ?? "")
+  const [submitting, setSubmitting] = createSignal(false)
+  const [error, setError] = createSignal("")
 
-  createEffect(() => {
-    setName(props.initialValues.info_name)
-    setSubdomain(props.initialValues.subdomain)
-    setIcon(props.initialValues.info_icon)
-    setDescription(props.initialValues.info_description)
-  })
-
-  function handleSubmit(e: Event) {
+  async function handleSubmit(e: Event) {
     e.preventDefault()
-    void props.onSubmit(
-      {
+    setError("")
+    setSubmitting(true)
+
+    try {
+      await props.onSubmit({
+        plan: plan(),
         info_name: name(),
         subdomain: subdomain(),
         info_icon: icon(),
         info_description: description(),
-      },
-      e,
-    )
+      })
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to save relay")
+    } finally {
+      setSubmitting(false)
+    }
   }
+
+  createEffect(() => {
+    if (props.syncSubdomainWithName) {
+      setSubdomain(slugify(name()))
+    }
+  })
 
   return (
     <form onSubmit={handleSubmit} class="space-y-6">
-      {/* Basic info */}
       <div>
         <label class="block text-sm font-medium text-gray-700 mb-1">Relay Name</label>
         <input
-          value={name()}
-          onInput={e => {
-            const value = e.currentTarget.value
-            setName(value)
-            if (props.syncSubdomainWithName) setSubdomain(slugify(value))
-          }}
           required
+          value={name()}
+          onInput={e => setName(e.currentTarget.value)}
           class="w-full border border-gray-300 rounded-lg px-3 py-2"
         />
       </div>
@@ -85,19 +83,41 @@ export default function RelayForm(props: RelayFormProps) {
       <div>
         <label class="block text-sm font-medium text-gray-700 mb-1">Description</label>
         <textarea
+          rows={3}
           value={description()}
           onInput={e => setDescription(e.currentTarget.value)}
-          rows={3}
           class="w-full border border-gray-300 rounded-lg px-3 py-2"
         />
       </div>
-      {props.error && <p class="text-sm text-red-600">{props.error}</p>}
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-3">Plan</label>
+        <div class="grid grid-cols-3 gap-3">
+          {PLANS.map(p => (
+            <button
+              type="button"
+              onClick={() => setPlan(p.id)}
+              class={`border-2 rounded-xl p-4 text-left transition-colors ${
+                plan() === p.id
+                  ? "border-blue-600 bg-blue-50"
+                  : "border-gray-200 hover:border-gray-300"
+              }`}
+            >
+              <div class="font-bold text-gray-900">{p.label}</div>
+              <div class="text-sm text-gray-500 mt-1">
+                {p.price === 0 ? "Free" : `${p.price.toLocaleString()} sats/mo`}
+              </div>
+              <div class="text-xs text-gray-500 mt-2">{p.members} members</div>
+            </button>
+          ))}
+        </div>
+      </div>
+      {error() && <p class="text-sm text-red-600">{error()}</p>}
       <button
         type="submit"
-        disabled={props.submitting}
+        disabled={submitting()}
         class="w-full py-2 px-4 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50"
       >
-        {props.submitting ? props.submittingLabel : props.submitLabel}
+        {submitting() ? props.submittingLabel : props.submitLabel}
       </button>
     </form>
   )

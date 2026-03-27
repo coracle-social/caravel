@@ -96,7 +96,26 @@ export const useAdminTenant = (pubkey: () => string) => createResource(pubkey, g
 
 export const useAdminTenantRelays = (pubkey: () => string) => createResource(pubkey, listTenantRelays)
 
-export const createRelayForActiveTenant = (input: CreateRelayInput) => createRelay({ ...input, tenant: account()!.pubkey })
+export const createRelayForActiveTenant = (input: CreateRelayInput) => {
+  const defaults = {
+    info_name: "",
+    info_icon: "",
+    info_description: "",
+    policy_public_join: 0,
+    policy_strip_signatures: 0,
+    groups_enabled: 1,
+    management_enabled: 1,
+    push_enabled: 1,
+  }
+
+  const overrides = {
+    tenant: account()!.pubkey,
+    blossom_enabled: input.plan === "free" ? 0 : 1,
+    livekit_enabled: input.plan === "free" ? 0 : 1,
+  }
+
+  return createRelay({...defaults, ...input, ...overrides})
+}
 
 export const updateActiveTenantBilling = (nwc_url: string) => updateTenantBilling(account()!.pubkey, { nwc_url })
 

@@ -7,7 +7,7 @@ use sqlx::{
     sqlite::{SqliteConnectOptions, SqlitePoolOptions},
 };
 
-use crate::models::{Activity, Invoice, InvoiceItem, Plan, Relay, Tenant};
+use crate::models::{Activity, Invoice, InvoiceItem, InvoiceWithItems, Plan, Relay, Tenant};
 
 #[derive(Clone)]
 pub struct Repo {
@@ -527,6 +527,39 @@ impl Repo {
         .fetch_all(&self.pool)
         .await?;
         Ok(rows)
+    }
+
+    pub async fn list_invoices_with_items(&self) -> Result<Vec<InvoiceWithItems>> {
+        let invoices = self.list_invoices().await?;
+        let mut result = Vec::with_capacity(invoices.len());
+        for invoice in invoices {
+            let items = self.get_invoice_items(&invoice.id).await?;
+            result.push(InvoiceWithItems { invoice, items });
+        }
+        Ok(result)
+    }
+
+    pub async fn list_invoices_for_tenant_with_items(
+        &self,
+        tenant_id: &str,
+    ) -> Result<Vec<InvoiceWithItems>> {
+        let invoices = self.list_invoices_for_tenant(tenant_id).await?;
+        let mut result = Vec::with_capacity(invoices.len());
+        for invoice in invoices {
+            let items = self.get_invoice_items(&invoice.id).await?;
+            result.push(InvoiceWithItems { invoice, items });
+        }
+        Ok(result)
+    }
+
+    pub async fn get_invoice_with_items(&self, id: &str) -> Result<Option<InvoiceWithItems>> {
+        match self.get_invoice(id).await? {
+            Some(invoice) => {
+                let items = self.get_invoice_items(&invoice.id).await?;
+                Ok(Some(InvoiceWithItems { invoice, items }))
+            }
+            None => Ok(None),
+        }
     }
 
     pub async fn get_invoice_items(&self, invoice_id: &str) -> Result<Vec<InvoiceItem>> {

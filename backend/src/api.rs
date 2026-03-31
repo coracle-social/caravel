@@ -696,7 +696,7 @@ async fn list_invoices(
     let pubkey = state.api.extract_auth_pubkey(&headers)?;
     state.api.require_admin(&pubkey)?;
 
-    match state.api.repo.list_invoices().await {
+    match state.api.repo.list_invoices_with_items().await {
         Ok(invoices) => Ok(ok(StatusCode::OK, invoices)),
         Err(e) => Ok(err(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -714,7 +714,7 @@ async fn list_tenant_invoices(
     let auth = state.api.extract_auth_pubkey(&headers)?;
     state.api.require_admin_or_tenant(&auth, &pubkey)?;
 
-    match state.api.repo.list_invoices_for_tenant(&pubkey).await {
+    match state.api.repo.list_invoices_for_tenant_with_items(&pubkey).await {
         Ok(invoices) => Ok(ok(StatusCode::OK, invoices)),
         Err(e) => Ok(err(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -731,7 +731,7 @@ async fn get_invoice(
 ) -> std::result::Result<Response, ApiError> {
     let auth = state.api.extract_auth_pubkey(&headers)?;
 
-    let invoice = match state.api.repo.get_invoice(&id).await {
+    let invoice = match state.api.repo.get_invoice_with_items(&id).await {
         Ok(Some(i)) => i,
         Ok(None) => return Ok(err(StatusCode::NOT_FOUND, "not-found", "invoice not found")),
         Err(e) => {
@@ -743,7 +743,7 @@ async fn get_invoice(
         }
     };
 
-    state.api.require_admin_or_tenant(&auth, &invoice.tenant)?;
+    state.api.require_admin_or_tenant(&auth, &invoice.invoice.tenant)?;
 
     Ok(ok(StatusCode::OK, invoice))
 }

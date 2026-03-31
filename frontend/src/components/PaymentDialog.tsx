@@ -51,6 +51,8 @@ export default function PaymentDialog(props: PaymentDialogProps) {
     props.onClose()
   }
 
+  const totalSats = () => props.invoice.items.reduce((sum, item) => sum + item.sats, 0)
+
   const periodLabel = () => {
     const start = new Date(props.invoice.period_start * 1000)
     const end = new Date(props.invoice.period_end * 1000)
@@ -69,9 +71,9 @@ export default function PaymentDialog(props: PaymentDialogProps) {
         <div class="flex items-start justify-between gap-3">
           <div>
             <h2 class="text-lg font-semibold text-gray-900">Pay Invoice</h2>
-            <Show when={props.invoice.amount}>
+            <Show when={totalSats() > 0}>
               <p class="text-2xl font-bold text-gray-900 mt-1">
-                {props.invoice.amount.toLocaleString()} <span class="text-base font-normal text-gray-500">sats</span>
+                {totalSats().toLocaleString()} <span class="text-base font-normal text-gray-500">sats</span>
               </p>
             </Show>
             <Show when={props.invoice.period_start && props.invoice.period_end}>

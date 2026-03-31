@@ -75,3 +75,10 @@ pub struct InvoiceItem {
     pub relay: String,
     pub sats: i64,
 }
+
+#[derive(Debug, Clone, Serialize)]
+pub struct InvoiceWithItems {
+    #[serde(flatten)]
+    pub invoice: Invoice,
+    pub items: Vec<InvoiceItem>,
+}

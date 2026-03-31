@@ -133,7 +133,9 @@ export default function Account() {
                         <div class="flex items-center justify-between gap-3">
                           <div>
                             <span class="font-medium text-gray-900">
-                              {invoice.amount ? `${invoice.amount.toLocaleString()} sats` : "—"}
+                              {invoice.items.length > 0
+                                ? `${invoice.items.reduce((sum, item) => sum + item.sats, 0).toLocaleString()} sats`
+                                : "—"}
                             </span>
                             <Show when={invoice.period_start && invoice.period_end}>
                               <p class="text-xs text-gray-500 mt-0.5">{periodLabel()}</p>

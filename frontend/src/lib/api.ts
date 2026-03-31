@@ -100,11 +100,18 @@ export type Tenant = {
   billing_anchor: number
 }
 
+export type InvoiceItem = {
+  id: string
+  invoice: string
+  relay: string
+  sats: number
+}
+
 export type Invoice = {
   id: string
   tenant: string
   status: string
-  amount: number
+  items: InvoiceItem[]
   created_at: number
   attempted_at: number
   error: string

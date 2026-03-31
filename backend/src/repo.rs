@@ -313,10 +313,16 @@ impl Repo {
     }
 
     pub async fn mark_relay_synced(&self, relay_id: &str) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+
         sqlx::query("UPDATE relay SET synced = 1, status = 'active', sync_error = '' WHERE id = ?")
             .bind(relay_id)
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await?;
+
+        Self::insert_activity(&mut tx, "mark_relay_synced", "relay", relay_id).await?;
+
+        tx.commit().await?;
         Ok(())
     }
 

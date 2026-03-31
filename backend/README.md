@@ -38,6 +38,7 @@ Environment variables:
 | `ADMINS` | Comma-separated admin pubkeys (hex) | _optional_ |
 | `ALLOW_ORIGINS` | Comma-separated CORS origins. If empty, CORS is permissive. | _optional_ |
 | `ZOOID_API_URL` | Zooid API base URL used by infra worker | _required for infra sync_ |
+| `ZOOID_API_SECRET` | Nostr secret key used for authentication of requests to the zooid API | _required_ |
 | `RELAY_DOMAIN` | Base domain appended to relay subdomains | empty |
 | `LIVEKIT_URL` | LiveKit URL sent to zooid when relay livekit is enabled | _optional_ |
 | `LIVEKIT_API_KEY` | LiveKit API key sent to zooid | _optional_ |

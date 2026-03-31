@@ -14,6 +14,7 @@ const ACTIVITY_LABELS: Record<string, string> = {
   mark_invoice_attempted:         "Invoice payment attempted",
   mark_invoice_sent:              "Invoice sent",
   mark_invoice_closed:            "Invoice closed",
+  mark_relay_synced:              "Relay synchronized",
 }
 
 function formatDate(ts: number) {

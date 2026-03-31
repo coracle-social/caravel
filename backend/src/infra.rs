@@ -1,4 +1,5 @@
 use anyhow::Result;
+use nostr_sdk::prelude::*;
 use tokio::sync::Mutex;
 
 use crate::repo::Repo;
@@ -10,6 +11,7 @@ pub struct Infra {
     livekit_url: String,
     livekit_api_key: String,
     livekit_api_secret: String,
+    api_secret: String,
     repo: Repo,
     last_activity_at: std::sync::Arc<Mutex<i64>>,
 }
@@ -21,12 +23,14 @@ impl Infra {
         let livekit_url = std::env::var("LIVEKIT_URL").unwrap_or_default();
         let livekit_api_key = std::env::var("LIVEKIT_API_KEY").unwrap_or_default();
         let livekit_api_secret = std::env::var("LIVEKIT_API_SECRET").unwrap_or_default();
+        let api_secret = std::env::var("ZOOID_API_SECRET").unwrap_or_default();
         Self {
             api_url,
             relay_domain,
             livekit_url,
             livekit_api_key,
             livekit_api_secret,
+            api_secret,
             repo,
             last_activity_at: std::sync::Arc::new(Mutex::new(0)),
         }
@@ -67,7 +71,10 @@ impl Infra {
                 let is_new = relay.synced == 0;
 
                 match self.sync_relay(&relay, is_new).await {
-                    Ok(()) => self.repo.mark_relay_synced(&relay.id).await?,
+                    Ok(()) => {
+                        tracing::info!(relay = %relay.id, "relay sync succeeded");
+                        self.repo.mark_relay_synced(&relay.id).await?
+                    }
                     Err(e) => {
                         tracing::warn!(relay = %relay.id, error = %e, "relay sync failed");
                         self.repo.fail_relay_sync(&relay, e.to_string()).await?;
@@ -81,6 +88,13 @@ impl Infra {
         Ok(())
     }
 
+    async fn nip98_auth(&self, url: &str, method: HttpMethod) -> Result<String> {
+        let keys = Keys::parse(&self.api_secret)?;
+        let server_url = Url::parse(url)?;
+        let auth = HttpData::new(server_url, method).to_authorization(&keys).await?;
+        Ok(auth)
+    }
+
     async fn sync_relay(&self, relay: &crate::models::Relay, is_new: bool) -> Result<()> {
         let client = reqwest::Client::new();
         let base = self.api_url.trim_end_matches('/');
@@ -91,12 +105,12 @@ impl Infra {
             format!("{}.{}", relay.subdomain, self.relay_domain)
         };
 
-        let secret = uuid::Uuid::new_v4().to_string();
+        let secret = Keys::generate().secret_key().to_secret_hex();
 
         let livekit = if relay.livekit_enabled == 1 {
             serde_json::json!({
                 "enabled": true,
-                "url": self.livekit_url,
+                "server_url": self.livekit_url,
                 "api_key": self.livekit_api_key,
                 "api_secret": self.livekit_api_secret,
             })
@@ -113,6 +127,7 @@ impl Infra {
                 "name": relay.info_name,
                 "icon": relay.info_icon,
                 "description": relay.info_description,
+                "pubkey": relay.tenant,
             },
             "policy": {
                 "public_join": relay.policy_public_join == 1,
@@ -123,21 +138,26 @@ impl Infra {
             "blossom": { "enabled": relay.blossom_enabled == 1 },
             "livekit": livekit,
             "push": { "enabled": relay.push_enabled == 1 },
-            "roles": [
-                { "name": "admin", "permissions": ["read", "write", "admin"] },
-                { "name": "member", "permissions": ["read", "write"] },
-                { "name": "guest", "permissions": ["read"] },
-            ],
+            "roles": {
+                "admin": { "can_manage": true, "can_invite": true },
+                "member": { "can_invite": true },
+            },
         });
 
         let response = if is_new {
-            client.post(format!("{}/relay", base)).json(&body).send().await?
+            let url = format!("{}/relay/{}", base, relay.id);
+            let auth = self.nip98_auth(&url, HttpMethod::POST).await?;
+            client.post(&url).header("Authorization", auth).json(&body).send().await?
         } else {
-            client.put(format!("{}/relay/{}", base, relay.id)).json(&body).send().await?
+            let url = format!("{}/relay/{}", base, relay.id);
+            let auth = self.nip98_auth(&url, HttpMethod::PUT).await?;
+            client.put(&url).header("Authorization", auth).json(&body).send().await?
         };
 
         if !response.status().is_success() {
-            anyhow::bail!("zooid sync returned {}", response.status())
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            anyhow::bail!("zooid sync returned {}: {}", status, body)
         }
         Ok(())
     }

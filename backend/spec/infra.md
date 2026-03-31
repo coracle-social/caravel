@@ -28,6 +28,6 @@ Iterates over `repo.list_activity` since last run and does the following:
 
 ## `async fn sync_relay(&self, relay: &Relay, is_new: bool)`
 
-- If `is_new`, sends `POST /relay` to create the relay in zooid.
+- If `is_new`, sends `POST /relay/:id` to create the relay in zooid.
 - Otherwise, sends `PUT /relay/:id` to update it.
 - Passes full relay configuration in the body including host, schema, secret, inactive flag, info, policy, groups, management, blossom, livekit, push, and roles.

@@ -91,6 +91,16 @@ Notes:
 - Sets relay status to `inactive`, sets `sync_error`
 - Logs activity as `(fail_relay_sync, relay_id)`
 
+## `pub fn mark_relay_synced(&self, relay_id: &str) -> Result<()>`
+
+- Sets `synced = 1`, `status = 'active'`, clears `sync_error`
+- No activity log (called by infra after successful sync)
+
+## `pub fn max_activity_at(&self) -> Result<i64>`
+
+- Returns the maximum `created_at` value from the activity table, or 0 if empty
+- Used by infra to initialize the since guard on startup
+
 ## `pub fn create_invoice(&self, invoice: &Invoice, invoice_items: [&InvoiceItem]) -> Result<()>`
 
 - Saves an `invoice` row and related `invoice_item` rows

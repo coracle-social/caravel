@@ -81,6 +81,7 @@ A relay is a nostr relay owned by a `tenant` and hosted by the attached zooid in
 - `blossom_enabled` - whether blossom file storage is enabled
 - `livekit_enabled` - whether livekit calls are enabled
 - `push_enabled` - whether relay push is enabled
+- `synced` (private) - whether the relay has been successfully synced to zooid at least once. Used by infra to decide POST vs PUT.
 
 Some attributes persisted to zooid via API have special handling:
 

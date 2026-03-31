@@ -54,20 +54,24 @@ impl Infra {
         let activity = self.repo.list_activity(&since).await?;
 
         for a in activity {
-            let sync_type = match a.activity_type.as_str() {
-                "create_relay" => Some(true),
-                "update_relay" | "deactivate_relay" => Some(false),
-                _ => None,
-            };
+            let needs_sync = matches!(
+                a.activity_type.as_str(),
+                "create_relay" | "update_relay" | "deactivate_relay"
+            );
 
-            if let Some(is_new) = sync_type {
+            if needs_sync {
                 let Some(relay) = self.repo.get_relay(&a.resource_id).await? else {
                     continue;
                 };
 
-                if let Err(e) = self.sync_relay(&relay, is_new).await {
-                    tracing::warn!(relay = %relay.id, error = %e, "relay sync failed");
-                    self.repo.fail_relay_sync(&relay, e.to_string()).await?;
+                let is_new = relay.synced == 0;
+
+                match self.sync_relay(&relay, is_new).await {
+                    Ok(()) => self.repo.mark_relay_synced(&relay.id).await?,
+                    Err(e) => {
+                        tracing::warn!(relay = %relay.id, error = %e, "relay sync failed");
+                        self.repo.fail_relay_sync(&relay, e.to_string()).await?;
+                    }
                 }
             }
 

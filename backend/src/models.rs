@@ -48,6 +48,8 @@ pub struct Relay {
     pub blossom_enabled: i64,
     pub livekit_enabled: i64,
     pub push_enabled: i64,
+    #[serde(skip_serializing)]
+    pub synced: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]

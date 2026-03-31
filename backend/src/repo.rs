@@ -162,13 +162,13 @@ impl Repo {
 
     pub async fn list_relays(&self) -> Result<Vec<Relay>> {
         let rows = sqlx::query_as::<_, Relay>(
-            "SELECT id, tenant, schema, subdomain, plan, status, sync_error,
-                    info_name, info_icon, info_description,
-                    policy_public_join, policy_strip_signatures,
-                    groups_enabled, management_enabled, blossom_enabled,
-                    livekit_enabled, push_enabled
-             FROM relay
-             ORDER BY id",
+             "SELECT id, tenant, schema, subdomain, plan, status, sync_error,
+                     info_name, info_icon, info_description,
+                     policy_public_join, policy_strip_signatures,
+                     groups_enabled, management_enabled, blossom_enabled,
+                     livekit_enabled, push_enabled, synced
+              FROM relay
+              ORDER BY id",
         )
         .fetch_all(&self.pool)
         .await?;
@@ -177,14 +177,14 @@ impl Repo {
 
     pub async fn list_relays_for_tenant(&self, tenant_id: &str) -> Result<Vec<Relay>> {
         let rows = sqlx::query_as::<_, Relay>(
-            "SELECT id, tenant, schema, subdomain, plan, status, sync_error,
-                    info_name, info_icon, info_description,
-                    policy_public_join, policy_strip_signatures,
-                    groups_enabled, management_enabled, blossom_enabled,
-                    livekit_enabled, push_enabled
-             FROM relay
-             WHERE tenant = ?
-             ORDER BY id",
+             "SELECT id, tenant, schema, subdomain, plan, status, sync_error,
+                     info_name, info_icon, info_description,
+                     policy_public_join, policy_strip_signatures,
+                     groups_enabled, management_enabled, blossom_enabled,
+                     livekit_enabled, push_enabled, synced
+              FROM relay
+              WHERE tenant = ?
+              ORDER BY id",
         )
         .bind(tenant_id)
         .fetch_all(&self.pool)
@@ -194,13 +194,13 @@ impl Repo {
 
     pub async fn get_relay(&self, id: &str) -> Result<Option<Relay>> {
         let row = sqlx::query_as::<_, Relay>(
-            "SELECT id, tenant, schema, subdomain, plan, status, sync_error,
-                    info_name, info_icon, info_description,
-                    policy_public_join, policy_strip_signatures,
-                    groups_enabled, management_enabled, blossom_enabled,
-                    livekit_enabled, push_enabled
-             FROM relay
-             WHERE id = ?",
+             "SELECT id, tenant, schema, subdomain, plan, status, sync_error,
+                     info_name, info_icon, info_description,
+                     policy_public_join, policy_strip_signatures,
+                     groups_enabled, management_enabled, blossom_enabled,
+                     livekit_enabled, push_enabled, synced
+              FROM relay
+              WHERE id = ?",
         )
         .bind(id)
         .fetch_optional(&self.pool)
@@ -309,6 +309,14 @@ impl Repo {
         Self::insert_activity(&mut tx, "fail_relay_sync", "relay", &relay.id).await?;
 
         tx.commit().await?;
+        Ok(())
+    }
+
+    pub async fn mark_relay_synced(&self, relay_id: &str) -> Result<()> {
+        sqlx::query("UPDATE relay SET synced = 1, status = 'active', sync_error = '' WHERE id = ?")
+            .bind(relay_id)
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 

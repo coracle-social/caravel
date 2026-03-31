@@ -520,6 +520,7 @@ async fn create_relay(
         blossom_enabled: payload.blossom_enabled.unwrap_or(0),
         livekit_enabled: payload.livekit_enabled.unwrap_or(0),
         push_enabled: payload.push_enabled.unwrap_or(1),
+        synced: 0,
     };
 
     relay = match state.api.prepare_relay(relay) {
@@ -902,6 +903,7 @@ mod tests {
             blossom_enabled: 0,
             livekit_enabled: 0,
             push_enabled: 1,
+            synced: 0,
         };
         repo.create_relay(&relay).await.expect("create relay");
     }

@@ -13,16 +13,18 @@ Members:
 
 ## `pub async fn start(self)`
 
-Calls `self.tick` in a loop every 10 seconds.
+- Initializes `last_activity_at` from `repo.max_activity_at()` so historical activities are not replayed on restart.
+- Calls `self.tick` in a loop every 10 seconds.
 
 ## `pub async fn tick(self)`
 
 Iterates over `repo.list_activity` since last run and does the following:
 
-- For `create_relay` activity, create the relay in zooid via `POST /relay`.
-- For `update_relay` or `deactivate_relay` activity, update the relay in zooid via `PUT /relay/:id`.
+- For `create_relay`, `update_relay`, or `deactivate_relay` activity, sync the relay to zooid.
+  - Uses `relay.synced` to decide POST vs PUT (not the activity type), so already-synced relays always use PUT even on restart.
+  - On success, calls `repo.mark_relay_synced` to set `synced = 1`, `status = 'active'`, and clear `sync_error`.
+  - On failure, calls `repo.fail_relay_sync`.
 - All other activity types are ignored (e.g. `fail_relay_sync` must not trigger another sync).
-- If unsuccessful, call `repo.fail_relay_sync`.
 
 ## `async fn sync_relay(&self, relay: &Relay, is_new: bool)`
 

@@ -18,6 +18,7 @@ import {
   updateTenantBilling,
   type Activity,
   type CreateRelayInput,
+  type Invoice,
   type Relay,
   type Tenant,
   type UpdateRelayInput,
@@ -129,6 +130,11 @@ export const updateRelayPlanById = (id: string, plan: string) => updateRelay(id,
 
 export const deactivateRelayById = (id: string) => deactivateRelay(id)
 
+export async function checkPendingInvoice(): Promise<Invoice | undefined> {
+  const invoices = await listTenantInvoices(account()!.pubkey)
+  return invoices.find(inv => inv.status === "pending")
+}
+
 export async function getRelayMembers(url: string) {
   const management = new RelayManagement(new NostrRelay(url), account()!.signer)
 
@@ -139,4 +145,4 @@ export async function getRelayMembers(url: string) {
   }
 }
 
-export type { Activity, Relay, Tenant }
+export type { Activity, Invoice, Relay, Tenant }

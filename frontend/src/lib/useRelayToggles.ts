@@ -1,5 +1,5 @@
 import { createSignal } from "solid-js"
-import { updateRelayById, deactivateRelayById, type Relay } from "@/lib/hooks"
+import { updateRelayById, deactivateRelayById, checkPendingInvoice, type Invoice, type Relay } from "@/lib/hooks"
 import { setToastMessage } from "@/components/Toast"
 import type { PlanId } from "@/lib/api"
 
@@ -30,6 +30,7 @@ export default function useRelayToggles(
   { refetch, mutate }: RelayActions,
 ) {
   const [busy, setBusy] = createSignal(false)
+  const [pendingInvoice, setPendingInvoice] = createSignal<Invoice | undefined>()
 
   async function updateRelay(next: Relay, previous: Relay) {
     mutate(next)
@@ -85,6 +86,11 @@ export default function useRelayToggles(
       setToastMessage(e instanceof Error ? e.message : "Failed to update relay plan")
       throw e
     }
+
+    if (plan !== "free") {
+      const invoice = await checkPendingInvoice()
+      if (invoice) setPendingInvoice(invoice)
+    }
   }
 
   const toggles = {
@@ -97,5 +103,5 @@ export default function useRelayToggles(
     onToggleLivekitSupport: () => toggle("livekit_enabled", relay()?.plan !== "free"),
   }
 
-  return { busy, handleDeactivate, handleUpdatePlan, toggles }
+  return { busy, handleDeactivate, handleUpdatePlan, pendingInvoice, clearPendingInvoice: () => setPendingInvoice(undefined), toggles }
 }

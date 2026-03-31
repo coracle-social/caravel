@@ -104,6 +104,7 @@ export type Invoice = {
   id: string
   tenant: string
   status: string
+  amount: number
   created_at: number
   attempted_at: number
   error: string

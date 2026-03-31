@@ -1,15 +1,17 @@
 import { createEffect, createMemo, createSignal, For, Show } from "solid-js"
 import PageContainer from "@/components/PageContainer"
 import LoadingState from "@/components/LoadingState"
+import PaymentDialog from "@/components/PaymentDialog"
 import useMinLoading from "@/components/useMinLoading"
-import { updateActiveTenantBilling, useTenant, useTenantInvoices } from "@/lib/hooks"
+import { updateActiveTenantBilling, useTenant, useTenantInvoices, type Invoice } from "@/lib/hooks"
 
 export default function Account() {
   const [tenant, { refetch: refetchTenant }] = useTenant()
-  const [invoices] = useTenantInvoices()
+  const [invoices, { refetch: refetchInvoices }] = useTenantInvoices()
   const [nwcUrl, setNwcUrl] = createSignal("")
   const [saving, setSaving] = createSignal(false)
   const [error, setError] = createSignal("")
+  const [selectedInvoice, setSelectedInvoice] = createSignal<Invoice | undefined>()
   const invoicesLoading = useMinLoading(() => invoices.loading)
 
   const hasBillingChanges = createMemo(() => {
@@ -36,9 +38,20 @@ export default function Account() {
     }
   }
 
+  function handleInvoiceDialogClose() {
+    setSelectedInvoice(undefined)
+    void refetchInvoices()
+  }
+
   function logout() {
     localStorage.clear()
     window.location.href = "/"
+  }
+
+  const invoiceStatusStyles: Record<string, string> = {
+    pending: "bg-yellow-50 text-yellow-700 border-yellow-200",
+    paid: "bg-green-50 text-green-700 border-green-200",
+    closed: "bg-gray-100 text-gray-500 border-gray-200",
   }
 
   return (
@@ -99,25 +112,64 @@ export default function Account() {
             <LoadingState message="Loading invoices..." paddingClass="py-8" />
           </Show>
           <Show when={!invoicesLoading()}>
-            <Show when={(invoices()?.length ?? 0) > 0} fallback={<p class="text-gray-500">No invoices yet.</p>}>
+            <Show when={(invoices()?.length ?? 0) > 0} fallback={<p class="text-gray-500 text-sm">No invoices yet.</p>}>
               <ul class="space-y-3">
                 <For each={invoices()}>
-                  {(invoice) => (
-                    <li class="rounded-lg border border-gray-200 p-3 text-sm text-gray-700">
-                      <div class="flex items-center justify-between gap-3">
-                        <span class="font-medium">—</span>
-                        <span class="uppercase text-xs tracking-wide text-gray-500">{invoice.status}</span>
-                      </div>
-                      <p class="text-xs text-gray-500 mt-1">{new Date(invoice.created_at * 1000).toLocaleString()}</p>
-                      <p class="text-xs mt-2 break-all">{invoice.bolt11}</p>
-                    </li>
-                  )}
+                  {(invoice) => {
+                    const isPending = () => invoice.status === "pending"
+                    const statusStyle = () => invoiceStatusStyles[invoice.status] ?? "bg-gray-100 text-gray-500 border-gray-200"
+                    const periodLabel = () => {
+                      const start = new Date(invoice.period_start * 1000)
+                      const end = new Date(invoice.period_end * 1000)
+                      return `${start.toLocaleDateString()} – ${end.toLocaleDateString()}`
+                    }
+
+                    return (
+                      <li
+                        class={`rounded-lg border border-gray-200 p-4 text-sm ${isPending() ? "cursor-pointer hover:border-blue-300 hover:bg-blue-50 transition-colors" : ""}`}
+                        onClick={() => isPending() && setSelectedInvoice(invoice)}
+                        title={isPending() ? "Click to pay this invoice" : undefined}
+                      >
+                        <div class="flex items-center justify-between gap-3">
+                          <div>
+                            <span class="font-medium text-gray-900">
+                              {invoice.amount ? `${invoice.amount.toLocaleString()} sats` : "—"}
+                            </span>
+                            <Show when={invoice.period_start && invoice.period_end}>
+                              <p class="text-xs text-gray-500 mt-0.5">{periodLabel()}</p>
+                            </Show>
+                          </div>
+                          <div class="flex items-center gap-2 flex-shrink-0">
+                            <Show when={isPending()}>
+                              <span class="text-xs text-blue-600 font-medium">Pay now →</span>
+                            </Show>
+                            <span class={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium capitalize ${statusStyle()}`}>
+                              {invoice.status}
+                            </span>
+                          </div>
+                        </div>
+                        <Show when={invoice.error}>
+                          <p class="text-xs text-red-500 mt-2">{invoice.error}</p>
+                        </Show>
+                      </li>
+                    )
+                  }}
                 </For>
               </ul>
             </Show>
           </Show>
         </section>
       </div>
+
+      <Show when={selectedInvoice()}>
+        {(invoice) => (
+          <PaymentDialog
+            invoice={invoice()}
+            open={true}
+            onClose={handleInvoiceDialogClose}
+          />
+        )}
+      </Show>
     </PageContainer>
   )
 }

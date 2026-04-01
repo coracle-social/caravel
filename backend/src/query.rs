@@ -113,28 +113,6 @@ impl Query {
         Ok(row)
     }
 
-    pub async fn max_activity_at(&self) -> Result<i64> {
-        let val = sqlx::query_scalar::<_, Option<i64>>(
-            "SELECT MAX(created_at) FROM activity",
-        )
-        .fetch_one(&self.pool)
-        .await?;
-        Ok(val.unwrap_or(0))
-    }
-
-    pub async fn list_activity(&self, since: &i64) -> Result<Vec<Activity>> {
-        let rows = sqlx::query_as::<_, Activity>(
-            "SELECT id, tenant, created_at, activity_type, resource_type, resource_id
-             FROM activity
-             WHERE created_at > ?
-             ORDER BY created_at, id",
-        )
-        .bind(since)
-        .fetch_all(&self.pool)
-        .await?;
-        Ok(rows)
-    }
-
     pub async fn list_activity_for_relay(&self, relay_id: &str) -> Result<Vec<Activity>> {
         let rows = sqlx::query_as::<_, Activity>(
             "SELECT id, tenant, created_at, activity_type, resource_type, resource_id

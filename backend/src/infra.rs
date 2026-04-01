@@ -38,14 +38,7 @@ impl Infra {
     }
 
     pub async fn start(self) {
-        // Subscribe before catch-up so no activities are missed between query and listen
         let mut rx = self.command.notify.subscribe();
-
-        // Catch up on any unsynced relays from before this process started
-        match self.catch_up().await {
-            Ok(()) => {}
-            Err(e) => tracing::error!(error = %e, "infra catch-up failed"),
-        }
 
         loop {
             match rx.recv().await {
@@ -55,25 +48,11 @@ impl Infra {
                     }
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                    tracing::warn!(missed = n, "infra lagged, running catch-up");
-                    if let Err(e) = self.catch_up().await {
-                        tracing::error!(error = %e, "infra catch-up failed");
-                    }
+                    tracing::warn!(missed = n, "infra lagged");
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
             }
         }
-    }
-
-    async fn catch_up(&self) -> Result<()> {
-        let relays = self.query.list_relays().await?;
-        for relay in relays {
-            if relay.synced == 0 && relay.sync_error.is_empty() {
-                let is_new = relay.synced == 0;
-                self.sync_and_report(&relay, is_new).await;
-            }
-        }
-        Ok(())
     }
 
     async fn handle_activity(&self, activity: &Activity) -> Result<()> {

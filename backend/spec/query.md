@@ -35,15 +35,6 @@ Members:
 
 - Returns matching relay
 
-## `pub fn max_activity_at(&self) -> Result<i64>`
-
-- Returns the maximum `created_at` value from the activity table, or 0 if empty
-- Used by infra to initialize the since guard on startup
-
-## `pub fn list_activity(&self, since: &i64) -> Result<Vec<Activity>>`
-
-- Returns all activity occuring after `since`
-
 ## `pub fn list_activity_for_relay(&self, relay_id: &str) -> Result<Vec<Activity>>`
 
 - Returns all activity where `resource_type = 'relay'` and `resource_id = relay_id`

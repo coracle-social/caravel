@@ -46,7 +46,9 @@ Notes:
 
 - Serves `GET /identity`
 - Authorizes anyone, but must be authorized
-- If a tenant for the identity doesn't exist, one is created
+- If a tenant for the identity doesn't exist:
+  - Call the Stripe API to create a new customer and subscription
+  - Create a new tenant using `command.create_tenant` with payload and stripe info
 - Return `data` is an `Identity` struct
 
 --- Tenant routes
@@ -119,7 +121,7 @@ Notes:
 
 - Serves `POST /relays/:id/deactivate`
 - Authorizes admin or relay owner
-- If relay is already active, return a `400` with `code=relay-is-inactive`
+- If relay is already inactive, return a `400` with `code=relay-is-inactive`
 - Call `billing.deactivate_relay`
 - Return `data` is empty
 

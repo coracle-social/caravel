@@ -6,3 +6,4 @@
 - Adds CORS middleware based on `origins`
 - Calls `axum::serve` with a listener
 - Spawns `infra.start`
+- Spawns `billing.start`

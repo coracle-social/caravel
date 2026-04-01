@@ -52,10 +52,20 @@ Notes:
 
 ## `pub fn fail_relay_sync(&self, relay: &Relay, sync_error: &str) -> Result<()>`
 
-- Sets relay status to `inactive`, sets `sync_error`
+- Sets `sync_error` on the relay
 - Logs activity as `(fail_relay_sync, relay_id)`
 
 ## `pub fn complete_relay_sync(&self, relay_id: &str) -> Result<()>`
 
-- Sets `synced = 1`, `status = 'active'`, clears `sync_error`
+- Sets `synced = 1`, clears `sync_error`
 - Logs activity as `(complete_relay_sync, relay_id)`
+
+## `pub fn delete_relay_subscription_item(&self, relay_id: &str) -> Result<()>`
+
+- Sets `stripe_subscription_item_id = null`
+- Does not log activity
+
+## `pub fn set_relay_subscription_item(&self, relay_id: &str, stripe_subscription_item_id: &str) -> Result<()>`
+
+- Sets `stripe_subscription_item_id`
+- Does not log activity

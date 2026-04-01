@@ -14,14 +14,8 @@ Members:
 
 ## `pub async fn start(self)`
 
-- Subscribes to `command.notify` before doing anything else so no activities are missed.
-- Calls `catch_up` to sync any relays that need it from before this process started.
+- Subscribes to `command.notify`
 - Loops on `rx.recv()`, calling `handle_activity` for each received `Activity`.
-- On `Lagged`, logs a warning and runs `catch_up` to recover.
-
-## `async fn catch_up(&self)`
-
-- Lists all relays via `query.list_relays()` and syncs any where `synced == 0` and `sync_error` is empty.
 
 ## `async fn handle_activity(&self, activity: &Activity)`
 

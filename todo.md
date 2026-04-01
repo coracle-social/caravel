@@ -1,6 +1,3 @@
-- [ ] Show relay status on details page
-- [ ] Show relay activity history on details page (add activity route and repo method to backend spec + implementation)
-- [ ] Infra provisioning isn't happening. At least, the relay's status isn't being updated
-- [ ] If relay is inactive, show "reactivate" instead of "inactivate" in the relay detal menu
-- [ ] Invoices
-- [ ] Stripe
+- [ ] Split repo into queries and commands
+- [ ] Fix billing by using stripe as a backend to do proration, then mark invoices paid manually when using bitcoin.
+- [ ] Send a payment link instead of an invoice so we can generate/pay on the fly

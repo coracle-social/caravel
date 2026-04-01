@@ -2,6 +2,7 @@
 
 - Configures logging
 - Creates instances of `Repo`, `Robot`, `Billing`, `Api`, and `Infra`
-- Spawns `billing.start`
 - Spawns `infra.start`
-- Calls `api.serve`
+- Get an axum router from `api.router`
+- Adds CORS middleware based on `origins`
+- Calls `axum::serve` with a listener

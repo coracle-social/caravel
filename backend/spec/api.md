@@ -21,11 +21,9 @@ Notes:
 
 - Reads environment and populates members
 
-## `pub fn serve(&self) -> Result<()>`
+## `pub fn router(&self) -> Result<()>`
 
-- Initializes an `axum::Router`
-- Adds CORS middleware based on `origins`
-- Calls `axum::serve` with a listener
+- Returns an `axum::Router`
 
 --- Plan routes
 
@@ -65,24 +63,18 @@ Notes:
 - Authorizes admin or matching tenant
 - Return `data` is a single tenant struct from `repo.get_tenant`
 
+## `async fn update_tenant(...) -> Response`
+
+- Serves `PUT /tenants/:pubkey`
+- Authorizes admin or matching tenant
+- Updates tenant using `repo.update_tenant`
+- Return `data` is the updated tenant struct
+
 ## `async fn list_tenant_relays(...) -> Response`
 
 - Serves `GET /tenants/:pubkey/relays`
 - Authorizes admin or matching tenant
 - Return `data` is a list of relay structs from `repo.list_relays_for_tenant`
-
-## `async fn list_tenant_invoices(...) -> Response`
-
-- Serves `GET /tenants/:pubkey/invoices`
-- Authorizes admin or matching tenant
-- Return `data` is a list of invoice structs from `repo.list_invoices_for_tenant`
-
-## `async fn update_tenant_billing(...) -> Response`
-
-- Serves `PUT /tenants/:pubkey/billing`
-- Authorizes admin or matching tenant
-- Updates tenant billing NWC URL using `repo.update_tenant_nwc_url`
-- Return `data` is the submitted billing payload
 
 --- Relay routes
 
@@ -120,28 +112,24 @@ Notes:
 
 - Serves `GET /relays/:id/activity`
 - Authorizes admin or relay owner
-- Return `data` is a list of activity structs from `repo.list_activity_for_relay`
+- Get activity from `repo.list_activity_for_relay`
+- Return `data` is `{activity}`
 
 ## `async fn deactivate_relay(...) -> Response`
 
 - Serves `POST /relays/:id/deactivate`
 - Authorizes admin or relay owner
-- Deactivates relay using `repo.deactivate_relay`
+- If relay is already active, return a `400` with `code=relay-is-inactive`
+- Call `billing.deactivate_relay`
 - Return `data` is empty
 
---- Invoice routes
+## `async fn reactivate_relay(...) -> Response`
 
-## `async fn list_invoices(...) -> Response`
-
-- Serves `GET /invoices`
-- Authorizes admin only
-- Return `data` is a list of invoice structs from `repo.list_invoices`
-
-## `async fn get_invoice(...) -> Response`
-
-- Serves `GET /invoices/:id`
-- Authorizes admin or invoice owner
-- Return `data` is a single invoice struct from `repo.get_invoice`
+- Serves `POST /relays/:id/reactivate`
+- Authorizes admin or relay owner
+- If relay is already active, return a `400` with `code=relay-is-active`
+- Call `billing.reactivate_relay`
+- Return `data` is empty
 
 --- Utilities
 

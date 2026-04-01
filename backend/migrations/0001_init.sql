@@ -10,8 +10,7 @@ CREATE TABLE IF NOT EXISTS activity (
 CREATE TABLE IF NOT EXISTS tenant (
   pubkey TEXT PRIMARY KEY,
   nwc_url TEXT NOT NULL DEFAULT '',
-  created_at INTEGER NOT NULL,
-  billing_anchor INTEGER NOT NULL
+  created_at INTEGER NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS relay (
@@ -21,6 +20,7 @@ CREATE TABLE IF NOT EXISTS relay (
   subdomain TEXT NOT NULL UNIQUE,
   plan TEXT NOT NULL,
   status TEXT NOT NULL,
+  synced INTEGER NOT NULL DEFAULT 0,
   sync_error TEXT NOT NULL DEFAULT '',
   info_name TEXT NOT NULL DEFAULT '',
   info_icon TEXT NOT NULL DEFAULT '',
@@ -33,29 +33,4 @@ CREATE TABLE IF NOT EXISTS relay (
   livekit_enabled INTEGER NOT NULL DEFAULT 0,
   push_enabled INTEGER NOT NULL DEFAULT 1,
   FOREIGN KEY (tenant) REFERENCES tenant(pubkey)
-);
-
-CREATE TABLE IF NOT EXISTS invoice (
-  id TEXT PRIMARY KEY,
-  tenant TEXT NOT NULL,
-  status TEXT NOT NULL,
-  created_at INTEGER NOT NULL,
-  attempted_at INTEGER NOT NULL DEFAULT 0,
-  error TEXT NOT NULL DEFAULT '',
-  closed_at INTEGER NOT NULL DEFAULT 0,
-  sent_at INTEGER NOT NULL DEFAULT 0,
-  paid_at INTEGER NOT NULL DEFAULT 0,
-  bolt11 TEXT NOT NULL,
-  period_start INTEGER NOT NULL,
-  period_end INTEGER NOT NULL,
-  FOREIGN KEY (tenant) REFERENCES tenant(pubkey)
-);
-
-CREATE TABLE IF NOT EXISTS invoice_item (
-  id TEXT PRIMARY KEY,
-  invoice TEXT NOT NULL,
-  relay TEXT NOT NULL,
-  sats INTEGER NOT NULL,
-  FOREIGN KEY (invoice) REFERENCES invoice(id),
-  FOREIGN KEY (relay) REFERENCES relay(id)
 );

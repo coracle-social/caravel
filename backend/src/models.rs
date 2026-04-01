@@ -26,7 +26,6 @@ pub struct Tenant {
     #[serde(skip_serializing)]
     pub nwc_url: String,
     pub created_at: i64,
-    pub billing_anchor: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -48,37 +47,5 @@ pub struct Relay {
     pub blossom_enabled: i64,
     pub livekit_enabled: i64,
     pub push_enabled: i64,
-    #[serde(skip_serializing)]
     pub synced: i64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
-pub struct Invoice {
-    pub id: String,
-    pub tenant: String,
-    pub status: String,
-    pub created_at: i64,
-    pub attempted_at: i64,
-    pub error: String,
-    pub closed_at: i64,
-    pub sent_at: i64,
-    pub paid_at: i64,
-    pub bolt11: String,
-    pub period_start: i64,
-    pub period_end: i64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
-pub struct InvoiceItem {
-    pub id: String,
-    pub invoice: String,
-    pub relay: String,
-    pub sats: i64,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct InvoiceWithItems {
-    #[serde(flatten)]
-    pub invoice: Invoice,
-    pub items: Vec<InvoiceItem>,
 }

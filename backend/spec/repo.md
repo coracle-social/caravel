@@ -10,7 +10,7 @@ Notes:
 
 - All public write methods should be run in a transaction so they're atomic
 - All writes should be accompanied by an activity log entry of `(tenant, activity_type, resource_type, resource_id)`
-- Database table names are singular: `activity`, `tenant`, `relay`, `invoice`, `invoice_item`
+- Database table names are singular: `activity`, `tenant`, `relay`
 
 ## `pub fn new() -> Self`
 
@@ -38,15 +38,10 @@ Notes:
 - Creates tenant, may throw sqlite uniqueness error on pubkey
 - Logs activity as `(create_tenant, tenant_id)`
 
-## `pub fn update_tenant_billing_anchor(&self, pubkey: &str, billing_anchor: i64) -> Result<()>`
+## `pub fn update_tenant(&self, tenant: &Tenant) -> Result<()>`
 
-- Updates the tenant's `billing_anchor`
-- Logs activity as `(update_tenant_billing_anchor, tenant_id)`
-
-## `pub fn update_tenant_nwc_url(&self, pubkey: &str, nwc_url: &str) -> Result<()>`
-
-- Updates tenant `nwc_url`
-- Logs activity as `(update_tenant_nwc_url, tenant_id)`
+- Updates tenant
+- Logs activity as `(update_tenant, tenant_id)`
 
 ## `pub fn list_plans() -> Vec<Plan>`
 
@@ -101,59 +96,12 @@ Notes:
 - Returns the maximum `created_at` value from the activity table, or 0 if empty
 - Used by infra to initialize the since guard on startup
 
-## `pub fn create_invoice(&self, invoice: &Invoice, invoice_items: [&InvoiceItem]) -> Result<()>`
-
-- Saves an `invoice` row and related `invoice_item` rows
-- Logs activity as `(create_invoice, invoice_id)`
-
-## `pub fn list_invoices() -> Result<Vec<Invoice>>`
-
-- Returns all invoices
-
-## `pub fn list_invoices_for_tenant(tenant_id: &str) -> Result<Vec<Invoice>>`
-
-- Returns all matching invoices
-
-## `pub fn mark_invoice_paid(&self, invoice_id: &str) -> Result<()>`
-
-- Sets invoice status to `paid`
-- Sets `paid_at` to now
-- Clears `error` if set
-- Logs activity as `(mark_invoice_paid, invoice_id)`
-
-## `pub fn mark_invoice_attempted(&self, invoice_id: &str, error: &str) -> Result<()>`
-
-- Sets `attempted_at` to now
-- Updates `error` if provided
-- Leaves status as `pending`
-- Logs activity as `(mark_invoice_attempted, invoice_id)`
-
-## `pub fn mark_invoice_sent(&self, invoice_id: &str) -> Result<()>`
-
-- Sets `sent_at` to now
-- Leaves status as `pending`
-- Logs activity as `(mark_invoice_sent, invoice_id)`
-
-## `pub fn mark_invoice_closed(&self, invoice_id: &str) -> Result<()>`
-
-- Sets invoice status to `closed`
-- Sets `closed_at` to now
-- Logs activity as `(mark_invoice_closed, invoice_id)`
-
 ## `pub fn list_activity(&self, since: &i64) -> Result<Vec<Activity>>`
 
 - Returns all activity occuring after `since`
-
-## `pub fn list_activity_for_tenant(&self, tenant: &str, since: &i64) -> Result<Vec<Activity>>`
-
-- Returns all activity occuring after `since` matching `tenant`
 
 ## `pub fn list_activity_for_relay(&self, relay_id: &str) -> Result<Vec<Activity>>`
 
 - Returns all activity where `resource_type = 'relay'` and `resource_id = relay_id`
 - Ordered newest-first
 
-## `pub fn get_relay_plan_sats(&self, plan: &str) -> Result<i64>`
-
-- Returns the monthly sats amount for a given plan id
-- Uses `list_plans()` data for consistent pricing logic across API and billing

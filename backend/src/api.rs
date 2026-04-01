@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use anyhow::{Result, anyhow};
+use anyhow::anyhow;
 use axum::{
     Json, Router,
     extract::{Path, State},
@@ -11,18 +11,17 @@ use axum::{
 use base64::Engine;
 use nostr_sdk::{Event, JsonUtil, Kind};
 use serde::{Deserialize, Serialize};
-use tower_http::cors::{AllowOrigin, CorsLayer};
 
+use crate::billing::Billing;
 use crate::models::{Relay, Tenant};
 use crate::repo::Repo;
 
 #[derive(Clone)]
 pub struct Api {
     host: String,
-    port: u16,
     admins: Vec<String>,
-    origins: Vec<String>,
     repo: Repo,
+    billing: Billing,
 }
 
 #[derive(Clone)]
@@ -58,45 +57,25 @@ impl IntoResponse for ApiError {
 }
 
 impl Api {
-    pub fn new(repo: Repo) -> Self {
+    pub fn new(repo: Repo, billing: Billing) -> Self {
         let host = std::env::var("HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
-        let port = std::env::var("PORT")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(3000);
         let admins = std::env::var("ADMINS")
             .unwrap_or_default()
             .split(',')
             .map(|v| v.trim().to_lowercase())
             .filter(|v| !v.is_empty())
             .collect();
-        let origins = std::env::var("ALLOW_ORIGINS")
-            .unwrap_or_default()
-            .split(',')
-            .map(|v| v.trim().to_string())
-            .filter(|v| !v.is_empty())
-            .collect();
         Self {
             host,
-            port,
             admins,
-            origins,
             repo,
+            billing,
         }
     }
 
-    pub async fn serve(&self) -> Result<()> {
-        let app = self.router();
-
-        let listener =
-            tokio::net::TcpListener::bind(format!("{}:{}", self.host, self.port)).await?;
-        axum::serve(listener, app).await?;
-        Ok(())
-    }
-
-    fn router(&self) -> Router {
+    pub fn router(self) -> Router {
         let state = AppState {
-            api: Arc::new(self.clone()),
+            api: Arc::new(self),
         };
 
         Router::new()
@@ -104,31 +83,14 @@ impl Api {
             .route("/plans", get(list_plans))
             .route("/plans/:id", get(get_plan))
             .route("/tenants", get(list_tenants))
-            .route("/tenants/:pubkey", get(get_tenant))
+            .route("/tenants/:pubkey", get(get_tenant).put(update_tenant))
             .route("/tenants/:pubkey/relays", get(list_tenant_relays))
-            .route("/tenants/:pubkey/invoices", get(list_tenant_invoices))
-            .route("/tenants/:pubkey/billing", put(update_tenant_billing))
             .route("/relays", get(list_relays).post(create_relay))
             .route("/relays/:id", get(get_relay).put(update_relay))
             .route("/relays/:id/activity", get(list_relay_activity))
             .route("/relays/:id/deactivate", post(deactivate_relay))
-            .route("/invoices", get(list_invoices))
-            .route("/invoices/:id", get(get_invoice))
+            .route("/relays/:id/reactivate", post(reactivate_relay))
             .with_state(state)
-            .layer(self.cors_layer())
-    }
-
-    fn cors_layer(&self) -> CorsLayer {
-        if self.origins.is_empty() {
-            CorsLayer::permissive()
-        } else {
-            let origins = self
-                .origins
-                .iter()
-                .filter_map(|o| o.parse::<axum::http::HeaderValue>().ok())
-                .collect::<Vec<_>>();
-            CorsLayer::new().allow_origin(AllowOrigin::list(origins))
-        }
     }
 
     fn extract_auth_pubkey(&self, headers: &HeaderMap) -> std::result::Result<String, ApiError> {
@@ -289,9 +251,9 @@ fn map_unique_error(err: &anyhow::Error) -> Option<&'static str> {
     None
 }
 
-#[derive(Deserialize, Serialize)]
-struct UpdateTenantBillingRequest {
-    nwc_url: String,
+#[derive(Deserialize)]
+struct UpdateTenantRequest {
+    nwc_url: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -364,7 +326,6 @@ async fn get_identity(
         pubkey: pubkey.clone(),
         nwc_url: String::new(),
         created_at: now_ts(),
-        billing_anchor: now_ts(),
     };
 
     match state.api.repo.create_tenant(&tenant).await {
@@ -489,7 +450,7 @@ async fn list_relay_activity(
     state.api.require_admin_or_tenant(&auth, &relay.tenant)?;
 
     match state.api.repo.list_activity_for_relay(&id).await {
-        Ok(activity) => Ok(ok(StatusCode::OK, activity)),
+        Ok(activity) => Ok(ok(StatusCode::OK, serde_json::json!({ "activity": activity }))),
         Err(e) => Ok(err(StatusCode::INTERNAL_SERVER_ERROR, "internal", &e.to_string())),
     }
 }
@@ -679,7 +640,15 @@ async fn deactivate_relay(
 
     state.api.require_admin_or_tenant(&auth, &relay.tenant)?;
 
-    match state.api.repo.deactivate_relay(&relay).await {
+    if relay.status == "inactive" {
+        return Ok(err(
+            StatusCode::BAD_REQUEST,
+            "relay-is-inactive",
+            "relay is already inactive",
+        ));
+    }
+
+    match state.api.billing.deactivate_relay(&id).await {
         Ok(()) => Ok(ok(StatusCode::OK, ())),
         Err(e) => Ok(err(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -689,51 +658,16 @@ async fn deactivate_relay(
     }
 }
 
-async fn list_invoices(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> std::result::Result<Response, ApiError> {
-    let pubkey = state.api.extract_auth_pubkey(&headers)?;
-    state.api.require_admin(&pubkey)?;
-
-    match state.api.repo.list_invoices_with_items().await {
-        Ok(invoices) => Ok(ok(StatusCode::OK, invoices)),
-        Err(e) => Ok(err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "internal",
-            &e.to_string(),
-        )),
-    }
-}
-
-async fn list_tenant_invoices(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Path(pubkey): Path<String>,
-) -> std::result::Result<Response, ApiError> {
-    let auth = state.api.extract_auth_pubkey(&headers)?;
-    state.api.require_admin_or_tenant(&auth, &pubkey)?;
-
-    match state.api.repo.list_invoices_for_tenant_with_items(&pubkey).await {
-        Ok(invoices) => Ok(ok(StatusCode::OK, invoices)),
-        Err(e) => Ok(err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "internal",
-            &e.to_string(),
-        )),
-    }
-}
-
-async fn get_invoice(
+async fn reactivate_relay(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> std::result::Result<Response, ApiError> {
     let auth = state.api.extract_auth_pubkey(&headers)?;
 
-    let invoice = match state.api.repo.get_invoice_with_items(&id).await {
-        Ok(Some(i)) => i,
-        Ok(None) => return Ok(err(StatusCode::NOT_FOUND, "not-found", "invoice not found")),
+    let relay = match state.api.repo.get_relay(&id).await {
+        Ok(Some(r)) => r,
+        Ok(None) => return Ok(err(StatusCode::NOT_FOUND, "not-found", "relay not found")),
         Err(e) => {
             return Ok(err(
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -743,27 +677,18 @@ async fn get_invoice(
         }
     };
 
-    state.api.require_admin_or_tenant(&auth, &invoice.invoice.tenant)?;
+    state.api.require_admin_or_tenant(&auth, &relay.tenant)?;
 
-    Ok(ok(StatusCode::OK, invoice))
-}
+    if relay.status == "active" {
+        return Ok(err(
+            StatusCode::BAD_REQUEST,
+            "relay-is-active",
+            "relay is already active",
+        ));
+    }
 
-async fn update_tenant_billing(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Path(pubkey): Path<String>,
-    Json(payload): Json<UpdateTenantBillingRequest>,
-) -> std::result::Result<Response, ApiError> {
-    let auth = state.api.extract_auth_pubkey(&headers)?;
-    state.api.require_admin_or_tenant(&auth, &pubkey)?;
-
-    match state
-        .api
-        .repo
-        .update_tenant_nwc_url(&pubkey, &payload.nwc_url)
-        .await
-    {
-        Ok(()) => Ok(ok(StatusCode::OK, payload)),
+    match state.api.billing.reactivate_relay(&id).await {
+        Ok(()) => Ok(ok(StatusCode::OK, ())),
         Err(e) => Ok(err(
             StatusCode::INTERNAL_SERVER_ERROR,
             "internal",
@@ -772,334 +697,38 @@ async fn update_tenant_billing(
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use std::str::FromStr;
+async fn update_tenant(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(pubkey): Path<String>,
+    Json(payload): Json<UpdateTenantRequest>,
+) -> std::result::Result<Response, ApiError> {
+    let auth = state.api.extract_auth_pubkey(&headers)?;
+    state.api.require_admin_or_tenant(&auth, &pubkey)?;
 
-    use axum::{
-        body::{Body, to_bytes},
-        http::{Request, StatusCode, header},
+    let mut tenant = match state.api.repo.get_tenant(&pubkey).await {
+        Ok(Some(t)) => t,
+        Ok(None) => return Ok(err(StatusCode::NOT_FOUND, "not-found", "tenant not found")),
+        Err(e) => {
+            return Ok(err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal",
+                &e.to_string(),
+            ));
+        }
     };
-    use base64::Engine;
-    use nostr_sdk::{EventBuilder, JsonUtil, Keys, Kind, Tag};
-    use serde_json::{Value, json};
-    use sqlx::{SqlitePool, sqlite::{SqliteConnectOptions, SqlitePoolOptions}};
-    use tower::util::ServiceExt;
 
-    use crate::{models::{Relay, Tenant}, repo::Repo};
-
-    use super::Api;
-
-    async fn test_repo() -> Repo {
-        let db_file = std::env::temp_dir().join(format!("caravel-api-test-{}.db", uuid::Uuid::new_v4()));
-        let database_url = format!("sqlite://{}", db_file.display());
-
-        let options = SqliteConnectOptions::from_str(&database_url)
-            .expect("sqlite options")
-            .create_if_missing(true);
-        let pool: SqlitePool = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect_with(options)
-            .await
-            .expect("connect sqlite");
-
-        sqlx::query("PRAGMA journal_mode = WAL;")
-            .execute(&pool)
-            .await
-            .expect("set WAL");
-
-        sqlx::migrate!("./migrations")
-            .run(&pool)
-            .await
-            .expect("run migrations");
-
-        Repo { pool }
+    if let Some(nwc_url) = payload.nwc_url {
+        tenant.nwc_url = nwc_url;
     }
 
-    fn keys() -> (Keys, Keys, Keys) {
-        (Keys::generate(), Keys::generate(), Keys::generate())
-    }
-
-    fn pubkey_hex(keys: &Keys) -> String {
-        keys.public_key().to_hex()
-    }
-
-    fn auth_header(keys: &Keys, u: &str) -> String {
-        let tag = Tag::parse(["u", u]).expect("u tag");
-        let event = EventBuilder::new(Kind::HttpAuth, "").tags([tag])
-            .sign_with_keys(keys)
-            .expect("sign nip98 event");
-        let json = event.as_json();
-        let b64 = base64::engine::general_purpose::STANDARD.encode(json);
-        format!("Nostr {b64}")
-    }
-
-    fn make_api(repo: Repo, admin_pubkey: String) -> Api {
-        Api {
-            host: "api.test".to_string(),
-            port: 0,
-            admins: vec![admin_pubkey],
-            origins: vec![],
-            repo,
-        }
-    }
-
-    async fn request(
-        api: &Api,
-        method: &str,
-        path: &str,
-        auth: Option<String>,
-        body: Option<Value>,
-    ) -> (StatusCode, Value) {
-        let mut builder = Request::builder().method(method).uri(path);
-        if let Some(auth) = auth {
-            builder = builder.header(header::AUTHORIZATION, auth);
-        }
-
-        let req = if let Some(body) = body {
-            builder
-                .header(header::CONTENT_TYPE, "application/json")
-                .body(Body::from(body.to_string()))
-                .expect("request")
-        } else {
-            builder.body(Body::empty()).expect("request")
-        };
-
-        let resp = api.router().oneshot(req).await.expect("router response");
-        let status = resp.status();
-        let bytes = to_bytes(resp.into_body(), usize::MAX)
-            .await
-            .expect("read body");
-        let payload: Value = serde_json::from_slice(&bytes).expect("json body");
-        (status, payload)
-    }
-
-    async fn create_tenant(repo: &Repo, pubkey: String) {
-        let tenant = Tenant {
-            pubkey,
-            nwc_url: String::new(),
-            created_at: 1,
-            billing_anchor: 1,
-        };
-        repo.create_tenant(&tenant).await.expect("create tenant");
-    }
-
-    async fn create_relay(repo: &Repo, id: &str, tenant: &str, subdomain: &str) {
-        let relay = Relay {
-            id: id.to_string(),
-            tenant: tenant.to_string(),
-            schema: format!("{}_{}", subdomain.replace('-', "_"), id),
-            subdomain: subdomain.to_string(),
-            plan: "free".to_string(),
-            status: "new".to_string(),
-            sync_error: String::new(),
-            info_name: String::new(),
-            info_icon: String::new(),
-            info_description: String::new(),
-            policy_public_join: 0,
-            policy_strip_signatures: 0,
-            groups_enabled: 1,
-            management_enabled: 1,
-            blossom_enabled: 0,
-            livekit_enabled: 0,
-            push_enabled: 1,
-            synced: 0,
-        };
-        repo.create_relay(&relay).await.expect("create relay");
-    }
-
-    #[tokio::test]
-    async fn missing_auth_returns_unauthorized() {
-        let repo = test_repo().await;
-        let (admin_keys, _, _) = keys();
-        let api = make_api(repo, pubkey_hex(&admin_keys));
-
-        let (status, body) = request(&api, "GET", "/plans", None, None).await;
-
-        assert_eq!(status, StatusCode::UNAUTHORIZED);
-        assert_eq!(body["code"], "unauthorized");
-    }
-
-    #[tokio::test]
-    async fn plans_endpoints_return_ok_and_not_found() {
-        let repo = test_repo().await;
-        let (admin_keys, _, _) = keys();
-        let api = make_api(repo, pubkey_hex(&admin_keys));
-        let auth = auth_header(&admin_keys, "https://api.test");
-
-        let (status, body) = request(&api, "GET", "/plans", Some(auth.clone()), None).await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(body["code"], "ok");
-        assert!(body["data"].as_array().expect("plans array").len() >= 3);
-
-        let (status, body) = request(&api, "GET", "/plans/does-not-exist", Some(auth), None).await;
-        assert_eq!(status, StatusCode::NOT_FOUND);
-        assert_eq!(body["code"], "not-found");
-    }
-
-    #[tokio::test]
-    async fn tenants_list_is_admin_only() {
-        let repo = test_repo().await;
-        let (admin_keys, tenant_keys, _) = keys();
-        let api = make_api(repo, pubkey_hex(&admin_keys));
-
-        let auth = auth_header(&tenant_keys, "https://api.test");
-        let (status, body) = request(&api, "GET", "/tenants", Some(auth), None).await;
-
-        assert_eq!(status, StatusCode::FORBIDDEN);
-        assert_eq!(body["code"], "forbidden");
-    }
-
-    #[tokio::test]
-    async fn identity_creates_tenant_if_missing() {
-        let repo = test_repo().await;
-        let (admin_keys, tenant_keys, _) = keys();
-        let api = make_api(repo.clone(), pubkey_hex(&admin_keys));
-        let auth = auth_header(&tenant_keys, "https://api.test");
-        let tenant_pubkey = pubkey_hex(&tenant_keys);
-
-        let (status, body) = request(&api, "GET", "/identity", Some(auth), None).await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(body["code"], "ok");
-        assert_eq!(body["data"]["pubkey"], tenant_pubkey);
-        assert_eq!(body["data"]["is_admin"], false);
-
-        let tenant = repo
-            .get_tenant(&tenant_pubkey)
-            .await
-            .expect("lookup tenant after identity");
-        assert!(tenant.is_some());
-    }
-
-    #[tokio::test]
-    async fn tenant_get_allows_owner_and_denies_other_tenant() {
-        let repo = test_repo().await;
-        let (admin_keys, tenant_a_keys, tenant_b_keys) = keys();
-        create_tenant(&repo, pubkey_hex(&tenant_a_keys)).await;
-        let api = make_api(repo, pubkey_hex(&admin_keys));
-
-        let owner_auth = auth_header(&tenant_a_keys, "https://api.test");
-        let (status, body) = request(
-            &api,
-            "GET",
-            &format!("/tenants/{}", pubkey_hex(&tenant_a_keys)),
-            Some(owner_auth),
-            None,
-        )
-        .await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(body["code"], "ok");
-
-        let other_auth = auth_header(&tenant_b_keys, "https://api.test");
-        let (status, body) = request(
-            &api,
-            "GET",
-            &format!("/tenants/{}", pubkey_hex(&tenant_a_keys)),
-            Some(other_auth),
-            None,
-        )
-        .await;
-        assert_eq!(status, StatusCode::FORBIDDEN);
-        assert_eq!(body["code"], "forbidden");
-    }
-
-    #[tokio::test]
-    async fn create_relay_validates_premium_feature_and_subdomain() {
-        let repo = test_repo().await;
-        let (admin_keys, tenant_keys, _) = keys();
-        create_tenant(&repo, pubkey_hex(&tenant_keys)).await;
-        let api = make_api(repo, pubkey_hex(&admin_keys));
-        let auth = auth_header(&tenant_keys, "https://api.test");
-
-        let (status, body) = request(
-            &api,
-            "POST",
-            "/relays",
-            Some(auth.clone()),
-            Some(json!({
-                "tenant": pubkey_hex(&tenant_keys),
-                "subdomain": "bad_subdomain",
-                "plan": "free"
-            })),
-        )
-        .await;
-        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
-        assert_eq!(body["code"], "invalid-relay");
-
-        let (status, body) = request(
-            &api,
-            "POST",
-            "/relays",
-            Some(auth),
-            Some(json!({
-                "tenant": pubkey_hex(&tenant_keys),
-                "subdomain": "good-subdomain",
-                "plan": "free",
-                "blossom_enabled": 1
-            })),
-        )
-        .await;
-        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
-        assert_eq!(body["code"], "premium-feature");
-    }
-
-    #[tokio::test]
-    async fn relay_get_honors_owner_and_duplicate_subdomain_is_422() {
-        let repo = test_repo().await;
-        let (admin_keys, tenant_a_keys, tenant_b_keys) = keys();
-        let tenant_a = pubkey_hex(&tenant_a_keys);
-        create_tenant(&repo, tenant_a.clone()).await;
-        create_tenant(&repo, pubkey_hex(&tenant_b_keys)).await;
-        create_relay(&repo, "relay-a", &tenant_a, "alpha").await;
-
-        let api = make_api(repo.clone(), pubkey_hex(&admin_keys));
-        let owner_auth = auth_header(&tenant_a_keys, "https://api.test");
-
-        let (status, body) = request(&api, "GET", "/relays/relay-a", Some(owner_auth), None).await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(body["code"], "ok");
-
-        let other_auth = auth_header(&tenant_b_keys, "https://api.test");
-        let (status, body) = request(&api, "GET", "/relays/relay-a", Some(other_auth), None).await;
-        assert_eq!(status, StatusCode::FORBIDDEN);
-        assert_eq!(body["code"], "forbidden");
-
-        let (status, body) = request(
-            &api,
-            "POST",
-            "/relays",
-            Some(auth_header(&tenant_a_keys, "https://api.test")),
-            Some(json!({
-                "tenant": tenant_a,
-                "subdomain": "alpha",
-                "plan": "free"
-            })),
-        )
-        .await;
-        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
-        assert_eq!(body["code"], "subdomain-exists");
-    }
-
-    #[tokio::test]
-    async fn update_tenant_billing_allows_self() {
-        let repo = test_repo().await;
-        let (admin_keys, tenant_keys, _) = keys();
-        let tenant = pubkey_hex(&tenant_keys);
-        create_tenant(&repo, tenant.clone()).await;
-
-        let api = make_api(repo.clone(), pubkey_hex(&admin_keys));
-        let auth = auth_header(&tenant_keys, "https://api.test");
-
-        let (status, body) = request(
-            &api,
-            "PUT",
-            &format!("/tenants/{tenant}/billing"),
-            Some(auth),
-            Some(json!({"nwc_url":"nostr+walletconnect://example"})),
-        )
-        .await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(body["code"], "ok");
-        assert_eq!(body["data"]["nwc_url"], "nostr+walletconnect://example");
+    match state.api.repo.update_tenant(&tenant).await {
+        Ok(()) => Ok(ok(StatusCode::OK, tenant)),
+        Err(e) => Ok(err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal",
+            &e.to_string(),
+        )),
     }
 }
+

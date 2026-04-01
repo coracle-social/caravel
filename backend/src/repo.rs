@@ -7,7 +7,7 @@ use sqlx::{
     sqlite::{SqliteConnectOptions, SqlitePoolOptions},
 };
 
-use crate::models::{Activity, Invoice, InvoiceItem, InvoiceWithItems, Plan, Relay, Tenant};
+use crate::models::{Activity, Plan, Relay, Tenant};
 
 #[derive(Clone)]
 pub struct Repo {
@@ -60,12 +60,6 @@ impl Repo {
                     .fetch_one(&mut **tx)
                     .await?
             }
-            "invoice" => {
-                sqlx::query_scalar::<_, String>("SELECT tenant FROM invoice WHERE id = ?")
-                    .bind(resource_id)
-                    .fetch_one(&mut **tx)
-                    .await?
-            }
             _ => anyhow::bail!("unknown resource_type: {}", resource_type),
         };
 
@@ -85,7 +79,7 @@ impl Repo {
 
     pub async fn list_tenants(&self) -> Result<Vec<Tenant>> {
         let rows = sqlx::query_as::<_, Tenant>(
-            "SELECT pubkey, nwc_url, created_at, billing_anchor
+            "SELECT pubkey, nwc_url, created_at
              FROM tenant
              ORDER BY pubkey",
         )
@@ -96,7 +90,7 @@ impl Repo {
 
     pub async fn get_tenant(&self, pubkey: &str) -> Result<Option<Tenant>> {
         let row = sqlx::query_as::<_, Tenant>(
-            "SELECT pubkey, nwc_url, created_at, billing_anchor
+            "SELECT pubkey, nwc_url, created_at
              FROM tenant
              WHERE pubkey = ?",
         )
@@ -110,13 +104,12 @@ impl Repo {
         let mut tx = self.pool.begin().await?;
 
         sqlx::query(
-            "INSERT INTO tenant (pubkey, nwc_url, created_at, billing_anchor)
-             VALUES (?, ?, ?, ?)",
+            "INSERT INTO tenant (pubkey, nwc_url, created_at)
+             VALUES (?, ?, ?)",
         )
         .bind(&tenant.pubkey)
         .bind(&tenant.nwc_url)
         .bind(tenant.created_at)
-        .bind(tenant.billing_anchor)
         .execute(&mut *tx)
         .await?;
 
@@ -126,35 +119,16 @@ impl Repo {
         Ok(())
     }
 
-    pub async fn update_tenant_billing_anchor(
-        &self,
-        pubkey: &str,
-        billing_anchor: i64,
-    ) -> Result<()> {
-        let mut tx = self.pool.begin().await?;
-
-        sqlx::query("UPDATE tenant SET billing_anchor = ? WHERE pubkey = ?")
-            .bind(billing_anchor)
-            .bind(pubkey)
-            .execute(&mut *tx)
-            .await?;
-
-        Self::insert_activity(&mut tx, "update_tenant_billing_anchor", "tenant", pubkey).await?;
-
-        tx.commit().await?;
-        Ok(())
-    }
-
-    pub async fn update_tenant_nwc_url(&self, pubkey: &str, nwc_url: &str) -> Result<()> {
+    pub async fn update_tenant(&self, tenant: &Tenant) -> Result<()> {
         let mut tx = self.pool.begin().await?;
 
         sqlx::query("UPDATE tenant SET nwc_url = ? WHERE pubkey = ?")
-            .bind(nwc_url)
-            .bind(pubkey)
+            .bind(&tenant.nwc_url)
+            .bind(&tenant.pubkey)
             .execute(&mut *tx)
             .await?;
 
-        Self::insert_activity(&mut tx, "update_tenant_nwc_url", "tenant", pubkey).await?;
+        Self::insert_activity(&mut tx, "update_tenant", "tenant", &tenant.pubkey).await?;
 
         tx.commit().await?;
         Ok(())
@@ -313,172 +287,10 @@ impl Repo {
     }
 
     pub async fn mark_relay_synced(&self, relay_id: &str) -> Result<()> {
-        let mut tx = self.pool.begin().await?;
-
         sqlx::query("UPDATE relay SET synced = 1, status = 'active', sync_error = '' WHERE id = ?")
             .bind(relay_id)
-            .execute(&mut *tx)
+            .execute(&self.pool)
             .await?;
-
-        Self::insert_activity(&mut tx, "mark_relay_synced", "relay", relay_id).await?;
-
-        tx.commit().await?;
-        Ok(())
-    }
-
-    pub async fn create_invoice(
-        &self,
-        invoice: &Invoice,
-        invoice_items: &[InvoiceItem],
-    ) -> Result<()> {
-        let mut tx = self.pool.begin().await?;
-
-        sqlx::query(
-            "INSERT INTO invoice (
-                id, tenant, status, created_at, attempted_at, error, closed_at,
-                sent_at, paid_at, bolt11, period_start, period_end
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        )
-        .bind(&invoice.id)
-        .bind(&invoice.tenant)
-        .bind(&invoice.status)
-        .bind(invoice.created_at)
-        .bind(invoice.attempted_at)
-        .bind(&invoice.error)
-        .bind(invoice.closed_at)
-        .bind(invoice.sent_at)
-        .bind(invoice.paid_at)
-        .bind(&invoice.bolt11)
-        .bind(invoice.period_start)
-        .bind(invoice.period_end)
-        .execute(&mut *tx)
-        .await?;
-
-        for item in invoice_items {
-            sqlx::query("INSERT INTO invoice_item (id, invoice, relay, sats) VALUES (?, ?, ?, ?)")
-                .bind(&item.id)
-                .bind(&item.invoice)
-                .bind(&item.relay)
-                .bind(item.sats)
-                .execute(&mut *tx)
-                .await?;
-        }
-
-        Self::insert_activity(&mut tx, "create_invoice", "invoice", &invoice.id).await?;
-
-        tx.commit().await?;
-        Ok(())
-    }
-
-    pub async fn list_invoices(&self) -> Result<Vec<Invoice>> {
-        let rows = sqlx::query_as::<_, Invoice>(
-            "SELECT id, tenant, status, created_at, attempted_at, error, closed_at,
-                    sent_at, paid_at, bolt11, period_start, period_end
-             FROM invoice
-             ORDER BY created_at DESC",
-        )
-        .fetch_all(&self.pool)
-        .await?;
-        Ok(rows)
-    }
-
-    pub async fn list_invoices_for_tenant(&self, tenant_id: &str) -> Result<Vec<Invoice>> {
-        let rows = sqlx::query_as::<_, Invoice>(
-            "SELECT id, tenant, status, created_at, attempted_at, error, closed_at,
-                    sent_at, paid_at, bolt11, period_start, period_end
-             FROM invoice
-             WHERE tenant = ?
-             ORDER BY created_at DESC",
-        )
-        .bind(tenant_id)
-        .fetch_all(&self.pool)
-        .await?;
-        Ok(rows)
-    }
-
-    pub async fn get_invoice(&self, id: &str) -> Result<Option<Invoice>> {
-        let row = sqlx::query_as::<_, Invoice>(
-            "SELECT id, tenant, status, created_at, attempted_at, error, closed_at,
-                    sent_at, paid_at, bolt11, period_start, period_end
-             FROM invoice
-             WHERE id = ?",
-        )
-        .bind(id)
-        .fetch_optional(&self.pool)
-        .await?;
-        Ok(row)
-    }
-
-    pub async fn mark_invoice_paid(&self, invoice_id: &str) -> Result<()> {
-        let mut tx = self.pool.begin().await?;
-
-        sqlx::query(
-            "UPDATE invoice
-             SET status = 'paid', paid_at = strftime('%s','now'), error = ''
-             WHERE id = ?",
-        )
-        .bind(invoice_id)
-        .execute(&mut *tx)
-        .await?;
-
-        Self::insert_activity(&mut tx, "mark_invoice_paid", "invoice", invoice_id).await?;
-
-        tx.commit().await?;
-        Ok(())
-    }
-
-    pub async fn mark_invoice_attempted(
-        &self,
-        invoice_id: &str,
-        error: Option<&str>,
-    ) -> Result<()> {
-        let mut tx = self.pool.begin().await?;
-
-        sqlx::query(
-            "UPDATE invoice
-             SET attempted_at = strftime('%s','now'), error = COALESCE(?, error)
-             WHERE id = ?",
-        )
-        .bind(error)
-        .bind(invoice_id)
-        .execute(&mut *tx)
-        .await?;
-
-        Self::insert_activity(&mut tx, "mark_invoice_attempted", "invoice", invoice_id).await?;
-
-        tx.commit().await?;
-        Ok(())
-    }
-
-    pub async fn mark_invoice_sent(&self, invoice_id: &str) -> Result<()> {
-        let mut tx = self.pool.begin().await?;
-
-        sqlx::query("UPDATE invoice SET sent_at = strftime('%s','now') WHERE id = ?")
-            .bind(invoice_id)
-            .execute(&mut *tx)
-            .await?;
-
-        Self::insert_activity(&mut tx, "mark_invoice_sent", "invoice", invoice_id).await?;
-
-        tx.commit().await?;
-        Ok(())
-    }
-
-    pub async fn mark_invoice_closed(&self, invoice_id: &str) -> Result<()> {
-        let mut tx = self.pool.begin().await?;
-
-        sqlx::query(
-            "UPDATE invoice
-             SET status = 'closed', closed_at = strftime('%s','now')
-             WHERE id = ?",
-        )
-        .bind(invoice_id)
-        .execute(&mut *tx)
-        .await?;
-
-        Self::insert_activity(&mut tx, "mark_invoice_closed", "invoice", invoice_id).await?;
-
-        tx.commit().await?;
         Ok(())
     }
 
@@ -504,24 +316,6 @@ impl Repo {
         Ok(rows)
     }
 
-    pub async fn list_activity_for_tenant(
-        &self,
-        tenant: &str,
-        since: &i64,
-    ) -> Result<Vec<Activity>> {
-        let rows = sqlx::query_as::<_, Activity>(
-            "SELECT id, tenant, created_at, activity_type, resource_type, resource_id
-             FROM activity
-             WHERE created_at > ? AND tenant = ?
-             ORDER BY created_at, id",
-        )
-        .bind(since)
-        .bind(tenant)
-        .fetch_all(&self.pool)
-        .await?;
-        Ok(rows)
-    }
-
     pub async fn list_activity_for_relay(&self, relay_id: &str) -> Result<Vec<Activity>> {
         let rows = sqlx::query_as::<_, Activity>(
             "SELECT id, tenant, created_at, activity_type, resource_type, resource_id
@@ -533,71 +327,6 @@ impl Repo {
         .fetch_all(&self.pool)
         .await?;
         Ok(rows)
-    }
-
-    pub async fn list_invoices_with_items(&self) -> Result<Vec<InvoiceWithItems>> {
-        let invoices = self.list_invoices().await?;
-        let mut result = Vec::with_capacity(invoices.len());
-        for invoice in invoices {
-            let items = self.get_invoice_items(&invoice.id).await?;
-            result.push(InvoiceWithItems { invoice, items });
-        }
-        Ok(result)
-    }
-
-    pub async fn list_invoices_for_tenant_with_items(
-        &self,
-        tenant_id: &str,
-    ) -> Result<Vec<InvoiceWithItems>> {
-        let invoices = self.list_invoices_for_tenant(tenant_id).await?;
-        let mut result = Vec::with_capacity(invoices.len());
-        for invoice in invoices {
-            let items = self.get_invoice_items(&invoice.id).await?;
-            result.push(InvoiceWithItems { invoice, items });
-        }
-        Ok(result)
-    }
-
-    pub async fn get_invoice_with_items(&self, id: &str) -> Result<Option<InvoiceWithItems>> {
-        match self.get_invoice(id).await? {
-            Some(invoice) => {
-                let items = self.get_invoice_items(&invoice.id).await?;
-                Ok(Some(InvoiceWithItems { invoice, items }))
-            }
-            None => Ok(None),
-        }
-    }
-
-    pub async fn get_invoice_items(&self, invoice_id: &str) -> Result<Vec<InvoiceItem>> {
-        let rows = sqlx::query_as::<_, InvoiceItem>(
-            "SELECT id, invoice, relay, sats
-             FROM invoice_item
-             WHERE invoice = ?",
-        )
-        .bind(invoice_id)
-        .fetch_all(&self.pool)
-        .await?;
-        Ok(rows)
-    }
-
-    pub async fn total_pending_invoices_for_tenant(&self, tenant: &str) -> Result<i64> {
-        let count = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM invoice
-             WHERE tenant = ? AND status = 'pending'",
-        )
-        .bind(tenant)
-        .fetch_one(&self.pool)
-        .await?;
-        Ok(count)
-    }
-
-    pub async fn get_relay_plan_sats(&self, plan: &str) -> Result<i64> {
-        let sats = Self::list_plans()
-            .into_iter()
-            .find(|p| p.id == plan)
-            .map(|p| p.sats)
-            .unwrap_or(0);
-        Ok(sats)
     }
 
     pub fn list_plans() -> Vec<Plan> {

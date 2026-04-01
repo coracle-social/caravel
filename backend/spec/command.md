@@ -32,7 +32,7 @@ Notes:
 ## `pub fn create_relay(&self, relay: &Relay) -> Result<()>`
 
 - Creates relay, may throw sqlite uniqueness error on subdomain
-- Sets relay status to `new`
+- Sets relay status to `active`
 - Logs activity as `(create_relay, relay_id)`
 
 ## `pub fn update_relay(&self, relay: &Relay) -> Result<()>`

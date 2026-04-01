@@ -109,7 +109,7 @@ impl Command {
                 policy_public_join, policy_strip_signatures,
                 groups_enabled, management_enabled, blossom_enabled,
                 livekit_enabled, push_enabled
-            ) VALUES (?, ?, ?, ?, ?, 'new', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&relay.id)
         .bind(&relay.tenant)

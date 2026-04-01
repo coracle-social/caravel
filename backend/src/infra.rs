@@ -68,7 +68,7 @@ impl Infra {
     async fn catch_up(&self) -> Result<()> {
         let relays = self.query.list_relays().await?;
         for relay in relays {
-            if relay.status == "new" || (relay.sync_error != "" && relay.status != "inactive") {
+            if relay.synced == 0 && relay.sync_error.is_empty() {
                 let is_new = relay.synced == 0;
                 self.sync_and_report(&relay, is_new).await;
             }

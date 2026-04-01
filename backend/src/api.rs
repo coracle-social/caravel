@@ -193,7 +193,7 @@ impl Api {
             relay.schema = format!("{}_{}", relay.subdomain.replace('-', "_"), relay.id);
         }
         if relay.status.is_empty() {
-            relay.status = "new".to_string();
+            relay.status = "active".to_string();
         }
         relay.policy_public_join = parse_bool_default(relay.policy_public_join, 0);
         relay.policy_strip_signatures = parse_bool_default(relay.policy_strip_signatures, 0);
@@ -472,7 +472,7 @@ async fn create_relay(
         schema: String::new(),
         subdomain: payload.subdomain,
         plan: payload.plan,
-        status: "new".to_string(),
+        status: "active".to_string(),
         sync_error: String::new(),
         info_name: payload.info_name.unwrap_or_default(),
         info_icon: payload.info_icon.unwrap_or_default(),

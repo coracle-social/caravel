@@ -21,7 +21,7 @@ Members:
 
 ## `async fn catch_up(&self)`
 
-- Lists all relays via `query.list_relays()` and syncs any that have `status = "new"` or a non-empty `sync_error`.
+- Lists all relays via `query.list_relays()` and syncs any where `synced == 0` and `sync_error` is empty.
 
 ## `async fn handle_activity(&self, activity: &Activity)`
 

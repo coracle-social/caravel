@@ -1,0 +1,206 @@
+use anyhow::Result;
+use sqlx::{Sqlite, SqlitePool, Transaction};
+
+use crate::models::{Relay, Tenant};
+
+#[derive(Clone)]
+pub struct Command {
+    pool: SqlitePool,
+}
+
+impl Command {
+    pub fn new(pool: SqlitePool) -> Self {
+        Self { pool }
+    }
+
+    async fn insert_activity(
+        tx: &mut Transaction<'_, Sqlite>,
+        activity_type: &str,
+        resource_type: &str,
+        resource_id: &str,
+    ) -> Result<()> {
+        let tenant = match resource_type {
+            "tenant" => resource_id.to_string(),
+            "relay" => {
+                sqlx::query_scalar::<_, String>("SELECT tenant FROM relay WHERE id = ?")
+                    .bind(resource_id)
+                    .fetch_one(&mut **tx)
+                    .await?
+            }
+            _ => anyhow::bail!("unknown resource_type: {}", resource_type),
+        };
+
+        sqlx::query(
+            "INSERT INTO activity (id, tenant, created_at, activity_type, resource_type, resource_id)
+             VALUES (?, ?, strftime('%s','now'), ?, ?, ?)",
+        )
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(tenant)
+        .bind(activity_type)
+        .bind(resource_type)
+        .bind(resource_id)
+        .execute(&mut **tx)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn create_tenant(&self, tenant: &Tenant) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+
+        sqlx::query(
+            "INSERT INTO tenant (pubkey, nwc_url, created_at)
+             VALUES (?, ?, ?)",
+        )
+        .bind(&tenant.pubkey)
+        .bind(&tenant.nwc_url)
+        .bind(tenant.created_at)
+        .execute(&mut *tx)
+        .await?;
+
+        Self::insert_activity(&mut tx, "create_tenant", "tenant", &tenant.pubkey).await?;
+
+        tx.commit().await?;
+        Ok(())
+    }
+
+    pub async fn update_tenant(&self, tenant: &Tenant) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+
+        sqlx::query("UPDATE tenant SET nwc_url = ? WHERE pubkey = ?")
+            .bind(&tenant.nwc_url)
+            .bind(&tenant.pubkey)
+            .execute(&mut *tx)
+            .await?;
+
+        Self::insert_activity(&mut tx, "update_tenant", "tenant", &tenant.pubkey).await?;
+
+        tx.commit().await?;
+        Ok(())
+    }
+
+    pub async fn create_relay(&self, relay: &Relay) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+
+        sqlx::query(
+            "INSERT INTO relay (
+                id, tenant, schema, subdomain, plan, status, sync_error,
+                info_name, info_icon, info_description,
+                policy_public_join, policy_strip_signatures,
+                groups_enabled, management_enabled, blossom_enabled,
+                livekit_enabled, push_enabled
+            ) VALUES (?, ?, ?, ?, ?, 'new', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&relay.id)
+        .bind(&relay.tenant)
+        .bind(&relay.schema)
+        .bind(&relay.subdomain)
+        .bind(&relay.plan)
+        .bind(&relay.sync_error)
+        .bind(&relay.info_name)
+        .bind(&relay.info_icon)
+        .bind(&relay.info_description)
+        .bind(relay.policy_public_join)
+        .bind(relay.policy_strip_signatures)
+        .bind(relay.groups_enabled)
+        .bind(relay.management_enabled)
+        .bind(relay.blossom_enabled)
+        .bind(relay.livekit_enabled)
+        .bind(relay.push_enabled)
+        .execute(&mut *tx)
+        .await?;
+
+        Self::insert_activity(&mut tx, "create_relay", "relay", &relay.id).await?;
+
+        tx.commit().await?;
+        Ok(())
+    }
+
+    pub async fn update_relay(&self, relay: &Relay) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+
+        sqlx::query(
+            "UPDATE relay
+             SET tenant = ?, schema = ?, subdomain = ?, plan = ?, status = ?, sync_error = ?,
+                 info_name = ?, info_icon = ?, info_description = ?,
+                 policy_public_join = ?, policy_strip_signatures = ?,
+                 groups_enabled = ?, management_enabled = ?, blossom_enabled = ?,
+                 livekit_enabled = ?, push_enabled = ?
+             WHERE id = ?",
+        )
+        .bind(&relay.tenant)
+        .bind(&relay.schema)
+        .bind(&relay.subdomain)
+        .bind(&relay.plan)
+        .bind(&relay.status)
+        .bind(&relay.sync_error)
+        .bind(&relay.info_name)
+        .bind(&relay.info_icon)
+        .bind(&relay.info_description)
+        .bind(relay.policy_public_join)
+        .bind(relay.policy_strip_signatures)
+        .bind(relay.groups_enabled)
+        .bind(relay.management_enabled)
+        .bind(relay.blossom_enabled)
+        .bind(relay.livekit_enabled)
+        .bind(relay.push_enabled)
+        .bind(&relay.id)
+        .execute(&mut *tx)
+        .await?;
+
+        Self::insert_activity(&mut tx, "update_relay", "relay", &relay.id).await?;
+
+        tx.commit().await?;
+        Ok(())
+    }
+
+    pub async fn deactivate_relay(&self, relay: &Relay) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+
+        sqlx::query("UPDATE relay SET status = 'inactive' WHERE id = ?")
+            .bind(&relay.id)
+            .execute(&mut *tx)
+            .await?;
+
+        Self::insert_activity(&mut tx, "deactivate_relay", "relay", &relay.id).await?;
+
+        tx.commit().await?;
+        Ok(())
+    }
+
+    pub async fn activate_relay(&self, relay: &Relay) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+
+        sqlx::query("UPDATE relay SET status = 'active' WHERE id = ?")
+            .bind(&relay.id)
+            .execute(&mut *tx)
+            .await?;
+
+        Self::insert_activity(&mut tx, "activate_relay", "relay", &relay.id).await?;
+
+        tx.commit().await?;
+        Ok(())
+    }
+
+    pub async fn fail_relay_sync(&self, relay: &Relay, sync_error: String) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+
+        sqlx::query("UPDATE relay SET status = 'inactive', sync_error = ? WHERE id = ?")
+            .bind(&sync_error)
+            .bind(&relay.id)
+            .execute(&mut *tx)
+            .await?;
+
+        Self::insert_activity(&mut tx, "fail_relay_sync", "relay", &relay.id).await?;
+
+        tx.commit().await?;
+        Ok(())
+    }
+
+    pub async fn mark_relay_synced(&self, relay_id: &str) -> Result<()> {
+        sqlx::query("UPDATE relay SET synced = 1, status = 'active', sync_error = '' WHERE id = ?")
+            .bind(relay_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+}

@@ -1,40 +1,43 @@
 use anyhow::Result;
 
-use crate::repo::Repo;
+use crate::command::Command;
+use crate::query::Query;
 use crate::robot::Robot;
 
 #[derive(Clone)]
 pub struct Billing {
     nwc_url: String,
-    repo: Repo,
+    query: Query,
+    command: Command,
     robot: Robot,
 }
 
 impl Billing {
-    pub fn new(repo: Repo, robot: Robot) -> Self {
+    pub fn new(query: Query, command: Command, robot: Robot) -> Self {
         let nwc_url = std::env::var("NWC_URL").unwrap_or_default();
         Self {
             nwc_url,
-            repo,
+            query,
+            command,
             robot,
         }
     }
 
     pub async fn deactivate_relay(&self, relay_id: &str) -> Result<()> {
         let relay = self
-            .repo
+            .query
             .get_relay(relay_id)
             .await?
             .ok_or_else(|| anyhow::anyhow!("relay not found"))?;
-        self.repo.deactivate_relay(&relay).await
+        self.command.deactivate_relay(&relay).await
     }
 
     pub async fn reactivate_relay(&self, relay_id: &str) -> Result<()> {
         let relay = self
-            .repo
+            .query
             .get_relay(relay_id)
             .await?
             .ok_or_else(|| anyhow::anyhow!("relay not found"))?;
-        self.repo.activate_relay(&relay).await
+        self.command.activate_relay(&relay).await
     }
 }

@@ -1,8 +1,10 @@
 mod api;
 mod billing;
+mod command;
 mod infra;
 mod models;
-mod repo;
+mod query;
+mod pool;
 mod robot;
 
 use anyhow::Result;
@@ -12,8 +14,9 @@ use tower_http::cors::{AllowOrigin, CorsLayer};
 
 use crate::api::Api;
 use crate::billing::Billing;
+use crate::command::Command;
 use crate::infra::Infra;
-use crate::repo::Repo;
+use crate::query::Query;
 use crate::robot::Robot;
 
 #[tokio::main]
@@ -25,11 +28,13 @@ async fn main() -> Result<()> {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    let repo = Repo::new().await?;
+    let pool = pool::create_pool().await?;
     let robot = Robot::new().await?;
-    let billing = Billing::new(repo.clone(), robot.clone());
-    let infra = Infra::new(repo.clone());
-    let api = Api::new(repo, billing.clone());
+    let query = Query::new(pool.clone());
+    let command = Command::new(pool);
+    let billing = Billing::new(query.clone(), command.clone(), robot.clone());
+    let infra = Infra::new(query.clone(), command.clone());
+    let api = Api::new(query, command, billing.clone());
 
     let host = std::env::var("HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
     let port: u16 = std::env::var("PORT")

@@ -5,9 +5,10 @@ Billing encapsulates logic related to synchronizing state with Stripe.
 Members:
 
 - `nwc_url: String` - a nostr wallet connect URL used to **create** bolt11 invoices
-- `repo: Repo`
+- `query: Query`
+- `command: Command`
 - `robot: Robot`
 
-## `pub fn new(repo: Repo, robot: Robot) -> Self`
+## `pub fn new(query: Query, command: Command, robot: Robot) -> Self`
 
 - Reads environment and populates members

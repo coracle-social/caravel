@@ -2,7 +2,8 @@ use anyhow::Result;
 use nostr_sdk::prelude::*;
 use tokio::sync::Mutex;
 
-use crate::repo::Repo;
+use crate::command::Command;
+use crate::query::Query;
 
 #[derive(Clone)]
 pub struct Infra {
@@ -12,12 +13,13 @@ pub struct Infra {
     livekit_api_key: String,
     livekit_api_secret: String,
     api_secret: String,
-    repo: Repo,
+    query: Query,
+    command: Command,
     last_activity_at: std::sync::Arc<Mutex<i64>>,
 }
 
 impl Infra {
-    pub fn new(repo: Repo) -> Self {
+    pub fn new(query: Query, command: Command) -> Self {
         let api_url = std::env::var("ZOOID_API_URL").unwrap_or_default();
         let relay_domain = std::env::var("RELAY_DOMAIN").unwrap_or_default();
         let livekit_url = std::env::var("LIVEKIT_URL").unwrap_or_default();
@@ -31,14 +33,15 @@ impl Infra {
             livekit_api_key,
             livekit_api_secret,
             api_secret,
-            repo,
+            query,
+            command,
             last_activity_at: std::sync::Arc::new(Mutex::new(0)),
         }
     }
 
     pub async fn start(self) {
         // Initialize from DB so we don't replay historical activities on restart
-        match self.repo.max_activity_at().await {
+        match self.query.max_activity_at().await {
             Ok(ts) => *self.last_activity_at.lock().await = ts,
             Err(e) => tracing::error!(error = %e, "failed to read max activity timestamp"),
         }
@@ -55,7 +58,7 @@ impl Infra {
     pub async fn tick(&self) -> Result<()> {
         let mut since_guard = self.last_activity_at.lock().await;
         let since = *since_guard;
-        let activity = self.repo.list_activity(&since).await?;
+        let activity = self.query.list_activity(&since).await?;
 
         for a in activity {
             let needs_sync = matches!(
@@ -64,7 +67,7 @@ impl Infra {
             );
 
             if needs_sync {
-                let Some(relay) = self.repo.get_relay(&a.resource_id).await? else {
+                let Some(relay) = self.query.get_relay(&a.resource_id).await? else {
                     continue;
                 };
 
@@ -73,11 +76,11 @@ impl Infra {
                 match self.sync_relay(&relay, is_new).await {
                     Ok(()) => {
                         tracing::info!(relay = %relay.id, "relay sync succeeded");
-                        self.repo.mark_relay_synced(&relay.id).await?
+                        self.command.mark_relay_synced(&relay.id).await?
                     }
                     Err(e) => {
                         tracing::warn!(relay = %relay.id, error = %e, "relay sync failed");
-                        self.repo.fail_relay_sync(&relay, e.to_string()).await?;
+                        self.command.fail_relay_sync(&relay, e.to_string()).await?;
                     }
                 }
             }

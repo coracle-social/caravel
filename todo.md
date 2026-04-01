@@ -1,3 +1,3 @@
-- [ ] Split repo into queries and commands
+- [ ] Update infra to listen to sqlite
 - [ ] Fix billing by using stripe as a backend to do proration, then mark invoices paid manually when using bitcoin.
 - [ ] Send a payment link instead of an invoice so we can generate/pay on the fly

@@ -5,10 +5,10 @@ Api manages the HTTP interface for the application
 Members:
 
 - `host: String` - the hostname of the service for checking NIP 98 auth, from `HOST`
-- `port: u16` - a port to run the server on from `PORT`
 - `admins: Vec<String>` - a list of admin pubkeys from `ADMINS`
-- `origins: Vec<String>` - to be used in CORS headers, from `ALLOW_ORIGINS`
-- `repo: Repo`
+- `query: Query`
+- `command: Command`
+- `billing: Billing`
 
 Notes:
 
@@ -31,7 +31,7 @@ Notes:
 
 - Serves `GET /plans`
 - No authentication required
-- Return `data` is a list of plan structs from `Repo::list_plans`
+- Return `data` is a list of plan structs from `Query::list_plans`
 
 ## `async fn get_plan(...) -> Response`
 
@@ -55,26 +55,26 @@ Notes:
 
 - Serves `GET /tenants`
 - Authorizes admin only
-- Return `data` is a list of tenant structs from `repo.list_tenants`
+- Return `data` is a list of tenant structs from `query.list_tenants`
 
 ## `async fn get_tenant(...) -> Response`
 
 - Serves `GET /tenants/:pubkey`
 - Authorizes admin or matching tenant
-- Return `data` is a single tenant struct from `repo.get_tenant`
+- Return `data` is a single tenant struct from `query.get_tenant`
 
 ## `async fn update_tenant(...) -> Response`
 
 - Serves `PUT /tenants/:pubkey`
 - Authorizes admin or matching tenant
-- Updates tenant using `repo.update_tenant`
+- Updates tenant using `command.update_tenant`
 - Return `data` is the updated tenant struct
 
 ## `async fn list_tenant_relays(...) -> Response`
 
 - Serves `GET /tenants/:pubkey/relays`
 - Authorizes admin or matching tenant
-- Return `data` is a list of relay structs from `repo.list_relays_for_tenant`
+- Return `data` is a list of relay structs from `query.list_relays_for_tenant`
 
 --- Relay routes
 
@@ -82,20 +82,20 @@ Notes:
 
 - Serves `GET /relays`
 - Authorizes admin only
-- Return `data` is a list of relay structs from `repo.list_relays`
+- Return `data` is a list of relay structs from `query.list_relays`
 
 ## `async fn get_relay(...) -> Response`
 
 - Serves `GET /relays/:id`
 - Authorizes admin or relay owner
-- Return `data` is a single relay struct from `repo.get_relay`
+- Return `data` is a single relay struct from `query.get_relay`
 
 ## `async fn create_relay(...) -> Response`
 
 - Serves `POST /relays`
 - Authorizes admin or matching tenant pubkey in request body
 - Validates/prepares the relay data to be saved using `prepare_relay`
-- Creates a new relay using `repo.create_relay`
+- Creates a new relay using `command.create_relay`
 - If relay is a duplicate by subdomain, return a `422` with `code=subdomain-exists`
 - Return `data` is a single relay struct. Use HTTP `201`.
 
@@ -104,7 +104,7 @@ Notes:
 - Serves `PUT /relays/:id`
 - Authorizes admin or relay owner
 - Validates/prepares the relay data to be saved using `prepare_relay`
-- Updates the given relay using `repo.update_relay`
+- Updates the given relay using `command.update_relay`
 - If relay is a duplicate by subdomain, return a `422` with `code=subdomain-exists`
 - Return `data` is a single relay struct.
 
@@ -112,7 +112,7 @@ Notes:
 
 - Serves `GET /relays/:id/activity`
 - Authorizes admin or relay owner
-- Get activity from `repo.list_activity_for_relay`
+- Get activity from `query.list_activity_for_relay`
 - Return `data` is `{activity}`
 
 ## `async fn deactivate_relay(...) -> Response`

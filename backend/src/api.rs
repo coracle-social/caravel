@@ -13,14 +13,16 @@ use nostr_sdk::{Event, JsonUtil, Kind};
 use serde::{Deserialize, Serialize};
 
 use crate::billing::Billing;
+use crate::command::Command;
 use crate::models::{Relay, Tenant};
-use crate::repo::Repo;
+use crate::query::Query;
 
 #[derive(Clone)]
 pub struct Api {
     host: String,
     admins: Vec<String>,
-    repo: Repo,
+    query: Query,
+    command: Command,
     billing: Billing,
 }
 
@@ -57,7 +59,7 @@ impl IntoResponse for ApiError {
 }
 
 impl Api {
-    pub fn new(repo: Repo, billing: Billing) -> Self {
+    pub fn new(query: Query, command: Command, billing: Billing) -> Self {
         let host = std::env::var("HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
         let admins = std::env::var("ADMINS")
             .unwrap_or_default()
@@ -68,7 +70,8 @@ impl Api {
         Self {
             host,
             admins,
-            repo,
+            query,
+            command,
             billing,
         }
     }
@@ -302,7 +305,7 @@ async fn list_tenants(
     let pubkey = state.api.extract_auth_pubkey(&headers)?;
     state.api.require_admin(&pubkey)?;
 
-    match state.api.repo.list_tenants().await {
+    match state.api.query.list_tenants().await {
         Ok(tenants) => Ok(ok(StatusCode::OK, tenants)),
         Err(e) => Ok(err(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -313,7 +316,7 @@ async fn list_tenants(
 }
 
 async fn list_plans() -> Response {
-    ok(StatusCode::OK, Repo::list_plans())
+    ok(StatusCode::OK, Query::list_plans())
 }
 
 async fn get_identity(
@@ -328,7 +331,7 @@ async fn get_identity(
         created_at: now_ts(),
     };
 
-    match state.api.repo.create_tenant(&tenant).await {
+    match state.api.command.create_tenant(&tenant).await {
         Ok(()) => true,
         Err(e) if matches!(map_unique_error(&e), Some("pubkey-exists")) => true,
         Err(e) => {
@@ -350,7 +353,7 @@ async fn get_identity(
 }
 
 async fn get_plan(Path(id): Path<String>) -> Response {
-    match Repo::list_plans().into_iter().find(|p| p.id == id) {
+    match Query::list_plans().into_iter().find(|p| p.id == id) {
         Some(plan) => ok(StatusCode::OK, plan),
         None => err(StatusCode::NOT_FOUND, "not-found", "plan not found"),
     }
@@ -364,7 +367,7 @@ async fn get_tenant(
     let auth = state.api.extract_auth_pubkey(&headers)?;
     state.api.require_admin_or_tenant(&auth, &pubkey)?;
 
-    match state.api.repo.get_tenant(&pubkey).await {
+    match state.api.query.get_tenant(&pubkey).await {
         Ok(Some(tenant)) => Ok(ok(StatusCode::OK, tenant)),
         Ok(None) => Ok(err(StatusCode::NOT_FOUND, "not-found", "tenant not found")),
         Err(e) => Ok(err(
@@ -382,7 +385,7 @@ async fn list_relays(
     let pubkey = state.api.extract_auth_pubkey(&headers)?;
     state.api.require_admin(&pubkey)?;
 
-    match state.api.repo.list_relays().await {
+    match state.api.query.list_relays().await {
         Ok(relays) => Ok(ok(StatusCode::OK, relays)),
         Err(e) => Ok(err(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -400,7 +403,7 @@ async fn list_tenant_relays(
     let auth = state.api.extract_auth_pubkey(&headers)?;
     state.api.require_admin_or_tenant(&auth, &pubkey)?;
 
-    match state.api.repo.list_relays_for_tenant(&pubkey).await {
+    match state.api.query.list_relays_for_tenant(&pubkey).await {
         Ok(relays) => Ok(ok(StatusCode::OK, relays)),
         Err(e) => Ok(err(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -417,7 +420,7 @@ async fn get_relay(
 ) -> std::result::Result<Response, ApiError> {
     let auth = state.api.extract_auth_pubkey(&headers)?;
 
-    let relay = match state.api.repo.get_relay(&id).await {
+    let relay = match state.api.query.get_relay(&id).await {
         Ok(Some(r)) => r,
         Ok(None) => return Ok(err(StatusCode::NOT_FOUND, "not-found", "relay not found")),
         Err(e) => {
@@ -441,7 +444,7 @@ async fn list_relay_activity(
 ) -> std::result::Result<Response, ApiError> {
     let auth = state.api.extract_auth_pubkey(&headers)?;
 
-    let relay = match state.api.repo.get_relay(&id).await {
+    let relay = match state.api.query.get_relay(&id).await {
         Ok(Some(r)) => r,
         Ok(None) => return Ok(err(StatusCode::NOT_FOUND, "not-found", "relay not found")),
         Err(e) => return Ok(err(StatusCode::INTERNAL_SERVER_ERROR, "internal", &e.to_string())),
@@ -449,7 +452,7 @@ async fn list_relay_activity(
 
     state.api.require_admin_or_tenant(&auth, &relay.tenant)?;
 
-    match state.api.repo.list_activity_for_relay(&id).await {
+    match state.api.query.list_activity_for_relay(&id).await {
         Ok(activity) => Ok(ok(StatusCode::OK, serde_json::json!({ "activity": activity }))),
         Err(e) => Ok(err(StatusCode::INTERNAL_SERVER_ERROR, "internal", &e.to_string())),
     }
@@ -502,7 +505,7 @@ async fn create_relay(
         }
     };
 
-    match state.api.repo.create_relay(&relay).await {
+    match state.api.command.create_relay(&relay).await {
         Ok(()) => Ok(ok(StatusCode::CREATED, relay)),
         Err(e) => {
             if matches!(map_unique_error(&e), Some("subdomain-exists")) {
@@ -530,7 +533,7 @@ async fn update_relay(
 ) -> std::result::Result<Response, ApiError> {
     let auth = state.api.extract_auth_pubkey(&headers)?;
 
-    let mut relay = match state.api.repo.get_relay(&id).await {
+    let mut relay = match state.api.query.get_relay(&id).await {
         Ok(Some(r)) => r,
         Ok(None) => return Ok(err(StatusCode::NOT_FOUND, "not-found", "relay not found")),
         Err(e) => {
@@ -599,7 +602,7 @@ async fn update_relay(
         }
     };
 
-    match state.api.repo.update_relay(&relay).await {
+    match state.api.command.update_relay(&relay).await {
         Ok(()) => Ok(ok(StatusCode::OK, relay)),
         Err(e) => {
             if matches!(map_unique_error(&e), Some("subdomain-exists")) {
@@ -626,7 +629,7 @@ async fn deactivate_relay(
 ) -> std::result::Result<Response, ApiError> {
     let auth = state.api.extract_auth_pubkey(&headers)?;
 
-    let relay = match state.api.repo.get_relay(&id).await {
+    let relay = match state.api.query.get_relay(&id).await {
         Ok(Some(r)) => r,
         Ok(None) => return Ok(err(StatusCode::NOT_FOUND, "not-found", "relay not found")),
         Err(e) => {
@@ -665,7 +668,7 @@ async fn reactivate_relay(
 ) -> std::result::Result<Response, ApiError> {
     let auth = state.api.extract_auth_pubkey(&headers)?;
 
-    let relay = match state.api.repo.get_relay(&id).await {
+    let relay = match state.api.query.get_relay(&id).await {
         Ok(Some(r)) => r,
         Ok(None) => return Ok(err(StatusCode::NOT_FOUND, "not-found", "relay not found")),
         Err(e) => {
@@ -706,7 +709,7 @@ async fn update_tenant(
     let auth = state.api.extract_auth_pubkey(&headers)?;
     state.api.require_admin_or_tenant(&auth, &pubkey)?;
 
-    let mut tenant = match state.api.repo.get_tenant(&pubkey).await {
+    let mut tenant = match state.api.query.get_tenant(&pubkey).await {
         Ok(Some(t)) => t,
         Ok(None) => return Ok(err(StatusCode::NOT_FOUND, "not-found", "tenant not found")),
         Err(e) => {
@@ -722,7 +725,7 @@ async fn update_tenant(
         tenant.nwc_url = nwc_url;
     }
 
-    match state.api.repo.update_tenant(&tenant).await {
+    match state.api.command.update_tenant(&tenant).await {
         Ok(()) => Ok(ok(StatusCode::OK, tenant)),
         Err(e) => Ok(err(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -731,4 +734,3 @@ async fn update_tenant(
         )),
     }
 }
-

@@ -1,16 +1,19 @@
 use anyhow::Result;
 use sqlx::{Sqlite, SqlitePool, Transaction};
+use tokio::sync::broadcast;
 
-use crate::models::{Relay, Tenant};
+use crate::models::{Activity, Relay, Tenant};
 
 #[derive(Clone)]
 pub struct Command {
     pool: SqlitePool,
+    pub notify: broadcast::Sender<Activity>,
 }
 
 impl Command {
     pub fn new(pool: SqlitePool) -> Self {
-        Self { pool }
+        let (notify, _) = broadcast::channel(64);
+        Self { pool, notify }
     }
 
     async fn insert_activity(
@@ -18,7 +21,7 @@ impl Command {
         activity_type: &str,
         resource_type: &str,
         resource_id: &str,
-    ) -> Result<()> {
+    ) -> Result<Activity> {
         let tenant = match resource_type {
             "tenant" => resource_id.to_string(),
             "relay" => {
@@ -30,18 +33,34 @@ impl Command {
             _ => anyhow::bail!("unknown resource_type: {}", resource_type),
         };
 
+        let id = uuid::Uuid::new_v4().to_string();
+        let created_at = chrono::Utc::now().timestamp();
+
         sqlx::query(
             "INSERT INTO activity (id, tenant, created_at, activity_type, resource_type, resource_id)
-             VALUES (?, ?, strftime('%s','now'), ?, ?, ?)",
+             VALUES (?, ?, ?, ?, ?, ?)",
         )
-        .bind(uuid::Uuid::new_v4().to_string())
-        .bind(tenant)
+        .bind(&id)
+        .bind(&tenant)
+        .bind(created_at)
         .bind(activity_type)
         .bind(resource_type)
         .bind(resource_id)
         .execute(&mut **tx)
         .await?;
-        Ok(())
+
+        Ok(Activity {
+            id,
+            tenant,
+            created_at,
+            activity_type: activity_type.to_string(),
+            resource_type: resource_type.to_string(),
+            resource_id: resource_id.to_string(),
+        })
+    }
+
+    fn emit(&self, activity: Activity) {
+        let _ = self.notify.send(activity);
     }
 
     pub async fn create_tenant(&self, tenant: &Tenant) -> Result<()> {
@@ -57,9 +76,10 @@ impl Command {
         .execute(&mut *tx)
         .await?;
 
-        Self::insert_activity(&mut tx, "create_tenant", "tenant", &tenant.pubkey).await?;
+        let activity = Self::insert_activity(&mut tx, "create_tenant", "tenant", &tenant.pubkey).await?;
 
         tx.commit().await?;
+        self.emit(activity);
         Ok(())
     }
 
@@ -72,9 +92,10 @@ impl Command {
             .execute(&mut *tx)
             .await?;
 
-        Self::insert_activity(&mut tx, "update_tenant", "tenant", &tenant.pubkey).await?;
+        let activity = Self::insert_activity(&mut tx, "update_tenant", "tenant", &tenant.pubkey).await?;
 
         tx.commit().await?;
+        self.emit(activity);
         Ok(())
     }
 
@@ -109,9 +130,10 @@ impl Command {
         .execute(&mut *tx)
         .await?;
 
-        Self::insert_activity(&mut tx, "create_relay", "relay", &relay.id).await?;
+        let activity = Self::insert_activity(&mut tx, "create_relay", "relay", &relay.id).await?;
 
         tx.commit().await?;
+        self.emit(activity);
         Ok(())
     }
 
@@ -147,9 +169,10 @@ impl Command {
         .execute(&mut *tx)
         .await?;
 
-        Self::insert_activity(&mut tx, "update_relay", "relay", &relay.id).await?;
+        let activity = Self::insert_activity(&mut tx, "update_relay", "relay", &relay.id).await?;
 
         tx.commit().await?;
+        self.emit(activity);
         Ok(())
     }
 
@@ -161,9 +184,10 @@ impl Command {
             .execute(&mut *tx)
             .await?;
 
-        Self::insert_activity(&mut tx, "deactivate_relay", "relay", &relay.id).await?;
+        let activity = Self::insert_activity(&mut tx, "deactivate_relay", "relay", &relay.id).await?;
 
         tx.commit().await?;
+        self.emit(activity);
         Ok(())
     }
 
@@ -175,9 +199,10 @@ impl Command {
             .execute(&mut *tx)
             .await?;
 
-        Self::insert_activity(&mut tx, "activate_relay", "relay", &relay.id).await?;
+        let activity = Self::insert_activity(&mut tx, "activate_relay", "relay", &relay.id).await?;
 
         tx.commit().await?;
+        self.emit(activity);
         Ok(())
     }
 
@@ -190,17 +215,25 @@ impl Command {
             .execute(&mut *tx)
             .await?;
 
-        Self::insert_activity(&mut tx, "fail_relay_sync", "relay", &relay.id).await?;
+        let activity = Self::insert_activity(&mut tx, "fail_relay_sync", "relay", &relay.id).await?;
 
         tx.commit().await?;
+        self.emit(activity);
         Ok(())
     }
 
-    pub async fn mark_relay_synced(&self, relay_id: &str) -> Result<()> {
+    pub async fn complete_relay_sync(&self, relay_id: &str) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+
         sqlx::query("UPDATE relay SET synced = 1, status = 'active', sync_error = '' WHERE id = ?")
             .bind(relay_id)
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await?;
+
+        let activity = Self::insert_activity(&mut tx, "complete_relay_sync", "relay", relay_id).await?;
+
+        tx.commit().await?;
+        self.emit(activity);
         Ok(())
     }
 }

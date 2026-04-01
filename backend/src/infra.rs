@@ -1,8 +1,8 @@
 use anyhow::Result;
 use nostr_sdk::prelude::*;
-use tokio::sync::Mutex;
 
 use crate::command::Command;
+use crate::models::Activity;
 use crate::query::Query;
 
 #[derive(Clone)]
@@ -15,7 +15,6 @@ pub struct Infra {
     api_secret: String,
     query: Query,
     command: Command,
-    last_activity_at: std::sync::Arc<Mutex<i64>>,
 }
 
 impl Infra {
@@ -35,60 +34,81 @@ impl Infra {
             api_secret,
             query,
             command,
-            last_activity_at: std::sync::Arc::new(Mutex::new(0)),
         }
     }
 
     pub async fn start(self) {
-        // Initialize from DB so we don't replay historical activities on restart
-        match self.query.max_activity_at().await {
-            Ok(ts) => *self.last_activity_at.lock().await = ts,
-            Err(e) => tracing::error!(error = %e, "failed to read max activity timestamp"),
+        // Subscribe before catch-up so no activities are missed between query and listen
+        let mut rx = self.command.notify.subscribe();
+
+        // Catch up on any unsynced relays from before this process started
+        match self.catch_up().await {
+            Ok(()) => {}
+            Err(e) => tracing::error!(error = %e, "infra catch-up failed"),
         }
 
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(10));
         loop {
-            interval.tick().await;
-            if let Err(e) = self.tick().await {
-                tracing::error!(error = %e, "infra tick failed");
+            match rx.recv().await {
+                Ok(activity) => {
+                    if let Err(e) = self.handle_activity(&activity).await {
+                        tracing::error!(error = %e, "infra handle_activity failed");
+                    }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    tracing::warn!(missed = n, "infra lagged, running catch-up");
+                    if let Err(e) = self.catch_up().await {
+                        tracing::error!(error = %e, "infra catch-up failed");
+                    }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
             }
         }
     }
 
-    pub async fn tick(&self) -> Result<()> {
-        let mut since_guard = self.last_activity_at.lock().await;
-        let since = *since_guard;
-        let activity = self.query.list_activity(&since).await?;
-
-        for a in activity {
-            let needs_sync = matches!(
-                a.activity_type.as_str(),
-                "create_relay" | "update_relay" | "deactivate_relay"
-            );
-
-            if needs_sync {
-                let Some(relay) = self.query.get_relay(&a.resource_id).await? else {
-                    continue;
-                };
-
+    async fn catch_up(&self) -> Result<()> {
+        let relays = self.query.list_relays().await?;
+        for relay in relays {
+            if relay.status == "new" || (relay.sync_error != "" && relay.status != "inactive") {
                 let is_new = relay.synced == 0;
-
-                match self.sync_relay(&relay, is_new).await {
-                    Ok(()) => {
-                        tracing::info!(relay = %relay.id, "relay sync succeeded");
-                        self.command.mark_relay_synced(&relay.id).await?
-                    }
-                    Err(e) => {
-                        tracing::warn!(relay = %relay.id, error = %e, "relay sync failed");
-                        self.command.fail_relay_sync(&relay, e.to_string()).await?;
-                    }
-                }
+                self.sync_and_report(&relay, is_new).await;
             }
+        }
+        Ok(())
+    }
 
-            *since_guard = (*since_guard).max(a.created_at);
+    async fn handle_activity(&self, activity: &Activity) -> Result<()> {
+        let needs_sync = matches!(
+            activity.activity_type.as_str(),
+            "create_relay" | "update_relay" | "deactivate_relay"
+        );
+
+        if needs_sync {
+            let Some(relay) = self.query.get_relay(&activity.resource_id).await? else {
+                return Ok(());
+            };
+
+            let is_new = relay.synced == 0;
+            self.sync_and_report(&relay, is_new).await;
         }
 
         Ok(())
+    }
+
+    async fn sync_and_report(&self, relay: &crate::models::Relay, is_new: bool) {
+        match self.sync_relay(relay, is_new).await {
+            Ok(()) => {
+                tracing::info!(relay = %relay.id, "relay sync succeeded");
+                if let Err(e) = self.command.complete_relay_sync(&relay.id).await {
+                    tracing::error!(relay = %relay.id, error = %e, "failed to mark sync complete");
+                }
+            }
+            Err(e) => {
+                tracing::warn!(relay = %relay.id, error = %e, "relay sync failed");
+                if let Err(e2) = self.command.fail_relay_sync(relay, e.to_string()).await {
+                    tracing::error!(relay = %relay.id, error = %e2, "failed to record sync failure");
+                }
+            }
+        }
     }
 
     async fn nip98_auth(&self, url: &str, method: HttpMethod) -> Result<String> {

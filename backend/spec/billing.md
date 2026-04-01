@@ -12,3 +12,4 @@ Members:
 ## `pub fn new(query: Query, command: Command, robot: Robot) -> Self`
 
 - Reads environment and populates members
+- Subscribes to `command.notify.notified`

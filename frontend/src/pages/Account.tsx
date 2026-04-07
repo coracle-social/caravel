@@ -1,17 +1,20 @@
-import { createEffect, createMemo, createSignal, For, Show } from "solid-js"
+import { createEffect, createMemo, createResource, createSignal, For, Show } from "solid-js"
 import PageContainer from "@/components/PageContainer"
 import LoadingState from "@/components/LoadingState"
 import PaymentDialog from "@/components/PaymentDialog"
 import useMinLoading from "@/components/useMinLoading"
-import { updateActiveTenantBilling, useTenant, useTenantInvoices, type Invoice } from "@/lib/hooks"
+import { updateActiveTenant, useTenant } from "@/lib/hooks"
+import { createPortalSession, listTenantInvoices, type Invoice } from "@/lib/api"
+import { account } from "@/lib/state"
 
 export default function Account() {
   const [tenant, { refetch: refetchTenant }] = useTenant()
-  const [invoices, { refetch: refetchInvoices }] = useTenantInvoices()
+  const [invoices, { refetch: refetchInvoices }] = createResource(() => listTenantInvoices(account()!.pubkey))
   const [nwcUrl, setNwcUrl] = createSignal("")
   const [saving, setSaving] = createSignal(false)
   const [error, setError] = createSignal("")
   const [selectedInvoice, setSelectedInvoice] = createSignal<Invoice | undefined>()
+  const [portalLoading, setPortalLoading] = createSignal(false)
   const invoicesLoading = useMinLoading(() => invoices.loading)
 
   const hasBillingChanges = createMemo(() => {
@@ -29,7 +32,7 @@ export default function Account() {
     setSaving(true)
     try {
       const next = nwcUrl().trim()
-      await updateActiveTenantBilling(next)
+      await updateActiveTenant({ nwc_url: next })
       await refetchTenant()
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to update billing")
@@ -43,15 +46,29 @@ export default function Account() {
     void refetchInvoices()
   }
 
+  async function openPortal() {
+    setPortalLoading(true)
+    try {
+      const { url } = await createPortalSession(account()!.pubkey)
+      window.location.href = url
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to open billing portal")
+    } finally {
+      setPortalLoading(false)
+    }
+  }
+
   function logout() {
     localStorage.clear()
     window.location.href = "/"
   }
 
   const invoiceStatusStyles: Record<string, string> = {
-    pending: "bg-yellow-50 text-yellow-700 border-yellow-200",
+    draft: "bg-gray-100 text-gray-500 border-gray-200",
+    open: "bg-yellow-50 text-yellow-700 border-yellow-200",
     paid: "bg-green-50 text-green-700 border-green-200",
-    closed: "bg-gray-100 text-gray-500 border-gray-200",
+    void: "bg-gray-100 text-gray-500 border-gray-200",
+    uncollectible: "bg-red-50 text-red-700 border-red-200",
   }
 
   return (
@@ -80,7 +97,17 @@ export default function Account() {
         </section>
 
         <section class="bg-white border border-gray-200 rounded-xl p-6">
-          <h2 class="text-lg font-semibold text-gray-900 mb-4">Recurring Billing</h2>
+          <div class="flex items-center justify-between gap-3 mb-4">
+            <h2 class="text-lg font-semibold text-gray-900">Recurring Billing</h2>
+            <button
+              type="button"
+              onClick={openPortal}
+              disabled={portalLoading()}
+              class="text-sm font-medium text-blue-600 hover:text-blue-700 disabled:opacity-50"
+            >
+              {portalLoading() ? "Loading..." : "Manage Billing"}
+            </button>
+          </div>
           <p class="text-sm text-gray-600 mb-4">
             Enable automatic payments by providing your Nostr Wallet Connect URL.
           </p>
@@ -101,6 +128,9 @@ export default function Account() {
               {saving() ? "Saving..." : "Save"}
             </button>
           </div>
+          <Show when={tenant()?.nwc_error}>
+            <p class="mt-3 text-sm text-red-600">{tenant()!.nwc_error}</p>
+          </Show>
           <Show when={error()}>
             <p class="mt-3 text-sm text-red-600">{error()}</p>
           </Show>
@@ -116,7 +146,7 @@ export default function Account() {
               <ul class="space-y-3">
                 <For each={invoices()}>
                   {(invoice) => {
-                    const isPending = () => invoice.status === "pending"
+                    const isOpen = () => invoice.status === "open"
                     const statusStyle = () => invoiceStatusStyles[invoice.status] ?? "bg-gray-100 text-gray-500 border-gray-200"
                     const periodLabel = () => {
                       const start = new Date(invoice.period_start * 1000)
@@ -126,33 +156,28 @@ export default function Account() {
 
                     return (
                       <li
-                        class={`rounded-lg border border-gray-200 p-4 text-sm ${isPending() ? "cursor-pointer hover:border-blue-300 hover:bg-blue-50 transition-colors" : ""}`}
-                        onClick={() => isPending() && setSelectedInvoice(invoice)}
-                        title={isPending() ? "Click to pay this invoice" : undefined}
+                        class={`rounded-lg border border-gray-200 p-4 text-sm ${isOpen() ? "cursor-pointer hover:border-blue-300 hover:bg-blue-50 transition-colors" : ""}`}
+                        onClick={() => isOpen() && setSelectedInvoice(invoice)}
+                        title={isOpen() ? "Click to pay this invoice" : undefined}
                       >
                         <div class="flex items-center justify-between gap-3">
                           <div>
                             <span class="font-medium text-gray-900">
-                              {invoice.items.length > 0
-                                ? `${invoice.items.reduce((sum, item) => sum + item.sats, 0).toLocaleString()} sats`
-                                : "—"}
+                              ${(invoice.amount_due / 100).toFixed(2)}
                             </span>
                             <Show when={invoice.period_start && invoice.period_end}>
                               <p class="text-xs text-gray-500 mt-0.5">{periodLabel()}</p>
                             </Show>
                           </div>
                           <div class="flex items-center gap-2 flex-shrink-0">
-                            <Show when={isPending()}>
-                              <span class="text-xs text-blue-600 font-medium">Pay now →</span>
+                            <Show when={isOpen()}>
+                              <span class="text-xs text-blue-600 font-medium">Pay now</span>
                             </Show>
                             <span class={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium capitalize ${statusStyle()}`}>
                               {invoice.status}
                             </span>
                           </div>
                         </div>
-                        <Show when={invoice.error}>
-                          <p class="text-xs text-red-500 mt-2">{invoice.error}</p>
-                        </Show>
                       </li>
                     )
                   }}

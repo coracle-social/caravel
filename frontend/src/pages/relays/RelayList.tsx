@@ -34,10 +34,7 @@ export default function RelayList() {
         <select value={status()} onChange={e => setStatus(e.currentTarget.value)} class="border border-gray-300 rounded-lg px-3 py-2 bg-white">
           <option value="all">All statuses</option>
           <option value="active">Active</option>
-          <option value="pending">Pending</option>
-          <option value="deactivated">Deactivated</option>
-          <option value="provisioning_failed">Provisioning failed</option>
-          <option value="suspended">Suspended</option>
+          <option value="inactive">Inactive</option>
         </select>
       </div>
       <ResourceState loading={loading()} error={relays.error} loadingText="Loading relays..." errorText="Failed to load relays." />

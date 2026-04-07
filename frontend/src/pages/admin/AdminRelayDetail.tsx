@@ -15,7 +15,7 @@ export default function AdminRelayDetail() {
   const [relay, { refetch, mutate }] = useRelay(relayId)
   const loading = useMinLoading(() => relay.loading && !relay())
   const [activity] = useRelayActivity(relayId)
-  const { busy, handleDeactivate, toggles } = useRelayToggles(relayId, relay, { refetch, mutate })
+  const { busy, handleDeactivate, handleReactivate, toggles } = useRelayToggles(relayId, relay, { refetch, mutate })
 
   return (
     <PageContainer>
@@ -29,7 +29,9 @@ export default function AdminRelayDetail() {
               showTenant
               editHref={`/admin/relays/${params.id}/edit`}
               onDeactivate={handleDeactivate}
+              onReactivate={handleReactivate}
               deactivating={busy()}
+              reactivating={busy()}
               enforcePlanLimits={false}
               showPlanActions={false}
               {...toggles}

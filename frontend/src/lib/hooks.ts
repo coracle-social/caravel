@@ -7,18 +7,17 @@ import { map, of } from "rxjs"
 import {
   createRelay,
   deactivateRelay,
+  reactivateRelay,
   getRelay,
   getTenant,
   listRelayActivity,
   listRelays,
-  listTenantInvoices,
   listTenantRelays,
   listTenants,
   updateRelay,
-  updateTenantBilling,
+  updateTenant,
   type Activity,
   type CreateRelayInput,
-  type Invoice,
   type Relay,
   type Tenant,
   type UpdateRelayInput,
@@ -87,11 +86,12 @@ export const useTenant = () => createResource(() => getTenant(account()!.pubkey)
 
 export const useTenantRelays = () => createResource(() => listTenantRelays(account()!.pubkey))
 
-export const useTenantInvoices = () => createResource(() => listTenantInvoices(account()!.pubkey))
-
 export const useRelay = (relayId: () => string) => createResource(relayId, getRelay)
 
-export const useRelayActivity = (relayId: () => string) => createResource(relayId, listRelayActivity)
+export const useRelayActivity = (relayId: () => string) => createResource(relayId, async (id) => {
+  const result = await listRelayActivity(id)
+  return result.activity
+})
 
 export const useAdminTenants = () => createResource(listTenants)
 
@@ -122,7 +122,7 @@ export const createRelayForActiveTenant = (input: CreateRelayInput) => {
   return createRelay({...defaults, ...input, ...overrides})
 }
 
-export const updateActiveTenantBilling = (nwc_url: string) => updateTenantBilling(account()!.pubkey, { nwc_url })
+export const updateActiveTenant = (input: { nwc_url?: string }) => updateTenant(account()!.pubkey, input)
 
 export const updateRelayById = (id: string, input: UpdateRelayInput) => updateRelay(id, input)
 
@@ -130,9 +130,11 @@ export const updateRelayPlanById = (id: string, plan: string) => updateRelay(id,
 
 export const deactivateRelayById = (id: string) => deactivateRelay(id)
 
-export async function checkPendingInvoice(): Promise<Invoice | undefined> {
-  const invoices = await listTenantInvoices(account()!.pubkey)
-  return invoices.find(inv => inv.status === "pending")
+export const reactivateRelayById = (id: string) => reactivateRelay(id)
+
+export async function tenantNeedsPaymentSetup(): Promise<boolean> {
+  const tenant = await getTenant(account()!.pubkey)
+  return !tenant.nwc_url && !tenant.stripe_subscription_id
 }
 
 export async function getRelayMembers(url: string) {
@@ -145,4 +147,4 @@ export async function getRelayMembers(url: string) {
   }
 }
 
-export type { Activity, Invoice, Relay, Tenant }
+export type { Activity, Relay, Tenant }

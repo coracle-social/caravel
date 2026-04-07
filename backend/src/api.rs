@@ -16,6 +16,7 @@ use crate::billing::Billing;
 use crate::command::Command;
 use crate::models::{Relay, Tenant};
 use crate::query::Query;
+use axum::body::Bytes;
 
 #[derive(Clone)]
 pub struct Api {
@@ -24,6 +25,27 @@ pub struct Api {
     query: Query,
     command: Command,
     billing: Billing,
+}
+
+async fn stripe_webhook(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    let signature = headers
+        .get("Stripe-Signature")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+
+    let payload = match std::str::from_utf8(&body) {
+        Ok(s) => s,
+        Err(_) => return err(StatusCode::BAD_REQUEST, "bad-request", "invalid payload"),
+    };
+
+    match state.api.billing.handle_webhook(payload, signature).await {
+        Ok(()) => ok(StatusCode::OK, ()),
+        Err(e) => err(StatusCode::BAD_REQUEST, "webhook-error", &e.to_string()),
+    }
 }
 
 #[derive(Clone)]
@@ -47,6 +69,8 @@ struct ErrorResponse {
 enum ApiError {
     Unauthorized(anyhow::Error),
     Forbidden(&'static str),
+    NotFound(&'static str),
+    Internal(String),
 }
 
 impl IntoResponse for ApiError {
@@ -54,6 +78,8 @@ impl IntoResponse for ApiError {
         match self {
             Self::Unauthorized(e) => err(StatusCode::UNAUTHORIZED, "unauthorized", &e.to_string()),
             Self::Forbidden(message) => err(StatusCode::FORBIDDEN, "forbidden", message),
+            Self::NotFound(message) => err(StatusCode::NOT_FOUND, "not-found", message),
+            Self::Internal(message) => err(StatusCode::INTERNAL_SERVER_ERROR, "internal", &message),
         }
     }
 }
@@ -93,6 +119,11 @@ impl Api {
             .route("/relays/:id/activity", get(list_relay_activity))
             .route("/relays/:id/deactivate", post(deactivate_relay))
             .route("/relays/:id/reactivate", post(reactivate_relay))
+            .route("/tenants/:pubkey/invoices", get(list_tenant_invoices))
+            .route("/invoices/:id", get(get_invoice))
+            .route("/invoices/:id/bolt11", get(get_invoice_bolt11))
+            .route("/tenants/:pubkey/stripe/session", get(create_stripe_session))
+            .route("/stripe/webhook", post(stripe_webhook))
             .with_state(state)
     }
 
@@ -170,6 +201,14 @@ impl Api {
             Ok(())
         } else {
             Err(ApiError::Forbidden("not authorized"))
+        }
+    }
+
+    async fn get_tenant_or_404(&self, pubkey: &str) -> std::result::Result<Tenant, ApiError> {
+        match self.query.get_tenant(pubkey).await {
+            Ok(Some(t)) => Ok(t),
+            Ok(None) => Err(ApiError::NotFound("tenant not found")),
+            Err(e) => Err(ApiError::Internal(e.to_string())),
         }
     }
 
@@ -328,16 +367,17 @@ async fn get_identity(
 
     // Only create if tenant doesn't exist yet
     if let Ok(None) = state.api.query.get_tenant(&pubkey).await {
-        // TODO: Call Stripe API to create customer and subscription
+        // TODO: Call Stripe API to create a new customer
         let stripe_customer_id = String::new();
-        let stripe_subscription_id = String::new();
 
         let tenant = Tenant {
             pubkey: pubkey.clone(),
             nwc_url: String::new(),
+            nwc_error: None,
             created_at: now_ts(),
             stripe_customer_id,
-            stripe_subscription_id,
+            stripe_subscription_id: None,
+            past_due_at: None,
         };
 
         match state.api.command.create_tenant(&tenant).await {
@@ -376,16 +416,8 @@ async fn get_tenant(
 ) -> std::result::Result<Response, ApiError> {
     let auth = state.api.extract_auth_pubkey(&headers)?;
     state.api.require_admin_or_tenant(&auth, &pubkey)?;
-
-    match state.api.query.get_tenant(&pubkey).await {
-        Ok(Some(tenant)) => Ok(ok(StatusCode::OK, tenant)),
-        Ok(None) => Ok(err(StatusCode::NOT_FOUND, "not-found", "tenant not found")),
-        Err(e) => Ok(err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "internal",
-            &e.to_string(),
-        )),
-    }
+    let tenant = state.api.get_tenant_or_404(&pubkey).await?;
+    Ok(ok(StatusCode::OK, tenant))
 }
 
 async fn list_relays(
@@ -662,7 +694,7 @@ async fn deactivate_relay(
         ));
     }
 
-    match state.api.billing.deactivate_relay(&id).await {
+    match state.api.command.deactivate_relay(&relay).await {
         Ok(()) => Ok(ok(StatusCode::OK, ())),
         Err(e) => Ok(err(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -701,8 +733,100 @@ async fn reactivate_relay(
         ));
     }
 
-    match state.api.billing.reactivate_relay(&id).await {
+    match state.api.command.activate_relay(&relay).await {
         Ok(()) => Ok(ok(StatusCode::OK, ())),
+        Err(e) => Ok(err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal",
+            &e.to_string(),
+        )),
+    }
+}
+
+async fn list_tenant_invoices(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(pubkey): Path<String>,
+) -> std::result::Result<Response, ApiError> {
+    let auth = state.api.extract_auth_pubkey(&headers)?;
+    state.api.require_admin_or_tenant(&auth, &pubkey)?;
+    let tenant = state.api.get_tenant_or_404(&pubkey).await?;
+
+    match state
+        .api
+        .billing
+        .stripe_list_invoices(&tenant.stripe_customer_id)
+        .await
+    {
+        Ok(invoices) => Ok(ok(StatusCode::OK, invoices)),
+        Err(e) => Ok(err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal",
+            &e.to_string(),
+        )),
+    }
+}
+
+async fn get_invoice(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> std::result::Result<Response, ApiError> {
+    let auth = state.api.extract_auth_pubkey(&headers)?;
+    let (invoice, tenant) = state.api.billing.get_invoice_with_tenant(&id).await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    state.api.require_admin_or_tenant(&auth, &tenant.pubkey)?;
+
+    Ok(ok(StatusCode::OK, invoice))
+}
+
+async fn get_invoice_bolt11(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> std::result::Result<Response, ApiError> {
+    let auth = state.api.extract_auth_pubkey(&headers)?;
+    let (invoice, tenant) = state.api.billing.get_invoice_with_tenant(&id).await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    state.api.require_admin_or_tenant(&auth, &tenant.pubkey)?;
+
+    let status = invoice["status"].as_str().unwrap_or_default();
+    if status != "open" {
+        return Ok(err(
+            StatusCode::BAD_REQUEST,
+            "invoice-not-open",
+            "invoice is not open",
+        ));
+    }
+
+    let amount_due = invoice["amount_due"].as_i64().unwrap_or(0);
+
+    match state.api.billing.create_bolt11(amount_due).await {
+        Ok(bolt11) => Ok(ok(StatusCode::OK, serde_json::json!({ "bolt11": bolt11 }))),
+        Err(e) => Ok(err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal",
+            &e.to_string(),
+        )),
+    }
+}
+
+async fn create_stripe_session(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(pubkey): Path<String>,
+) -> std::result::Result<Response, ApiError> {
+    let auth = state.api.extract_auth_pubkey(&headers)?;
+    state.api.require_admin_or_tenant(&auth, &pubkey)?;
+    let tenant = state.api.get_tenant_or_404(&pubkey).await?;
+
+    match state
+        .api
+        .billing
+        .stripe_create_portal_session(&tenant.stripe_customer_id)
+        .await
+    {
+        Ok(url) => Ok(ok(StatusCode::OK, serde_json::json!({ "url": url }))),
         Err(e) => Ok(err(
             StatusCode::INTERNAL_SERVER_ERROR,
             "internal",
@@ -719,18 +843,7 @@ async fn update_tenant(
 ) -> std::result::Result<Response, ApiError> {
     let auth = state.api.extract_auth_pubkey(&headers)?;
     state.api.require_admin_or_tenant(&auth, &pubkey)?;
-
-    let mut tenant = match state.api.query.get_tenant(&pubkey).await {
-        Ok(Some(t)) => t,
-        Ok(None) => return Ok(err(StatusCode::NOT_FOUND, "not-found", "tenant not found")),
-        Err(e) => {
-            return Ok(err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal",
-                &e.to_string(),
-            ));
-        }
-    };
+    let mut tenant = state.api.get_tenant_or_404(&pubkey).await?;
 
     if let Some(nwc_url) = payload.nwc_url {
         tenant.nwc_url = nwc_url;

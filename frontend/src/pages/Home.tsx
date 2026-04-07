@@ -187,8 +187,8 @@ export default function Home() {
                     <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
                   </svg>
                 ),
-                title: "Pay with sats",
-                body: "Lightning-native billing. No credit cards, no bank accounts — just sats, straight from your wallet.",
+                title: "Flexible payments",
+                body: "Pay with Bitcoin/Lightning or with a card.",
               },
             ].map(({ icon, title, body }) => (
               <div class="bg-white rounded-2xl border border-gray-200 p-6 hover:border-blue-200 hover:shadow-sm transition-all">
@@ -301,7 +301,7 @@ export default function Home() {
         <div class="max-w-5xl mx-auto px-6 py-20">
           <h2 class="text-3xl font-bold text-center text-gray-900 mb-4">Simple pricing</h2>
           <p class="text-center text-gray-500 mb-14 max-w-lg mx-auto">
-            Pay in sats. Upgrade or cancel any time.
+            Upgrade or cancel any time.
           </p>
 
           <PricingTable onCta={openRelayModal} />
@@ -314,7 +314,7 @@ export default function Home() {
         <div class="relative max-w-5xl mx-auto px-6 py-28 text-center">
           <h2 class="text-4xl font-extrabold text-gray-900 mb-4">Ready to launch your relay?</h2>
           <p class="text-gray-500 mb-10 max-w-lg mx-auto text-lg">
-            Join communities already running on Caravel. Set up in minutes, pay in sats.
+            Join communities already running on Caravel. Set up in minutes.
           </p>
           <button
             type="button"

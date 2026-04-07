@@ -20,10 +20,9 @@ function XIcon() {
   )
 }
 
-function priceLabel(sats: number) {
-  if (sats === 0) return "0"
-  if (sats >= 1000) return `${(sats / 1000).toLocaleString()}K`
-  return sats.toLocaleString()
+function priceLabel(amount: number) {
+  if (amount === 0) return "Free"
+  return `$${amount / 100}`
 }
 
 function memberLabel(members: number | null) {
@@ -55,8 +54,8 @@ export default function PricingTable(props: PricingTableProps) {
               )}
               <h3 class="text-lg font-bold text-gray-900 mb-1">{plan.name}</h3>
               <div class="mb-8">
-                <span class="text-4xl font-extrabold text-gray-900">{priceLabel(plan.sats)}</span>
-                <span class="text-sm text-gray-400 ml-1">sats / mo</span>
+                <span class="text-4xl font-extrabold text-gray-900">{priceLabel(plan.amount)}</span>
+                <span class="text-sm text-gray-400 ml-1">/ mo</span>
               </div>
               <ul class="mb-8 text-sm text-gray-600 space-y-3">
                 <li class="flex items-start gap-2"><CheckIcon />{memberLabel(plan.members)}</li>

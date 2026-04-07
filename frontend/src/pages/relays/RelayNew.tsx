@@ -2,13 +2,13 @@ import { createSignal } from "solid-js"
 import { useNavigate } from "@solidjs/router"
 import BackLink from "@/components/BackLink"
 import PageContainer from "@/components/PageContainer"
-import PaymentDialog from "@/components/PaymentDialog"
+import PaymentSetup from "@/components/PaymentSetup"
 import RelayForm, { type RelayFormValues } from "@/components/RelayForm"
-import { checkPendingInvoice, createRelayForActiveTenant, type Invoice } from "@/lib/hooks"
+import { createRelayForActiveTenant, tenantNeedsPaymentSetup } from "@/lib/hooks"
 
 export default function RelayNew() {
   const navigate = useNavigate()
-  const [pendingInvoice, setPendingInvoice] = createSignal<Invoice | undefined>()
+  const [showPaymentSetup, setShowPaymentSetup] = createSignal(false)
   let createdRelayId = ""
 
   async function handleSubmit(values: RelayFormValues) {
@@ -16,9 +16,9 @@ export default function RelayNew() {
     createdRelayId = relay.id
 
     if (values.plan !== "free") {
-      const invoice = await checkPendingInvoice()
-      if (invoice) {
-        setPendingInvoice(invoice)
+      const needs = await tenantNeedsPaymentSetup()
+      if (needs) {
+        setShowPaymentSetup(true)
         return
       }
     }
@@ -27,7 +27,7 @@ export default function RelayNew() {
   }
 
   function handleDialogClose() {
-    setPendingInvoice(undefined)
+    setShowPaymentSetup(false)
     navigate(`/relays/${createdRelayId}`)
   }
 
@@ -41,13 +41,10 @@ export default function RelayNew() {
         submitLabel="Create Relay"
         submittingLabel="Creating..."
       />
-      {pendingInvoice() && (
-        <PaymentDialog
-          invoice={pendingInvoice()!}
-          open={!!pendingInvoice()}
-          onClose={handleDialogClose}
-        />
-      )}
+      <PaymentSetup
+        open={showPaymentSetup()}
+        onClose={handleDialogClose}
+      />
     </PageContainer>
   )
 }

@@ -1,5 +1,5 @@
 import { createSignal } from "solid-js"
-import { updateRelayById, deactivateRelayById, checkPendingInvoice, type Invoice, type Relay } from "@/lib/hooks"
+import { updateRelayById, deactivateRelayById, reactivateRelayById, tenantNeedsPaymentSetup, type Relay } from "@/lib/hooks"
 import { setToastMessage } from "@/components/Toast"
 import type { PlanId } from "@/lib/api"
 
@@ -30,7 +30,7 @@ export default function useRelayToggles(
   { refetch, mutate }: RelayActions,
 ) {
   const [busy, setBusy] = createSignal(false)
-  const [pendingInvoice, setPendingInvoice] = createSignal<Invoice | undefined>()
+  const [needsPaymentSetup, setNeedsPaymentSetup] = createSignal(false)
 
   async function updateRelay(next: Relay, previous: Relay) {
     mutate(next)
@@ -63,6 +63,19 @@ export default function useRelayToggles(
     }
   }
 
+  async function handleReactivate() {
+    if (busy()) return
+    setBusy(true)
+    try {
+      await reactivateRelayById(relayId())
+      await refetch()
+    } catch (e) {
+      setToastMessage(e instanceof Error ? e.message : "Failed to reactivate relay")
+    } finally {
+      setBusy(false)
+    }
+  }
+
   async function handleUpdatePlan(plan: PlanId) {
     const current = relay()
     if (!current) return
@@ -88,8 +101,8 @@ export default function useRelayToggles(
     }
 
     if (plan !== "free") {
-      const invoice = await checkPendingInvoice()
-      if (invoice) setPendingInvoice(invoice)
+      const needs = await tenantNeedsPaymentSetup()
+      if (needs) setNeedsPaymentSetup(true)
     }
   }
 
@@ -103,5 +116,5 @@ export default function useRelayToggles(
     onToggleLivekitSupport: () => toggle("livekit_enabled", relay()?.plan !== "free"),
   }
 
-  return { busy, handleDeactivate, handleUpdatePlan, pendingInvoice, clearPendingInvoice: () => setPendingInvoice(undefined), toggles }
+  return { busy, handleDeactivate, handleReactivate, handleUpdatePlan, needsPaymentSetup, clearNeedsPaymentSetup: () => setNeedsPaymentSetup(false), toggles }
 }

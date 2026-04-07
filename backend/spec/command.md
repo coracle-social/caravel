@@ -69,3 +69,33 @@ Notes:
 
 - Sets `stripe_subscription_item_id`
 - Does not log activity
+
+## `pub fn set_tenant_subscription(&self, pubkey: &str, stripe_subscription_id: &str) -> Result<()>`
+
+- Sets `stripe_subscription_id` on the tenant
+- Does not log activity
+
+## `pub fn clear_tenant_subscription(&self, pubkey: &str) -> Result<()>`
+
+- Sets `stripe_subscription_id = null` on the tenant
+- Does not log activity
+
+## `pub fn set_tenant_nwc_error(&self, pubkey: &str, error: &str) -> Result<()>`
+
+- Sets `nwc_error` on the tenant
+- Does not log activity
+
+## `pub fn clear_tenant_nwc_error(&self, pubkey: &str) -> Result<()>`
+
+- Sets `nwc_error = null` on the tenant
+- Does not log activity
+
+## `pub fn set_tenant_past_due(&self, pubkey: &str) -> Result<()>`
+
+- Sets `past_due_at` to the current timestamp
+- Does not log activity
+
+## `pub fn clear_tenant_past_due(&self, pubkey: &str) -> Result<()>`
+
+- Sets `past_due_at = null` on the tenant
+- Does not log activity

@@ -15,7 +15,7 @@ impl Query {
 
     pub async fn list_tenants(&self) -> Result<Vec<Tenant>> {
         let rows = sqlx::query_as::<_, Tenant>(
-            "SELECT pubkey, nwc_url, created_at, stripe_customer_id, stripe_subscription_id
+            "SELECT pubkey, nwc_url, nwc_error, created_at, stripe_customer_id, stripe_subscription_id, past_due_at
              FROM tenant
              ORDER BY pubkey",
         )
@@ -26,7 +26,7 @@ impl Query {
 
     pub async fn get_tenant(&self, pubkey: &str) -> Result<Option<Tenant>> {
         let row = sqlx::query_as::<_, Tenant>(
-            "SELECT pubkey, nwc_url, created_at, stripe_customer_id, stripe_subscription_id
+            "SELECT pubkey, nwc_url, nwc_error, created_at, stripe_customer_id, stripe_subscription_id, past_due_at
              FROM tenant
              WHERE pubkey = ?",
         )
@@ -45,7 +45,7 @@ impl Query {
                 members: Some(10),
                 blossom: false,
                 livekit: false,
-                stripe_price_id: String::new(),
+                stripe_price_id: None,
             },
             Plan {
                 id: "basic".to_string(),
@@ -54,7 +54,7 @@ impl Query {
                 members: Some(100),
                 blossom: true,
                 livekit: true,
-                stripe_price_id: std::env::var("STRIPE_PRICE_BASIC").unwrap_or_default(),
+                stripe_price_id: Some(std::env::var("STRIPE_PRICE_BASIC").unwrap_or_default()),
             },
             Plan {
                 id: "growth".to_string(),
@@ -63,7 +63,7 @@ impl Query {
                 members: None,
                 blossom: true,
                 livekit: true,
-                stripe_price_id: std::env::var("STRIPE_PRICE_GROWTH").unwrap_or_default(),
+                stripe_price_id: Some(std::env::var("STRIPE_PRICE_GROWTH").unwrap_or_default()),
             },
         ]
     }
@@ -117,6 +117,28 @@ impl Query {
         .fetch_optional(&self.pool)
         .await?;
         Ok(row)
+    }
+
+    pub async fn get_tenant_by_stripe_customer_id(&self, stripe_customer_id: &str) -> Result<Option<Tenant>> {
+        let row = sqlx::query_as::<_, Tenant>(
+            "SELECT pubkey, nwc_url, nwc_error, created_at, stripe_customer_id, stripe_subscription_id, past_due_at
+             FROM tenant
+             WHERE stripe_customer_id = ?",
+        )
+        .bind(stripe_customer_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
+    pub async fn has_active_paid_relays(&self, tenant_id: &str) -> Result<bool> {
+        let count = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM relay WHERE tenant = ? AND status = 'active' AND plan != 'free'",
+        )
+        .bind(tenant_id)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(count > 0)
     }
 
     pub async fn list_activity_for_relay(&self, relay_id: &str) -> Result<Vec<Activity>> {

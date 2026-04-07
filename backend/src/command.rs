@@ -67,14 +67,13 @@ impl Command {
         let mut tx = self.pool.begin().await?;
 
         sqlx::query(
-            "INSERT INTO tenant (pubkey, nwc_url, created_at, stripe_customer_id, stripe_subscription_id)
-             VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO tenant (pubkey, nwc_url, created_at, stripe_customer_id)
+             VALUES (?, ?, ?, ?)",
         )
         .bind(&tenant.pubkey)
         .bind(&tenant.nwc_url)
         .bind(tenant.created_at)
         .bind(&tenant.stripe_customer_id)
-        .bind(&tenant.stripe_subscription_id)
         .execute(&mut *tx)
         .await?;
 
@@ -251,6 +250,58 @@ impl Command {
         sqlx::query("UPDATE relay SET stripe_subscription_item_id = ? WHERE id = ?")
             .bind(stripe_subscription_item_id)
             .bind(relay_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn set_tenant_subscription(&self, pubkey: &str, stripe_subscription_id: &str) -> Result<()> {
+        sqlx::query("UPDATE tenant SET stripe_subscription_id = ? WHERE pubkey = ?")
+            .bind(stripe_subscription_id)
+            .bind(pubkey)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn clear_tenant_subscription(&self, pubkey: &str) -> Result<()> {
+        sqlx::query("UPDATE tenant SET stripe_subscription_id = NULL WHERE pubkey = ?")
+            .bind(pubkey)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn set_tenant_nwc_error(&self, pubkey: &str, error: &str) -> Result<()> {
+        sqlx::query("UPDATE tenant SET nwc_error = ? WHERE pubkey = ?")
+            .bind(error)
+            .bind(pubkey)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn clear_tenant_nwc_error(&self, pubkey: &str) -> Result<()> {
+        sqlx::query("UPDATE tenant SET nwc_error = NULL WHERE pubkey = ?")
+            .bind(pubkey)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn set_tenant_past_due(&self, pubkey: &str) -> Result<()> {
+        let now = chrono::Utc::now().timestamp();
+        sqlx::query("UPDATE tenant SET past_due_at = ? WHERE pubkey = ?")
+            .bind(now)
+            .bind(pubkey)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn clear_tenant_past_due(&self, pubkey: &str) -> Result<()> {
+        sqlx::query("UPDATE tenant SET past_due_at = NULL WHERE pubkey = ?")
+            .bind(pubkey)
             .execute(&self.pool)
             .await?;
         Ok(())

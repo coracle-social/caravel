@@ -2,3 +2,4 @@ ref
 target
 .agents
 .playwright-cli
+node_modules

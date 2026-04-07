@@ -1,31 +1,44 @@
 import { createEffect, createSignal, Show } from "solid-js"
 import QRCode from "qrcode"
 import Modal from "@/components/Modal"
-import { getInvoice, type Invoice } from "@/lib/api"
+import PaymentSetup from "@/components/PaymentSetup"
+import { getInvoice, getInvoiceBolt11 } from "@/lib/api"
+import { tenantNeedsPaymentSetup } from "@/lib/hooks"
 
-type Tab = "bitcoin" | "card"
 type PayStatus = "idle" | "loading" | "success" | "error"
 
+type PaymentInvoice = {
+  id: string
+  amount_due: number
+}
+
 type PaymentDialogProps = {
-  invoice: Invoice
+  invoice: PaymentInvoice
   open: boolean
   onClose: () => void
 }
 
 export default function PaymentDialog(props: PaymentDialogProps) {
-  const [tab, setTab] = createSignal<Tab>("bitcoin")
+  const [bolt11, setBolt11] = createSignal("")
   const [qrDataUrl, setQrDataUrl] = createSignal("")
   const [payStatus, setPayStatus] = createSignal<PayStatus>("idle")
   const [payError, setPayError] = createSignal("")
+  const [showSetup, setShowSetup] = createSignal(false)
+  const [showPaymentSetup, setShowPaymentSetup] = createSignal(false)
 
   createEffect(async () => {
-    const bolt11 = props.invoice?.bolt11
-    if (!bolt11) return
-    setQrDataUrl(await QRCode.toDataURL(bolt11, { width: 256, margin: 2 }))
+    if (!props.open || !props.invoice.id) return
+    try {
+      const { bolt11: invoice } = await getInvoiceBolt11(props.invoice.id)
+      setBolt11(invoice)
+      setQrDataUrl(await QRCode.toDataURL(invoice, { width: 256, margin: 2 }))
+    } catch {
+      // bolt11 generation may fail
+    }
   })
 
   function copyBolt11() {
-    void navigator.clipboard.writeText(props.invoice.bolt11)
+    void navigator.clipboard.writeText(bolt11())
   }
 
   async function checkPayment() {
@@ -35,6 +48,7 @@ export default function PaymentDialog(props: PaymentDialogProps) {
       const invoice = await getInvoice(props.invoice.id)
       if (invoice.status === "paid") {
         setPayStatus("success")
+        tenantNeedsPaymentSetup().then(needs => setShowSetup(needs)).catch(() => {})
       } else {
         setPayStatus("error")
         setPayError("Payment not yet confirmed. Please try again after sending.")
@@ -48,18 +62,16 @@ export default function PaymentDialog(props: PaymentDialogProps) {
   function handleClose() {
     setPayStatus("idle")
     setPayError("")
+    setBolt11("")
+    setQrDataUrl("")
+    setShowSetup(false)
     props.onClose()
   }
 
-  const totalSats = () => props.invoice.items.reduce((sum, item) => sum + item.sats, 0)
-
-  const periodLabel = () => {
-    const start = new Date(props.invoice.period_start * 1000)
-    const end = new Date(props.invoice.period_end * 1000)
-    return `${start.toLocaleDateString()} – ${end.toLocaleDateString()}`
-  }
+  const amountLabel = () => `$${(props.invoice.amount_due / 100).toFixed(2)}`
 
   return (
+    <>
     <Modal
       open={props.open}
       onClose={handleClose}
@@ -71,14 +83,7 @@ export default function PaymentDialog(props: PaymentDialogProps) {
         <div class="flex items-start justify-between gap-3">
           <div>
             <h2 class="text-lg font-semibold text-gray-900">Pay Invoice</h2>
-            <Show when={totalSats() > 0}>
-              <p class="text-2xl font-bold text-gray-900 mt-1">
-                {totalSats().toLocaleString()} <span class="text-base font-normal text-gray-500">sats</span>
-              </p>
-            </Show>
-            <Show when={props.invoice.period_start && props.invoice.period_end}>
-              <p class="text-xs text-gray-500 mt-0.5">{periodLabel()}</p>
-            </Show>
+            <p class="text-2xl font-bold text-gray-900 mt-1">{amountLabel()}</p>
           </div>
           <button
             type="button"
@@ -93,45 +98,24 @@ export default function PaymentDialog(props: PaymentDialogProps) {
         </div>
       </div>
 
-      {/* Pay with label + Tabs */}
-      <div class="px-6 pt-4">
-        <p class="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Pay with</p>
-        <div class="flex gap-2 border border-gray-200 rounded-lg p-1">
-          <button
-            type="button"
-            class={`flex-1 rounded-md px-3 py-2 text-sm transition-colors ${tab() === "bitcoin" ? "bg-gray-900 text-white" : "text-gray-700 hover:bg-gray-50"}`}
-            onClick={() => setTab("bitcoin")}
-          >
-            Bitcoin
-          </button>
-          <button
-            type="button"
-            class={`flex-1 rounded-md px-3 py-2 text-sm transition-colors ${tab() === "card" ? "bg-gray-900 text-white" : "text-gray-700 hover:bg-gray-50"}`}
-            onClick={() => setTab("card")}
-          >
-            Card
-          </button>
-        </div>
-      </div>
-
-      {/* Tab content */}
+      {/* Content */}
       <div class="px-6 py-4 min-h-[240px] flex flex-col items-center justify-center">
-        <Show when={tab() === "bitcoin"}>
-          <Show
-            when={payStatus() === "success"}
-            fallback={
-              <div class="w-full space-y-3">
-                <Show
-                  when={qrDataUrl()}
-                  fallback={<div class="flex items-center justify-center py-12 text-sm text-gray-400">Generating invoice...</div>}
-                >
-                  <img src={qrDataUrl()} alt="Lightning invoice QR code" class="mx-auto rounded-lg" />
-                </Show>
+        <Show
+          when={payStatus() === "success"}
+          fallback={
+            <div class="w-full space-y-3">
+              <Show
+                when={qrDataUrl()}
+                fallback={<div class="flex items-center justify-center py-12 text-sm text-gray-400">Generating invoice...</div>}
+              >
+                <img src={qrDataUrl()} alt="Lightning invoice QR code" class="mx-auto rounded-lg" />
+              </Show>
+              <Show when={bolt11()}>
                 <div class="flex rounded-lg border border-gray-300">
                   <input
                     type="text"
                     readOnly
-                    value={props.invoice.bolt11}
+                    value={bolt11()}
                     class="min-w-0 flex-1 rounded-l-lg border-0 px-3 py-2 text-xs text-gray-500 bg-transparent focus:outline-none"
                   />
                   <button
@@ -146,31 +130,27 @@ export default function PaymentDialog(props: PaymentDialogProps) {
                     </svg>
                   </button>
                 </div>
-              </div>
-            }
-          >
-            <div class="text-center">
-              <div class="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-green-100">
-                <svg class="w-6 h-6 text-green-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <polyline points="20 6 9 17 4 12" />
-                </svg>
-              </div>
-              <p class="text-sm font-medium text-gray-900">Payment confirmed!</p>
-              <p class="text-xs text-gray-500 mt-1">Thank you. Your relay is now active.</p>
+              </Show>
             </div>
-          </Show>
-        </Show>
-
-        <Show when={tab() === "card"}>
-          <div class="text-center">
-            <div class="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-gray-100">
-              <svg class="w-6 h-6 text-gray-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <rect x="1" y="4" width="22" height="16" rx="2" ry="2" />
-                <line x1="1" y1="10" x2="23" y2="10" />
+          }
+        >
+          <div class="text-center space-y-3">
+            <div class="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-green-100">
+              <svg class="w-6 h-6 text-green-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="20 6 9 17 4 12" />
               </svg>
             </div>
-            <p class="text-sm font-medium text-gray-700">Coming soon</p>
-            <p class="text-xs text-gray-500 mt-1">Card payments are not yet available.</p>
+            <p class="text-sm font-medium text-gray-900">Payment confirmed!</p>
+            <p class="text-xs text-gray-500">Thank you. Your account is up to date.</p>
+            <Show when={showSetup()}>
+              <button
+                type="button"
+                onClick={() => setShowPaymentSetup(true)}
+                class="mt-2 text-sm font-medium text-blue-600 hover:text-blue-700"
+              >
+                Set up automatic payments
+              </button>
+            </Show>
           </div>
         </Show>
       </div>
@@ -216,5 +196,10 @@ export default function PaymentDialog(props: PaymentDialogProps) {
         </Show>
       </div>
     </Modal>
+    <PaymentSetup
+      open={showPaymentSetup()}
+      onClose={() => setShowPaymentSetup(false)}
+    />
+    </>
   )
 }

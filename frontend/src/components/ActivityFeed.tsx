@@ -2,19 +2,14 @@ import { For, Show } from "solid-js"
 import type { Activity } from "@/lib/hooks"
 
 const ACTIVITY_LABELS: Record<string, string> = {
-  create_relay:                   "Relay created",
-  update_relay:                   "Relay updated",
-  deactivate_relay:               "Relay deactivated",
-  fail_relay_sync:                "Relay sync failed",
-  create_tenant:                  "Account created",
-  update_tenant_billing_anchor:   "Billing anchor updated",
-  update_tenant_nwc_url:          "Wallet connection updated",
-  create_invoice:                 "Invoice created",
-  mark_invoice_paid:              "Invoice paid",
-  mark_invoice_attempted:         "Invoice payment attempted",
-  mark_invoice_sent:              "Invoice sent",
-  mark_invoice_closed:            "Invoice closed",
-  mark_relay_synced:              "Relay synchronized",
+  create_relay:           "Relay created",
+  update_relay:           "Relay updated",
+  deactivate_relay:       "Relay deactivated",
+  activate_relay:         "Relay activated",
+  fail_relay_sync:        "Relay sync failed",
+  complete_relay_sync:    "Relay sync completed",
+  create_tenant:          "Account created",
+  update_tenant:          "Account updated",
 }
 
 function formatDate(ts: number) {

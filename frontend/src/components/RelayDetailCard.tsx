@@ -10,12 +10,8 @@ import { setToastMessage } from "@/components/Toast"
 import { plans } from "@/lib/state"
 
 const STATUS_STYLES: Record<string, string> = {
-  active:               "bg-green-50 text-green-700 border-green-200",
-  new:                  "bg-blue-50 text-blue-700 border-blue-200",
-  pending:              "bg-yellow-50 text-yellow-700 border-yellow-200",
-  provisioning_failed:  "bg-red-50 text-red-700 border-red-200",
-  deactivated:          "bg-gray-100 text-gray-500 border-gray-200",
-  suspended:            "bg-orange-50 text-orange-700 border-orange-200",
+  active:   "bg-green-50 text-green-700 border-green-200",
+  inactive: "bg-gray-100 text-gray-500 border-gray-200",
 }
 
 function StatusBadge(props: { status: string }) {
@@ -56,7 +52,9 @@ type RelayDetailCardProps = {
   showTenant?: boolean
   editHref?: string
   onDeactivate?: () => void
+  onReactivate?: () => void
   deactivating?: boolean
+  reactivating?: boolean
   onTogglePublicJoin?: () => void
   onToggleStripSignatures?: () => void
   onToggleGroups?: () => void
@@ -149,7 +147,7 @@ export default function RelayDetailCard(props: RelayDetailCardProps) {
           </div>
         </div>
 
-        <Show when={props.editHref && props.onDeactivate}>
+        <Show when={props.editHref && (props.onDeactivate || props.onReactivate)}>
           <div class="relative flex-shrink-0" ref={menuContainerRef}>
             <button
               type="button"
@@ -174,17 +172,32 @@ export default function RelayDetailCard(props: RelayDetailCardProps) {
               >
                 Edit Details
               </A>
-              <button
-                type="button"
-                class="block w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50 disabled:opacity-50"
-                onClick={() => {
-                  setMenuOpen(false)
-                  props.onDeactivate?.()
-                }}
-                disabled={props.deactivating}
-              >
-                {props.deactivating ? "Deactivating..." : "Deactivate"}
-              </button>
+              <Show when={r().status === "active" && props.onDeactivate}>
+                <button
+                  type="button"
+                  class="block w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50 disabled:opacity-50"
+                  onClick={() => {
+                    setMenuOpen(false)
+                    props.onDeactivate?.()
+                  }}
+                  disabled={props.deactivating}
+                >
+                  {props.deactivating ? "Deactivating..." : "Deactivate"}
+                </button>
+              </Show>
+              <Show when={r().status === "inactive" && props.onReactivate}>
+                <button
+                  type="button"
+                  class="block w-full text-left px-3 py-2 text-sm text-blue-600 hover:bg-blue-50 disabled:opacity-50"
+                  onClick={() => {
+                    setMenuOpen(false)
+                    props.onReactivate?.()
+                  }}
+                  disabled={props.reactivating}
+                >
+                  {props.reactivating ? "Reactivating..." : "Reactivate"}
+                </button>
+              </Show>
             </div>
           </div>
         </Show>

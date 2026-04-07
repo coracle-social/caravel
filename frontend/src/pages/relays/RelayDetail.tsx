@@ -2,7 +2,7 @@ import { useParams } from "@solidjs/router"
 import { createMemo, createResource, Show } from "solid-js"
 import BackLink from "@/components/BackLink"
 import PageContainer from "@/components/PageContainer"
-import PaymentDialog from "@/components/PaymentDialog"
+import PaymentSetup from "@/components/PaymentSetup"
 import RelayDetailCard from "@/components/RelayDetailCard"
 import ResourceState from "@/components/ResourceState"
 import useMinLoading from "@/components/useMinLoading"
@@ -21,7 +21,7 @@ export default function RelayDetail() {
   const [members] = createResource(relayUrl, getRelayMembers)
   const loading = useMinLoading(() => relay.loading && !relay())
   const [activity] = useRelayActivity(relayId)
-  const { busy, handleDeactivate, handleUpdatePlan, pendingInvoice, clearPendingInvoice, toggles } = useRelayToggles(relayId, relay, { refetch, mutate })
+  const { busy, handleDeactivate, handleReactivate, handleUpdatePlan, needsPaymentSetup, clearNeedsPaymentSetup, toggles } = useRelayToggles(relayId, relay, { refetch, mutate })
 
   return (
     <PageContainer>
@@ -35,7 +35,9 @@ export default function RelayDetail() {
               currentMembers={members.length}
               editHref={`/relays/${params.id}/edit`}
               onDeactivate={handleDeactivate}
+              onReactivate={handleReactivate}
               deactivating={busy()}
+              reactivating={busy()}
               onUpdatePlan={handleUpdatePlan}
               {...toggles}
             />
@@ -43,15 +45,10 @@ export default function RelayDetail() {
           </div>
         )}
       </Show>
-      <Show when={pendingInvoice()}>
-        {(invoice) => (
-          <PaymentDialog
-            invoice={invoice()}
-            open={true}
-            onClose={clearPendingInvoice}
-          />
-        )}
-      </Show>
+      <PaymentSetup
+        open={needsPaymentSetup()}
+        onClose={clearNeedsPaymentSetup}
+      />
     </PageContainer>
   )
 }

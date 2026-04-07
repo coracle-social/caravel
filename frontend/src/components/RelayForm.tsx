@@ -110,7 +110,7 @@ export default function RelayForm(props: RelayFormProps) {
               >
                 <div class="font-bold text-gray-900">{p.name}</div>
                 <div class="text-sm text-gray-500 mt-1">
-                  {p.sats === 0 ? "Free" : `${p.sats.toLocaleString()} sats/mo`}
+                  {p.amount === 0 ? "Free" : `$${p.amount / 100}/mo`}
                 </div>
                 <div class="text-xs text-gray-500 mt-2">
                   {p.members === null ? "Unlimited members" : `Up to ${p.members} members`}

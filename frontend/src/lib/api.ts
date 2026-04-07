@@ -11,8 +11,8 @@ type ApiOk<T> = {
   code: string
 }
 
-type BillingInput = {
-  nwc_url: string
+type UpdateTenantInput = {
+  nwc_url?: string
 }
 
 type AuthCache = {
@@ -34,7 +34,8 @@ export class ApiError extends Error {
 export type Plan = {
   id: string
   name: string
-  sats: number
+  amount: number
+  stripe_price_id: string | null
   members: number | null
   blossom: boolean
   livekit: boolean
@@ -50,6 +51,8 @@ export type Relay = {
   plan: PlanId
   status: string
   sync_error: string
+  stripe_subscription_item_id: string | null
+  synced: number
   info_name: string
   info_icon: string
   info_description: string
@@ -97,28 +100,18 @@ export type Tenant = {
   pubkey: string
   nwc_url: string
   created_at: number
-  billing_anchor: number
-}
-
-export type InvoiceItem = {
-  id: string
-  invoice: string
-  relay: string
-  sats: number
+  stripe_customer_id: string
+  stripe_subscription_id: string | null
+  past_due_at: number | null
+  nwc_error: string | null
 }
 
 export type Invoice = {
   id: string
-  tenant: string
   status: string
-  items: InvoiceItem[]
-  created_at: number
-  attempted_at: number
-  error: string
-  closed_at: number
-  sent_at: number
-  paid_at: number
-  bolt11: string
+  amount_due: number
+  currency: string
+  hosted_invoice_url: string
   period_start: number
   period_end: number
 }
@@ -222,10 +215,6 @@ export function getTenant(pubkey: string) {
   return callApi<undefined, Tenant>("GET", `/tenants/${pubkey}`)
 }
 
-export function createTenant() {
-  return callApi<undefined, Tenant>("POST", "/tenants")
-}
-
 export function listTenantRelays(pubkey: string) {
   return callApi<undefined, Relay[]>("GET", `/tenants/${pubkey}/relays`)
 }
@@ -234,8 +223,8 @@ export function listTenantInvoices(pubkey: string) {
   return callApi<undefined, Invoice[]>("GET", `/tenants/${pubkey}/invoices`)
 }
 
-export function updateTenantBilling(pubkey: string, billing: BillingInput) {
-  return callApi<BillingInput, BillingInput>("PUT", `/tenants/${pubkey}/billing`, billing)
+export function updateTenant(pubkey: string, input: UpdateTenantInput) {
+  return callApi<UpdateTenantInput, Tenant>("PUT", `/tenants/${pubkey}`, input)
 }
 
 export function listRelays() {
@@ -247,7 +236,19 @@ export function getRelay(id: string) {
 }
 
 export function listRelayActivity(id: string) {
-  return callApi<undefined, Activity[]>("GET", `/relays/${id}/activity`)
+  return callApi<undefined, { activity: Activity[] }>("GET", `/relays/${id}/activity`)
+}
+
+export function reactivateRelay(id: string) {
+  return callApi<undefined, void>("POST", `/relays/${id}/reactivate`)
+}
+
+export function createPortalSession(pubkey: string) {
+  return callApi<undefined, { url: string }>("GET", `/tenants/${pubkey}/stripe/session`)
+}
+
+export function getInvoiceBolt11(invoiceId: string) {
+  return callApi<undefined, { bolt11: string }>("GET", `/invoices/${invoiceId}/bolt11`)
 }
 
 export function createRelay(input: CreateRelayInput) {
@@ -260,10 +261,6 @@ export function updateRelay(id: string, input: UpdateRelayInput) {
 
 export function deactivateRelay(id: string) {
   return callApi<undefined, void>("POST", `/relays/${id}/deactivate`)
-}
-
-export function listInvoices() {
-  return callApi<undefined, Invoice[]>("GET", "/invoices")
 }
 
 export function getInvoice(id: string) {

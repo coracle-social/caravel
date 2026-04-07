@@ -18,17 +18,18 @@ pub struct Plan {
     pub members: Option<i64>,
     pub blossom: bool,
     pub livekit: bool,
-    pub stripe_price_id: String,
+    pub stripe_price_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Tenant {
     pub pubkey: String,
-    #[serde(skip_serializing)]
     pub nwc_url: String,
+    pub nwc_error: Option<String>,
     pub created_at: i64,
     pub stripe_customer_id: String,
-    pub stripe_subscription_id: String,
+    pub stripe_subscription_id: Option<String>,
+    pub past_due_at: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]

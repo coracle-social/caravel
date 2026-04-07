@@ -47,8 +47,8 @@ Notes:
 - Serves `GET /identity`
 - Authorizes anyone, but must be authorized
 - If a tenant for the identity doesn't exist:
-  - Call the Stripe API to create a new customer and subscription
-  - Create a new tenant using `command.create_tenant` with payload and stripe info
+  - Call the Stripe API to create a new customer
+  - Create a new tenant using `command.create_tenant` with payload and `stripe_customer_id`. No subscription is created yet — that happens when the first relay is added.
 - Return `data` is an `Identity` struct
 
 --- Tenant routes
@@ -122,7 +122,7 @@ Notes:
 - Serves `POST /relays/:id/deactivate`
 - Authorizes admin or relay owner
 - If relay is already inactive, return a `400` with `code=relay-is-inactive`
-- Call `billing.deactivate_relay`
+- Call `command.deactivate_relay`
 - Return `data` is empty
 
 ## `async fn reactivate_relay(...) -> Response`
@@ -130,8 +130,54 @@ Notes:
 - Serves `POST /relays/:id/reactivate`
 - Authorizes admin or relay owner
 - If relay is already active, return a `400` with `code=relay-is-active`
-- Call `billing.reactivate_relay`
+- Call `command.activate_relay`
 - Return `data` is empty
+
+--- Invoice routes
+
+## `async fn list_tenant_invoices(...) -> Response`
+
+- Serves `GET /tenants/:pubkey/invoices`
+- Authorizes admin or matching tenant
+- Looks up tenant by pubkey, fetches invoices from Stripe API using `stripe_customer_id`
+- Return `data` is a list of Stripe invoice objects: `{ id, status, amount_due, currency, hosted_invoice_url, period_start, period_end }`
+
+## `async fn get_invoice(...) -> Response`
+
+- Serves `GET /invoices/:id`
+- Fetches invoice from Stripe API by ID
+- Looks up tenant by the invoice's `customer` field, authorizes admin or matching tenant
+- Return `data` is a single Stripe invoice object
+- If invoice does not exist, return `404` with `code=not-found`
+
+## `async fn get_invoice_bolt11(...) -> Response`
+
+- Serves `GET /invoices/:id/bolt11`
+- Fetches invoice from Stripe API by ID
+- Looks up tenant by the invoice's `customer` field, authorizes admin or matching tenant
+- If invoice `status` is not `open`, return `400` with `code=invoice-not-open`
+- Creates a bolt11 Lightning invoice for the invoice's `amount_due` using `billing.create_bolt11(amount_due)`
+- Return `data` is `{ bolt11 }`
+
+--- Stripe session route
+
+## `async fn create_stripe_session(...) -> Response`
+
+- Serves `GET /tenants/:pubkey/stripe/session`
+- Authorizes admin or matching tenant
+- Looks up tenant by pubkey
+- Creates a Stripe Customer Portal session for the tenant's `stripe_customer_id`
+- Return `data` is `{ url }` — the portal session URL
+
+--- Stripe webhook route
+
+## `async fn stripe_webhook(...) -> Response`
+
+- Serves `POST /stripe/webhook`
+- No NIP-98 authentication — uses Stripe signature verification instead
+- Reads raw request body and `Stripe-Signature` header
+- Calls `billing.handle_webhook(payload, signature)`
+- Returns `200` on success, `400` on signature verification failure
 
 --- Utilities
 

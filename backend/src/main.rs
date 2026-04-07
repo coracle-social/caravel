@@ -64,6 +64,10 @@ async fn main() -> Result<()> {
         infra.start().await;
     });
 
+    tokio::spawn(async move {
+        billing.start().await;
+    });
+
     let listener = tokio::net::TcpListener::bind(format!("{host}:{port}")).await?;
     axum::serve(listener, app).await?;
     Ok(())

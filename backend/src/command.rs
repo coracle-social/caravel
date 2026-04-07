@@ -67,12 +67,14 @@ impl Command {
         let mut tx = self.pool.begin().await?;
 
         sqlx::query(
-            "INSERT INTO tenant (pubkey, nwc_url, created_at)
-             VALUES (?, ?, ?)",
+            "INSERT INTO tenant (pubkey, nwc_url, created_at, stripe_customer_id, stripe_subscription_id)
+             VALUES (?, ?, ?, ?, ?)",
         )
         .bind(&tenant.pubkey)
         .bind(&tenant.nwc_url)
         .bind(tenant.created_at)
+        .bind(&tenant.stripe_customer_id)
+        .bind(&tenant.stripe_subscription_id)
         .execute(&mut *tx)
         .await?;
 
@@ -209,7 +211,7 @@ impl Command {
     pub async fn fail_relay_sync(&self, relay: &Relay, sync_error: String) -> Result<()> {
         let mut tx = self.pool.begin().await?;
 
-        sqlx::query("UPDATE relay SET status = 'inactive', sync_error = ? WHERE id = ?")
+        sqlx::query("UPDATE relay SET sync_error = ? WHERE id = ?")
             .bind(&sync_error)
             .bind(&relay.id)
             .execute(&mut *tx)
@@ -225,7 +227,7 @@ impl Command {
     pub async fn complete_relay_sync(&self, relay_id: &str) -> Result<()> {
         let mut tx = self.pool.begin().await?;
 
-        sqlx::query("UPDATE relay SET synced = 1, status = 'active', sync_error = '' WHERE id = ?")
+        sqlx::query("UPDATE relay SET synced = 1, sync_error = '' WHERE id = ?")
             .bind(relay_id)
             .execute(&mut *tx)
             .await?;
@@ -234,6 +236,23 @@ impl Command {
 
         tx.commit().await?;
         self.emit(activity);
+        Ok(())
+    }
+
+    pub async fn delete_relay_subscription_item(&self, relay_id: &str) -> Result<()> {
+        sqlx::query("UPDATE relay SET stripe_subscription_item_id = NULL WHERE id = ?")
+            .bind(relay_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn set_relay_subscription_item(&self, relay_id: &str, stripe_subscription_item_id: &str) -> Result<()> {
+        sqlx::query("UPDATE relay SET stripe_subscription_item_id = ? WHERE id = ?")
+            .bind(stripe_subscription_item_id)
+            .bind(relay_id)
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 }

@@ -14,10 +14,11 @@ pub struct Activity {
 pub struct Plan {
     pub id: String,
     pub name: String,
-    pub sats: i64,
+    pub amount: i64,
     pub members: Option<i64>,
     pub blossom: bool,
     pub livekit: bool,
+    pub stripe_price_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -26,6 +27,8 @@ pub struct Tenant {
     #[serde(skip_serializing)]
     pub nwc_url: String,
     pub created_at: i64,
+    pub stripe_customer_id: String,
+    pub stripe_subscription_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -35,6 +38,7 @@ pub struct Relay {
     pub schema: String,
     pub subdomain: String,
     pub plan: String,
+    pub stripe_subscription_item_id: Option<String>,
     pub status: String,
     pub sync_error: String,
     pub info_name: String,

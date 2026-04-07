@@ -6,7 +6,7 @@ use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
-    routing::{get, post, put},
+    routing::{get, post},
 };
 use base64::Engine;
 use nostr_sdk::{Event, JsonUtil, Kind};
@@ -325,23 +325,33 @@ async fn get_identity(
 ) -> std::result::Result<Response, ApiError> {
     let pubkey = state.api.extract_auth_pubkey(&headers)?;
     let is_admin = state.api.admins.iter().any(|a| a == &pubkey);
-    let tenant = Tenant {
-        pubkey: pubkey.clone(),
-        nwc_url: String::new(),
-        created_at: now_ts(),
-    };
 
-    match state.api.command.create_tenant(&tenant).await {
-        Ok(()) => true,
-        Err(e) if matches!(map_unique_error(&e), Some("pubkey-exists")) => true,
-        Err(e) => {
-            return Ok(err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal",
-                &e.to_string(),
-            ));
-        }
-    };
+    // Only create if tenant doesn't exist yet
+    if let Ok(None) = state.api.query.get_tenant(&pubkey).await {
+        // TODO: Call Stripe API to create customer and subscription
+        let stripe_customer_id = String::new();
+        let stripe_subscription_id = String::new();
+
+        let tenant = Tenant {
+            pubkey: pubkey.clone(),
+            nwc_url: String::new(),
+            created_at: now_ts(),
+            stripe_customer_id,
+            stripe_subscription_id,
+        };
+
+        match state.api.command.create_tenant(&tenant).await {
+            Ok(()) => {}
+            Err(e) if matches!(map_unique_error(&e), Some("pubkey-exists")) => {}
+            Err(e) => {
+                return Ok(err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "internal",
+                    &e.to_string(),
+                ));
+            }
+        };
+    }
 
     Ok(ok(
         StatusCode::OK,
@@ -472,6 +482,7 @@ async fn create_relay(
         schema: String::new(),
         subdomain: payload.subdomain,
         plan: payload.plan,
+        stripe_subscription_item_id: None,
         status: "active".to_string(),
         sync_error: String::new(),
         info_name: payload.info_name.unwrap_or_default(),

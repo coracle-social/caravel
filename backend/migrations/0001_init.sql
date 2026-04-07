@@ -10,7 +10,9 @@ CREATE TABLE IF NOT EXISTS activity (
 CREATE TABLE IF NOT EXISTS tenant (
   pubkey TEXT PRIMARY KEY,
   nwc_url TEXT NOT NULL DEFAULT '',
-  created_at INTEGER NOT NULL
+  created_at INTEGER NOT NULL,
+  stripe_customer_id TEXT NOT NULL DEFAULT '',
+  stripe_subscription_id TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS relay (
@@ -19,6 +21,7 @@ CREATE TABLE IF NOT EXISTS relay (
   schema TEXT NOT NULL,
   subdomain TEXT NOT NULL UNIQUE,
   plan TEXT NOT NULL,
+  stripe_subscription_item_id TEXT,
   status TEXT NOT NULL,
   synced INTEGER NOT NULL DEFAULT 0,
   sync_error TEXT NOT NULL DEFAULT '',

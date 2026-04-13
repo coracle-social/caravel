@@ -800,8 +800,9 @@ async fn get_invoice_bolt11(
     }
 
     let amount_due = invoice["amount_due"].as_i64().unwrap_or(0);
+    let currency = invoice["currency"].as_str().unwrap_or("usd");
 
-    match state.api.billing.create_bolt11(amount_due).await {
+    match state.api.billing.create_bolt11(amount_due, currency).await {
         Ok(bolt11) => Ok(ok(StatusCode::OK, serde_json::json!({ "bolt11": bolt11 }))),
         Err(e) => Ok(err(
             StatusCode::INTERNAL_SERVER_ERROR,

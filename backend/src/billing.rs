@@ -1,7 +1,7 @@
 use anyhow::{Result, anyhow};
 use hmac::{Hmac, Mac};
 use nwc::prelude::{
-    MakeInvoiceRequest, NostrWalletConnectURI, PayInvoiceRequest as NwcPayInvoiceRequest, NWC,
+    MakeInvoiceRequest, NWC, NostrWalletConnectURI, PayInvoiceRequest as NwcPayInvoiceRequest,
 };
 use sha2::Sha256;
 
@@ -13,6 +13,7 @@ use crate::robot::Robot;
 type HmacSha256 = Hmac<Sha256>;
 
 const STRIPE_API: &str = "https://api.stripe.com/v1";
+const COINBASE_SPOT_API: &str = "https://api.coinbase.com/v2/prices";
 const WEBHOOK_TOLERANCE_SECS: i64 = 300;
 
 #[derive(serde::Deserialize)]
@@ -27,11 +28,22 @@ struct StripeEventData {
     object: serde_json::Value,
 }
 
+#[derive(serde::Deserialize)]
+struct CoinbaseSpotPriceResponse {
+    data: CoinbaseSpotPriceData,
+}
+
+#[derive(serde::Deserialize)]
+struct CoinbaseSpotPriceData {
+    amount: String,
+}
+
 #[derive(Clone)]
 pub struct Billing {
     nwc_url: String,
     stripe_secret_key: String,
     stripe_webhook_secret: String,
+    btc_quote_api_base: String,
     http: reqwest::Client,
     query: Query,
     command: Command,
@@ -43,10 +55,13 @@ impl Billing {
         let nwc_url = std::env::var("NWC_URL").unwrap_or_default();
         let stripe_secret_key = std::env::var("STRIPE_SECRET_KEY").unwrap_or_default();
         let stripe_webhook_secret = std::env::var("STRIPE_WEBHOOK_SECRET").unwrap_or_default();
+        let btc_quote_api_base = std::env::var("BTC_PRICE_API_BASE")
+            .unwrap_or_else(|_| COINBASE_SPOT_API.to_string());
         Self {
             nwc_url,
             stripe_secret_key,
             stripe_webhook_secret,
+            btc_quote_api_base,
             http: reqwest::Client::new(),
             query,
             command,
@@ -75,8 +90,12 @@ impl Billing {
     async fn handle_activity(&self, activity: &Activity) -> Result<()> {
         let needs_billing_sync = matches!(
             activity.activity_type.as_str(),
-            "create_relay" | "update_relay" | "activate_relay" | "deactivate_relay"
-                | "fail_relay_sync" | "complete_relay_sync"
+            "create_relay"
+                | "update_relay"
+                | "activate_relay"
+                | "deactivate_relay"
+                | "fail_relay_sync"
+                | "complete_relay_sync"
         );
 
         if needs_billing_sync {
@@ -99,7 +118,9 @@ impl Billing {
         if relay.plan == "free" {
             if let Some(ref item_id) = relay.stripe_subscription_item_id {
                 self.stripe_delete_subscription_item(item_id).await?;
-                self.command.delete_relay_subscription_item(&relay.id).await?;
+                self.command
+                    .delete_relay_subscription_item(&relay.id)
+                    .await?;
             }
             self.cleanup_empty_subscription(&tenant.pubkey).await?;
             return Ok(());
@@ -109,16 +130,16 @@ impl Billing {
         if relay.status == "inactive" {
             if let Some(ref item_id) = relay.stripe_subscription_item_id {
                 self.stripe_delete_subscription_item(item_id).await?;
-                self.command.delete_relay_subscription_item(&relay.id).await?;
+                self.command
+                    .delete_relay_subscription_item(&relay.id)
+                    .await?;
             }
             self.cleanup_empty_subscription(&tenant.pubkey).await?;
             return Ok(());
         }
 
         // Active relay on a paid plan
-        let plan = Query::list_plans()
-            .into_iter()
-            .find(|p| p.id == relay.plan);
+        let plan = Query::list_plans().into_iter().find(|p| p.id == relay.plan);
 
         let Some(plan) = plan else {
             return Ok(());
@@ -170,7 +191,9 @@ impl Billing {
 
         if let Some(ref subscription_id) = tenant.stripe_subscription_id {
             self.stripe_cancel_subscription(subscription_id).await?;
-            self.command.clear_tenant_subscription(tenant_pubkey).await?;
+            self.command
+                .clear_tenant_subscription(tenant_pubkey)
+                .await?;
         }
 
         Ok(())
@@ -186,8 +209,9 @@ impl Billing {
             "invoice.created" => {
                 let customer = obj["customer"].as_str().unwrap_or_default();
                 let amount_due = obj["amount_due"].as_i64().unwrap_or(0);
+                let currency = obj["currency"].as_str().unwrap_or("usd");
                 let invoice_id = obj["id"].as_str().unwrap_or_default();
-                self.handle_invoice_created(customer, amount_due, invoice_id)
+                self.handle_invoice_created(customer, amount_due, currency, invoice_id)
                     .await?;
             }
             "invoice.paid" => {
@@ -240,7 +264,9 @@ impl Billing {
             return Err(anyhow!("webhook signature mismatch"));
         }
 
-        let ts: i64 = timestamp.parse().map_err(|_| anyhow!("bad webhook timestamp"))?;
+        let ts: i64 = timestamp
+            .parse()
+            .map_err(|_| anyhow!("bad webhook timestamp"))?;
         let now = chrono::Utc::now().timestamp();
         if (now - ts).abs() > WEBHOOK_TOLERANCE_SECS {
             return Err(anyhow!("webhook timestamp outside tolerance"));
@@ -253,6 +279,7 @@ impl Billing {
         &self,
         stripe_customer_id: &str,
         amount_due: i64,
+        currency: &str,
         invoice_id: &str,
     ) -> Result<()> {
         if amount_due == 0 {
@@ -269,12 +296,13 @@ impl Billing {
 
         // 1. NWC auto-pay: if the tenant has a nwc_url
         if !tenant.nwc_url.is_empty() {
-            match self.nwc_pay_invoice(amount_due, &tenant.nwc_url).await {
+            match self
+                .nwc_pay_invoice(amount_due, currency, &tenant.nwc_url)
+                .await
+            {
                 Ok(()) => {
                     self.stripe_pay_invoice_out_of_band(invoice_id).await?;
-                    self.command
-                        .clear_tenant_nwc_error(&tenant.pubkey)
-                        .await?;
+                    self.command.clear_tenant_nwc_error(&tenant.pubkey).await?;
                     return Ok(());
                 }
                 Err(e) => {
@@ -467,10 +495,12 @@ impl Billing {
         Ok(body)
     }
 
-    pub async fn create_bolt11(&self, amount_due_cents: i64) -> Result<String> {
-        let amount_msats = (amount_due_cents as u64) * 1000; // placeholder conversion
+    pub async fn create_bolt11(&self, amount_due_minor: i64, currency: &str) -> Result<String> {
+        let amount_msats = self.fiat_minor_to_msats(amount_due_minor, currency).await?;
 
-        let system_uri: NostrWalletConnectURI = self.nwc_url.parse()
+        let system_uri: NostrWalletConnectURI = self
+            .nwc_url
+            .parse()
             .map_err(|_| anyhow!("invalid system NWC URL"))?;
         let system_nwc = NWC::new(system_uri);
 
@@ -550,10 +580,7 @@ impl Billing {
             .http
             .post(format!("{STRIPE_API}/subscription_items"))
             .bearer_auth(&self.stripe_secret_key)
-            .form(&[
-                ("subscription", subscription_id),
-                ("price", price_id),
-            ])
+            .form(&[("subscription", subscription_id), ("price", price_id)])
             .send()
             .await?;
 
@@ -642,14 +669,18 @@ impl Billing {
 
     // --- NWC helpers ---
 
-    async fn nwc_pay_invoice(&self, amount_due_cents: i64, tenant_nwc_url: &str) -> Result<()> {
-        // Convert USD cents to millisatoshis (approximate: 1 sat ≈ variable USD)
-        // amount_due is in cents from Stripe. We create a Lightning invoice for the exact amount.
-        // The NWC make_invoice amount is in millisatoshis.
-        let amount_msats = (amount_due_cents as u64) * 1000; // placeholder conversion, actual rate would come from exchange
+    async fn nwc_pay_invoice(
+        &self,
+        amount_due_minor: i64,
+        currency: &str,
+        tenant_nwc_url: &str,
+    ) -> Result<()> {
+        let amount_msats = self.fiat_minor_to_msats(amount_due_minor, currency).await?;
 
         // Create a bolt11 invoice using the system wallet (self.nwc_url)
-        let system_uri: NostrWalletConnectURI = self.nwc_url.parse()
+        let system_uri: NostrWalletConnectURI = self
+            .nwc_url
+            .parse()
             .map_err(|_| anyhow!("invalid system NWC URL"))?;
         let system_nwc = NWC::new(system_uri);
 
@@ -668,7 +699,8 @@ impl Billing {
         system_nwc.shutdown().await;
 
         // Pay the bolt11 invoice using the tenant's wallet
-        let tenant_uri: NostrWalletConnectURI = tenant_nwc_url.parse()
+        let tenant_uri: NostrWalletConnectURI = tenant_nwc_url
+            .parse()
             .map_err(|_| anyhow!("invalid tenant NWC URL"))?;
         let tenant_nwc = NWC::new(tenant_uri);
 
@@ -682,5 +714,104 @@ impl Billing {
         tenant_nwc.shutdown().await;
 
         Ok(())
+    }
+
+    async fn fiat_minor_to_msats(&self, amount_due_minor: i64, currency: &str) -> Result<u64> {
+        let normalized_currency = currency.to_uppercase();
+        let btc_price = self.fetch_btc_spot_price(&normalized_currency).await?;
+        fiat_minor_to_msats_from_quote(amount_due_minor, &normalized_currency, btc_price)
+    }
+
+    async fn fetch_btc_spot_price(&self, currency: &str) -> Result<f64> {
+        fetch_btc_spot_price_from_base(&self.http, &self.btc_quote_api_base, currency).await
+    }
+
+    fn currency_minor_exponent(currency: &str) -> Result<u8> {
+        let normalized = currency.to_uppercase();
+        let exponent = match normalized.as_str() {
+            // Zero-decimal currencies in Stripe.
+            "BIF" | "CLP" | "DJF" | "GNF" | "JPY" | "KMF" | "KRW" | "MGA" | "PYG" | "RWF"
+            | "UGX" | "VND" | "VUV" | "XAF" | "XOF" | "XPF" => 0,
+            // Three-decimal currencies in Stripe.
+            "BHD" | "JOD" | "KWD" | "OMR" | "TND" => 3,
+            _ if normalized.chars().all(|c| c.is_ascii_alphabetic()) && normalized.len() == 3 => 2,
+            _ => return Err(anyhow!("invalid currency code: {currency}")),
+        };
+
+        Ok(exponent)
+    }
+}
+
+pub async fn fetch_btc_spot_price_from_base(
+    http: &reqwest::Client,
+    api_base: &str,
+    currency: &str,
+) -> Result<f64> {
+    let pair = format!("BTC-{currency}");
+    let url = format!("{}/{pair}/spot", api_base.trim_end_matches('/'));
+    let resp = http.get(url).send().await?;
+    let body: CoinbaseSpotPriceResponse = resp.error_for_status()?.json().await?;
+
+    let amount = body
+        .data
+        .amount
+        .parse::<f64>()
+        .map_err(|e| anyhow!("invalid BTC spot quote for {currency}: {e}"))?;
+
+    if amount <= 0.0 {
+        return Err(anyhow!("invalid non-positive BTC spot quote for {currency}"));
+    }
+
+    Ok(amount)
+}
+
+pub fn fiat_minor_to_msats_from_quote(
+    amount_due_minor: i64,
+    currency: &str,
+    btc_price_in_fiat: f64,
+) -> Result<u64> {
+    if amount_due_minor <= 0 {
+        return Err(anyhow!("amount_due must be positive"));
+    }
+
+    if btc_price_in_fiat <= 0.0 {
+        return Err(anyhow!("btc_price_in_fiat must be positive"));
+    }
+
+    let exponent = Billing::currency_minor_exponent(currency)?;
+    let divisor = 10_f64.powi(exponent as i32);
+    let amount_fiat = (amount_due_minor as f64) / divisor;
+    let amount_btc = amount_fiat / btc_price_in_fiat;
+    let raw_msats = amount_btc * 100_000_000_000.0;
+    // Guard against tiny floating point artifacts at integer boundaries.
+    let amount_msats = if (raw_msats - raw_msats.round()).abs() < 1e-6 {
+        raw_msats.round()
+    } else {
+        raw_msats.ceil()
+    };
+
+    if !amount_msats.is_finite() || amount_msats <= 0.0 || amount_msats > u64::MAX as f64 {
+        return Err(anyhow!("calculated msat amount is out of bounds"));
+    }
+
+    Ok(amount_msats as u64)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::fiat_minor_to_msats_from_quote;
+
+    #[test]
+    fn converts_usd_minor_units_with_quote() {
+        let msats = fiat_minor_to_msats_from_quote(100, "usd", 100_000.0)
+            .expect("conversion should succeed");
+        assert_eq!(msats, 1_000_000);
+    }
+
+    #[test]
+    fn converts_zero_decimal_currency_with_quote() {
+        let msats = fiat_minor_to_msats_from_quote(100, "jpy", 10_000_000.0)
+            .expect("conversion should succeed");
+        assert_eq!(msats, 1_000_000);
     }
 }

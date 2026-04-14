@@ -254,3 +254,23 @@ async fn set_cached(
         },
     );
 }
+
+#[cfg(test)]
+impl Robot {
+    pub fn test_stub() -> Self {
+        let keys = Keys::generate();
+        let client = Client::new(keys);
+
+        Self {
+            secret: String::new(),
+            name: String::new(),
+            description: String::new(),
+            picture: String::new(),
+            outbox_client: client.clone(),
+            indexer_client: client.clone(),
+            messaging_client: client,
+            outbox_cache: std::sync::Arc::new(Mutex::new(HashMap::new())),
+            dm_cache: std::sync::Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+}

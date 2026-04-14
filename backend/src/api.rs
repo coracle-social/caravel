@@ -370,32 +370,50 @@ async fn get_identity(
     let pubkey = state.api.extract_auth_pubkey(&headers)?;
     let is_admin = state.api.admins.iter().any(|a| a == &pubkey);
 
-    // Only create if tenant doesn't exist yet
-    if let Ok(None) = state.api.query.get_tenant(&pubkey).await {
-        // TODO: Call Stripe API to create a new customer
-        let stripe_customer_id = String::new();
+    // Ensure tenant exists.
+    match state.api.query.get_tenant(&pubkey).await {
+        Ok(Some(_)) => {}
+        Ok(None) => {
+            let stripe_customer_id = match state.api.billing.stripe_create_customer(&pubkey).await {
+                Ok(id) => id,
+                Err(e) => {
+                    return Ok(err(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "stripe-customer-create-failed",
+                        &e.to_string(),
+                    ));
+                }
+            };
 
-        let tenant = Tenant {
-            pubkey: pubkey.clone(),
-            nwc_url: String::new(),
-            nwc_error: None,
-            created_at: now_ts(),
-            stripe_customer_id,
-            stripe_subscription_id: None,
-            past_due_at: None,
-        };
+            let tenant = Tenant {
+                pubkey: pubkey.clone(),
+                nwc_url: String::new(),
+                nwc_error: None,
+                created_at: now_ts(),
+                stripe_customer_id,
+                stripe_subscription_id: None,
+                past_due_at: None,
+            };
 
-        match state.api.command.create_tenant(&tenant).await {
-            Ok(()) => {}
-            Err(e) if matches!(map_unique_error(&e), Some("pubkey-exists")) => {}
-            Err(e) => {
-                return Ok(err(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "internal",
-                    &e.to_string(),
-                ));
-            }
-        };
+            match state.api.command.create_tenant(&tenant).await {
+                Ok(()) => {}
+                Err(e) if matches!(map_unique_error(&e), Some("pubkey-exists")) => {}
+                Err(e) => {
+                    return Ok(err(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "internal",
+                        &e.to_string(),
+                    ));
+                }
+            };
+        }
+        Err(e) => {
+            return Ok(err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal",
+                &e.to_string(),
+            ));
+        }
     }
 
     Ok(ok(StatusCode::OK, IdentityResponse { pubkey, is_admin }))

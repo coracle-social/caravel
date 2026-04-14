@@ -56,6 +56,9 @@ impl Billing {
     pub fn new(query: Query, command: Command, robot: Robot) -> Self {
         let nwc_url = std::env::var("NWC_URL").unwrap_or_default();
         let stripe_secret_key = std::env::var("STRIPE_SECRET_KEY").unwrap_or_default();
+        if stripe_secret_key.trim().is_empty() {
+            panic!("missing STRIPE_SECRET_KEY environment variable");
+        }
         let stripe_webhook_secret = std::env::var("STRIPE_WEBHOOK_SECRET").unwrap_or_default();
         let btc_quote_api_base =
             std::env::var("BTC_PRICE_API_BASE").unwrap_or_else(|_| COINBASE_SPOT_API.to_string());
@@ -472,6 +475,33 @@ impl Billing {
         Ok((invoice, tenant))
     }
 
+    pub async fn stripe_create_customer(&self, tenant_pubkey: &str) -> Result<String> {
+        let short_pubkey: String = tenant_pubkey.chars().take(12).collect();
+        let display_name = format!("Caravel tenant {short_pubkey}");
+
+        let resp = self
+            .http
+            .post(format!("{STRIPE_API}/customers"))
+            .bearer_auth(&self.stripe_secret_key)
+            .form(&[
+                ("name", display_name.as_str()),
+                ("metadata[tenant_pubkey]", tenant_pubkey),
+            ])
+            .send()
+            .await?;
+
+        let body: serde_json::Value = resp.error_for_status()?.json().await?;
+        let customer_id = body["id"]
+            .as_str()
+            .ok_or_else(|| anyhow!("missing customer id"))?;
+
+        if !customer_id.starts_with("cus_") {
+            return Err(anyhow!("unexpected customer id format"));
+        }
+
+        Ok(customer_id.to_string())
+    }
+
     pub async fn stripe_list_invoices(&self, customer_id: &str) -> Result<serde_json::Value> {
         let resp = self
             .http
@@ -870,5 +900,111 @@ mod tests {
         assert!(!Billing::should_reactivate_after_payment(
             &unknown_status_paid
         ));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlx::SqlitePool;
+    use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+    use std::str::FromStr;
+    use std::sync::{Mutex, OnceLock};
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    #[allow(unused_unsafe)]
+    fn set_stripe_secret_key(value: Option<&str>) {
+        match value {
+            Some(v) => unsafe { std::env::set_var("STRIPE_SECRET_KEY", v) },
+            None => unsafe { std::env::remove_var("STRIPE_SECRET_KEY") },
+        }
+    }
+
+    struct StripeSecretKeyGuard {
+        previous: Option<String>,
+    }
+
+    impl StripeSecretKeyGuard {
+        fn set(value: Option<&str>) -> Self {
+            let previous = std::env::var("STRIPE_SECRET_KEY").ok();
+            set_stripe_secret_key(value);
+            Self { previous }
+        }
+    }
+
+    impl Drop for StripeSecretKeyGuard {
+        fn drop(&mut self) {
+            set_stripe_secret_key(self.previous.as_deref());
+        }
+    }
+
+    async fn test_pool() -> SqlitePool {
+        let connect_options = SqliteConnectOptions::from_str("sqlite::memory:")
+            .expect("valid sqlite memory url")
+            .create_if_missing(true);
+
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(connect_options)
+            .await
+            .expect("connect sqlite memory db");
+
+        sqlx::migrate!("./migrations")
+            .run(&pool)
+            .await
+            .expect("run migrations");
+
+        pool
+    }
+
+    #[tokio::test]
+    async fn billing_new_panics_without_stripe_secret_key() {
+        let _lock = env_lock().lock().expect("acquire env lock");
+        let _env = StripeSecretKeyGuard::set(None);
+
+        let pool = test_pool().await;
+        let query = Query::new(pool.clone());
+        let command = Command::new(pool);
+        let robot = Robot::test_stub();
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            Billing::new(query, command, robot)
+        }));
+
+        let panic_payload = match result {
+            Ok(_) => panic!("constructor should panic when STRIPE_SECRET_KEY is missing"),
+            Err(payload) => payload,
+        };
+        let panic_msg = if let Some(msg) = panic_payload.downcast_ref::<&str>() {
+            (*msg).to_string()
+        } else if let Some(msg) = panic_payload.downcast_ref::<String>() {
+            msg.clone()
+        } else {
+            String::new()
+        };
+
+        assert!(
+            panic_msg.contains("missing STRIPE_SECRET_KEY environment variable"),
+            "unexpected panic: {panic_msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn billing_new_accepts_non_empty_stripe_secret_key() {
+        let _lock = env_lock().lock().expect("acquire env lock");
+        let _env = StripeSecretKeyGuard::set(Some("sk_test_dummy"));
+
+        let pool = test_pool().await;
+        let billing = Billing::new(
+            Query::new(pool.clone()),
+            Command::new(pool),
+            Robot::test_stub(),
+        );
+
+        assert_eq!(billing.stripe_secret_key, "sk_test_dummy");
     }
 }

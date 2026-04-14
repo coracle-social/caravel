@@ -66,6 +66,10 @@ impl Command {
     }
 
     pub async fn create_tenant(&self, tenant: &Tenant) -> Result<()> {
+        if tenant.stripe_customer_id.trim().is_empty() {
+            anyhow::bail!("stripe_customer_id is required");
+        }
+
         let mut tx = self.pool.begin().await?;
 
         sqlx::query(
@@ -205,7 +209,8 @@ impl Command {
             .execute(&mut *tx)
             .await?;
 
-        let activity = Self::insert_activity(&mut tx, activity_type, "relay", relay_id).await?;
+        let activity =
+            Self::insert_activity(&mut tx, "deactivate_relay", "relay", &relay_id).await?;
 
         tx.commit().await?;
         self.emit(activity);
@@ -325,5 +330,58 @@ impl Command {
             .execute(&self.pool)
             .await?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlx::SqlitePool;
+    use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+    use std::str::FromStr;
+
+    async fn test_pool() -> SqlitePool {
+        let connect_options = SqliteConnectOptions::from_str("sqlite::memory:")
+            .expect("valid sqlite memory url")
+            .create_if_missing(true);
+
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(connect_options)
+            .await
+            .expect("connect sqlite memory db");
+
+        sqlx::migrate!("./migrations")
+            .run(&pool)
+            .await
+            .expect("run migrations");
+
+        pool
+    }
+
+    #[tokio::test]
+    async fn create_tenant_rejects_empty_stripe_customer_id() {
+        let pool = test_pool().await;
+        let command = Command::new(pool);
+
+        let tenant = Tenant {
+            pubkey: "tenant_pubkey".to_string(),
+            nwc_url: String::new(),
+            nwc_error: None,
+            created_at: 0,
+            stripe_customer_id: "   ".to_string(),
+            stripe_subscription_id: None,
+            past_due_at: None,
+        };
+
+        let err = command
+            .create_tenant(&tenant)
+            .await
+            .expect_err("empty customer id must be rejected");
+
+        assert!(
+            err.to_string().contains("stripe_customer_id is required"),
+            "unexpected error: {err}"
+        );
     }
 }

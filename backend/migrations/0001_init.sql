@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS tenant (
   nwc_url TEXT NOT NULL DEFAULT '',
   nwc_error TEXT,
   created_at INTEGER NOT NULL,
-  stripe_customer_id TEXT NOT NULL DEFAULT '',
+  stripe_customer_id TEXT NOT NULL,
   stripe_subscription_id TEXT,
   past_due_at INTEGER
 );

@@ -2,7 +2,7 @@ use anyhow::Result;
 use nostr_sdk::prelude::*;
 
 use crate::command::Command;
-use crate::models::Activity;
+use crate::models::{Activity, RELAY_STATUS_DELINQUENT, RELAY_STATUS_INACTIVE};
 use crate::query::Query;
 
 #[derive(Clone)]
@@ -124,7 +124,8 @@ impl Infra {
             "host": host,
             "schema": relay.schema,
             "secret": secret,
-            "inactive": relay.status == "inactive",
+            "inactive": relay.status == RELAY_STATUS_INACTIVE
+                || relay.status == RELAY_STATUS_DELINQUENT,
             "info": {
                 "name": relay.info_name,
                 "icon": relay.info_icon,

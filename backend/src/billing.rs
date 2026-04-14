@@ -6,7 +6,9 @@ use nwc::prelude::{
 use sha2::Sha256;
 
 use crate::command::Command;
-use crate::models::Activity;
+use crate::models::{
+    Activity, RELAY_STATUS_ACTIVE, RELAY_STATUS_DELINQUENT, RELAY_STATUS_INACTIVE, Relay,
+};
 use crate::query::Query;
 use crate::robot::Robot;
 
@@ -55,8 +57,8 @@ impl Billing {
         let nwc_url = std::env::var("NWC_URL").unwrap_or_default();
         let stripe_secret_key = std::env::var("STRIPE_SECRET_KEY").unwrap_or_default();
         let stripe_webhook_secret = std::env::var("STRIPE_WEBHOOK_SECRET").unwrap_or_default();
-        let btc_quote_api_base = std::env::var("BTC_PRICE_API_BASE")
-            .unwrap_or_else(|_| COINBASE_SPOT_API.to_string());
+        let btc_quote_api_base =
+            std::env::var("BTC_PRICE_API_BASE").unwrap_or_else(|_| COINBASE_SPOT_API.to_string());
         Self {
             nwc_url,
             stripe_secret_key,
@@ -127,7 +129,7 @@ impl Billing {
         }
 
         // Inactive relay: remove subscription item if exists, then clean up
-        if relay.status == "inactive" {
+        if relay.status == RELAY_STATUS_INACTIVE || relay.status == RELAY_STATUS_DELINQUENT {
             if let Some(ref item_id) = relay.stripe_subscription_item_id {
                 self.stripe_delete_subscription_item(item_id).await?;
                 self.command
@@ -348,7 +350,7 @@ impl Billing {
 
             let relays = self.query.list_relays_for_tenant(&tenant.pubkey).await?;
             for relay in relays {
-                if relay.status == "inactive" && relay.plan != "free" {
+                if Self::should_reactivate_after_payment(&relay) {
                     self.command.activate_relay(&relay).await?;
                 }
             }
@@ -402,8 +404,8 @@ impl Billing {
 
         let relays = self.query.list_relays_for_tenant(&tenant.pubkey).await?;
         for relay in relays {
-            if relay.status == "active" && relay.plan != "free" {
-                self.command.deactivate_relay(&relay).await?;
+            if relay.status == RELAY_STATUS_ACTIVE && relay.plan != "free" {
+                self.command.mark_relay_delinquent(&relay).await?;
             }
         }
 
@@ -437,8 +439,8 @@ impl Billing {
 
         let relays = self.query.list_relays_for_tenant(&tenant.pubkey).await?;
         for relay in relays {
-            if relay.status == "active" && relay.plan != "free" {
-                self.command.deactivate_relay(&relay).await?;
+            if relay.status == RELAY_STATUS_ACTIVE && relay.plan != "free" {
+                self.command.mark_relay_delinquent(&relay).await?;
             }
         }
 
@@ -722,6 +724,10 @@ impl Billing {
         fiat_minor_to_msats_from_quote(amount_due_minor, &normalized_currency, btc_price)
     }
 
+    fn should_reactivate_after_payment(relay: &Relay) -> bool {
+        relay.status == RELAY_STATUS_DELINQUENT && relay.plan != "free"
+    }
+
     async fn fetch_btc_spot_price(&self, currency: &str) -> Result<f64> {
         fetch_btc_spot_price_from_base(&self.http, &self.btc_quote_api_base, currency).await
     }
@@ -759,7 +765,9 @@ pub async fn fetch_btc_spot_price_from_base(
         .map_err(|e| anyhow!("invalid BTC spot quote for {currency}: {e}"))?;
 
     if amount <= 0.0 {
-        return Err(anyhow!("invalid non-positive BTC spot quote for {currency}"));
+        return Err(anyhow!(
+            "invalid non-positive BTC spot quote for {currency}"
+        ));
     }
 
     Ok(amount)
@@ -799,7 +807,34 @@ pub fn fiat_minor_to_msats_from_quote(
 
 #[cfg(test)]
 mod tests {
-    use super::fiat_minor_to_msats_from_quote;
+    use super::{Billing, fiat_minor_to_msats_from_quote};
+    use crate::models::{
+        RELAY_STATUS_ACTIVE, RELAY_STATUS_DELINQUENT, RELAY_STATUS_INACTIVE, Relay,
+    };
+
+    fn relay_fixture(status: &str, plan: &str) -> Relay {
+        Relay {
+            id: "relay-1".to_string(),
+            tenant: "tenant-1".to_string(),
+            schema: "tenant_1".to_string(),
+            subdomain: "relay-1".to_string(),
+            plan: plan.to_string(),
+            stripe_subscription_item_id: None,
+            status: status.to_string(),
+            sync_error: String::new(),
+            info_name: String::new(),
+            info_icon: String::new(),
+            info_description: String::new(),
+            policy_public_join: 0,
+            policy_strip_signatures: 0,
+            groups_enabled: 1,
+            management_enabled: 1,
+            blossom_enabled: 1,
+            livekit_enabled: 1,
+            push_enabled: 1,
+            synced: 1,
+        }
+    }
 
     #[test]
     fn converts_usd_minor_units_with_quote() {
@@ -813,5 +848,27 @@ mod tests {
         let msats = fiat_minor_to_msats_from_quote(100, "jpy", 10_000_000.0)
             .expect("conversion should succeed");
         assert_eq!(msats, 1_000_000);
+    }
+
+    #[test]
+    fn reactivates_only_delinquent_paid_relays_after_payment() {
+        let delinquent_paid = relay_fixture(RELAY_STATUS_DELINQUENT, "basic");
+        assert!(Billing::should_reactivate_after_payment(&delinquent_paid));
+
+        let manually_inactive_paid = relay_fixture(RELAY_STATUS_INACTIVE, "basic");
+        assert!(!Billing::should_reactivate_after_payment(
+            &manually_inactive_paid
+        ));
+
+        let free_delinquent = relay_fixture(RELAY_STATUS_DELINQUENT, "free");
+        assert!(!Billing::should_reactivate_after_payment(&free_delinquent));
+
+        let active_paid = relay_fixture(RELAY_STATUS_ACTIVE, "basic");
+        assert!(!Billing::should_reactivate_after_payment(&active_paid));
+
+        let unknown_status_paid = relay_fixture("suspended", "basic");
+        assert!(!Billing::should_reactivate_after_payment(
+            &unknown_status_paid
+        ));
     }
 }

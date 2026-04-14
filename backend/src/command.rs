@@ -2,7 +2,9 @@ use anyhow::Result;
 use sqlx::{Sqlite, SqlitePool, Transaction};
 use tokio::sync::broadcast;
 
-use crate::models::{Activity, Relay, Tenant};
+use crate::models::{
+    Activity, RELAY_STATUS_ACTIVE, RELAY_STATUS_DELINQUENT, RELAY_STATUS_INACTIVE, Relay, Tenant,
+};
 
 #[derive(Clone)]
 pub struct Command {
@@ -77,7 +79,8 @@ impl Command {
         .execute(&mut *tx)
         .await?;
 
-        let activity = Self::insert_activity(&mut tx, "create_tenant", "tenant", &tenant.pubkey).await?;
+        let activity =
+            Self::insert_activity(&mut tx, "create_tenant", "tenant", &tenant.pubkey).await?;
 
         tx.commit().await?;
         self.emit(activity);
@@ -93,7 +96,8 @@ impl Command {
             .execute(&mut *tx)
             .await?;
 
-        let activity = Self::insert_activity(&mut tx, "update_tenant", "tenant", &tenant.pubkey).await?;
+        let activity =
+            Self::insert_activity(&mut tx, "update_tenant", "tenant", &tenant.pubkey).await?;
 
         tx.commit().await?;
         self.emit(activity);
@@ -178,14 +182,30 @@ impl Command {
     }
 
     pub async fn deactivate_relay(&self, relay: &Relay) -> Result<()> {
+        self.set_relay_status(&relay.id, RELAY_STATUS_INACTIVE, "deactivate_relay")
+            .await
+    }
+
+    pub async fn mark_relay_delinquent(&self, relay: &Relay) -> Result<()> {
+        self.set_relay_status(&relay.id, RELAY_STATUS_DELINQUENT, "deactivate_relay")
+            .await
+    }
+
+    async fn set_relay_status(
+        &self,
+        relay_id: &str,
+        status: &str,
+        activity_type: &str,
+    ) -> Result<()> {
         let mut tx = self.pool.begin().await?;
 
-        sqlx::query("UPDATE relay SET status = 'inactive' WHERE id = ?")
-            .bind(&relay.id)
+        sqlx::query("UPDATE relay SET status = ? WHERE id = ?")
+            .bind(status)
+            .bind(relay_id)
             .execute(&mut *tx)
             .await?;
 
-        let activity = Self::insert_activity(&mut tx, "deactivate_relay", "relay", &relay.id).await?;
+        let activity = Self::insert_activity(&mut tx, activity_type, "relay", relay_id).await?;
 
         tx.commit().await?;
         self.emit(activity);
@@ -193,18 +213,8 @@ impl Command {
     }
 
     pub async fn activate_relay(&self, relay: &Relay) -> Result<()> {
-        let mut tx = self.pool.begin().await?;
-
-        sqlx::query("UPDATE relay SET status = 'active' WHERE id = ?")
-            .bind(&relay.id)
-            .execute(&mut *tx)
-            .await?;
-
-        let activity = Self::insert_activity(&mut tx, "activate_relay", "relay", &relay.id).await?;
-
-        tx.commit().await?;
-        self.emit(activity);
-        Ok(())
+        self.set_relay_status(&relay.id, RELAY_STATUS_ACTIVE, "activate_relay")
+            .await
     }
 
     pub async fn fail_relay_sync(&self, relay: &Relay, sync_error: String) -> Result<()> {
@@ -216,7 +226,8 @@ impl Command {
             .execute(&mut *tx)
             .await?;
 
-        let activity = Self::insert_activity(&mut tx, "fail_relay_sync", "relay", &relay.id).await?;
+        let activity =
+            Self::insert_activity(&mut tx, "fail_relay_sync", "relay", &relay.id).await?;
 
         tx.commit().await?;
         self.emit(activity);
@@ -231,7 +242,8 @@ impl Command {
             .execute(&mut *tx)
             .await?;
 
-        let activity = Self::insert_activity(&mut tx, "complete_relay_sync", "relay", relay_id).await?;
+        let activity =
+            Self::insert_activity(&mut tx, "complete_relay_sync", "relay", relay_id).await?;
 
         tx.commit().await?;
         self.emit(activity);
@@ -246,7 +258,11 @@ impl Command {
         Ok(())
     }
 
-    pub async fn set_relay_subscription_item(&self, relay_id: &str, stripe_subscription_item_id: &str) -> Result<()> {
+    pub async fn set_relay_subscription_item(
+        &self,
+        relay_id: &str,
+        stripe_subscription_item_id: &str,
+    ) -> Result<()> {
         sqlx::query("UPDATE relay SET stripe_subscription_item_id = ? WHERE id = ?")
             .bind(stripe_subscription_item_id)
             .bind(relay_id)
@@ -255,7 +271,11 @@ impl Command {
         Ok(())
     }
 
-    pub async fn set_tenant_subscription(&self, pubkey: &str, stripe_subscription_id: &str) -> Result<()> {
+    pub async fn set_tenant_subscription(
+        &self,
+        pubkey: &str,
+        stripe_subscription_id: &str,
+    ) -> Result<()> {
         sqlx::query("UPDATE tenant SET stripe_subscription_id = ? WHERE pubkey = ?")
             .bind(stripe_subscription_id)
             .bind(pubkey)

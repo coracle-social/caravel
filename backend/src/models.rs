@@ -1,5 +1,9 @@
 use serde::{Deserialize, Serialize};
 
+pub const RELAY_STATUS_ACTIVE: &str = "active";
+pub const RELAY_STATUS_INACTIVE: &str = "inactive";
+pub const RELAY_STATUS_DELINQUENT: &str = "delinquent";
+
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Activity {
     pub id: String,

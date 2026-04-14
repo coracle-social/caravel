@@ -70,7 +70,7 @@ impl Query {
 
     pub async fn list_relays(&self) -> Result<Vec<Relay>> {
         let rows = sqlx::query_as::<_, Relay>(
-             "SELECT id, tenant, schema, subdomain, plan, stripe_subscription_item_id,
+            "SELECT id, tenant, schema, subdomain, plan, stripe_subscription_item_id,
                      status, sync_error,
                      info_name, info_icon, info_description,
                      policy_public_join, policy_strip_signatures,
@@ -86,7 +86,7 @@ impl Query {
 
     pub async fn list_relays_for_tenant(&self, tenant_id: &str) -> Result<Vec<Relay>> {
         let rows = sqlx::query_as::<_, Relay>(
-             "SELECT id, tenant, schema, subdomain, plan, stripe_subscription_item_id,
+            "SELECT id, tenant, schema, subdomain, plan, stripe_subscription_item_id,
                      status, sync_error,
                      info_name, info_icon, info_description,
                      policy_public_join, policy_strip_signatures,
@@ -104,7 +104,7 @@ impl Query {
 
     pub async fn get_relay(&self, id: &str) -> Result<Option<Relay>> {
         let row = sqlx::query_as::<_, Relay>(
-             "SELECT id, tenant, schema, subdomain, plan, stripe_subscription_item_id,
+            "SELECT id, tenant, schema, subdomain, plan, stripe_subscription_item_id,
                      status, sync_error,
                      info_name, info_icon, info_description,
                      policy_public_join, policy_strip_signatures,
@@ -119,7 +119,10 @@ impl Query {
         Ok(row)
     }
 
-    pub async fn get_tenant_by_stripe_customer_id(&self, stripe_customer_id: &str) -> Result<Option<Tenant>> {
+    pub async fn get_tenant_by_stripe_customer_id(
+        &self,
+        stripe_customer_id: &str,
+    ) -> Result<Option<Tenant>> {
         let row = sqlx::query_as::<_, Tenant>(
             "SELECT pubkey, nwc_url, nwc_error, created_at, stripe_customer_id, stripe_subscription_id, past_due_at
              FROM tenant

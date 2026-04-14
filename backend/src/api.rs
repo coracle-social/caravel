@@ -14,7 +14,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::billing::Billing;
 use crate::command::Command;
-use crate::models::{Relay, Tenant};
+use crate::models::{
+    RELAY_STATUS_ACTIVE, RELAY_STATUS_DELINQUENT, RELAY_STATUS_INACTIVE, Relay, Tenant,
+};
 use crate::query::Query;
 use axum::body::Bytes;
 
@@ -122,7 +124,10 @@ impl Api {
             .route("/tenants/:pubkey/invoices", get(list_tenant_invoices))
             .route("/invoices/:id", get(get_invoice))
             .route("/invoices/:id/bolt11", get(get_invoice_bolt11))
-            .route("/tenants/:pubkey/stripe/session", get(create_stripe_session))
+            .route(
+                "/tenants/:pubkey/stripe/session",
+                get(create_stripe_session),
+            )
             .route("/stripe/webhook", post(stripe_webhook))
             .with_state(state)
     }
@@ -232,7 +237,7 @@ impl Api {
             relay.schema = format!("{}_{}", relay.subdomain.replace('-', "_"), relay.id);
         }
         if relay.status.is_empty() {
-            relay.status = "active".to_string();
+            relay.status = RELAY_STATUS_ACTIVE.to_string();
         }
         relay.policy_public_join = parse_bool_default(relay.policy_public_join, 0);
         relay.policy_strip_signatures = parse_bool_default(relay.policy_strip_signatures, 0);
@@ -393,13 +398,7 @@ async fn get_identity(
         };
     }
 
-    Ok(ok(
-        StatusCode::OK,
-        IdentityResponse {
-            pubkey,
-            is_admin,
-        },
-    ))
+    Ok(ok(StatusCode::OK, IdentityResponse { pubkey, is_admin }))
 }
 
 async fn get_plan(Path(id): Path<String>) -> Response {
@@ -489,14 +488,27 @@ async fn list_relay_activity(
     let relay = match state.api.query.get_relay(&id).await {
         Ok(Some(r)) => r,
         Ok(None) => return Ok(err(StatusCode::NOT_FOUND, "not-found", "relay not found")),
-        Err(e) => return Ok(err(StatusCode::INTERNAL_SERVER_ERROR, "internal", &e.to_string())),
+        Err(e) => {
+            return Ok(err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal",
+                &e.to_string(),
+            ));
+        }
     };
 
     state.api.require_admin_or_tenant(&auth, &relay.tenant)?;
 
     match state.api.query.list_activity_for_relay(&id).await {
-        Ok(activity) => Ok(ok(StatusCode::OK, serde_json::json!({ "activity": activity }))),
-        Err(e) => Ok(err(StatusCode::INTERNAL_SERVER_ERROR, "internal", &e.to_string())),
+        Ok(activity) => Ok(ok(
+            StatusCode::OK,
+            serde_json::json!({ "activity": activity }),
+        )),
+        Err(e) => Ok(err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal",
+            &e.to_string(),
+        )),
     }
 }
 
@@ -515,7 +527,7 @@ async fn create_relay(
         subdomain: payload.subdomain,
         plan: payload.plan,
         stripe_subscription_item_id: None,
-        status: "active".to_string(),
+        status: RELAY_STATUS_ACTIVE.to_string(),
         sync_error: String::new(),
         info_name: payload.info_name.unwrap_or_default(),
         info_icon: payload.info_icon.unwrap_or_default(),
@@ -686,7 +698,7 @@ async fn deactivate_relay(
 
     state.api.require_admin_or_tenant(&auth, &relay.tenant)?;
 
-    if relay.status == "inactive" {
+    if relay.status == RELAY_STATUS_INACTIVE || relay.status == RELAY_STATUS_DELINQUENT {
         return Ok(err(
             StatusCode::BAD_REQUEST,
             "relay-is-inactive",
@@ -725,7 +737,7 @@ async fn reactivate_relay(
 
     state.api.require_admin_or_tenant(&auth, &relay.tenant)?;
 
-    if relay.status == "active" {
+    if relay.status == RELAY_STATUS_ACTIVE {
         return Ok(err(
             StatusCode::BAD_REQUEST,
             "relay-is-active",
@@ -773,7 +785,11 @@ async fn get_invoice(
     Path(id): Path<String>,
 ) -> std::result::Result<Response, ApiError> {
     let auth = state.api.extract_auth_pubkey(&headers)?;
-    let (invoice, tenant) = state.api.billing.get_invoice_with_tenant(&id).await
+    let (invoice, tenant) = state
+        .api
+        .billing
+        .get_invoice_with_tenant(&id)
+        .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
     state.api.require_admin_or_tenant(&auth, &tenant.pubkey)?;
 
@@ -786,7 +802,11 @@ async fn get_invoice_bolt11(
     Path(id): Path<String>,
 ) -> std::result::Result<Response, ApiError> {
     let auth = state.api.extract_auth_pubkey(&headers)?;
-    let (invoice, tenant) = state.api.billing.get_invoice_with_tenant(&id).await
+    let (invoice, tenant) = state
+        .api
+        .billing
+        .get_invoice_with_tenant(&id)
+        .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
     state.api.require_admin_or_tenant(&auth, &tenant.pubkey)?;
 

@@ -901,10 +901,7 @@ mod tests {
             &unknown_status_paid
         ));
     }
-}
 
-#[cfg(test)]
-mod tests {
     use super::*;
     use sqlx::SqlitePool;
     use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};

@@ -209,8 +209,7 @@ impl Command {
             .execute(&mut *tx)
             .await?;
 
-        let activity =
-            Self::insert_activity(&mut tx, "deactivate_relay", "relay", &relay_id).await?;
+        let activity = Self::insert_activity(&mut tx, activity_type, "relay", relay_id).await?;
 
         tx.commit().await?;
         self.emit(activity);

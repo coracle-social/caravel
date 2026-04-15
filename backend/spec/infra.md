@@ -19,7 +19,7 @@ Members:
 
 ## `async fn handle_activity(&self, activity: &Activity)`
 
-- For `create_relay`, `update_relay`, or `deactivate_relay` activity, calls `sync_and_report`.
+- For `create_relay`, `update_relay`, `activate_relay`, or `deactivate_relay` activity, calls `sync_and_report`.
 - All other activity types are ignored (e.g. `fail_relay_sync`, `complete_relay_sync`).
 
 ## `async fn sync_and_report(&self, relay: &Relay, is_new: bool)`

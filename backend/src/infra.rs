@@ -56,10 +56,7 @@ impl Infra {
     }
 
     async fn handle_activity(&self, activity: &Activity) -> Result<()> {
-        let needs_sync = matches!(
-            activity.activity_type.as_str(),
-            "create_relay" | "update_relay" | "deactivate_relay"
-        );
+        let needs_sync = should_sync_relay_activity(activity.activity_type.as_str());
 
         if needs_sync {
             let Some(relay) = self.query.get_relay(&activity.resource_id).await? else {
@@ -93,7 +90,9 @@ impl Infra {
     async fn nip98_auth(&self, url: &str, method: HttpMethod) -> Result<String> {
         let keys = Keys::parse(&self.api_secret)?;
         let server_url = Url::parse(url)?;
-        let auth = HttpData::new(server_url, method).to_authorization(&keys).await?;
+        let auth = HttpData::new(server_url, method)
+            .to_authorization(&keys)
+            .await?;
         Ok(auth)
     }
 
@@ -150,11 +149,21 @@ impl Infra {
         let response = if is_new {
             let url = format!("{}/relay/{}", base, relay.id);
             let auth = self.nip98_auth(&url, HttpMethod::POST).await?;
-            client.post(&url).header("Authorization", auth).json(&body).send().await?
+            client
+                .post(&url)
+                .header("Authorization", auth)
+                .json(&body)
+                .send()
+                .await?
         } else {
             let url = format!("{}/relay/{}", base, relay.id);
             let auth = self.nip98_auth(&url, HttpMethod::PUT).await?;
-            client.put(&url).header("Authorization", auth).json(&body).send().await?
+            client
+                .put(&url)
+                .header("Authorization", auth)
+                .json(&body)
+                .send()
+                .await?
         };
 
         if !response.status().is_success() {
@@ -164,4 +173,11 @@ impl Infra {
         }
         Ok(())
     }
+}
+
+fn should_sync_relay_activity(activity_type: &str) -> bool {
+    matches!(
+        activity_type,
+        "create_relay" | "update_relay" | "activate_relay" | "deactivate_relay"
+    )
 }

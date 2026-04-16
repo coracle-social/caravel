@@ -60,7 +60,13 @@ See [spec](spec) for more details
 
 ## API Routes
 
-All routes are NIP-98 protected.
+Most API routes are NIP-98 protected.
+
+Public exceptions:
+
+- `GET /plans`
+- `GET /plans/:id`
+- `POST /stripe/webhook` (validated with Stripe signatures instead)
 
 - `GET /identity` — get auth identity (`pubkey`, `is_admin`)
 - `GET /tenants` — list tenants (admin)
@@ -73,3 +79,13 @@ All routes are NIP-98 protected.
 - `PUT /relays/:id` — update relay (admin or relay tenant)
 - `POST /relays/:id/deactivate` — deactivate relay (admin or relay tenant)
 - `GET /invoices` — list invoices (`?tenant=<pubkey>` allowed for admin only)
+
+## API Auth Model
+
+Caravel intentionally uses a session-style variant of NIP-98 for client-to-backend API auth.
+
+- Frontend signs one kind `27235` event with `u = VITE_API_URL` and caches that header for about 10 minutes.
+- Backend verifies event kind, signature, and that `u` contains configured `HOST`.
+- Backend intentionally does not bind auth to exact request URL/method/query, and does not enforce payload hash, timestamp freshness window, or replay cache.
+- Goal: reduce repeated wallet signing prompts and avoid cookie-based sessions.
+- Tradeoff: this is weaker request-intent binding than strict NIP-98 semantics.

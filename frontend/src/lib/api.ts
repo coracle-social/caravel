@@ -145,6 +145,8 @@ export async function makeAuth(): Promise<string | undefined> {
     kind: 27235,
     content: "",
     created_at: Math.floor(now / 1000),
+    // Intentional session-style auth: sign the API base URL once, then reuse
+    // the header briefly to avoid prompting the signer on every request.
     tags: [["u", API_URL]],
   })
 

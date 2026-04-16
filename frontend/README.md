@@ -51,8 +51,11 @@ npm run preview
 
 ## Authentication
 
-- Tenant requests use NIP-98 tokens derived from the logged-in user
-- Admin routes require a pubkey listed in `PLATFORM_ADMIN_PUBKEYS` on the backend
+- Tenant requests use an intentional session-style variant of NIP-98:
+  - The client signs one kind `27235` event with `u = VITE_API_URL`.
+  - The resulting `Authorization` header is cached for about 10 minutes to avoid repeated signer prompts.
+  - The backend validates signer identity + host affinity rather than exact URL/method binding per request.
+- Admin routes require a pubkey listed in `ADMINS` on the backend.
 
 ## Routes
 

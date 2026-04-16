@@ -209,6 +209,9 @@ impl Api {
             return Err(ApiError::Unauthorized(anyhow!("missing u tag")));
         };
 
+        // Intentional session-style variant of NIP-98 for Caravel API auth.
+        // We validate signer identity plus host affinity, and do not bind to exact
+        // request URL/method or maintain replay state here.
         if !self.host.is_empty() && !got_u.contains(&self.host) {
             return Err(ApiError::Unauthorized(anyhow!(
                 "authorization host mismatch"

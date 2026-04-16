@@ -184,9 +184,11 @@ Notes:
 ## `extract_auth_pubkey(&self, headers: &HeaderMap) -> Result<String>`
 
 - Parses `Authorization` header
-- Validates event kind and signature using `nostr_sdk`
-- Validates event `u` against `HOST` (not the request path. Non-standard, but correct)
-- Does not validate `method` tag
+- Validates event kind (`27235`) and signature using `nostr_sdk`
+- Validates event `u` contains configured `HOST`
+- Intentionally does **not** enforce exact request URL/method/query matching
+- Intentionally does **not** validate `payload` tag/hash, `created_at` freshness window, or replay nonce/cache
+- This is a deliberate session-style tradeoff to reduce repeated signer prompts in the client
 - Returns pubkey if header all checks pass
 
 Refer to https://github.com/nostr-protocol/nips/blob/master/98.md for details. Use `nostr_sdk` functionality where possible.

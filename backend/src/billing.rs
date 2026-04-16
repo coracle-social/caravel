@@ -18,6 +18,41 @@ const STRIPE_API: &str = "https://api.stripe.com/v1";
 const COINBASE_SPOT_API: &str = "https://api.coinbase.com/v2/prices";
 const WEBHOOK_TOLERANCE_SECS: i64 = 300;
 
+#[derive(Debug)]
+pub enum InvoiceLookupError {
+    StripeClient { status: reqwest::StatusCode },
+    Internal(anyhow::Error),
+}
+
+impl std::fmt::Display for InvoiceLookupError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::StripeClient { status } => {
+                write!(
+                    f,
+                    "stripe invoice lookup failed with status {}",
+                    status.as_u16()
+                )
+            }
+            Self::Internal(error) => write!(f, "{error}"),
+        }
+    }
+}
+
+impl std::error::Error for InvoiceLookupError {}
+
+impl From<anyhow::Error> for InvoiceLookupError {
+    fn from(value: anyhow::Error) -> Self {
+        Self::Internal(value)
+    }
+}
+
+impl From<reqwest::Error> for InvoiceLookupError {
+    fn from(value: reqwest::Error) -> Self {
+        Self::Internal(value.into())
+    }
+}
+
 #[derive(serde::Deserialize)]
 struct StripeEvent {
     #[serde(rename = "type")]
@@ -462,16 +497,18 @@ impl Billing {
     pub async fn get_invoice_with_tenant(
         &self,
         invoice_id: &str,
-    ) -> Result<(serde_json::Value, crate::models::Tenant)> {
+    ) -> std::result::Result<(serde_json::Value, crate::models::Tenant), InvoiceLookupError> {
         let invoice = self.stripe_get_invoice(invoice_id).await?;
         let customer_id = invoice["customer"]
             .as_str()
-            .ok_or_else(|| anyhow!("invoice missing customer"))?;
+            .ok_or_else(|| InvoiceLookupError::Internal(anyhow!("invoice missing customer")))?;
         let tenant = self
             .query
             .get_tenant_by_stripe_customer_id(customer_id)
             .await?
-            .ok_or_else(|| anyhow!("tenant not found for customer"))?;
+            .ok_or_else(|| {
+                InvoiceLookupError::Internal(anyhow!("tenant not found for customer"))
+            })?;
         Ok((invoice, tenant))
     }
 
@@ -515,13 +552,22 @@ impl Billing {
         Ok(body["data"].clone())
     }
 
-    pub async fn stripe_get_invoice(&self, invoice_id: &str) -> Result<serde_json::Value> {
+    pub async fn stripe_get_invoice(
+        &self,
+        invoice_id: &str,
+    ) -> std::result::Result<serde_json::Value, InvoiceLookupError> {
         let resp = self
             .http
             .get(format!("{STRIPE_API}/invoices/{invoice_id}"))
             .bearer_auth(&self.stripe_secret_key)
             .send()
             .await?;
+
+        if resp.status().is_client_error() {
+            return Err(InvoiceLookupError::StripeClient {
+                status: resp.status(),
+            });
+        }
 
         let body: serde_json::Value = resp.error_for_status()?.json().await?;
         Ok(body)

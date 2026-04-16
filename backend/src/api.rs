@@ -12,7 +12,7 @@ use base64::Engine;
 use nostr_sdk::{Event, JsonUtil, Kind};
 use serde::{Deserialize, Serialize};
 
-use crate::billing::Billing;
+use crate::billing::{Billing, InvoiceLookupError};
 use crate::command::Command;
 use crate::models::{
     RELAY_STATUS_ACTIVE, RELAY_STATUS_DELINQUENT, RELAY_STATUS_INACTIVE, Relay, Tenant,
@@ -72,6 +72,11 @@ enum ApiError {
     Unauthorized(anyhow::Error),
     Forbidden(&'static str),
     NotFound(&'static str),
+    Client {
+        status: StatusCode,
+        code: &'static str,
+        message: &'static str,
+    },
     Internal(String),
 }
 
@@ -81,8 +86,33 @@ impl IntoResponse for ApiError {
             Self::Unauthorized(e) => err(StatusCode::UNAUTHORIZED, "unauthorized", &e.to_string()),
             Self::Forbidden(message) => err(StatusCode::FORBIDDEN, "forbidden", message),
             Self::NotFound(message) => err(StatusCode::NOT_FOUND, "not-found", message),
+            Self::Client {
+                status,
+                code,
+                message,
+            } => err(status, code, message),
             Self::Internal(message) => err(StatusCode::INTERNAL_SERVER_ERROR, "internal", &message),
         }
+    }
+}
+
+fn map_invoice_lookup_error(error: InvoiceLookupError) -> ApiError {
+    match error {
+        InvoiceLookupError::StripeClient { status } => {
+            let status = StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::BAD_REQUEST);
+            match status {
+                StatusCode::NOT_FOUND => ApiError::NotFound("invoice not found"),
+                StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
+                    ApiError::Forbidden("invoice access denied")
+                }
+                _ => ApiError::Client {
+                    status,
+                    code: "invoice-request-rejected",
+                    message: "invoice request rejected",
+                },
+            }
+        }
+        InvoiceLookupError::Internal(error) => ApiError::Internal(error.to_string()),
     }
 }
 
@@ -808,7 +838,7 @@ async fn get_invoice(
         .billing
         .get_invoice_with_tenant(&id)
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        .map_err(map_invoice_lookup_error)?;
     state.api.require_admin_or_tenant(&auth, &tenant.pubkey)?;
 
     Ok(ok(StatusCode::OK, invoice))
@@ -825,7 +855,7 @@ async fn get_invoice_bolt11(
         .billing
         .get_invoice_with_tenant(&id)
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        .map_err(map_invoice_lookup_error)?;
     state.api.require_admin_or_tenant(&auth, &tenant.pubkey)?;
 
     let status = invoice["status"].as_str().unwrap_or_default();

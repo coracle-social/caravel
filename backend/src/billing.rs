@@ -154,8 +154,11 @@ impl Billing {
             return Ok(());
         };
 
+        let plan = Query::get_plan(&relay.plan)
+            .ok_or_else(|| anyhow!("unknown relay plan id: {}", relay.plan))?;
+
         // Free plan: remove subscription item if exists, then clean up
-        if relay.plan == "free" {
+        if plan.id == "free" {
             if let Some(ref item_id) = relay.stripe_subscription_item_id {
                 self.stripe_delete_subscription_item(item_id).await?;
                 self.command
@@ -179,12 +182,6 @@ impl Billing {
         }
 
         // Active relay on a paid plan
-        let plan = Query::list_plans().into_iter().find(|p| p.id == relay.plan);
-
-        let Some(plan) = plan else {
-            return Ok(());
-        };
-
         let Some(ref stripe_price_id) = plan.stripe_price_id else {
             return Ok(());
         };
@@ -442,7 +439,7 @@ impl Billing {
 
         let relays = self.query.list_relays_for_tenant(&tenant.pubkey).await?;
         for relay in relays {
-            if relay.status == RELAY_STATUS_ACTIVE && relay.plan != "free" {
+            if relay.status == RELAY_STATUS_ACTIVE && Query::is_paid_plan(&relay.plan) {
                 self.command.mark_relay_delinquent(&relay).await?;
             }
         }
@@ -477,7 +474,7 @@ impl Billing {
 
         let relays = self.query.list_relays_for_tenant(&tenant.pubkey).await?;
         for relay in relays {
-            if relay.status == RELAY_STATUS_ACTIVE && relay.plan != "free" {
+            if relay.status == RELAY_STATUS_ACTIVE && Query::is_paid_plan(&relay.plan) {
                 self.command.mark_relay_delinquent(&relay).await?;
             }
         }
@@ -801,7 +798,7 @@ impl Billing {
     }
 
     fn should_reactivate_after_payment(relay: &Relay) -> bool {
-        relay.status == RELAY_STATUS_DELINQUENT && relay.plan != "free"
+        relay.status == RELAY_STATUS_DELINQUENT && Query::is_paid_plan(&relay.plan)
     }
 
     async fn fetch_btc_spot_price(&self, currency: &str) -> Result<f64> {

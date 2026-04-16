@@ -204,7 +204,8 @@ Refer to https://github.com/nostr-protocol/nips/blob/master/98.md for details. U
 ## `prepare_relay(&self, relay: Relay) -> anyhow::Result<Relay>`
 
 - Validate `subdomain`
-- If `plan` is free and `blossom` is enabled, return `premium-feature`
-- If `plan` is free and `livekit` is enabled, return `premium-feature`
+- Validate that `plan` matches a known plan id from `Query::list_plans`
+- If selected `plan` does not include `blossom` and `blossom` is enabled, return `premium-feature`
+- If selected `plan` does not include `livekit` and `livekit` is enabled, return `premium-feature`
 - Populate `schema` if not already set
 - Populate missing fields using reasonable defaults

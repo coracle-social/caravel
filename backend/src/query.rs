@@ -68,6 +68,16 @@ impl Query {
         ]
     }
 
+    pub fn get_plan(plan_id: &str) -> Option<Plan> {
+        Self::list_plans().into_iter().find(|p| p.id == plan_id)
+    }
+
+    pub fn is_paid_plan(plan_id: &str) -> bool {
+        Self::get_plan(plan_id)
+            .map(|p| p.id != "free")
+            .unwrap_or(false)
+    }
+
     pub async fn list_relays(&self) -> Result<Vec<Relay>> {
         let rows = sqlx::query_as::<_, Relay>(
             "SELECT id, tenant, schema, subdomain, plan, stripe_subscription_item_id,
@@ -135,13 +145,14 @@ impl Query {
     }
 
     pub async fn has_active_paid_relays(&self, tenant_id: &str) -> Result<bool> {
-        let count = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM relay WHERE tenant = ? AND status = 'active' AND plan != 'free'",
+        let plans = sqlx::query_scalar::<_, String>(
+            "SELECT plan FROM relay WHERE tenant = ? AND status = 'active'",
         )
         .bind(tenant_id)
-        .fetch_one(&self.pool)
+        .fetch_all(&self.pool)
         .await?;
-        Ok(count > 0)
+
+        Ok(plans.into_iter().any(|plan| Self::is_paid_plan(&plan)))
     }
 
     pub async fn list_activity_for_relay(&self, relay_id: &str) -> Result<Vec<Activity>> {

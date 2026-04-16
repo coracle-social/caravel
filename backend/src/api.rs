@@ -259,10 +259,12 @@ impl Api {
             return Err(anyhow!("invalid-subdomain"));
         }
 
-        if relay.plan == "free" && relay.blossom_enabled == 1 {
+        let plan = Query::get_plan(&relay.plan).ok_or_else(|| anyhow!("invalid-plan"))?;
+
+        if !plan.blossom && relay.blossom_enabled == 1 {
             return Err(anyhow!("premium-feature"));
         }
-        if relay.plan == "free" && relay.livekit_enabled == 1 {
+        if !plan.livekit && relay.livekit_enabled == 1 {
             return Err(anyhow!("premium-feature"));
         }
 
@@ -276,14 +278,10 @@ impl Api {
         relay.policy_strip_signatures = parse_bool_default(relay.policy_strip_signatures, 0);
         relay.groups_enabled = parse_bool_default(relay.groups_enabled, 1);
         relay.management_enabled = parse_bool_default(relay.management_enabled, 1);
-        relay.blossom_enabled = parse_bool_default(
-            relay.blossom_enabled,
-            if relay.plan == "free" { 0 } else { 1 },
-        );
-        relay.livekit_enabled = parse_bool_default(
-            relay.livekit_enabled,
-            if relay.plan == "free" { 0 } else { 1 },
-        );
+        relay.blossom_enabled =
+            parse_bool_default(relay.blossom_enabled, if plan.blossom { 1 } else { 0 });
+        relay.livekit_enabled =
+            parse_bool_default(relay.livekit_enabled, if plan.livekit { 1 } else { 0 });
         relay.push_enabled = parse_bool_default(relay.push_enabled, 1);
 
         Ok(relay)
@@ -453,7 +451,7 @@ async fn get_identity(
 }
 
 async fn get_plan(Path(id): Path<String>) -> Response {
-    match Query::list_plans().into_iter().find(|p| p.id == id) {
+    match Query::get_plan(&id) {
         Some(plan) => ok(StatusCode::OK, plan),
         None => err(StatusCode::NOT_FOUND, "not-found", "plan not found"),
     }
@@ -594,6 +592,13 @@ async fn create_relay(
     };
 
     relay = match state.api.prepare_relay(relay) {
+        Err(e) if e.to_string() == "invalid-plan" => {
+            return Ok(err(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "invalid-plan",
+                "plan not found",
+            ));
+        }
         Ok(r) => r,
         Err(e) if e.to_string() == "premium-feature" => {
             return Ok(err(
@@ -691,6 +696,13 @@ async fn update_relay(
     }
 
     relay = match state.api.prepare_relay(relay) {
+        Err(e) if e.to_string() == "invalid-plan" => {
+            return Ok(err(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "invalid-plan",
+                "plan not found",
+            ));
+        }
         Ok(r) => r,
         Err(e) if e.to_string() == "premium-feature" => {
             return Ok(err(

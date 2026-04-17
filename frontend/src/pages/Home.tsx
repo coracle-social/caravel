@@ -213,7 +213,7 @@ export default function Home() {
           </p>
         </div>
 
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {/* Flotilla */}
           <a
             href="https://flotilla.social"
@@ -223,7 +223,7 @@ export default function Home() {
           >
             <div class="flex items-start justify-between gap-4">
               <div class="flex items-center gap-3">
-                <div class="w-12 h-12 rounded-2xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white font-bold text-xl shadow-md shadow-blue-200">
+                <div class="w-12 h-12 rounded-2xl bg-linear-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white font-bold text-xl shadow-md shadow-blue-200">
                   F
                 </div>
                 <div>
@@ -263,7 +263,7 @@ export default function Home() {
           >
             <div class="flex items-start justify-between gap-4">
               <div class="flex items-center gap-3">
-                <div class="w-12 h-12 rounded-2xl bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center text-white font-bold text-xl shadow-md shadow-purple-200">
+                <div class="w-12 h-12 rounded-2xl bg-linear-to-br from-purple-500 to-pink-500 flex items-center justify-center text-white font-bold text-xl shadow-md shadow-purple-200">
                   C
                 </div>
                 <div>
@@ -290,6 +290,47 @@ export default function Home() {
             <div class="mt-auto pt-2">
               <span class="inline-flex items-center gap-1.5 text-sm font-semibold text-purple-600">
                 Visit chachi.chat <ExternalLinkIcon />
+              </span>
+            </div>
+          </a>
+
+          {/* Nostrord */}
+          <a
+            href="https://nostrord.com/"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="group flex flex-col gap-5 rounded-2xl border border-gray-200 bg-white p-8 hover:border-amber-300 hover:shadow-md transition-all"
+          >
+            <div class="flex items-start justify-between gap-4">
+              <div class="flex items-center gap-3">
+                <div class="w-12 h-12 rounded-2xl bg-linear-to-br from-amber-500 to-orange-500 flex items-center justify-center text-white font-bold text-xl shadow-md shadow-amber-200">
+                  N
+                </div>
+                <div>
+                  <h3 class="text-lg font-bold text-gray-900 group-hover:text-amber-600 transition-colors">Nostrord</h3>
+                  <p class="text-xs text-gray-400">nostrord.com</p>
+                </div>
+              </div>
+              <span class="text-gray-300 group-hover:text-amber-400 transition-colors mt-1">
+                <ExternalLinkIcon />
+              </span>
+            </div>
+            <p class="text-sm text-gray-600 leading-relaxed">
+              A NIP-29 client built for decentralized group chat on Nostr. Create
+              censorship-resistant communities with admin roles, moderation, and access
+              control—all powered by your relay.
+            </p>
+            <div class="space-y-2">
+              {["Decentralized group chat with NIP-29", "Censorship-resistant communities", "Admin roles & moderation"].map(f => (
+                <div class="flex items-start gap-2 text-sm text-gray-600">
+                  <CheckIcon />
+                  {f}
+                </div>
+              ))}
+            </div>
+            <div class="mt-auto pt-2">
+              <span class="inline-flex items-center gap-1.5 text-sm font-semibold text-amber-600">
+                Visit nostrord.com <ExternalLinkIcon />
               </span>
             </div>
           </a>
@@ -338,6 +379,7 @@ export default function Home() {
           <div class="flex gap-4">
             <a href="https://flotilla.social" target="_blank" rel="noopener noreferrer" class="hover:text-gray-600 transition-colors">Flotilla</a>
             <a href="https://chachi.chat" target="_blank" rel="noopener noreferrer" class="hover:text-gray-600 transition-colors">Chachi</a>
+            <a href="https://nostrord.com/" target="_blank" rel="noopener noreferrer" class="hover:text-gray-600 transition-colors">Nostrord</a>
           </div>
         </div>
       </footer>

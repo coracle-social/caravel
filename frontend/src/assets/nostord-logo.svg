@@ -1,0 +1,21 @@
+<svg xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd" xmlns="http://www.w3.org/2000/svg" xmlns:svg="http://www.w3.org/2000/svg" width="66.145837" height="66.145837" viewBox="0 0 66.145837 66.145837" version="1.1" id="svg1" inkscape:version="1.4.2 (ebf0e940d0, 2025-05-08)" sodipodi:docname="nostrord.svg">
+  <sodipodi:namedview id="namedview1" pagecolor="#ffffff" bordercolor="#000000" borderopacity="0.25" inkscape:showpageshadow="2" inkscape:pageopacity="0.0" inkscape:pagecheckerboard="0" inkscape:deskcolor="#d1d1d1" inkscape:document-units="mm" inkscape:zoom="2.1971895" inkscape:cx="172.94822" inkscape:cy="184.78151" inkscape:window-width="2048" inkscape:window-height="1083" inkscape:window-x="0" inkscape:window-y="0" inkscape:window-maximized="1" inkscape:current-layer="layer1"/>
+  <defs id="defs1"/>
+  <g inkscape:label="Layer 1" inkscape:groupmode="layer" id="layer1" transform="translate(-80.278336,-100.91589)">
+    <rect x="80.278336" y="100.91589" width="66.145836" height="66.145836" rx="15.434029" fill="#0a0a0a" id="rect1-6-9-7-7-9-8-6" style="stroke-width:1.10243"/>
+    <g id="g32" transform="matrix(0.56473291,0,0,0.56473291,-434.56644,229.88942)">
+      <path d="m 941.12408,-145.50974 c 0,7.28807 10.93211,10.93211 29.15233,10.93211 18.2201,0 29.1523,-3.64404 29.1523,-10.93211 v -32.79632 c 0,-14.57615 -10.9322,-25.50826 -29.1523,-25.50826 -18.22022,0 -29.15233,10.93211 -29.15233,25.50826 z" fill="#fafafa" id="path3-6-2-5-9-7-4-1" style="stroke-width:1.82202"/>
+      <path d="m 948.41215,-171.01799 c 0,-7.28807 10.93211,-10.93211 21.86426,-10.93211 10.9321,0 21.8642,3.64404 21.8642,10.93211 v 7.28807 c 0,7.28807 -10.9321,10.9321 -21.8642,10.9321 -10.93215,0 -21.86426,-3.64403 -21.86426,-10.9321 z" fill="#0a0a0a" id="path4-1-3-6-2-3-5-5" style="stroke-width:1.82202"/>
+      <ellipse cx="959.34424" cy="-167.37396" rx="5.4660549" ry="7.2880735" fill="#fafafa" id="ellipse4-5-7-2-0-6-0-5" style="stroke-width:1.82202"/>
+      <ellipse cx="981.2085" cy="-167.37396" rx="5.4660549" ry="7.2880735" fill="#fafafa" id="ellipse5-5-5-9-2-1-3-4" style="stroke-width:1.82202"/>
+      <g id="g12-2-3-2-6-7" transform="matrix(1.3286857,0,0,1.3286857,15.786725,-131.79559)">
+        <path d="m 740.53601,-40.469391 14,-14 q 3,-2 1,2 l -11,14 q -2,2 -4,1 z" fill="#fafafa" id="path3-9-7-7-9-1-6"/>
+        <path d="m 738.53601,-34.469391 10,-10 q 2,-2 1,1 l -8,11 q -2,2 -3,1 z" fill="#fafafa" id="path4-73-0-5-3-0-5"/>
+      </g>
+      <g id="g12-2-2-9-1-6-6" transform="matrix(-1.3286857,0,0,1.3286857,1924.6621,-131.79559)">
+        <path d="m 740.53601,-40.469391 14,-14 q 3,-2 1,2 l -11,14 q -2,2 -4,1 z" fill="#fafafa" id="path3-9-7-6-2-9-3-9"/>
+        <path d="m 738.53601,-34.469391 10,-10 q 2,-2 1,1 l -8,11 q -2,2 -3,1 z" fill="#fafafa" id="path4-73-0-1-2-4-2-3"/>
+      </g>
+    </g>
+  </g>
+</svg>

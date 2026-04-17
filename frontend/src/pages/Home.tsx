@@ -8,6 +8,9 @@ import Modal from "@/components/Modal"
 import Login from "@/views/Login"
 import { createRelayForActiveTenant } from "@/lib/hooks"
 import { account } from "@/lib/state"
+import FlotillaLogo from "@/assets/flotilla-logo.svg"
+import ChachiLogo from "@/assets/chachi-logo.svg"
+import NostordLogo from "@/assets/nostord-logo.svg"
 
 export default function Home() {
   const navigate = useNavigate()
@@ -223,9 +226,7 @@ export default function Home() {
           >
             <div class="flex items-start justify-between gap-4">
               <div class="flex items-center gap-3">
-                <div class="w-12 h-12 rounded-2xl bg-linear-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white font-bold text-xl shadow-md shadow-blue-200">
-                  F
-                </div>
+                <img src={FlotillaLogo} alt="Flotilla" class="w-12 h-12 rounded-2xl shadow-md shadow-blue-200" />
                 <div>
                   <h3 class="text-lg font-bold text-gray-900 group-hover:text-blue-600 transition-colors">Flotilla</h3>
                   <p class="text-xs text-gray-400">flotilla.social</p>
@@ -263,9 +264,7 @@ export default function Home() {
           >
             <div class="flex items-start justify-between gap-4">
               <div class="flex items-center gap-3">
-                <div class="w-12 h-12 rounded-2xl bg-linear-to-br from-purple-500 to-pink-500 flex items-center justify-center text-white font-bold text-xl shadow-md shadow-purple-200">
-                  C
-                </div>
+                <img src={ChachiLogo} alt="Chachi" class="w-12 h-12 rounded-2xl shadow-md shadow-purple-200" />
                 <div>
                   <h3 class="text-lg font-bold text-gray-900 group-hover:text-purple-600 transition-colors">Chachi</h3>
                   <p class="text-xs text-gray-400">chachi.chat</p>
@@ -303,9 +302,7 @@ export default function Home() {
           >
             <div class="flex items-start justify-between gap-4">
               <div class="flex items-center gap-3">
-                <div class="w-12 h-12 rounded-2xl bg-linear-to-br from-amber-500 to-orange-500 flex items-center justify-center text-white font-bold text-xl shadow-md shadow-amber-200">
-                  N
-                </div>
+                <img src={NostordLogo} alt="Nostrord" class="w-12 h-12 rounded-2xl shadow-md shadow-amber-200" />
                 <div>
                   <h3 class="text-lg font-bold text-gray-900 group-hover:text-amber-600 transition-colors">Nostrord</h3>
                   <p class="text-xs text-gray-400">nostrord.com</p>

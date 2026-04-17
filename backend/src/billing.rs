@@ -95,6 +95,9 @@ impl Billing {
             panic!("missing STRIPE_SECRET_KEY environment variable");
         }
         let stripe_webhook_secret = std::env::var("STRIPE_WEBHOOK_SECRET").unwrap_or_default();
+        if stripe_webhook_secret.trim().is_empty() {
+            panic!("missing STRIPE_WEBHOOK_SECRET environment variable");
+        }
         let btc_quote_api_base =
             std::env::var("BTC_PRICE_API_BASE").unwrap_or_else(|_| COINBASE_SPOT_API.to_string());
         Self {
@@ -949,7 +952,8 @@ mod tests {
     use sqlx::SqlitePool;
     use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
     use std::str::FromStr;
-    use std::sync::{Mutex, OnceLock};
+    use std::sync::OnceLock;
+    use tokio::sync::Mutex;
 
     fn env_lock() -> &'static Mutex<()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -961,6 +965,14 @@ mod tests {
         match value {
             Some(v) => unsafe { std::env::set_var("STRIPE_SECRET_KEY", v) },
             None => unsafe { std::env::remove_var("STRIPE_SECRET_KEY") },
+        }
+    }
+
+    #[allow(unused_unsafe)]
+    fn set_stripe_webhook_secret(value: Option<&str>) {
+        match value {
+            Some(v) => unsafe { std::env::set_var("STRIPE_WEBHOOK_SECRET", v) },
+            None => unsafe { std::env::remove_var("STRIPE_WEBHOOK_SECRET") },
         }
     }
 
@@ -979,6 +991,24 @@ mod tests {
     impl Drop for StripeSecretKeyGuard {
         fn drop(&mut self) {
             set_stripe_secret_key(self.previous.as_deref());
+        }
+    }
+
+    struct StripeWebhookSecretGuard {
+        previous: Option<String>,
+    }
+
+    impl StripeWebhookSecretGuard {
+        fn set(value: Option<&str>) -> Self {
+            let previous = std::env::var("STRIPE_WEBHOOK_SECRET").ok();
+            set_stripe_webhook_secret(value);
+            Self { previous }
+        }
+    }
+
+    impl Drop for StripeWebhookSecretGuard {
+        fn drop(&mut self) {
+            set_stripe_webhook_secret(self.previous.as_deref());
         }
     }
 
@@ -1003,8 +1033,9 @@ mod tests {
 
     #[tokio::test]
     async fn billing_new_panics_without_stripe_secret_key() {
-        let _lock = env_lock().lock().expect("acquire env lock");
-        let _env = StripeSecretKeyGuard::set(None);
+        let _lock = env_lock().lock().await;
+        let _secret_env = StripeSecretKeyGuard::set(None);
+        let _webhook_env = StripeWebhookSecretGuard::set(Some("whsec_test_dummy"));
 
         let pool = test_pool().await;
         let query = Query::new(pool.clone());
@@ -1034,9 +1065,76 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn billing_new_accepts_non_empty_stripe_secret_key() {
-        let _lock = env_lock().lock().expect("acquire env lock");
-        let _env = StripeSecretKeyGuard::set(Some("sk_test_dummy"));
+    async fn billing_new_panics_without_stripe_webhook_secret() {
+        let _lock = env_lock().lock().await;
+        let _secret_env = StripeSecretKeyGuard::set(Some("sk_test_dummy"));
+        let _webhook_env = StripeWebhookSecretGuard::set(None);
+
+        let pool = test_pool().await;
+        let query = Query::new(pool.clone());
+        let command = Command::new(pool);
+        let robot = Robot::test_stub();
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            Billing::new(query, command, robot)
+        }));
+
+        let panic_payload = match result {
+            Ok(_) => panic!("constructor should panic when STRIPE_WEBHOOK_SECRET is missing"),
+            Err(payload) => payload,
+        };
+        let panic_msg = if let Some(msg) = panic_payload.downcast_ref::<&str>() {
+            (*msg).to_string()
+        } else if let Some(msg) = panic_payload.downcast_ref::<String>() {
+            msg.clone()
+        } else {
+            String::new()
+        };
+
+        assert!(
+            panic_msg.contains("missing STRIPE_WEBHOOK_SECRET environment variable"),
+            "unexpected panic: {panic_msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn billing_new_panics_with_blank_stripe_webhook_secret() {
+        let _lock = env_lock().lock().await;
+        let _secret_env = StripeSecretKeyGuard::set(Some("sk_test_dummy"));
+        let _webhook_env = StripeWebhookSecretGuard::set(Some("   "));
+
+        let pool = test_pool().await;
+        let query = Query::new(pool.clone());
+        let command = Command::new(pool);
+        let robot = Robot::test_stub();
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            Billing::new(query, command, robot)
+        }));
+
+        let panic_payload = match result {
+            Ok(_) => panic!("constructor should panic when STRIPE_WEBHOOK_SECRET is blank"),
+            Err(payload) => payload,
+        };
+        let panic_msg = if let Some(msg) = panic_payload.downcast_ref::<&str>() {
+            (*msg).to_string()
+        } else if let Some(msg) = panic_payload.downcast_ref::<String>() {
+            msg.clone()
+        } else {
+            String::new()
+        };
+
+        assert!(
+            panic_msg.contains("missing STRIPE_WEBHOOK_SECRET environment variable"),
+            "unexpected panic: {panic_msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn billing_new_accepts_non_empty_stripe_secrets() {
+        let _lock = env_lock().lock().await;
+        let _secret_env = StripeSecretKeyGuard::set(Some("sk_test_dummy"));
+        let _webhook_env = StripeWebhookSecretGuard::set(Some("whsec_test_dummy"));
 
         let pool = test_pool().await;
         let billing = Billing::new(
@@ -1046,5 +1144,6 @@ mod tests {
         );
 
         assert_eq!(billing.stripe_secret_key, "sk_test_dummy");
+        assert_eq!(billing.stripe_webhook_secret, "whsec_test_dummy");
     }
 }

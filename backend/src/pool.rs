@@ -21,8 +21,7 @@ pub async fn create_pool() -> Result<SqlitePool> {
         std::fs::create_dir_all(parent)?;
     }
 
-    let connect_options =
-        SqliteConnectOptions::from_str(&database_url)?.create_if_missing(true);
+    let connect_options = SqliteConnectOptions::from_str(&database_url)?.create_if_missing(true);
 
     let pool = SqlitePoolOptions::new()
         .max_connections(5)

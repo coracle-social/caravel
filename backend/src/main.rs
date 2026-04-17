@@ -3,8 +3,8 @@ mod billing;
 mod command;
 mod infra;
 mod models;
-mod query;
 mod pool;
+mod query;
 mod robot;
 
 use anyhow::Result;

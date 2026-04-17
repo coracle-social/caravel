@@ -5,6 +5,7 @@ Billing encapsulates logic related to synchronizing state with Stripe, processin
 Members:
 
 - `nwc_url: String` - a nostr wallet connect URL used to **create** bolt11 invoices (i.e. receive payments), from `NWC_URL`
+- `stripe_secret_key: String` - Stripe API key used for billing API operations, from `STRIPE_SECRET_KEY`
 - `stripe_webhook_secret: String` - secret for verifying Stripe webhook signatures, from `STRIPE_WEBHOOK_SECRET`
 - `query: Query`
 - `command: Command`
@@ -13,6 +14,8 @@ Members:
 ## `pub fn new(query: Query, command: Command, robot: Robot) -> Self`
 
 - Reads environment and populates members
+- Panics if `STRIPE_SECRET_KEY` is missing/empty
+- Panics if `STRIPE_WEBHOOK_SECRET` is missing/empty
 
 ## `pub fn start(&self)`
 
@@ -109,4 +112,3 @@ Skip invoices with `amount_due` of 0.
 
 - Look up tenant by `stripe_customer_id`
 - Clear `stripe_subscription_id` via `command.clear_tenant_subscription`
-

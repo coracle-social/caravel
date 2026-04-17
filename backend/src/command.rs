@@ -32,7 +32,7 @@ impl Command {
                     .fetch_one(&mut **tx)
                     .await?
             }
-            _ => anyhow::bail!("unknown resource_type: {}", resource_type),
+            _ => anyhow::bail!("unknown resource_type: {resource_type}"),
         };
 
         let id = uuid::Uuid::new_v4().to_string();

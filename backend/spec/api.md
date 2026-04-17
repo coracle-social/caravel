@@ -178,6 +178,7 @@ Notes:
 - Reads raw request body and `Stripe-Signature` header
 - Calls `billing.handle_webhook(payload, signature)`
 - Returns `200` on success, `400` on signature verification failure
+- Startup requires non-empty `STRIPE_WEBHOOK_SECRET`
 
 --- Utilities
 

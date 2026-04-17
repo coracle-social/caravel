@@ -139,7 +139,7 @@ impl Api {
             api: Arc::new(self),
         };
 
-        Router::new()
+        let router = Router::new()
             .route("/identity", get(get_identity))
             .route("/plans", get(list_plans))
             .route("/plans/:id", get(get_plan))
@@ -158,8 +158,9 @@ impl Api {
                 "/tenants/:pubkey/stripe/session",
                 get(create_stripe_session),
             )
-            .route("/stripe/webhook", post(stripe_webhook))
-            .with_state(state)
+            .route("/stripe/webhook", post(stripe_webhook));
+
+        router.with_state(state)
     }
 
     fn extract_auth_pubkey(&self, headers: &HeaderMap) -> std::result::Result<String, ApiError> {

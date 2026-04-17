@@ -25,7 +25,7 @@ async fn quote_endpoint_can_be_stubbed_deterministically() {
 
     assert_eq!(btc_price, 50_000.0);
 
-    let msats = fiat_minor_to_msats_from_quote(100, "USD", btc_price)
-        .expect("convert quoted fiat amount");
+    let msats =
+        fiat_minor_to_msats_from_quote(100, "USD", btc_price).expect("convert quoted fiat amount");
     assert_eq!(msats, 2_000_000);
 }

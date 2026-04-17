@@ -46,9 +46,8 @@ Notes:
 
 - Serves `GET /identity`
 - Authorizes anyone, but must be authorized
-- If a tenant for the identity doesn't exist:
-  - Call the Stripe API to create a new customer
-  - Create a new tenant using `command.create_tenant` with payload and `stripe_customer_id`. No subscription is created yet — that happens when the first relay is added.
+- Side-effect-free: returns `{ pubkey, is_admin }` only
+- Clients must call `POST /tenants` before any tenant-scoped write
 - Return `data` is an `Identity` struct
 
 --- Tenant routes
@@ -58,6 +57,18 @@ Notes:
 - Serves `GET /tenants`
 - Authorizes admin only
 - Return `data` is a list of tenant structs from `query.list_tenants`
+
+## `async fn create_tenant(...) -> Response`
+
+- Serves `POST /tenants`
+- Authorizes anyone, but must be authorized
+- No request body; target pubkey is derived from NIP-98 auth
+- Idempotent: if a tenant already exists for the auth pubkey, return it without calling Stripe or writing to the DB
+- Otherwise, call the Stripe API to create a new customer and create a new tenant using `command.create_tenant` with the resulting `stripe_customer_id`. No subscription is created yet — that happens when the first relay is added.
+- On unique-constraint race (`pubkey-exists`), re-fetch and return the existing tenant
+- If Stripe customer creation fails, return `code=stripe-customer-create-failed`
+- Always returns `200` (create-or-get is uniform)
+- Return `data` is a single `Tenant` struct
 
 ## `async fn get_tenant(...) -> Response`
 

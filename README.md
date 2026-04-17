@@ -53,7 +53,7 @@ The rest of the defaults work as-is. `ROBOT_*`, `LIVEKIT_*`, billing, and Stripe
 cp frontend/.env.template frontend/.env
 ```
 
-The defaults (`VITE_API_URL=http://127.0.0.1:3000`) point at the backend and work out of the box.
+The defaults (`VITE_API_URL=http://127.0.0.1:2892`) point at the backend and work out of the box.
 
 ### 4. Install dependencies and run
 
@@ -62,7 +62,7 @@ cd frontend && bun install && cd ..
 just dev
 ```
 
-This starts the backend (with auto-reload on file changes) at `http://127.0.0.1:3000` and the frontend at `http://127.0.0.1:5173`.
+This starts the backend (with auto-reload on file changes) at `http://127.0.0.1:2892` and the frontend at `http://127.0.0.1:5173`.
 
 ## Project docs
 

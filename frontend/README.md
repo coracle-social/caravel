@@ -32,7 +32,7 @@ Environment variables (see `.env.template`):
 
 | Variable | Description | Default |
 |---|---|---|
-| `VITE_API_URL` | Backend API base URL | `http://127.0.0.1:3000` |
+| `VITE_API_URL` | Backend API base URL | `http://127.0.0.1:2892` |
 
 ## Running
 

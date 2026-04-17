@@ -40,7 +40,7 @@ async fn main() -> Result<()> {
     let port: u16 = std::env::var("PORT")
         .ok()
         .and_then(|v| v.parse().ok())
-        .unwrap_or(3000);
+        .unwrap_or(2892);
     let origins: Vec<String> = std::env::var("ALLOW_ORIGINS")
         .unwrap_or_default()
         .split(',')

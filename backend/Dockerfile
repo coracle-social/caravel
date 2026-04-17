@@ -26,6 +26,6 @@ WORKDIR /app
 
 COPY --from=build /app/target/release/backend /app/backend
 
-EXPOSE 3000
+EXPOSE 2892
 
 CMD ["/app/backend"]

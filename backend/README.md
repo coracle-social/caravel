@@ -34,7 +34,7 @@ Environment variables:
 |---|---|---|
 | `DATABASE_URL` | SQLite URL. Relative paths are resolved under `backend/`. | `sqlite://<backend>/data/caravel.db` |
 | `HOST` | API bind host (also used for NIP-98 `u` host check) | `127.0.0.1` |
-| `PORT` | API bind port | `3000` |
+| `PORT` | API bind port | `2892` |
 | `ADMINS` | Comma-separated admin pubkeys (hex) | _optional_ |
 | `ALLOW_ORIGINS` | Comma-separated CORS origins. If empty, CORS is permissive. | _optional_ |
 | `ZOOID_API_URL` | Zooid API base URL used by infra worker | _required for infra sync_ |

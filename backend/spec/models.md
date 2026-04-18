@@ -85,9 +85,8 @@ A relay is a nostr relay owned by a `tenant` and hosted by the attached zooid in
 
 Some attributes persisted to zooid via API have special handling:
 
-- The relay's `secret` is generated once and persisted to the zooid configuration but isn't stored in the database.
+- The relay's `secret` is generated once on relay creation, persisted to the zooid configuration, and isn't stored in the database. Relay updates do not resend `secret`.
 - The relay's `host` is calculated based on `subdomain` + `RELAY_DOMAIN`
 - The value of `inactive` is calculated based on `status`
 - The relay's `livekit_*` configuration is inferred based on environment variables and `livekit_enabled`.
 - The relay's `roles` are hard-coded for now.
-

@@ -30,5 +30,6 @@ Members:
 ## `async fn sync_relay(&self, relay: &Relay, is_new: bool)`
 
 - If `is_new`, sends `POST /relay/:id` to create the relay in zooid.
-- Otherwise, sends `PUT /relay/:id` to update it.
-- Passes full relay configuration in the body including host, schema, secret, inactive flag, info, policy, groups, management, blossom, livekit, push, and roles.
+- Otherwise, sends `PATCH /relay/:id` to update it.
+- Includes `secret` only for relay creation (`POST`) so updates do not rotate relay identity.
+- Passes relay configuration in the body including host, schema, inactive flag, info, policy, groups, management, blossom, livekit, push, and roles.

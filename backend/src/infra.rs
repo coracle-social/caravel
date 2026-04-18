@@ -2,7 +2,7 @@ use anyhow::Result;
 use nostr_sdk::prelude::*;
 
 use crate::command::Command;
-use crate::models::{Activity, RELAY_STATUS_DELINQUENT, RELAY_STATUS_INACTIVE};
+use crate::models::{Activity, Relay, RELAY_STATUS_DELINQUENT, RELAY_STATUS_INACTIVE};
 use crate::query::Query;
 
 #[derive(Clone)]
@@ -70,7 +70,7 @@ impl Infra {
         Ok(())
     }
 
-    async fn sync_and_report(&self, relay: &crate::models::Relay, is_new: bool) {
+    async fn sync_and_report(&self, relay: &Relay, is_new: bool) {
         match self.sync_relay(relay, is_new).await {
             Ok(()) => {
                 tracing::info!(relay = %relay.id, "relay sync succeeded");
@@ -96,7 +96,7 @@ impl Infra {
         Ok(auth)
     }
 
-    async fn sync_relay(&self, relay: &crate::models::Relay, is_new: bool) -> Result<()> {
+    async fn sync_relay(&self, relay: &Relay, is_new: bool) -> Result<()> {
         let client = reqwest::Client::new();
         let base = self.api_url.trim_end_matches('/');
 
@@ -105,8 +105,6 @@ impl Infra {
         } else {
             format!("{}.{}", relay.subdomain, self.relay_domain)
         };
-
-        let secret = Keys::generate().secret_key().to_secret_hex();
 
         let livekit = if relay.livekit_enabled == 1 {
             serde_json::json!({
@@ -119,52 +117,27 @@ impl Infra {
             serde_json::json!({ "enabled": false })
         };
 
-        let body = serde_json::json!({
-            "host": host,
-            "schema": relay.schema,
-            "secret": secret,
-            "inactive": relay.status == RELAY_STATUS_INACTIVE
-                || relay.status == RELAY_STATUS_DELINQUENT,
-            "info": {
-                "name": relay.info_name,
-                "icon": relay.info_icon,
-                "description": relay.info_description,
-                "pubkey": relay.tenant,
-            },
-            "policy": {
-                "public_join": relay.policy_public_join == 1,
-                "strip_signatures": relay.policy_strip_signatures == 1,
-            },
-            "groups": { "enabled": relay.groups_enabled == 1 },
-            "management": { "enabled": relay.management_enabled == 1 },
-            "blossom": { "enabled": relay.blossom_enabled == 1 },
-            "livekit": livekit,
-            "push": { "enabled": relay.push_enabled == 1 },
-            "roles": {
-                "admin": { "can_manage": true, "can_invite": true },
-                "member": { "can_invite": true },
-            },
-        });
+        let body = relay_sync_body(
+            relay,
+            host,
+            livekit,
+            is_new.then(|| Keys::generate().secret_key().to_secret_hex()),
+        );
 
-        let response = if is_new {
-            let url = format!("{}/relay/{}", base, relay.id);
-            let auth = self.nip98_auth(&url, HttpMethod::POST).await?;
-            client
-                .post(&url)
-                .header("Authorization", auth)
-                .json(&body)
-                .send()
-                .await?
+        let url = format!("{}/relay/{}", base, relay.id);
+        let auth = self.nip98_auth(&url, zooid_sync_http_method(is_new)).await?;
+
+        let request = if is_new {
+            client.post(&url)
         } else {
-            let url = format!("{}/relay/{}", base, relay.id);
-            let auth = self.nip98_auth(&url, HttpMethod::PUT).await?;
-            client
-                .put(&url)
-                .header("Authorization", auth)
-                .json(&body)
-                .send()
-                .await?
+            client.patch(&url)
         };
+
+        let response = request
+            .header("Authorization", auth)
+            .json(&body)
+            .send()
+            .await?;
 
         if !response.status().is_success() {
             let status = response.status();
@@ -173,6 +146,53 @@ impl Infra {
         }
         Ok(())
     }
+}
+
+fn zooid_sync_http_method(is_new: bool) -> HttpMethod {
+    if is_new {
+        HttpMethod::POST
+    } else {
+        HttpMethod::PATCH
+    }
+}
+
+fn relay_sync_body(
+    relay: &Relay,
+    host: String,
+    livekit: serde_json::Value,
+    secret: Option<String>,
+) -> serde_json::Value {
+    let mut body = serde_json::json!({
+        "host": host,
+        "schema": relay.schema,
+        "inactive": relay.status == RELAY_STATUS_INACTIVE
+            || relay.status == RELAY_STATUS_DELINQUENT,
+        "info": {
+            "name": relay.info_name,
+            "icon": relay.info_icon,
+            "description": relay.info_description,
+            "pubkey": relay.tenant,
+        },
+        "policy": {
+            "public_join": relay.policy_public_join == 1,
+            "strip_signatures": relay.policy_strip_signatures == 1,
+        },
+        "groups": { "enabled": relay.groups_enabled == 1 },
+        "management": { "enabled": relay.management_enabled == 1 },
+        "blossom": { "enabled": relay.blossom_enabled == 1 },
+        "livekit": livekit,
+        "push": { "enabled": relay.push_enabled == 1 },
+        "roles": {
+            "admin": { "can_manage": true, "can_invite": true },
+            "member": { "can_invite": true },
+        },
+    });
+
+    if let (Some(secret), Some(body_obj)) = (secret, body.as_object_mut()) {
+        body_obj.insert("secret".to_string(), serde_json::Value::String(secret));
+    }
+
+    body
 }
 
 fn should_sync_relay_activity(activity_type: &str) -> bool {

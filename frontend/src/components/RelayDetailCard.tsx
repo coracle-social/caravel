@@ -203,6 +203,13 @@ export default function RelayDetailCard(props: RelayDetailCardProps) {
         </Show>
       </div>
 
+      <Show when={r().sync_error}>
+        <div class="rounded-lg border border-red-200 bg-red-50 px-4 py-3">
+          <p class="text-sm font-semibold text-red-800">Provisioning error</p>
+          <p class="mt-1 text-sm text-red-700 font-mono break-all">{r().sync_error}</p>
+        </div>
+      </Show>
+
       <hr class="border-gray-200" />
 
       <DetailSection title="Policy">

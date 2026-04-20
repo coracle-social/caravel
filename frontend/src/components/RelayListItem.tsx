@@ -1,4 +1,5 @@
 import { A } from "@solidjs/router"
+import { Show } from "solid-js"
 import type { Relay } from "@/lib/api"
 
 type RelayListItemProps = {
@@ -19,7 +20,17 @@ export default function RelayListItem(props: RelayListItemProps) {
               <p class="text-xs text-gray-500 break-all mt-1">Tenant: {props.relay.tenant}</p>
             )}
           </div>
-          <p class="text-xs uppercase tracking-wide text-gray-500">{props.relay.status}</p>
+          <Show
+            when={props.relay.sync_error}
+            fallback={<p class="text-xs uppercase tracking-wide text-gray-500">{props.relay.status}</p>}
+          >
+            <span
+              class="inline-flex items-center rounded-full border border-red-200 bg-red-50 px-2.5 py-0.5 text-xs font-medium text-red-700 max-w-56 truncate"
+              title={props.relay.sync_error}
+            >
+              {props.relay.sync_error}
+            </span>
+          </Show>
         </div>
       </A>
     </li>

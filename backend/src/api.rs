@@ -143,7 +143,7 @@ impl Api {
             .route("/identity", get(get_identity))
             .route("/plans", get(list_plans))
             .route("/plans/:id", get(get_plan))
-            .route("/tenants", get(list_tenants))
+            .route("/tenants", get(list_tenants).post(create_tenant))
             .route("/tenants/:pubkey", get(get_tenant).put(update_tenant))
             .route("/tenants/:pubkey/relays", get(list_tenant_relays))
             .route("/relays", get(list_relays).post(create_relay))
@@ -401,10 +401,17 @@ async fn get_identity(
 ) -> std::result::Result<Response, ApiError> {
     let pubkey = state.api.extract_auth_pubkey(&headers)?;
     let is_admin = state.api.admins.iter().any(|a| a == &pubkey);
+    Ok(ok(StatusCode::OK, IdentityResponse { pubkey, is_admin }))
+}
 
-    // Ensure tenant exists.
+async fn create_tenant(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> std::result::Result<Response, ApiError> {
+    let pubkey = state.api.extract_auth_pubkey(&headers)?;
+
     match state.api.query.get_tenant(&pubkey).await {
-        Ok(Some(_)) => {}
+        Ok(Some(t)) => Ok(ok(StatusCode::OK, t)),
         Ok(None) => {
             let stripe_customer_id = match state.api.billing.stripe_create_customer(&pubkey).await {
                 Ok(id) => id,
@@ -428,27 +435,35 @@ async fn get_identity(
             };
 
             match state.api.command.create_tenant(&tenant).await {
-                Ok(()) => {}
-                Err(e) if matches!(map_unique_error(&e), Some("pubkey-exists")) => {}
-                Err(e) => {
-                    return Ok(err(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        "internal",
-                        &e.to_string(),
-                    ));
+                Ok(()) => Ok(ok(StatusCode::OK, tenant)),
+                Err(e) if matches!(map_unique_error(&e), Some("pubkey-exists")) => {
+                    match state.api.query.get_tenant(&pubkey).await {
+                        Ok(Some(t)) => Ok(ok(StatusCode::OK, t)),
+                        Ok(None) => Ok(err(
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            "internal",
+                            "tenant row missing after unique-constraint race",
+                        )),
+                        Err(e) => Ok(err(
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            "internal",
+                            &e.to_string(),
+                        )),
+                    }
                 }
-            };
+                Err(e) => Ok(err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "internal",
+                    &e.to_string(),
+                )),
+            }
         }
-        Err(e) => {
-            return Ok(err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal",
-                &e.to_string(),
-            ));
-        }
+        Err(e) => Ok(err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal",
+            &e.to_string(),
+        )),
     }
-
-    Ok(ok(StatusCode::OK, IdentityResponse { pubkey, is_admin }))
 }
 
 async fn get_plan(Path(id): Path<String>) -> Response {

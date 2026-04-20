@@ -70,9 +70,9 @@ Public exceptions:
 - `GET /plans/:id`
 - `POST /stripe/webhook` (validated with Stripe signatures)
 
-- `GET /identity` — get auth identity (`pubkey`, `is_admin`)
+- `GET /identity` — get auth identity (`pubkey`, `is_admin`); side-effect-free
 - `GET /tenants` — list tenants (admin)
-- `POST /tenants` — create current auth pubkey as tenant
+- `POST /tenants` — idempotently ensure a tenant row exists for the current auth pubkey (creates Stripe customer + tenant on first call, returns existing tenant otherwise)
 - `GET /tenants/:pubkey` — get tenant (admin or same tenant)
 - `PUT /tenants/:pubkey/billing` — update tenant `nwc_url` (admin or same tenant)
 - `GET /relays` — list relays (`?tenant=<pubkey>` allowed for admin only)

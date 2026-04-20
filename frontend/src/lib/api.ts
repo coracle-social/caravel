@@ -205,6 +205,10 @@ export function getIdentity() {
   return callApi<undefined, Identity>("GET", "/identity")
 }
 
+export function createTenant() {
+  return callApi<undefined, Tenant>("POST", "/tenants")
+}
+
 export function getPlan(id: string) {
   return callApi<undefined, Plan>("GET", `/plans/${id}`)
 }

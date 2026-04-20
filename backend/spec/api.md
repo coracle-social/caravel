@@ -132,7 +132,7 @@ Notes:
 
 - Serves `POST /relays/:id/deactivate`
 - Authorizes admin or relay owner
-- If relay is already inactive, return a `400` with `code=relay-is-inactive`
+- If relay status is `inactive` or `delinquent`, return a `400` with `code=relay-is-inactive`
 - Call `command.deactivate_relay`
 - Return `data` is empty
 

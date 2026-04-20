@@ -69,7 +69,7 @@ A relay is a nostr relay owned by a `tenant` and hosted by the attached zooid in
 - `subdomain` - the relay's subdomain
 - `plan` - the relay's plan
 - `stripe_subscription_item_id` (nullable) - the Stripe subscription item id. Only set for relays on paid plans.
-- `status` - `active|inactive`. Only `active` relays count toward billing.
+- `status` - one of `active|inactive|delinquent`. Only `active` relays count toward billing. `delinquent` is set by the billing system when a relay's subscription becomes past due; `inactive` is set when a user or admin manually deactivates a relay.
 - `synced` - whether the relay has been successfully synced to zooid at least once.
 - `sync_error` - a string indicating any errors encountered when synchronizing.
 - `info_name` - the relay's name

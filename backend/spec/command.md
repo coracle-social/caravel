@@ -44,6 +44,14 @@ Notes:
 
 - Sets relay status to `inactive`
 - Logs activity as `(deactivate_relay, relay_id)`
+- Used for user/admin-initiated deactivation only
+
+## `pub fn mark_relay_delinquent(&self, relay: &Relay) -> Result<()>`
+
+- Sets relay status to `delinquent`
+- Logs activity as `(deactivate_relay, relay_id)`
+- Used exclusively by the billing system when a relay's subscription becomes past due
+- `delinquent` relays are automatically reactivated via `activate_relay` when payment is received
 
 ## `pub fn activate_relay(&self, relay: &Relay) -> Result<()>`
 

@@ -28,7 +28,7 @@ Manages the Stripe subscription and subscription items for a relay's tenant. Onl
 
 - Fetch the relay and tenant associated with the `activity`
 - **If relay plan is `free`**: if the relay has a `stripe_subscription_item_id`, delete it via the Stripe API and call `command.delete_relay_subscription_item`. Then check cleanup (below). Return early.
-- **If relay is `inactive`**: if the relay has a `stripe_subscription_item_id`, delete it via the Stripe API and call `command.delete_relay_subscription_item`. Then check cleanup (below). Return early.
+- **If relay is `inactive` or `delinquent`**: if the relay has a `stripe_subscription_item_id`, delete it via the Stripe API and call `command.delete_relay_subscription_item`. Then check cleanup (below). Return early.
 - **If relay is `active` and on a paid plan**:
   - **Ensure subscription exists**: If the tenant has no `stripe_subscription_id`, create a Stripe subscription for the customer with `collection_method: "charge_automatically"` and the relay's price as the first item. Save the subscription ID via `command.set_tenant_subscription` and the item ID via `command.set_relay_subscription_item`. Return early.
   - **Sync the subscription item**: If the tenant already has a subscription, create or update the relay's Stripe subscription item to the plan's `stripe_price_id` via the Stripe API, then call `command.set_relay_subscription_item`.
@@ -85,7 +85,7 @@ Skip invoices with `amount_due` of 0.
 - Look up tenant by `stripe_customer_id`
 - If tenant has `past_due_at` set:
   - Clear `past_due_at` via `command.clear_tenant_past_due`
-  - Find all `inactive` relays for the tenant that were deactivated due to non-payment (i.e. relays on paid plans that are inactive)
+  - Find all `delinquent` relays on paid plans for the tenant (relays marked delinquent by the billing system due to non-payment)
   - Reactivate each one via `command.activate_relay`
 
 ## `fn handle_invoice_payment_failed(&self, invoice: &Invoice)`
@@ -98,7 +98,7 @@ Skip invoices with `amount_due` of 0.
 ## `fn handle_invoice_overdue(&self, invoice: &Invoice)`
 
 - Look up tenant by `stripe_customer_id`
-- Deactivate all active relays on paid plans via `command.deactivate_relay`
+- Mark all active relays on paid plans as delinquent via `command.mark_relay_delinquent` (sets status to `delinquent`, distinct from user-initiated `deactivate_relay`)
 - Send a DM via `robot.send_dm` notifying the tenant that their paid relays have been deactivated due to non-payment
 
 ## `fn handle_subscription_updated(&self, subscription: &Subscription)`
@@ -106,7 +106,7 @@ Skip invoices with `amount_due` of 0.
 - Look up tenant by `stripe_customer_id`
 - If subscription status is `canceled` or `unpaid`:
   - Clear `stripe_subscription_id` via `command.clear_tenant_subscription`
-  - Deactivate all active paid relays for the tenant via `command.deactivate_relay`
+  - Mark all active paid relays as delinquent via `command.mark_relay_delinquent`
 
 ## `fn handle_subscription_deleted(&self, subscription: &Subscription)`
 

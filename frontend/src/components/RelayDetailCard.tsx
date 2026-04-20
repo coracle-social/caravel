@@ -2,6 +2,7 @@ import { A } from "@solidjs/router"
 import { Show, createEffect, createSignal, onCleanup } from "solid-js"
 import type { Relay, PlanId } from "@/lib/api"
 import menuDotsIcon from "@/assets/menu-dots-2.svg"
+import ConfirmDialog from "@/components/ConfirmDialog"
 import Field from "@/components/Field"
 import PricingTable from "@/components/PricingTable"
 import ToggleButton from "@/components/ToggleButton"
@@ -51,8 +52,8 @@ type RelayDetailCardProps = {
   currentMembers?: number
   showTenant?: boolean
   editHref?: string
-  onDeactivate?: () => void
-  onReactivate?: () => void
+  onDeactivate?: () => void | Promise<void>
+  onReactivate?: () => void | Promise<void>
   deactivating?: boolean
   reactivating?: boolean
   onTogglePublicJoin?: () => void
@@ -76,6 +77,7 @@ export default function RelayDetailCard(props: RelayDetailCardProps) {
   }
   const [menuOpen, setMenuOpen] = createSignal(false)
   const [plan, setPlan] = createSignal<PlanId>(props.relay.plan)
+  const [pendingAction, setPendingAction] = createSignal<"deactivate" | "reactivate" | null>(null)
 
   let menuContainerRef: HTMLDivElement | undefined
 
@@ -86,6 +88,24 @@ export default function RelayDetailCard(props: RelayDetailCardProps) {
   }
   const planLimited = () => (props.enforcePlanLimits ?? true) && r().plan === "free"
   const showPlanActions = () => props.showPlanActions ?? true
+  const actionBusy = () => pendingAction() === "deactivate" ? !!props.deactivating : pendingAction() === "reactivate" ? !!props.reactivating : false
+  const relayLabel = () => r().info_name || r().subdomain
+  const confirmTitle = () => pendingAction() === "deactivate" ? "Deactivate relay?" : "Reactivate relay?"
+  const confirmDescription = () => pendingAction() === "deactivate"
+    ? `${relayLabel()} will be taken offline immediately.`
+    : `${relayLabel()} will come back online and start accepting connections.`
+  const confirmDetails = () => pendingAction() === "deactivate"
+    ? [
+        "All client connections will be dropped immediately.",
+        "Members will be unable to read from or publish to the relay.",
+        "Scheduled and automated tasks (billing, syncing) will be paused.",
+        "All relay data, settings, and members are preserved, nothing is deleted.",
+        "You can reactivate at any time from this page.",
+      ]
+    : undefined
+  const confirmLabel = () => pendingAction() === "deactivate" ? "Yes, deactivate" : "Yes, reactivate"
+  const confirmBusyLabel = () => pendingAction() === "deactivate" ? "Deactivating..." : "Reactivating..."
+  const confirmTone = () => pendingAction() === "deactivate" ? "danger" : "primary"
 
   async function changePlan(plan: PlanId) {
     setPlan(plan)
@@ -95,6 +115,29 @@ export default function RelayDetailCard(props: RelayDetailCardProps) {
     } catch {
       // error is handled by the caller
     }
+  }
+
+  function openActionDialog(action: "deactivate" | "reactivate") {
+    setMenuOpen(false)
+    setPendingAction(action)
+  }
+
+  function closeActionDialog() {
+    if (actionBusy()) return
+    setPendingAction(null)
+  }
+
+  async function confirmAction() {
+    const action = pendingAction()
+    if (!action) return
+
+    if (action === "deactivate") {
+      await props.onDeactivate?.()
+    } else {
+      await props.onReactivate?.()
+    }
+
+    setPendingAction(null)
   }
 
   createEffect(() => {
@@ -128,7 +171,7 @@ export default function RelayDetailCard(props: RelayDetailCardProps) {
       <div class="flex items-start justify-between gap-4">
         <div class="flex items-start gap-4 min-w-0">
           <Show when={r().info_icon}>
-            <img src={r().info_icon} alt="" class="w-14 h-14 rounded-xl object-cover flex-shrink-0 border border-gray-200" />
+            <img src={r().info_icon} alt="" class="w-14 h-14 rounded-xl object-cover shrink-0 border border-gray-200" />
           </Show>
           <div class="min-w-0">
             <div class="flex items-center gap-3 flex-wrap">
@@ -148,7 +191,7 @@ export default function RelayDetailCard(props: RelayDetailCardProps) {
         </div>
 
         <Show when={props.editHref && (props.onDeactivate || props.onReactivate)}>
-          <div class="relative flex-shrink-0" ref={menuContainerRef}>
+          <div class="relative shrink-0" ref={menuContainerRef}>
             <button
               type="button"
               class="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-gray-200 hover:bg-gray-50"
@@ -177,8 +220,7 @@ export default function RelayDetailCard(props: RelayDetailCardProps) {
                   type="button"
                   class="block w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50 disabled:opacity-50"
                   onClick={() => {
-                    setMenuOpen(false)
-                    props.onDeactivate?.()
+                    openActionDialog("deactivate")
                   }}
                   disabled={props.deactivating}
                 >
@@ -190,8 +232,7 @@ export default function RelayDetailCard(props: RelayDetailCardProps) {
                   type="button"
                   class="block w-full text-left px-3 py-2 text-sm text-blue-600 hover:bg-blue-50 disabled:opacity-50"
                   onClick={() => {
-                    setMenuOpen(false)
-                    props.onReactivate?.()
+                    openActionDialog("reactivate")
                   }}
                   disabled={props.reactivating}
                 >
@@ -346,6 +387,19 @@ export default function RelayDetailCard(props: RelayDetailCardProps) {
           </Show>
         </DetailSection>
       </Show>
+
+      <ConfirmDialog
+        open={pendingAction() !== null}
+        title={confirmTitle()}
+        description={confirmDescription()}
+        details={confirmDetails()}
+        confirmLabel={confirmLabel()}
+        busyLabel={confirmBusyLabel()}
+        busy={actionBusy()}
+        tone={confirmTone()}
+        onConfirm={confirmAction}
+        onClose={closeActionDialog}
+      />
     </div>
   )
 }

@@ -1,6 +1,7 @@
 import { createEffect, createMemo, createSignal, For } from "solid-js"
 import type { Relay } from "@/lib/hooks"
 import { slugify } from "@/lib/slugify"
+import { validateSubdomainLabel } from "@/lib/subdomain"
 import { setToastMessage } from "@/components/Toast"
 import { plans } from "@/lib/state"
 
@@ -28,6 +29,12 @@ export default function RelayForm(props: RelayFormProps) {
 
     if (!plan()) {
       setToastMessage("Please select a plan")
+      return
+    }
+
+    const subdomainError = validateSubdomainLabel(subdomain())
+    if (subdomainError) {
+      setToastMessage(subdomainError)
       return
     }
 

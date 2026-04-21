@@ -251,22 +251,16 @@ impl Api {
         }
     }
 
-    fn prepare_relay(&self, mut relay: Relay) -> anyhow::Result<Relay> {
-        if !relay
-            .subdomain
-            .chars()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
-        {
-            return Err(anyhow!("invalid-subdomain"));
-        }
+    fn prepare_relay(&self, mut relay: Relay) -> std::result::Result<Relay, RelayValidationError> {
+        validate_subdomain_label(&relay.subdomain)?;
 
-        let plan = Query::get_plan(&relay.plan).ok_or_else(|| anyhow!("invalid-plan"))?;
+        let plan = Query::get_plan(&relay.plan).ok_or(RelayValidationError::InvalidPlan)?;
 
         if !plan.blossom && relay.blossom_enabled == 1 {
-            return Err(anyhow!("premium-feature"));
+            return Err(RelayValidationError::PremiumFeature);
         }
         if !plan.livekit && relay.livekit_enabled == 1 {
-            return Err(anyhow!("premium-feature"));
+            return Err(RelayValidationError::PremiumFeature);
         }
 
         if relay.schema.is_empty() {
@@ -287,6 +281,96 @@ impl Api {
 
         Ok(relay)
     }
+}
+
+const SUBDOMAIN_LABEL_MAX_LEN: usize = 63;
+const RESERVED_SUBDOMAIN_LABELS: [&str; 2] = ["api", "admin"];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SubdomainValidationError {
+    Empty,
+    TooLong,
+    Reserved,
+    EdgeHyphen,
+    InvalidCharacters,
+}
+
+impl SubdomainValidationError {
+    fn code(self) -> &'static str {
+        match self {
+            Self::Empty => "subdomain-empty",
+            Self::TooLong => "subdomain-too-long",
+            Self::Reserved => "subdomain-reserved",
+            Self::EdgeHyphen => "subdomain-invalid-hyphen",
+            Self::InvalidCharacters => "subdomain-invalid-characters",
+        }
+    }
+
+    fn message(self) -> &'static str {
+        match self {
+            Self::Empty => "subdomain is required",
+            Self::TooLong => "subdomain must be 63 characters or fewer",
+            Self::Reserved => "subdomain is reserved",
+            Self::EdgeHyphen => "subdomain cannot start or end with a hyphen",
+            Self::InvalidCharacters => {
+                "subdomain may only contain lowercase letters, numbers, and hyphens"
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RelayValidationError {
+    InvalidPlan,
+    PremiumFeature,
+    Subdomain(SubdomainValidationError),
+}
+
+impl RelayValidationError {
+    fn code(self) -> &'static str {
+        match self {
+            Self::InvalidPlan => "invalid-plan",
+            Self::PremiumFeature => "premium-feature",
+            Self::Subdomain(reason) => reason.code(),
+        }
+    }
+
+    fn message(self) -> &'static str {
+        match self {
+            Self::InvalidPlan => "plan not found",
+            Self::PremiumFeature => "feature requires a paid plan",
+            Self::Subdomain(reason) => reason.message(),
+        }
+    }
+}
+
+impl From<SubdomainValidationError> for RelayValidationError {
+    fn from(value: SubdomainValidationError) -> Self {
+        Self::Subdomain(value)
+    }
+}
+
+fn validate_subdomain_label(subdomain: &str) -> std::result::Result<(), SubdomainValidationError> {
+    if subdomain.is_empty() {
+        return Err(SubdomainValidationError::Empty);
+    }
+    if subdomain.len() > SUBDOMAIN_LABEL_MAX_LEN {
+        return Err(SubdomainValidationError::TooLong);
+    }
+    if subdomain.starts_with('-') || subdomain.ends_with('-') {
+        return Err(SubdomainValidationError::EdgeHyphen);
+    }
+    if RESERVED_SUBDOMAIN_LABELS.contains(&subdomain) {
+        return Err(SubdomainValidationError::Reserved);
+    }
+    if !subdomain
+        .chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+    {
+        return Err(SubdomainValidationError::InvalidCharacters);
+    }
+
+    Ok(())
 }
 
 fn ok<T: Serialize>(status: StatusCode, data: T) -> Response {
@@ -314,6 +398,14 @@ fn parse_bool_default(value: i64, default: i64) -> i64 {
     } else {
         default
     }
+}
+
+fn relay_validation_error_response(error: RelayValidationError) -> Response {
+    err(
+        StatusCode::UNPROCESSABLE_ENTITY,
+        error.code(),
+        error.message(),
+    )
 }
 
 fn map_unique_error(err: &anyhow::Error) -> Option<&'static str> {
@@ -608,27 +700,9 @@ async fn create_relay(
     };
 
     relay = match state.api.prepare_relay(relay) {
-        Err(e) if e.to_string() == "invalid-plan" => {
-            return Ok(err(
-                StatusCode::UNPROCESSABLE_ENTITY,
-                "invalid-plan",
-                "plan not found",
-            ));
-        }
         Ok(r) => r,
-        Err(e) if e.to_string() == "premium-feature" => {
-            return Ok(err(
-                StatusCode::UNPROCESSABLE_ENTITY,
-                "premium-feature",
-                "feature requires a paid plan",
-            ));
-        }
-        Err(_) => {
-            return Ok(err(
-                StatusCode::UNPROCESSABLE_ENTITY,
-                "invalid-relay",
-                "relay validation failed",
-            ));
+        Err(e) => {
+            return Ok(relay_validation_error_response(e));
         }
     };
 
@@ -712,27 +786,9 @@ async fn update_relay(
     }
 
     relay = match state.api.prepare_relay(relay) {
-        Err(e) if e.to_string() == "invalid-plan" => {
-            return Ok(err(
-                StatusCode::UNPROCESSABLE_ENTITY,
-                "invalid-plan",
-                "plan not found",
-            ));
-        }
         Ok(r) => r,
-        Err(e) if e.to_string() == "premium-feature" => {
-            return Ok(err(
-                StatusCode::UNPROCESSABLE_ENTITY,
-                "premium-feature",
-                "feature requires a paid plan",
-            ));
-        }
-        Err(_) => {
-            return Ok(err(
-                StatusCode::UNPROCESSABLE_ENTITY,
-                "invalid-relay",
-                "relay validation failed",
-            ));
+        Err(e) => {
+            return Ok(relay_validation_error_response(e));
         }
     };
 

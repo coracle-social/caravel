@@ -1,7 +1,6 @@
 import { useNavigate, useParams } from "@solidjs/router"
 import { Show } from "solid-js"
 import RelayForm, { type RelayFormValues } from "@/components/RelayForm"
-import { slugify } from "@/lib/slugify"
 import BackLink from "@/components/BackLink"
 import PageContainer from "@/components/PageContainer"
 import ResourceState from "@/components/ResourceState"
@@ -18,7 +17,7 @@ export default function RelayEdit(props: { basePath?: string; title?: string }) 
 
   async function handleSubmit(values: RelayFormValues) {
     await updateRelayById(relayId(), {
-      subdomain: slugify(values.subdomain),
+      subdomain: values.subdomain,
       info_name: values.info_name.trim(),
       info_icon: values.info_icon.trim(),
       info_description: values.info_description.trim(),

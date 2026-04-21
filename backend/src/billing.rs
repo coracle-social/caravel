@@ -167,6 +167,8 @@ impl Billing {
                 self.command
                     .delete_relay_subscription_item(&relay.id)
                     .await?;
+                self.validate_downgrade_proration(&tenant, "free-plan-downgrade")
+                    .await;
             }
             self.cleanup_empty_subscription(&tenant.pubkey).await?;
             return Ok(());
@@ -206,8 +208,28 @@ impl Billing {
         // Sync the subscription item: create or update
         let subscription_id = tenant.stripe_subscription_id.as_ref().unwrap();
         let item_id = if let Some(ref existing_item_id) = relay.stripe_subscription_item_id {
-            self.stripe_update_subscription_item(existing_item_id, stripe_price_id)
-                .await?
+            let is_downgrade = self
+                .is_subscription_item_downgrade(existing_item_id, plan.amount)
+                .await
+                .unwrap_or_else(|error| {
+                    tracing::warn!(
+                        error = %error,
+                        relay_id = %relay.id,
+                        "failed to determine relay plan downgrade direction"
+                    );
+                    false
+                });
+
+            let updated_item_id = self
+                .stripe_update_subscription_item(existing_item_id, stripe_price_id)
+                .await?;
+
+            if is_downgrade {
+                self.validate_downgrade_proration(&tenant, "paid-plan-downgrade")
+                    .await;
+            }
+
+            updated_item_id
         } else {
             self.stripe_create_subscription_item(subscription_id, stripe_price_id)
                 .await?
@@ -274,6 +296,10 @@ impl Billing {
             "customer.subscription.deleted" => {
                 let customer = obj["customer"].as_str().unwrap_or_default();
                 self.handle_subscription_deleted(customer).await?;
+            }
+            "payment_method.attached" => {
+                let customer = obj["customer"].as_str().unwrap_or_default();
+                self.handle_payment_method_attached(customer).await?;
             }
             _ => {}
         }
@@ -492,6 +518,103 @@ impl Billing {
         Ok(())
     }
 
+    async fn handle_payment_method_attached(&self, stripe_customer_id: &str) -> Result<()> {
+        if stripe_customer_id.is_empty() {
+            return Ok(());
+        }
+
+        let Some(tenant) = self
+            .query
+            .get_tenant_by_stripe_customer_id(stripe_customer_id)
+            .await?
+        else {
+            return Ok(());
+        };
+
+        self.pay_outstanding_card_invoices(&tenant).await?;
+        Ok(())
+    }
+
+    async fn is_subscription_item_downgrade(
+        &self,
+        item_id: &str,
+        next_plan_amount: i64,
+    ) -> Result<bool> {
+        let Some(current_price_id) = self.stripe_get_subscription_item_price_id(item_id).await?
+        else {
+            return Ok(false);
+        };
+
+        let Some(current_plan_amount) = Self::plan_amount_from_price_id(&current_price_id) else {
+            return Ok(false);
+        };
+
+        Ok(next_plan_amount < current_plan_amount)
+    }
+
+    fn plan_amount_from_price_id(price_id: &str) -> Option<i64> {
+        Query::list_plans().into_iter().find_map(|plan| {
+            if plan.stripe_price_id.as_deref() == Some(price_id) {
+                Some(plan.amount)
+            } else {
+                None
+            }
+        })
+    }
+
+    async fn validate_downgrade_proration(&self, tenant: &crate::models::Tenant, context: &str) {
+        match self
+            .stripe_preview_upcoming_invoice(
+                &tenant.stripe_customer_id,
+                tenant.stripe_subscription_id.as_deref(),
+            )
+            .await
+        {
+            Ok(upcoming) => {
+                let lines = upcoming["lines"]["data"]
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default();
+                let proration_lines = lines
+                    .iter()
+                    .filter(|line| line["proration"].as_bool().unwrap_or(false))
+                    .count();
+                let amount_due = upcoming["amount_due"]
+                    .as_i64()
+                    .unwrap_or_else(|| upcoming["total"].as_i64().unwrap_or(0));
+                let currency = upcoming["currency"].as_str().unwrap_or("usd");
+                let preview_id = upcoming["id"].as_str().unwrap_or_default();
+
+                tracing::info!(
+                    tenant_pubkey = %tenant.pubkey,
+                    stripe_customer_id = %tenant.stripe_customer_id,
+                    context,
+                    preview_id,
+                    proration_lines,
+                    amount_due,
+                    currency,
+                    "validated Stripe proration preview for downgrade"
+                );
+
+                if proration_lines == 0 {
+                    tracing::warn!(
+                        tenant_pubkey = %tenant.pubkey,
+                        context,
+                        "downgrade proration preview has no proration lines; verify in Stripe dashboard"
+                    );
+                }
+            }
+            Err(error) => {
+                tracing::warn!(
+                    error = %error,
+                    tenant_pubkey = %tenant.pubkey,
+                    context,
+                    "failed to fetch downgrade proration preview"
+                );
+            }
+        }
+    }
+
     // --- Public API helpers ---
 
     pub async fn get_invoice_with_tenant(
@@ -597,6 +720,93 @@ impl Billing {
         system_nwc.shutdown().await;
 
         Ok(invoice_response.invoice)
+    }
+
+    pub async fn pay_outstanding_nwc_invoices(&self, tenant: &crate::models::Tenant) -> Result<()> {
+        if tenant.nwc_url.is_empty() {
+            return Ok(());
+        }
+
+        let invoices = self
+            .stripe_list_invoices(&tenant.stripe_customer_id)
+            .await?;
+        let invoices_arr = invoices.as_array().cloned().unwrap_or_default();
+
+        for invoice in &invoices_arr {
+            let status = invoice["status"].as_str().unwrap_or_default();
+            let amount_due = invoice["amount_due"].as_i64().unwrap_or(0);
+            let invoice_id = invoice["id"].as_str().unwrap_or_default();
+            let currency = invoice["currency"].as_str().unwrap_or("usd");
+
+            if status != "open" || amount_due == 0 || invoice_id.is_empty() {
+                continue;
+            }
+
+            match self
+                .nwc_pay_invoice(amount_due, currency, &tenant.nwc_url)
+                .await
+            {
+                Ok(()) => {
+                    if let Err(e) = self.stripe_pay_invoice_out_of_band(invoice_id).await {
+                        tracing::error!(
+                            error = %e,
+                            invoice_id,
+                            "failed to mark invoice paid out of band"
+                        );
+                    } else {
+                        let _ = self.command.clear_tenant_nwc_error(&tenant.pubkey).await;
+                    }
+                }
+                Err(e) => {
+                    let error_msg = format!("{e}");
+                    tracing::error!(
+                        error = %e,
+                        invoice_id,
+                        "nwc payment failed for outstanding invoice"
+                    );
+                    let _ = self
+                        .command
+                        .set_tenant_nwc_error(&tenant.pubkey, &error_msg)
+                        .await;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn pay_outstanding_card_invoices(&self, tenant: &crate::models::Tenant) -> Result<()> {
+        if !self
+            .stripe_has_payment_method(&tenant.stripe_customer_id)
+            .await?
+        {
+            return Ok(());
+        }
+
+        let invoices = self
+            .stripe_list_invoices(&tenant.stripe_customer_id)
+            .await?;
+        let invoices_arr = invoices.as_array().cloned().unwrap_or_default();
+
+        for invoice in &invoices_arr {
+            let status = invoice["status"].as_str().unwrap_or_default();
+            let amount_due = invoice["amount_due"].as_i64().unwrap_or(0);
+            let invoice_id = invoice["id"].as_str().unwrap_or_default();
+
+            if status != "open" || amount_due == 0 || invoice_id.is_empty() {
+                continue;
+            }
+
+            if let Err(error) = self.stripe_pay_invoice(invoice_id).await {
+                tracing::error!(
+                    error = %error,
+                    invoice_id,
+                    "failed to retry card payment for outstanding invoice"
+                );
+            }
+        }
+
+        Ok(())
     }
 
     pub async fn stripe_create_portal_session(&self, customer_id: &str) -> Result<String> {
@@ -713,6 +923,48 @@ impl Billing {
             .error_for_status()?;
 
         Ok(())
+    }
+
+    async fn stripe_pay_invoice(&self, invoice_id: &str) -> Result<()> {
+        self.http
+            .post(format!("{STRIPE_API}/invoices/{invoice_id}/pay"))
+            .bearer_auth(&self.stripe_secret_key)
+            .send()
+            .await?
+            .error_for_status()?;
+
+        Ok(())
+    }
+
+    async fn stripe_get_subscription_item_price_id(&self, item_id: &str) -> Result<Option<String>> {
+        let resp = self
+            .http
+            .get(format!("{STRIPE_API}/subscription_items/{item_id}"))
+            .bearer_auth(&self.stripe_secret_key)
+            .send()
+            .await?;
+
+        let body: serde_json::Value = resp.error_for_status()?.json().await?;
+        Ok(body["price"]["id"].as_str().map(ToString::to_string))
+    }
+
+    async fn stripe_preview_upcoming_invoice(
+        &self,
+        customer_id: &str,
+        subscription_id: Option<&str>,
+    ) -> Result<serde_json::Value> {
+        let mut req = self
+            .http
+            .get(format!("{STRIPE_API}/invoices/upcoming"))
+            .bearer_auth(&self.stripe_secret_key)
+            .query(&[("customer", customer_id)]);
+
+        if let Some(subscription_id) = subscription_id {
+            req = req.query(&[("subscription", subscription_id)]);
+        }
+
+        let body: serde_json::Value = req.send().await?.error_for_status()?.json().await?;
+        Ok(body)
     }
 
     async fn stripe_pay_invoice_out_of_band(&self, invoice_id: &str) -> Result<()> {

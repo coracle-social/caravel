@@ -3,7 +3,6 @@ import QRCode from "qrcode"
 import Modal from "@/components/Modal"
 import PaymentSetup from "@/components/PaymentSetup"
 import { getInvoice, getInvoiceBolt11 } from "@/lib/api"
-import { tenantNeedsPaymentSetup } from "@/lib/hooks"
 
 type PayStatus = "idle" | "loading" | "success" | "error"
 type Bolt11Status = "idle" | "loading" | "ready" | "error"
@@ -26,8 +25,8 @@ export default function PaymentDialog(props: PaymentDialogProps) {
   const [bolt11Error, setBolt11Error] = createSignal("")
   const [payStatus, setPayStatus] = createSignal<PayStatus>("idle")
   const [payError, setPayError] = createSignal("")
-  const [showSetup, setShowSetup] = createSignal(false)
   const [showPaymentSetup, setShowPaymentSetup] = createSignal(false)
+  const [setupSaved, setSetupSaved] = createSignal(false)
 
   async function loadBolt11() {
     if (!props.invoice.id) return
@@ -63,7 +62,6 @@ export default function PaymentDialog(props: PaymentDialogProps) {
       const invoice = await getInvoice(props.invoice.id)
       if (invoice.status === "paid") {
         setPayStatus("success")
-        tenantNeedsPaymentSetup().then(needs => setShowSetup(needs)).catch(() => {})
       } else {
         setPayStatus("error")
         setPayError("Payment not yet confirmed. Please try again after sending.")
@@ -81,7 +79,6 @@ export default function PaymentDialog(props: PaymentDialogProps) {
     setBolt11Error("")
     setBolt11("")
     setQrDataUrl("")
-    setShowSetup(false)
     props.onClose()
   }
 
@@ -160,6 +157,15 @@ export default function PaymentDialog(props: PaymentDialogProps) {
                     </button>
                   </div>
                 </Show>
+                <div class="text-center pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setShowPaymentSetup(true)}
+                    class="text-sm text-blue-600 hover:text-blue-700"
+                  >
+                    Set up payment method instead
+                  </button>
+                </div>
               </Show>
             </div>
           }
@@ -172,15 +178,13 @@ export default function PaymentDialog(props: PaymentDialogProps) {
             </div>
             <p class="text-sm font-medium text-gray-900">Payment confirmed!</p>
             <p class="text-xs text-gray-500">Thank you. Your account is up to date.</p>
-            <Show when={showSetup()}>
-              <button
-                type="button"
-                onClick={() => setShowPaymentSetup(true)}
-                class="mt-2 text-sm font-medium text-blue-600 hover:text-blue-700"
-              >
-                Set up automatic payments
-              </button>
-            </Show>
+            <button
+              type="button"
+              onClick={() => setShowPaymentSetup(true)}
+              class="mt-2 text-sm font-medium text-blue-600 hover:text-blue-700"
+            >
+              Set up automatic payments
+            </button>
           </div>
         </Show>
       </div>
@@ -228,7 +232,14 @@ export default function PaymentDialog(props: PaymentDialogProps) {
     </Modal>
     <PaymentSetup
       open={showPaymentSetup()}
-      onClose={() => setShowPaymentSetup(false)}
+      onClose={() => {
+        setShowPaymentSetup(false)
+        if (setupSaved()) {
+          setSetupSaved(false)
+          props.onClose()
+        }
+      }}
+      onSaved={() => setSetupSaved(true)}
     />
     </>
   )

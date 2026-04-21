@@ -9,6 +9,7 @@ type Tab = "nwc" | "card"
 type PaymentSetupProps = {
   open: boolean
   onClose: () => void
+  onSaved?: () => void
 }
 
 export default function PaymentSetup(props: PaymentSetupProps) {
@@ -27,6 +28,7 @@ export default function PaymentSetup(props: PaymentSetupProps) {
     try {
       await updateActiveTenant({ nwc_url: url })
       setSaved(true)
+      props.onSaved?.()
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to save wallet connection")
     } finally {
@@ -64,7 +66,7 @@ export default function PaymentSetup(props: PaymentSetupProps) {
         <div class="flex items-start justify-between gap-3">
           <div>
             <h2 class="text-lg font-semibold text-gray-900">Set Up Payments</h2>
-            <p class="text-sm text-gray-500 mt-1">Choose how you'd like to pay for your relay.</p>
+            <p class="text-sm text-gray-500 mt-1">Choose how you'd like to pay once invoices are issued for your relay.</p>
           </div>
           <button
             type="button"
@@ -144,7 +146,7 @@ export default function PaymentSetup(props: PaymentSetupProps) {
                 <line x1="1" y1="10" x2="23" y2="10" />
               </svg>
             </div>
-            <p class="text-sm text-gray-600">Add a payment card via Stripe to enable automatic billing.</p>
+            <p class="text-sm text-gray-600">Add a payment card via Stripe to enable automatic billing. If an invoice is currently due, we will retry collection after card setup.</p>
             <button
               type="button"
               onClick={openPortal}

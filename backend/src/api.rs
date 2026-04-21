@@ -945,12 +945,29 @@ async fn update_tenant(
     state.api.require_admin_or_tenant(&auth, &pubkey)?;
     let mut tenant = state.api.get_tenant_or_404(&pubkey).await?;
 
+    let nwc_previously_empty = tenant.nwc_url.is_empty();
     if let Some(nwc_url) = payload.nwc_url {
         tenant.nwc_url = nwc_url;
     }
 
     match state.api.command.update_tenant(&tenant).await {
-        Ok(()) => Ok(ok(StatusCode::OK, tenant)),
+        Ok(()) => {
+            // When NWC is first connected, attempt to pay any outstanding open invoices.
+            if nwc_previously_empty && !tenant.nwc_url.is_empty() {
+                let billing = state.api.billing.clone();
+                let tenant_clone = tenant.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = billing.pay_outstanding_nwc_invoices(&tenant_clone).await {
+                        tracing::error!(
+                            error = %e,
+                            pubkey = %tenant_clone.pubkey,
+                            "pay_outstanding_nwc_invoices failed after NWC setup"
+                        );
+                    }
+                });
+            }
+            Ok(ok(StatusCode::OK, tenant))
+        }
         Err(e) => Ok(err(
             StatusCode::INTERNAL_SERVER_ERROR,
             "internal",

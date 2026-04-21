@@ -12,12 +12,14 @@ import {
   getTenant,
   listRelayActivity,
   listRelays,
+  listTenantInvoices,
   listTenantRelays,
   listTenants,
   updateRelay,
   updateTenant,
   type Activity,
   type CreateRelayInput,
+  type Invoice,
   type Relay,
   type Tenant,
   type UpdateRelayInput,
@@ -137,6 +139,14 @@ export async function tenantNeedsPaymentSetup(): Promise<boolean> {
   return !tenant.nwc_url && !tenant.stripe_subscription_id
 }
 
+export async function getLatestOpenInvoice(): Promise<Invoice | null> {
+  const invoices = await listTenantInvoices(account()!.pubkey)
+  const open = invoices
+    .filter(inv => inv.status === "open" && inv.amount_due > 0)
+    .sort((a, b) => b.period_start - a.period_start)
+  return open[0] ?? null
+}
+
 export async function getRelayMembers(url: string) {
   const management = new RelayManagement(new NostrRelay(url), account()!.signer)
 
@@ -147,4 +157,4 @@ export async function getRelayMembers(url: string) {
   }
 }
 
-export type { Activity, Relay, Tenant }
+export type { Activity, Invoice, Relay, Tenant }

@@ -8,7 +8,8 @@ import RelayDetailCard from "@/components/RelayDetailCard"
 import ResourceState from "@/components/ResourceState"
 import useMinLoading from "@/components/useMinLoading"
 import ActivityFeed from "@/components/ActivityFeed"
-import { getLatestOpenInvoice, getRelayMembers, useRelay, useRelayActivity, useTenant } from "@/lib/hooks"
+import { listRelayMembers } from "@/lib/api"
+import { getLatestOpenInvoice, useRelay, useRelayActivity, useTenant } from "@/lib/hooks"
 import useRelayToggles from "@/lib/useRelayToggles"
 import { plans } from "@/lib/state"
 
@@ -16,11 +17,15 @@ export default function RelayDetail() {
   const params = useParams()
   const relayId = () => params.id ?? ""
   const [relay, { refetch, mutate }] = useRelay(relayId)
-  const relayUrl = createMemo(() => {
-    const subdomain = relay()?.subdomain
-    return subdomain ? `wss://${subdomain}.spaces.coracle.social` : undefined
+  const [members] = createResource(relayId, async (id) => {
+    if (!id) return []
+
+    try {
+      return (await listRelayMembers(id)).members
+    } catch {
+      return []
+    }
   })
-  const [members] = createResource(relayUrl, getRelayMembers)
   const loading = useMinLoading(() => relay.loading && !relay())
   const [activity] = useRelayActivity(relayId)
   const { busy, handleDeactivate, handleReactivate, handleUpdatePlan, pendingInvoice, clearPendingInvoice, toggles } = useRelayToggles(relayId, relay, { refetch, mutate })
@@ -97,7 +102,7 @@ export default function RelayDetail() {
             </Show>
             <RelayDetailCard
               relay={r()}
-              currentMembers={members.length}
+              currentMembers={members()?.length}
               editHref={`/relays/${params.id}/edit`}
               onDeactivate={handleDeactivate}
               onReactivate={handleReactivate}

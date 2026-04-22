@@ -33,8 +33,8 @@ async fn main() -> Result<()> {
     let query = Query::new(pool.clone());
     let command = Command::new(pool);
     let billing = Billing::new(query.clone(), command.clone(), robot.clone());
-    let infra = Infra::new(query.clone(), command.clone());
-    let api = Api::new(query, command, billing.clone());
+    let infra = Infra::new(query.clone(), command.clone())?;
+    let api = Api::new(query, command, billing.clone(), infra.clone());
 
     let host = std::env::var("HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
     let port: u16 = std::env::var("PORT")

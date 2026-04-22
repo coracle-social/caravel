@@ -2,7 +2,7 @@ use anyhow::Result;
 use nostr_sdk::prelude::*;
 
 use crate::command::Command;
-use crate::models::{Activity, Relay, RELAY_STATUS_DELINQUENT, RELAY_STATUS_INACTIVE};
+use crate::models::{Activity, RELAY_STATUS_DELINQUENT, RELAY_STATUS_INACTIVE, Relay};
 use crate::query::Query;
 
 #[derive(Clone)]
@@ -18,14 +18,22 @@ pub struct Infra {
 }
 
 impl Infra {
-    pub fn new(query: Query, command: Command) -> Self {
+    pub fn new(query: Query, command: Command) -> Result<Self> {
         let api_url = std::env::var("ZOOID_API_URL").unwrap_or_default();
         let relay_domain = std::env::var("RELAY_DOMAIN").unwrap_or_default();
         let livekit_url = std::env::var("LIVEKIT_URL").unwrap_or_default();
         let livekit_api_key = std::env::var("LIVEKIT_API_KEY").unwrap_or_default();
         let livekit_api_secret = std::env::var("LIVEKIT_API_SECRET").unwrap_or_default();
         let api_secret = std::env::var("ZOOID_API_SECRET").unwrap_or_default();
-        Self {
+
+        if api_url.trim().is_empty() {
+            anyhow::bail!("missing ZOOID_API_URL");
+        }
+        if api_secret.trim().is_empty() {
+            anyhow::bail!("missing ZOOID_API_SECRET");
+        }
+
+        Ok(Self {
             api_url,
             relay_domain,
             livekit_url,
@@ -34,7 +42,7 @@ impl Infra {
             api_secret,
             query,
             command,
-        }
+        })
     }
 
     pub async fn start(self) {
@@ -96,6 +104,28 @@ impl Infra {
         Ok(auth)
     }
 
+    pub async fn list_relay_members(&self, relay_id: &str) -> Result<Vec<String>> {
+        let client = reqwest::Client::new();
+        let base = self.api_url.trim_end_matches('/');
+        let url = format!("{base}/relay/{relay_id}/members");
+        let auth = self.nip98_auth(&url, HttpMethod::GET).await?;
+
+        let response = client
+            .get(&url)
+            .header("Authorization", auth)
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            anyhow::bail!("zooid members returned {status}: {body}");
+        }
+
+        let body = response.text().await?;
+        parse_relay_members_response(&body)
+    }
+
     async fn sync_relay(&self, relay: &Relay, is_new: bool) -> Result<()> {
         let client = reqwest::Client::new();
         let base = self.api_url.trim_end_matches('/');
@@ -125,7 +155,9 @@ impl Infra {
         );
 
         let url = format!("{}/relay/{}", base, relay.id);
-        let auth = self.nip98_auth(&url, zooid_sync_http_method(is_new)).await?;
+        let auth = self
+            .nip98_auth(&url, zooid_sync_http_method(is_new))
+            .await?;
 
         let request = if is_new {
             client.post(&url)
@@ -154,6 +186,34 @@ fn zooid_sync_http_method(is_new: bool) -> HttpMethod {
     } else {
         HttpMethod::PATCH
     }
+}
+
+fn parse_relay_members_response(body: &str) -> Result<Vec<String>> {
+    let value: serde_json::Value = serde_json::from_str(body)?;
+
+    if let Some(members) = members_from_value(&value) {
+        return Ok(members);
+    }
+    if let Some(members) = value.get("members").and_then(members_from_value) {
+        return Ok(members);
+    }
+    if let Some(members) = value
+        .get("data")
+        .and_then(|data| data.get("members"))
+        .and_then(members_from_value)
+    {
+        return Ok(members);
+    }
+
+    anyhow::bail!("zooid members response missing members array")
+}
+
+fn members_from_value(value: &serde_json::Value) -> Option<Vec<String>> {
+    let values = value.as_array()?;
+    values
+        .iter()
+        .map(|value| value.as_str().map(ToString::to_string))
+        .collect()
 }
 
 fn relay_sync_body(

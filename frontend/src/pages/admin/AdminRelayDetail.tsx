@@ -1,11 +1,12 @@
 import { useParams } from "@solidjs/router"
-import { Show } from "solid-js"
+import { createResource, Show } from "solid-js"
 import BackLink from "@/components/BackLink"
 import PageContainer from "@/components/PageContainer"
 import RelayDetailCard from "@/components/RelayDetailCard"
 import ResourceState from "@/components/ResourceState"
 import useMinLoading from "@/components/useMinLoading"
 import ActivityFeed from "@/components/ActivityFeed"
+import { listRelayMembers } from "@/lib/api"
 import { useRelay, useRelayActivity } from "@/lib/hooks"
 import useRelayToggles from "@/lib/useRelayToggles"
 
@@ -13,6 +14,15 @@ export default function AdminRelayDetail() {
   const params = useParams()
   const relayId = () => params.id ?? ""
   const [relay, { refetch, mutate }] = useRelay(relayId)
+  const [members] = createResource(relayId, async (id) => {
+    if (!id) return []
+
+    try {
+      return (await listRelayMembers(id)).members
+    } catch {
+      return []
+    }
+  })
   const loading = useMinLoading(() => relay.loading && !relay())
   const [activity] = useRelayActivity(relayId)
   const { busy, handleDeactivate, handleReactivate, toggles } = useRelayToggles(relayId, relay, { refetch, mutate })
@@ -26,6 +36,7 @@ export default function AdminRelayDetail() {
           <div class="space-y-6 mb-6">
             <RelayDetailCard
               relay={r()}
+              currentMembers={members()?.length}
               showTenant
               editHref={`/admin/relays/${params.id}/edit`}
               onDeactivate={handleDeactivate}

@@ -9,6 +9,7 @@ Members:
 - `query: Query`
 - `command: Command`
 - `billing: Billing`
+- `infra: Infra`
 
 Notes:
 
@@ -103,6 +104,14 @@ Notes:
 - Authorizes admin or relay owner
 - Return `data` is a single relay struct from `query.get_relay`
 
+## `async fn list_relay_members(...) -> Response`
+
+- Serves `GET /relays/:id/members`
+- Authorizes admin or relay owner
+- For unsynced relays, returns an empty member list without calling zooid
+- For synced relays, proxies the member list from zooid via `infra`
+- Return `data` is `{ members }`
+
 ## `async fn create_relay(...) -> Response`
 
 - Serves `POST /relays`
@@ -117,6 +126,7 @@ Notes:
 - Serves `PUT /relays/:id`
 - Authorizes admin or relay owner
 - Validates/prepares the relay data to be saved using `prepare_relay`
+- If the requested plan changes to a plan with a finite member limit and the current member count exceeds that limit, return a `422` with `code=member-limit-exceeded`
 - Updates the given relay using `command.update_relay`
 - If relay is a duplicate by subdomain, return a `422` with `code=subdomain-exists`
 - Return `data` is a single relay struct.

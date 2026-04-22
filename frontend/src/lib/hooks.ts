@@ -2,7 +2,6 @@ import { createEffect, createResource, createSignal, onCleanup } from "solid-js"
 import { getProfilePicture } from "applesauce-core/helpers/profile"
 import { createOutboxMap, selectOptimalRelays, setFallbackRelays } from "applesauce-core/helpers/relay-selection"
 import { includeMailboxes } from "applesauce-core/observable"
-import { Relay as NostrRelay, RelayManagement } from "applesauce-relay"
 import { map, of } from "rxjs"
 import {
   createRelay,
@@ -145,16 +144,6 @@ export async function getLatestOpenInvoice(): Promise<Invoice | null> {
     .filter(inv => inv.status === "open" && inv.amount_due > 0)
     .sort((a, b) => b.period_start - a.period_start)
   return open[0] ?? null
-}
-
-export async function getRelayMembers(url: string) {
-  const management = new RelayManagement(new NostrRelay(url), account()!.signer)
-
-  try {
-    return await management.listAllowedPubkeys()
-  } catch {
-    return []
-  }
 }
 
 export type { Activity, Invoice, Relay, Tenant }

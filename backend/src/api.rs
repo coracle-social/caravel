@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use anyhow::anyhow;
+use anyhow::{Result, anyhow};
 use axum::{
     Json, Router,
     extract::{Path, State},
@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::billing::{Billing, InvoiceLookupError};
 use crate::command::Command;
+use crate::infra::Infra;
 use crate::models::{
     RELAY_STATUS_ACTIVE, RELAY_STATUS_DELINQUENT, RELAY_STATUS_INACTIVE, Relay, Tenant,
 };
@@ -27,6 +28,7 @@ pub struct Api {
     query: Query,
     command: Command,
     billing: Billing,
+    infra: Infra,
 }
 
 async fn stripe_webhook(
@@ -117,7 +119,7 @@ fn map_invoice_lookup_error(error: InvoiceLookupError) -> ApiError {
 }
 
 impl Api {
-    pub fn new(query: Query, command: Command, billing: Billing) -> Self {
+    pub fn new(query: Query, command: Command, billing: Billing, infra: Infra) -> Self {
         let host = std::env::var("HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
         let admins = std::env::var("ADMINS")
             .unwrap_or_default()
@@ -131,6 +133,7 @@ impl Api {
             query,
             command,
             billing,
+            infra,
         }
     }
 
@@ -148,6 +151,7 @@ impl Api {
             .route("/tenants/:pubkey/relays", get(list_tenant_relays))
             .route("/relays", get(list_relays).post(create_relay))
             .route("/relays/:id", get(get_relay).put(update_relay))
+            .route("/relays/:id/members", get(list_relay_members))
             .route("/relays/:id/activity", get(list_relay_activity))
             .route("/relays/:id/deactivate", post(deactivate_relay))
             .route("/relays/:id/reactivate", post(reactivate_relay))
@@ -249,6 +253,14 @@ impl Api {
             Ok(None) => Err(ApiError::NotFound("tenant not found")),
             Err(e) => Err(ApiError::Internal(e.to_string())),
         }
+    }
+
+    async fn fetch_relay_members(&self, relay: &Relay) -> Result<Vec<String>> {
+        if relay.synced == 0 {
+            return Ok(Vec::new());
+        }
+
+        self.infra.list_relay_members(&relay.id).await
     }
 
     fn prepare_relay(&self, mut relay: Relay) -> std::result::Result<Relay, RelayValidationError> {
@@ -669,6 +681,40 @@ async fn list_relay_activity(
     }
 }
 
+async fn list_relay_members(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> std::result::Result<Response, ApiError> {
+    let auth = state.api.extract_auth_pubkey(&headers)?;
+
+    let relay = match state.api.query.get_relay(&id).await {
+        Ok(Some(r)) => r,
+        Ok(None) => return Ok(err(StatusCode::NOT_FOUND, "not-found", "relay not found")),
+        Err(e) => {
+            return Ok(err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal",
+                &e.to_string(),
+            ));
+        }
+    };
+
+    state.api.require_admin_or_tenant(&auth, &relay.tenant)?;
+
+    match state.api.fetch_relay_members(&relay).await {
+        Ok(members) => Ok(ok(
+            StatusCode::OK,
+            serde_json::json!({ "members": members }),
+        )),
+        Err(e) => Ok(err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal",
+            &e.to_string(),
+        )),
+    }
+}
+
 async fn create_relay(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -748,10 +794,13 @@ async fn update_relay(
 
     state.api.require_admin_or_tenant(&auth, &relay.tenant)?;
 
+    let current_plan = relay.plan.clone();
+    let requested_plan = payload.plan.clone();
+
     if let Some(v) = payload.subdomain {
         relay.subdomain = v;
     }
-    if let Some(v) = payload.plan {
+    if let Some(v) = requested_plan.clone() {
         relay.plan = v;
     }
     if let Some(v) = payload.info_name {
@@ -791,6 +840,38 @@ async fn update_relay(
             return Ok(relay_validation_error_response(e));
         }
     };
+
+    let plan_changed = requested_plan
+        .as_deref()
+        .is_some_and(|requested| requested != current_plan);
+
+    if plan_changed {
+        let selected_plan = Query::get_plan(&relay.plan).expect("validated plan must exist");
+        if let Some(limit) = selected_plan.members {
+            let current_members = match state.api.fetch_relay_members(&relay).await {
+                Ok(members) => members.len() as i64,
+                Err(e) => {
+                    return Ok(err(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "internal",
+                        &e.to_string(),
+                    ));
+                }
+            };
+
+            if current_members > limit {
+                let message = format!(
+                    "relay has {current_members} members, which exceeds the {} plan limit of {limit}",
+                    selected_plan.name.to_lowercase()
+                );
+                return Ok(err(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "member-limit-exceeded",
+                    &message,
+                ));
+            }
+        }
+    }
 
     match state.api.command.update_relay(&relay).await {
         Ok(()) => Ok(ok(StatusCode::OK, relay)),

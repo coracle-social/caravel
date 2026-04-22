@@ -241,6 +241,10 @@ export function getRelay(id: string) {
   return callApi<undefined, Relay>("GET", `/relays/${id}`)
 }
 
+export function listRelayMembers(id: string) {
+  return callApi<undefined, { members: string[] }>("GET", `/relays/${id}/members`)
+}
+
 export function listRelayActivity(id: string) {
   return callApi<undefined, { activity: Activity[] }>("GET", `/relays/${id}/activity`)
 }

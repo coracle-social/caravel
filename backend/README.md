@@ -74,13 +74,20 @@ Public exceptions:
 - `GET /tenants` — list tenants (admin)
 - `POST /tenants` — idempotently ensure a tenant row exists for the current auth pubkey (creates Stripe customer + tenant on first call, returns existing tenant otherwise)
 - `GET /tenants/:pubkey` — get tenant (admin or same tenant)
-- `PUT /tenants/:pubkey/billing` — update tenant `nwc_url` (admin or same tenant)
-- `GET /relays` — list relays (`?tenant=<pubkey>` allowed for admin only)
+- `PUT /tenants/:pubkey` — update tenant `nwc_url` (admin or same tenant)
+- `GET /tenants/:pubkey/relays` — list tenant relays (admin or same tenant)
+- `GET /relays` — list relays (admin)
 - `POST /relays` — create relay (admin or relay tenant)
 - `GET /relays/:id` — get relay (admin or relay tenant)
+- `GET /relays/:id/members` — list relay members from zooid (admin or relay tenant)
 - `PUT /relays/:id` — update relay (admin or relay tenant)
+- `GET /relays/:id/activity` — list relay activity (admin or relay tenant)
 - `POST /relays/:id/deactivate` — deactivate relay (admin or relay tenant)
-- `GET /invoices` — list invoices (`?tenant=<pubkey>` allowed for admin only)
+- `POST /relays/:id/reactivate` — reactivate relay (admin or relay tenant)
+- `GET /tenants/:pubkey/invoices` — list tenant invoices (admin or same tenant)
+- `GET /invoices/:id` — get invoice (admin or same tenant)
+- `GET /invoices/:id/bolt11` — get invoice bolt11 (admin or same tenant)
+- `GET /tenants/:pubkey/stripe/session` — create Stripe customer portal session (admin or same tenant)
 
 ## API Auth Model
 

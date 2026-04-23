@@ -94,6 +94,23 @@ impl Query {
         Ok(rows)
     }
 
+    pub async fn list_relays_with_sync_error(&self) -> Result<Vec<Relay>> {
+        let rows = sqlx::query_as::<_, Relay>(
+            "SELECT id, tenant, schema, subdomain, plan, stripe_subscription_item_id,
+                     status, sync_error,
+                     info_name, info_icon, info_description,
+                     policy_public_join, policy_strip_signatures,
+                     groups_enabled, management_enabled, blossom_enabled,
+                     livekit_enabled, push_enabled, synced
+              FROM relay
+              WHERE TRIM(sync_error) != ''
+              ORDER BY id",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
     pub async fn list_relays_for_tenant(&self, tenant_id: &str) -> Result<Vec<Relay>> {
         let rows = sqlx::query_as::<_, Relay>(
             "SELECT id, tenant, schema, subdomain, plan, stripe_subscription_item_id,

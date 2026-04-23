@@ -15,12 +15,15 @@ Members:
 ## `pub async fn start(self)`
 
 - Subscribes to `command.notify`
+- On startup, schedules delayed sync retries for relays whose `sync_error` is non-empty.
 - Loops on `rx.recv()`, calling `handle_activity` for each received `Activity`.
 
 ## `async fn handle_activity(&self, activity: &Activity)`
 
-- For `create_relay`, `update_relay`, `activate_relay`, or `deactivate_relay` activity, calls `sync_and_report`.
-- All other activity types are ignored (e.g. `fail_relay_sync`, `complete_relay_sync`).
+- For `create_relay`, `update_relay`, `activate_relay`, or `deactivate_relay` activity, calls `sync_and_report` immediately.
+- For `fail_relay_sync`, schedules a delayed retry using exponential backoff based on consecutive failures for the relay.
+- Retry scheduling stops after the configured max attempts to avoid infinite retry loops.
+- Other activity types are ignored (e.g. `complete_relay_sync`).
 
 ## `async fn sync_and_report(&self, relay: &Relay, is_new: bool)`
 

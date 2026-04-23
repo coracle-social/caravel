@@ -1,9 +1,14 @@
 use anyhow::Result;
 use nostr_sdk::prelude::*;
+use std::time::Duration;
 
 use crate::command::Command;
 use crate::models::{Activity, RELAY_STATUS_DELINQUENT, RELAY_STATUS_INACTIVE, Relay};
 use crate::query::Query;
+
+const RELAY_SYNC_RETRY_BASE_DELAY_SECS: u64 = 30;
+const RELAY_SYNC_RETRY_MAX_DELAY_SECS: u64 = 15 * 60;
+const RELAY_SYNC_RETRY_MAX_ATTEMPTS: usize = 6;
 
 #[derive(Clone)]
 pub struct Infra {
@@ -48,6 +53,10 @@ impl Infra {
     pub async fn start(self) {
         let mut rx = self.command.notify.subscribe();
 
+        if let Err(e) = self.schedule_startup_retries().await {
+            tracing::error!(error = %e, "failed to schedule relay sync retries on startup");
+        }
+
         loop {
             match rx.recv().await {
                 Ok(activity) => {
@@ -66,15 +75,84 @@ impl Infra {
     async fn handle_activity(&self, activity: &Activity) -> Result<()> {
         let needs_sync = should_sync_relay_activity(activity.activity_type.as_str());
 
-        if needs_sync {
-            let Some(relay) = self.query.get_relay(&activity.resource_id).await? else {
-                return Ok(());
-            };
-
-            let is_new = relay.synced == 0;
-            self.sync_and_report(&relay, is_new).await;
+        if !needs_sync || activity.resource_type != "relay" {
+            return Ok(());
         }
 
+        if activity.activity_type == "fail_relay_sync" {
+            self.schedule_relay_sync_retry(&activity.resource_id, "activity")
+                .await?;
+            return Ok(());
+        }
+
+        let Some(relay) = self.query.get_relay(&activity.resource_id).await? else {
+            return Ok(());
+        };
+
+        let is_new = relay.synced == 0;
+        self.sync_and_report(&relay, is_new).await;
+
+        Ok(())
+    }
+
+    async fn schedule_startup_retries(&self) -> Result<()> {
+        let relays = self.query.list_relays_with_sync_error().await?;
+
+        for relay in relays {
+            self.schedule_relay_sync_retry(&relay.id, "startup").await?;
+        }
+
+        Ok(())
+    }
+
+    async fn schedule_relay_sync_retry(&self, relay_id: &str, source: &str) -> Result<()> {
+        let activities = self.query.list_activity_for_relay(relay_id).await?;
+        let consecutive_failures = consecutive_sync_failures(&activities);
+
+        let Some(delay) = relay_sync_retry_delay(consecutive_failures) else {
+            tracing::warn!(
+                relay = relay_id,
+                consecutive_failures,
+                max_attempts = RELAY_SYNC_RETRY_MAX_ATTEMPTS,
+                "relay sync retries exhausted; awaiting manual intervention"
+            );
+            return Ok(());
+        };
+
+        tracing::info!(
+            relay = relay_id,
+            source,
+            consecutive_failures,
+            delay_secs = delay.as_secs(),
+            "scheduled relay sync retry"
+        );
+
+        let relay_id = relay_id.to_string();
+        let infra = self.clone();
+
+        tokio::spawn(async move {
+            tokio::time::sleep(delay).await;
+
+            if let Err(e) = infra.retry_relay_sync(&relay_id).await {
+                tracing::error!(relay = %relay_id, error = %e, "relay sync retry task failed");
+            }
+        });
+
+        Ok(())
+    }
+
+    async fn retry_relay_sync(&self, relay_id: &str) -> Result<()> {
+        let Some(relay) = self.query.get_relay(relay_id).await? else {
+            return Ok(());
+        };
+
+        if relay.sync_error.trim().is_empty() {
+            tracing::debug!(relay = %relay.id, "skip relay sync retry; relay has no sync_error");
+            return Ok(());
+        }
+
+        let is_new = relay.synced == 0;
+        self.sync_and_report(&relay, is_new).await;
         Ok(())
     }
 
@@ -258,6 +336,28 @@ fn relay_sync_body(
 fn should_sync_relay_activity(activity_type: &str) -> bool {
     matches!(
         activity_type,
-        "create_relay" | "update_relay" | "activate_relay" | "deactivate_relay"
+        "create_relay" | "update_relay" | "activate_relay" | "deactivate_relay" | "fail_relay_sync"
     )
+}
+
+fn consecutive_sync_failures(activities: &[Activity]) -> usize {
+    activities
+        .iter()
+        .take_while(|activity| activity.activity_type == "fail_relay_sync")
+        .count()
+}
+
+fn relay_sync_retry_delay(consecutive_failures: usize) -> Option<Duration> {
+    let retry_attempt = consecutive_failures.max(1);
+    if retry_attempt > RELAY_SYNC_RETRY_MAX_ATTEMPTS {
+        return None;
+    }
+
+    let exponent = (retry_attempt - 1).min(31);
+    let multiplier = 1u64 << exponent;
+    let delay_secs = RELAY_SYNC_RETRY_BASE_DELAY_SECS
+        .saturating_mul(multiplier)
+        .min(RELAY_SYNC_RETRY_MAX_DELAY_SECS);
+
+    Some(Duration::from_secs(delay_secs))
 }

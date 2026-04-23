@@ -17,6 +17,9 @@ type HmacSha256 = Hmac<Sha256>;
 const STRIPE_API: &str = "https://api.stripe.com/v1";
 const COINBASE_SPOT_API: &str = "https://api.coinbase.com/v2/prices";
 const WEBHOOK_TOLERANCE_SECS: i64 = 300;
+const MANUAL_LIGHTNING_PAYMENT_DM: &str = "Payment is due for your relay subscription. Please visit the application to complete a manual Lightning payment.";
+const NWC_ERROR_DM_PREFIX: &str = "NWC auto-payment failed:";
+const NWC_ERROR_DM_MAX_CHARS: usize = 240;
 
 #[derive(Debug)]
 pub enum InvoiceLookupError {
@@ -80,7 +83,6 @@ pub struct Billing {
     nwc_url: String,
     stripe_secret_key: String,
     stripe_webhook_secret: String,
-    btc_quote_api_base: String,
     http: reqwest::Client,
     query: Query,
     command: Command,
@@ -98,13 +100,10 @@ impl Billing {
         if stripe_webhook_secret.trim().is_empty() {
             panic!("missing STRIPE_WEBHOOK_SECRET environment variable");
         }
-        let btc_quote_api_base =
-            std::env::var("BTC_PRICE_API_BASE").unwrap_or_else(|_| COINBASE_SPOT_API.to_string());
         Self {
             nwc_url,
             stripe_secret_key,
             stripe_webhook_secret,
-            btc_quote_api_base,
             http: reqwest::Client::new(),
             query,
             command,
@@ -360,6 +359,8 @@ impl Billing {
             return Ok(());
         };
 
+        let mut nwc_error_for_dm: Option<String> = None;
+
         // 1. NWC auto-pay: if the tenant has a nwc_url
         if !tenant.nwc_url.is_empty() {
             match self
@@ -376,6 +377,14 @@ impl Billing {
                     self.command
                         .set_tenant_nwc_error(&tenant.pubkey, &error_msg)
                         .await?;
+                    tracing::warn!(
+                        error = %e,
+                        tenant_pubkey = %tenant.pubkey,
+                        stripe_customer_id,
+                        invoice_id,
+                        "nwc auto-payment failed for invoice.created"
+                    );
+                    nwc_error_for_dm = summarize_nwc_error_for_dm(&error_msg);
                     // Fall through to next option
                 }
             }
@@ -390,12 +399,8 @@ impl Billing {
         }
 
         // 3. Manual payment: send a DM
-        self.robot
-            .send_dm(
-                &tenant.pubkey,
-                "Payment is due for your relay subscription. Please visit the application to complete a manual Lightning payment.",
-            )
-            .await?;
+        let dm_message = manual_lightning_payment_dm(nwc_error_for_dm.as_deref());
+        self.robot.send_dm(&tenant.pubkey, &dm_message).await?;
 
         Ok(())
     }
@@ -1057,7 +1062,7 @@ impl Billing {
     }
 
     async fn fetch_btc_spot_price(&self, currency: &str) -> Result<f64> {
-        fetch_btc_spot_price_from_base(&self.http, &self.btc_quote_api_base, currency).await
+        fetch_btc_spot_price_from_base(&self.http, COINBASE_SPOT_API, currency).await
     }
 
     fn currency_minor_exponent(currency: &str) -> Result<u8> {
@@ -1099,6 +1104,31 @@ pub async fn fetch_btc_spot_price_from_base(
     }
 
     Ok(amount)
+}
+
+fn summarize_nwc_error_for_dm(error: &str) -> Option<String> {
+    let normalized = error.split_whitespace().collect::<Vec<_>>().join(" ");
+    if normalized.is_empty() {
+        return None;
+    }
+
+    if normalized.chars().count() <= NWC_ERROR_DM_MAX_CHARS {
+        return Some(normalized);
+    }
+
+    let prefix_len = NWC_ERROR_DM_MAX_CHARS.saturating_sub(3);
+    let mut truncated = normalized.chars().take(prefix_len).collect::<String>();
+    truncated.push_str("...");
+    Some(truncated)
+}
+
+fn manual_lightning_payment_dm(nwc_error: Option<&str>) -> String {
+    match nwc_error {
+        Some(error) if !error.is_empty() => {
+            format!("{MANUAL_LIGHTNING_PAYMENT_DM}\n\n{NWC_ERROR_DM_PREFIX} {error}")
+        }
+        _ => MANUAL_LIGHTNING_PAYMENT_DM.to_string(),
+    }
 }
 
 pub fn fiat_minor_to_msats_from_quote(

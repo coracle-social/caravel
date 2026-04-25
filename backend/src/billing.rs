@@ -643,11 +643,13 @@ impl Billing {
     pub async fn stripe_create_customer(&self, tenant_pubkey: &str) -> Result<String> {
         let short_pubkey: String = tenant_pubkey.chars().take(12).collect();
         let display_name = format!("Caravel tenant {short_pubkey}");
+        let idempotency_key = self.idempotency_key(&["create_customer", tenant_pubkey]);
 
         let resp = self
             .http
             .post(format!("{STRIPE_API}/customers"))
             .bearer_auth(&self.stripe_secret_key)
+            .header("Idempotency-Key", idempotency_key)
             .form(&[
                 ("name", display_name.as_str()),
                 ("metadata[tenant_pubkey]", tenant_pubkey),
@@ -834,15 +836,30 @@ impl Billing {
 
     // --- Stripe API helpers ---
 
+    fn idempotency_key(&self, parts: &[&str]) -> String {
+        let mut mac = HmacSha256::new_from_slice(self.stripe_secret_key.as_bytes())
+            .expect("HMAC accepts any key length");
+        for (i, part) in parts.iter().enumerate() {
+            if i > 0 {
+                mac.update(b":");
+            }
+            mac.update(part.as_bytes());
+        }
+        hex::encode(mac.finalize().into_bytes())
+    }
+
     async fn stripe_create_subscription(
         &self,
         customer_id: &str,
         price_id: &str,
     ) -> Result<(String, String)> {
+        let idempotency_key =
+            self.idempotency_key(&["create_subscription", customer_id, price_id]);
         let resp = self
             .http
             .post(format!("{STRIPE_API}/subscriptions"))
             .bearer_auth(&self.stripe_secret_key)
+            .header("Idempotency-Key", idempotency_key)
             .form(&[
                 ("customer", customer_id),
                 ("collection_method", "charge_automatically"),
@@ -869,10 +886,13 @@ impl Billing {
         subscription_id: &str,
         price_id: &str,
     ) -> Result<String> {
+        let idempotency_key =
+            self.idempotency_key(&["create_subscription_item", subscription_id, price_id]);
         let resp = self
             .http
             .post(format!("{STRIPE_API}/subscription_items"))
             .bearer_auth(&self.stripe_secret_key)
+            .header("Idempotency-Key", idempotency_key)
             .form(&[("subscription", subscription_id), ("price", price_id)])
             .send()
             .await?;
@@ -891,10 +911,13 @@ impl Billing {
         item_id: &str,
         price_id: &str,
     ) -> Result<String> {
+        let idempotency_key =
+            self.idempotency_key(&["update_subscription_item", item_id, price_id]);
         let resp = self
             .http
             .post(format!("{STRIPE_API}/subscription_items/{item_id}"))
             .bearer_auth(&self.stripe_secret_key)
+            .header("Idempotency-Key", idempotency_key)
             .form(&[("price", price_id)])
             .send()
             .await?;
@@ -931,9 +954,11 @@ impl Billing {
     }
 
     async fn stripe_pay_invoice(&self, invoice_id: &str) -> Result<()> {
+        let idempotency_key = self.idempotency_key(&["pay_invoice", invoice_id]);
         self.http
             .post(format!("{STRIPE_API}/invoices/{invoice_id}/pay"))
             .bearer_auth(&self.stripe_secret_key)
+            .header("Idempotency-Key", idempotency_key)
             .send()
             .await?
             .error_for_status()?;
@@ -973,9 +998,11 @@ impl Billing {
     }
 
     async fn stripe_pay_invoice_out_of_band(&self, invoice_id: &str) -> Result<()> {
+        let idempotency_key = self.idempotency_key(&["pay_invoice_oob", invoice_id]);
         self.http
             .post(format!("{STRIPE_API}/invoices/{invoice_id}/pay"))
             .bearer_auth(&self.stripe_secret_key)
+            .header("Idempotency-Key", idempotency_key)
             .form(&[("paid_out_of_band", "true")])
             .send()
             .await?
@@ -1428,4 +1455,5 @@ mod tests {
         assert_eq!(billing.stripe_secret_key, "sk_test_dummy");
         assert_eq!(billing.stripe_webhook_secret, "whsec_test_dummy");
     }
+
 }

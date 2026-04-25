@@ -313,6 +313,46 @@ impl Command {
         Ok(())
     }
 
+    pub async fn insert_pending_invoice_nwc_payment(
+        &self,
+        invoice_id: &str,
+        tenant_pubkey: &str,
+    ) -> Result<bool> {
+        let now = chrono::Utc::now().timestamp();
+        let result = sqlx::query(
+            "INSERT INTO invoice_nwc_payment (invoice_id, tenant_pubkey, state, created_at, updated_at)
+             VALUES (?, ?, 'pending', ?, ?)
+             ON CONFLICT(invoice_id) DO NOTHING",
+        )
+        .bind(invoice_id)
+        .bind(tenant_pubkey)
+        .bind(now)
+        .bind(now)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    pub async fn mark_invoice_nwc_payment_paid(&self, invoice_id: &str) -> Result<()> {
+        let now = chrono::Utc::now().timestamp();
+        let result = sqlx::query(
+            "UPDATE invoice_nwc_payment
+             SET state = 'paid', updated_at = ?
+             WHERE invoice_id = ?",
+        )
+        .bind(now)
+        .bind(invoice_id)
+        .execute(&self.pool)
+        .await?;
+
+        if result.rows_affected() == 0 {
+            anyhow::bail!("invoice_nwc_payment row missing for invoice_id: {invoice_id}");
+        }
+
+        Ok(())
+    }
+
     pub async fn set_tenant_past_due(&self, pubkey: &str) -> Result<()> {
         let now = chrono::Utc::now().timestamp();
         sqlx::query("UPDATE tenant SET past_due_at = ? WHERE pubkey = ?")

@@ -78,6 +78,12 @@ struct CoinbaseSpotPriceData {
     amount: String,
 }
 
+enum NwcInvoicePaymentOutcome {
+    Paid,
+    Fallback(anyhow::Error),
+    Pending(anyhow::Error),
+}
+
 #[derive(Clone)]
 pub struct Billing {
     nwc_url: String,
@@ -260,6 +266,23 @@ impl Billing {
         Ok(())
     }
 
+    async fn existing_invoice_nwc_payment_outcome(
+        &self,
+        invoice_id: &str,
+    ) -> Result<Option<NwcInvoicePaymentOutcome>> {
+        let state = self.query.get_invoice_nwc_payment_state(invoice_id).await?;
+        match state.as_deref() {
+            Some("paid") => Ok(Some(NwcInvoicePaymentOutcome::Paid)),
+            Some("pending") => Ok(Some(NwcInvoicePaymentOutcome::Pending(anyhow!(
+                "invoice {invoice_id} has a pending NWC reconciliation; refusing to create a new Lightning charge"
+            )))),
+            Some(other) => Err(anyhow!(
+                "unknown invoice_nwc_payment state '{other}' for invoice {invoice_id}"
+            )),
+            None => Ok(None),
+        }
+    }
+
     pub async fn handle_webhook(&self, payload: &str, signature: &str) -> Result<()> {
         self.verify_webhook_signature(payload, signature)?;
 
@@ -364,15 +387,21 @@ impl Billing {
         // 1. NWC auto-pay: if the tenant has a nwc_url
         if !tenant.nwc_url.is_empty() {
             match self
-                .nwc_pay_invoice(amount_due, currency, &tenant.nwc_url)
-                .await
+                .nwc_pay_invoice(
+                    invoice_id,
+                    &tenant.pubkey,
+                    amount_due,
+                    currency,
+                    &tenant.nwc_url,
+                )
+                .await?
             {
-                Ok(()) => {
-                    self.stripe_pay_invoice_out_of_band(invoice_id).await?;
-                    self.command.clear_tenant_nwc_error(&tenant.pubkey).await?;
+                NwcInvoicePaymentOutcome::Paid => {
+                    self.mark_invoice_paid_out_of_band_after_nwc(invoice_id, &tenant.pubkey)
+                        .await?;
                     return Ok(());
                 }
-                Err(e) => {
+                NwcInvoicePaymentOutcome::Fallback(e) => {
                     let error_msg = format!("{e}");
                     self.command
                         .set_tenant_nwc_error(&tenant.pubkey, &error_msg)
@@ -386,6 +415,20 @@ impl Billing {
                     );
                     nwc_error_for_dm = summarize_nwc_error_for_dm(&error_msg);
                     // Fall through to next option
+                }
+                NwcInvoicePaymentOutcome::Pending(e) => {
+                    let error_msg = format!("{e}");
+                    self.command
+                        .set_tenant_nwc_error(&tenant.pubkey, &error_msg)
+                        .await?;
+                    tracing::error!(
+                        error = %e,
+                        tenant_pubkey = %tenant.pubkey,
+                        stripe_customer_id,
+                        invoice_id,
+                        "nwc auto-payment requires reconciliation before retry"
+                    );
+                    return Err(e);
                 }
             }
         }
@@ -750,26 +793,45 @@ impl Billing {
             }
 
             match self
-                .nwc_pay_invoice(amount_due, currency, &tenant.nwc_url)
-                .await
+                .nwc_pay_invoice(
+                    invoice_id,
+                    &tenant.pubkey,
+                    amount_due,
+                    currency,
+                    &tenant.nwc_url,
+                )
+                .await?
             {
-                Ok(()) => {
-                    if let Err(e) = self.stripe_pay_invoice_out_of_band(invoice_id).await {
+                NwcInvoicePaymentOutcome::Paid => {
+                    if let Err(e) = self
+                        .mark_invoice_paid_out_of_band_after_nwc(invoice_id, &tenant.pubkey)
+                        .await
+                    {
                         tracing::error!(
                             error = %e,
                             invoice_id,
                             "failed to mark invoice paid out of band"
                         );
-                    } else {
-                        let _ = self.command.clear_tenant_nwc_error(&tenant.pubkey).await;
                     }
                 }
-                Err(e) => {
+                NwcInvoicePaymentOutcome::Fallback(e) => {
                     let error_msg = format!("{e}");
                     tracing::error!(
                         error = %e,
                         invoice_id,
                         "nwc payment failed for outstanding invoice"
+                    );
+                    let _ = self
+                        .command
+                        .set_tenant_nwc_error(&tenant.pubkey, &error_msg)
+                        .await;
+                }
+                NwcInvoicePaymentOutcome::Pending(e) => {
+                    let error_msg = format!("{e}");
+                    tracing::error!(
+                        error = %e,
+                        invoice_id,
+                        "outstanding invoice requires NWC reconciliation before retry"
                     );
                     let _ = self
                         .command
@@ -1031,19 +1093,47 @@ impl Billing {
 
     // --- NWC helpers ---
 
+    async fn mark_invoice_paid_out_of_band_after_nwc(
+        &self,
+        invoice_id: &str,
+        tenant_pubkey: &str,
+    ) -> Result<()> {
+        self.stripe_pay_invoice_out_of_band(invoice_id).await?;
+        self.command.clear_tenant_nwc_error(tenant_pubkey).await?;
+        Ok(())
+    }
+
+    fn parse_nwc_uri(nwc_url: &str, role: &str) -> Result<NostrWalletConnectURI> {
+        nwc_url
+            .parse::<NostrWalletConnectURI>()
+            .map_err(|_| anyhow!("invalid {role} NWC URL"))
+    }
+
     async fn nwc_pay_invoice(
         &self,
+        invoice_id: &str,
+        tenant_pubkey: &str,
         amount_due_minor: i64,
         currency: &str,
         tenant_nwc_url: &str,
-    ) -> Result<()> {
-        let amount_msats = self.fiat_minor_to_msats(amount_due_minor, currency).await?;
+    ) -> Result<NwcInvoicePaymentOutcome> {
+        if let Some(existing_outcome) = self
+            .existing_invoice_nwc_payment_outcome(invoice_id)
+            .await?
+        {
+            return Ok(existing_outcome);
+        }
+
+        let amount_msats = match self.fiat_minor_to_msats(amount_due_minor, currency).await {
+            Ok(amount_msats) => amount_msats,
+            Err(error) => return Ok(NwcInvoicePaymentOutcome::Fallback(error)),
+        };
 
         // Create a bolt11 invoice using the system wallet (self.nwc_url)
-        let system_uri: NostrWalletConnectURI = self
-            .nwc_url
-            .parse()
-            .map_err(|_| anyhow!("invalid system NWC URL"))?;
+        let system_uri = match Self::parse_nwc_uri(&self.nwc_url, "system") {
+            Ok(system_uri) => system_uri,
+            Err(error) => return Ok(NwcInvoicePaymentOutcome::Fallback(error)),
+        };
         let system_nwc = NWC::new(system_uri);
 
         let make_req = MakeInvoiceRequest {
@@ -1053,29 +1143,61 @@ impl Billing {
             expiry: None,
         };
 
-        let invoice_response = system_nwc
-            .make_invoice(make_req)
-            .await
-            .map_err(|e| anyhow!("failed to create invoice: {e}"))?;
+        let invoice_response = system_nwc.make_invoice(make_req).await;
+
+        let invoice_response = match invoice_response {
+            Ok(invoice_response) => invoice_response,
+            Err(error) => {
+                system_nwc.shutdown().await;
+                return Ok(NwcInvoicePaymentOutcome::Fallback(anyhow!(
+                    "failed to create invoice: {error}"
+                )));
+            }
+        };
 
         system_nwc.shutdown().await;
 
         // Pay the bolt11 invoice using the tenant's wallet
-        let tenant_uri: NostrWalletConnectURI = tenant_nwc_url
-            .parse()
-            .map_err(|_| anyhow!("invalid tenant NWC URL"))?;
+        let tenant_uri = match Self::parse_nwc_uri(tenant_nwc_url, "tenant") {
+            Ok(tenant_uri) => tenant_uri,
+            Err(error) => return Ok(NwcInvoicePaymentOutcome::Fallback(error)),
+        };
+
+        if !self
+            .command
+            .insert_pending_invoice_nwc_payment(invoice_id, tenant_pubkey)
+            .await?
+        {
+            if let Some(existing_outcome) = self
+                .existing_invoice_nwc_payment_outcome(invoice_id)
+                .await?
+            {
+                return Ok(existing_outcome);
+            }
+            return Err(anyhow!(
+                "invoice_nwc_payment row missing after insert race for invoice {invoice_id}"
+            ));
+        }
+
         let tenant_nwc = NWC::new(tenant_uri);
 
         let pay_req = NwcPayInvoiceRequest::new(invoice_response.invoice);
 
-        tenant_nwc
-            .pay_invoice(pay_req)
-            .await
-            .map_err(|e| anyhow!("failed to pay invoice: {e}"))?;
+        let pay_result = tenant_nwc.pay_invoice(pay_req).await;
 
         tenant_nwc.shutdown().await;
 
-        Ok(())
+        match pay_result {
+            Ok(_) => match self.command.mark_invoice_nwc_payment_paid(invoice_id).await {
+                Ok(()) => Ok(NwcInvoicePaymentOutcome::Paid),
+                Err(error) => Ok(NwcInvoicePaymentOutcome::Pending(anyhow!(
+                    "invoice {invoice_id} was charged over NWC but failed to persist paid state: {error}"
+                ))),
+            },
+            Err(error) => Ok(NwcInvoicePaymentOutcome::Pending(anyhow!(
+                "invoice {invoice_id} NWC payment attempt requires reconciliation: {error}"
+            ))),
+        }
     }
 
     async fn fiat_minor_to_msats(&self, amount_due_minor: i64, currency: &str) -> Result<u64> {

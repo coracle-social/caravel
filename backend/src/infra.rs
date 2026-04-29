@@ -53,8 +53,8 @@ impl Infra {
     pub async fn start(self) {
         let mut rx = self.command.notify.subscribe();
 
-        if let Err(e) = self.schedule_startup_retries().await {
-            tracing::error!(error = %e, "failed to schedule relay sync retries on startup");
+        if let Err(error) = self.reconcile_relay_state("startup").await {
+            tracing::error!(error = %error, "failed to reconcile relay state on startup");
         }
 
         loop {
@@ -66,6 +66,10 @@ impl Infra {
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                     tracing::warn!(missed = n, "infra lagged");
+
+                    if let Err(error) = self.reconcile_relay_state("lagged").await {
+                        tracing::error!(error = %error, "failed to reconcile relay state after lag");
+                    }
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
             }
@@ -95,11 +99,22 @@ impl Infra {
         Ok(())
     }
 
-    async fn schedule_startup_retries(&self) -> Result<()> {
-        let relays = self.query.list_relays_with_sync_error().await?;
+    async fn reconcile_relay_state(&self, source: &str) -> Result<()> {
+        let relays = self.query.list_relays_pending_sync().await?;
+
+        if relays.is_empty() {
+            return Ok(());
+        }
+
+        tracing::info!(source, relay_count = relays.len(), "reconciling pending relay state");
 
         for relay in relays {
-            self.schedule_relay_sync_retry(&relay.id, "startup").await?;
+            if relay.sync_error.trim().is_empty() {
+                let is_new = relay.synced == 0;
+                self.sync_and_report(&relay, is_new).await;
+            } else {
+                self.schedule_relay_sync_retry(&relay.id, source).await?;
+            }
         }
 
         Ok(())

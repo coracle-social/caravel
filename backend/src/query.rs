@@ -94,7 +94,7 @@ impl Query {
         Ok(rows)
     }
 
-    pub async fn list_relays_with_sync_error(&self) -> Result<Vec<Relay>> {
+    pub async fn list_relays_pending_sync(&self) -> Result<Vec<Relay>> {
         let rows = sqlx::query_as::<_, Relay>(
             "SELECT id, tenant, schema, subdomain, plan, stripe_subscription_item_id,
                      status, sync_error,
@@ -103,7 +103,7 @@ impl Query {
                      groups_enabled, management_enabled, blossom_enabled,
                      livekit_enabled, push_enabled, synced
               FROM relay
-              WHERE TRIM(sync_error) != ''
+              WHERE synced = 0 OR TRIM(sync_error) != ''
               ORDER BY id",
         )
         .fetch_all(&self.pool)

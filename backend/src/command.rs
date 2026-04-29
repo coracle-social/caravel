@@ -113,12 +113,12 @@ impl Command {
 
         sqlx::query(
             "INSERT INTO relay (
-                id, tenant, schema, subdomain, plan, status, sync_error,
+                id, tenant, schema, subdomain, plan, status, synced, sync_error,
                 info_name, info_icon, info_description,
                 policy_public_join, policy_strip_signatures,
                 groups_enabled, management_enabled, blossom_enabled,
                 livekit_enabled, push_enabled
-            ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ) VALUES (?, ?, ?, ?, ?, 'active', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&relay.id)
         .bind(&relay.tenant)
@@ -151,7 +151,7 @@ impl Command {
 
         sqlx::query(
             "UPDATE relay
-             SET tenant = ?, schema = ?, subdomain = ?, plan = ?, status = ?, sync_error = ?,
+             SET tenant = ?, schema = ?, subdomain = ?, plan = ?, status = ?, sync_error = ?, synced = 0,
                  info_name = ?, info_icon = ?, info_description = ?,
                  policy_public_join = ?, policy_strip_signatures = ?,
                  groups_enabled = ?, management_enabled = ?, blossom_enabled = ?,
@@ -203,7 +203,7 @@ impl Command {
     ) -> Result<()> {
         let mut tx = self.pool.begin().await?;
 
-        sqlx::query("UPDATE relay SET status = ? WHERE id = ?")
+        sqlx::query("UPDATE relay SET status = ?, synced = 0 WHERE id = ?")
             .bind(status)
             .bind(relay_id)
             .execute(&mut *tx)
@@ -224,7 +224,7 @@ impl Command {
     pub async fn fail_relay_sync(&self, relay: &Relay, sync_error: String) -> Result<()> {
         let mut tx = self.pool.begin().await?;
 
-        sqlx::query("UPDATE relay SET sync_error = ? WHERE id = ?")
+        sqlx::query("UPDATE relay SET synced = 0, sync_error = ? WHERE id = ?")
             .bind(&sync_error)
             .bind(&relay.id)
             .execute(&mut *tx)

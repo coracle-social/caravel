@@ -1009,6 +1009,13 @@ async fn get_invoice(
         .map_err(map_invoice_lookup_error)?;
     state.api.require_admin_or_tenant(&auth, &tenant.pubkey)?;
 
+    let invoice = state
+        .api
+        .billing
+        .reconcile_manual_lightning_invoice(&id, &invoice)
+        .await
+        .map_err(map_invoice_lookup_error)?;
+
     Ok(ok(StatusCode::OK, invoice))
 }
 
@@ -1026,6 +1033,13 @@ async fn get_invoice_bolt11(
         .map_err(map_invoice_lookup_error)?;
     state.api.require_admin_or_tenant(&auth, &tenant.pubkey)?;
 
+    let invoice = state
+        .api
+        .billing
+        .reconcile_manual_lightning_invoice(&id, &invoice)
+        .await
+        .map_err(map_invoice_lookup_error)?;
+
     let status = invoice["status"].as_str().unwrap_or_default();
     if status != "open" {
         return Ok(err(
@@ -1038,7 +1052,12 @@ async fn get_invoice_bolt11(
     let amount_due = invoice["amount_due"].as_i64().unwrap_or(0);
     let currency = invoice["currency"].as_str().unwrap_or("usd");
 
-    match state.api.billing.create_bolt11(amount_due, currency).await {
+    match state
+        .api
+        .billing
+        .get_or_create_manual_lightning_bolt11(&id, &tenant.pubkey, amount_due, currency)
+        .await
+    {
         Ok(bolt11) => Ok(ok(StatusCode::OK, serde_json::json!({ "bolt11": bolt11 }))),
         Err(e) => Ok(err(
             StatusCode::INTERNAL_SERVER_ERROR,

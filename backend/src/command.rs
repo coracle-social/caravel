@@ -353,6 +353,30 @@ impl Command {
         Ok(())
     }
 
+    pub async fn insert_manual_lightning_invoice_payment(
+        &self,
+        invoice_id: &str,
+        tenant_pubkey: &str,
+        bolt11: &str,
+    ) -> Result<bool> {
+        let now = chrono::Utc::now().timestamp();
+        let result = sqlx::query(
+            "INSERT INTO invoice_manual_lightning_payment
+             (invoice_id, tenant_pubkey, bolt11, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?)
+             ON CONFLICT(invoice_id) DO NOTHING",
+        )
+        .bind(invoice_id)
+        .bind(tenant_pubkey)
+        .bind(bolt11)
+        .bind(now)
+        .bind(now)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
     pub async fn set_tenant_past_due(&self, pubkey: &str) -> Result<()> {
         let now = chrono::Utc::now().timestamp();
         sqlx::query("UPDATE tenant SET past_due_at = ? WHERE pubkey = ?")

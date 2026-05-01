@@ -171,6 +171,19 @@ impl Query {
         Ok(state)
     }
 
+    pub async fn get_invoice_manual_lightning_bolt11(
+        &self,
+        invoice_id: &str,
+    ) -> Result<Option<String>> {
+        let bolt11 = sqlx::query_scalar::<_, String>(
+            "SELECT bolt11 FROM invoice_manual_lightning_payment WHERE invoice_id = ?",
+        )
+        .bind(invoice_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(bolt11)
+    }
+
     pub async fn has_active_paid_relays(&self, tenant_id: &str) -> Result<bool> {
         let plans = sqlx::query_scalar::<_, String>(
             "SELECT plan FROM relay WHERE tenant = ? AND status = 'active'",

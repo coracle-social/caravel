@@ -1,7 +1,8 @@
 use anyhow::{Result, anyhow};
 use hmac::{Hmac, Mac};
 use nwc::prelude::{
-    MakeInvoiceRequest, NWC, NostrWalletConnectURI, PayInvoiceRequest as NwcPayInvoiceRequest,
+    LookupInvoiceRequest, LookupInvoiceResponse, MakeInvoiceRequest, NWC, NostrWalletConnectURI,
+    PayInvoiceRequest as NwcPayInvoiceRequest, TransactionState,
 };
 use sha2::Sha256;
 
@@ -718,6 +719,50 @@ impl Billing {
         Ok((invoice, tenant))
     }
 
+    pub async fn reconcile_manual_lightning_invoice(
+        &self,
+        invoice_id: &str,
+        invoice: &serde_json::Value,
+    ) -> std::result::Result<serde_json::Value, InvoiceLookupError> {
+        self.reconcile_manual_lightning_invoice_if_settled(invoice_id, invoice)
+            .await
+    }
+
+    pub async fn get_or_create_manual_lightning_bolt11(
+        &self,
+        invoice_id: &str,
+        tenant_pubkey: &str,
+        amount_due_minor: i64,
+        currency: &str,
+    ) -> Result<String> {
+        if let Some(existing_bolt11) = self
+            .query
+            .get_invoice_manual_lightning_bolt11(invoice_id)
+            .await?
+        {
+            return Ok(existing_bolt11);
+        }
+
+        let bolt11 = self.create_bolt11(amount_due_minor, currency).await?;
+
+        if self
+            .command
+            .insert_manual_lightning_invoice_payment(invoice_id, tenant_pubkey, &bolt11)
+            .await?
+        {
+            return Ok(bolt11);
+        }
+
+        self.query
+            .get_invoice_manual_lightning_bolt11(invoice_id)
+            .await?
+            .ok_or_else(|| {
+                anyhow!(
+                    "manual lightning payment row missing after insert race for invoice {invoice_id}"
+                )
+            })
+    }
+
     pub async fn stripe_create_customer(&self, tenant_pubkey: &str) -> Result<String> {
         let short_pubkey: String = tenant_pubkey.chars().take(12).collect();
         let display_name = format!("Caravel tenant {short_pubkey}");
@@ -1136,6 +1181,72 @@ impl Billing {
         self.stripe_pay_invoice_out_of_band(invoice_id).await?;
         self.command.clear_tenant_nwc_error(tenant_pubkey).await?;
         Ok(())
+    }
+
+    async fn reconcile_manual_lightning_invoice_if_settled(
+        &self,
+        invoice_id: &str,
+        invoice: &serde_json::Value,
+    ) -> std::result::Result<serde_json::Value, InvoiceLookupError> {
+        if invoice["status"].as_str().unwrap_or_default() != "open" {
+            return Ok(invoice.clone());
+        }
+
+        let Some(bolt11) = self
+            .query
+            .get_invoice_manual_lightning_bolt11(invoice_id)
+            .await?
+        else {
+            return Ok(invoice.clone());
+        };
+
+        let settled = match self.is_manual_lightning_invoice_settled(&bolt11).await {
+            Ok(settled) => settled,
+            Err(error) => {
+                tracing::warn!(
+                    error = %error,
+                    invoice_id,
+                    "failed to lookup manual lightning invoice settlement"
+                );
+                return Ok(invoice.clone());
+            }
+        };
+
+        if !settled {
+            return Ok(invoice.clone());
+        }
+
+        if let Err(error) = self.stripe_pay_invoice_out_of_band(invoice_id).await {
+            tracing::warn!(
+                error = %error,
+                invoice_id,
+                "failed to mark settled manual lightning invoice as paid_out_of_band"
+            );
+        }
+
+        self.stripe_get_invoice(invoice_id).await
+    }
+
+    async fn is_manual_lightning_invoice_settled(&self, bolt11: &str) -> Result<bool> {
+        let system_uri = Self::parse_nwc_uri(&self.nwc_url, "system")?;
+        let system_nwc = NWC::new(system_uri);
+
+        let lookup_req = LookupInvoiceRequest {
+            payment_hash: None,
+            invoice: Some(bolt11.to_string()),
+        };
+
+        let lookup_result = system_nwc.lookup_invoice(lookup_req).await;
+        system_nwc.shutdown().await;
+
+        let lookup_response =
+            lookup_result.map_err(|error| anyhow!("failed to lookup invoice: {error}"))?;
+
+        Ok(Self::lookup_invoice_response_is_settled(&lookup_response))
+    }
+
+    fn lookup_invoice_response_is_settled(response: &LookupInvoiceResponse) -> bool {
+        response.state == Some(TransactionState::Settled) || response.settled_at.is_some()
     }
 
     fn parse_nwc_uri(nwc_url: &str, role: &str) -> Result<NostrWalletConnectURI> {

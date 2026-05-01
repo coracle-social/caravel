@@ -93,7 +93,7 @@ impl Infra {
             return Ok(());
         };
 
-        let is_new = relay.synced == 0;
+        let is_new = self.relay_sync_is_new(&relay).await?;
         self.sync_and_report(&relay, is_new).await;
 
         Ok(())
@@ -110,7 +110,7 @@ impl Infra {
 
         for relay in relays {
             if relay.sync_error.trim().is_empty() {
-                let is_new = relay.synced == 0;
+                let is_new = self.relay_sync_is_new(&relay).await?;
                 self.sync_and_report(&relay, is_new).await;
             } else {
                 self.schedule_relay_sync_retry(&relay.id, source).await?;
@@ -166,9 +166,18 @@ impl Infra {
             return Ok(());
         }
 
-        let is_new = relay.synced == 0;
+        let is_new = self.relay_sync_is_new(&relay).await?;
         self.sync_and_report(&relay, is_new).await;
         Ok(())
+    }
+
+    async fn relay_sync_is_new(&self, relay: &Relay) -> Result<bool> {
+        if relay.synced == 1 {
+            return Ok(false);
+        }
+
+        let has_completed_sync = self.query.relay_has_completed_sync(&relay.id).await?;
+        Ok(!has_completed_sync)
     }
 
     async fn sync_and_report(&self, relay: &Relay, is_new: bool) {

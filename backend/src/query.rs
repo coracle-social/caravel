@@ -194,4 +194,20 @@ impl Query {
         .await?;
         Ok(rows)
     }
+
+    pub async fn relay_has_completed_sync(&self, relay_id: &str) -> Result<bool> {
+        let found = sqlx::query_scalar::<_, i64>(
+            "SELECT 1
+             FROM activity
+             WHERE resource_type = 'relay'
+               AND resource_id = ?
+               AND activity_type = 'complete_relay_sync'
+             LIMIT 1",
+        )
+        .bind(relay_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(found.is_some())
+    }
 }

@@ -57,7 +57,7 @@ Notes:
 
 - Serves `GET /tenants`
 - Authorizes admin only
-- Return `data` is a list of tenant structs from `query.list_tenants`
+- Return `data` is a list of `TenantResponse` structs (contains `nwc_is_set: bool` instead of `nwc_url`)
 
 ## `async fn create_tenant(...) -> Response`
 
@@ -69,20 +69,21 @@ Notes:
 - On unique-constraint race (`pubkey-exists`), re-fetch and return the existing tenant
 - If Stripe customer creation fails, return `code=stripe-customer-create-failed`
 - Always returns `200` (create-or-get is uniform)
-- Return `data` is a single `Tenant` struct
+- Return `data` is a single `TenantResponse` struct (contains `nwc_is_set: bool` instead of `nwc_url`)
 
 ## `async fn get_tenant(...) -> Response`
 
 - Serves `GET /tenants/:pubkey`
 - Authorizes admin or matching tenant
-- Return `data` is a single tenant struct from `query.get_tenant`
+- Return `data` is a single `TenantResponse` struct (contains `nwc_is_set: bool` instead of `nwc_url`)
 
 ## `async fn update_tenant(...) -> Response`
 
 - Serves `PUT /tenants/:pubkey`
 - Authorizes admin or matching tenant
+- Accepts `nwc_url` in the request body; encrypts it before storage using `cipher::encrypt`
 - Updates tenant using `command.update_tenant`
-- Return `data` is the updated tenant struct
+- Return `data` is the updated `TenantResponse` struct (contains `nwc_is_set: bool` instead of `nwc_url`)
 
 ## `async fn list_tenant_relays(...) -> Response`
 

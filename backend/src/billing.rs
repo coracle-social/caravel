@@ -422,13 +422,14 @@ impl Billing {
 
         // 1. NWC auto-pay: if the tenant has a nwc_url
         if !tenant.nwc_url.is_empty() {
+            let plain_nwc_url = crate::cipher::decrypt(&tenant.nwc_url)?;
             match self
                 .nwc_pay_invoice(
                     invoice_id,
                     &tenant.pubkey,
                     amount_due,
                     currency,
-                    &tenant.nwc_url,
+                    &plain_nwc_url,
                 )
                 .await?
             {
@@ -857,6 +858,8 @@ impl Billing {
             return Ok(());
         }
 
+        let plain_nwc_url = crate::cipher::decrypt(&tenant.nwc_url)?;
+
         let invoices = self
             .stripe_list_invoices(&tenant.stripe_customer_id)
             .await?;
@@ -878,7 +881,7 @@ impl Billing {
                     &tenant.pubkey,
                     amount_due,
                     currency,
-                    &tenant.nwc_url,
+                    &plain_nwc_url,
                 )
                 .await?
             {

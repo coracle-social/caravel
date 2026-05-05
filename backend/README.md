@@ -44,6 +44,7 @@ Environment variables:
 | `LIVEKIT_API_KEY`        | LiveKit API key sent to zooid                                           | _optional_                           |
 | `LIVEKIT_API_SECRET`     | LiveKit API secret sent to zooid                                        | _optional_                           |
 | `NWC_URL`                | Platform NWC URL used to generate BOLT11 invoices                       | _required for invoice generation_    |
+| `ENCRYPTION_SECRET`      | Nostr secret key (hex or nsec) used to encrypt tenant NWC URLs at rest  | _required_                           |
 | `STRIPE_SECRET_KEY`      | Stripe API secret key used for billing API operations                   | _required_                           |
 | `STRIPE_WEBHOOK_SECRET`  | Stripe webhook signing secret used to verify `Stripe-Signature` headers | _required_                           |
 | `ROBOT_SECRET`           | Robot Nostr secret key                                                  | _required_                           |

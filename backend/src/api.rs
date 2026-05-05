@@ -445,6 +445,31 @@ struct IdentityResponse {
     is_admin: bool,
 }
 
+#[derive(Serialize)]
+struct TenantResponse {
+    pubkey: String,
+    nwc_is_set: bool,
+    nwc_error: Option<String>,
+    created_at: i64,
+    stripe_customer_id: String,
+    stripe_subscription_id: Option<String>,
+    past_due_at: Option<i64>,
+}
+
+impl From<Tenant> for TenantResponse {
+    fn from(t: Tenant) -> Self {
+        TenantResponse {
+            nwc_is_set: !t.nwc_url.is_empty(),
+            pubkey: t.pubkey,
+            nwc_error: t.nwc_error,
+            created_at: t.created_at,
+            stripe_customer_id: t.stripe_customer_id,
+            stripe_subscription_id: t.stripe_subscription_id,
+            past_due_at: t.past_due_at,
+        }
+    }
+}
+
 #[derive(Deserialize)]
 struct CreateRelayRequest {
     tenant: String,
@@ -486,7 +511,13 @@ async fn list_tenants(
     state.api.require_admin(&pubkey)?;
 
     match state.api.query.list_tenants().await {
-        Ok(tenants) => Ok(ok(StatusCode::OK, tenants)),
+        Ok(tenants) => Ok(ok(
+            StatusCode::OK,
+            tenants
+                .into_iter()
+                .map(TenantResponse::from)
+                .collect::<Vec<_>>(),
+        )),
         Err(e) => Ok(err(
             StatusCode::INTERNAL_SERVER_ERROR,
             "internal",
@@ -515,7 +546,7 @@ async fn create_tenant(
     let pubkey = state.api.extract_auth_pubkey(&headers)?;
 
     match state.api.query.get_tenant(&pubkey).await {
-        Ok(Some(t)) => Ok(ok(StatusCode::OK, t)),
+        Ok(Some(t)) => Ok(ok(StatusCode::OK, TenantResponse::from(t))),
         Ok(None) => {
             let stripe_customer_id = match state.api.billing.stripe_create_customer(&pubkey).await {
                 Ok(id) => id,
@@ -539,10 +570,10 @@ async fn create_tenant(
             };
 
             match state.api.command.create_tenant(&tenant).await {
-                Ok(()) => Ok(ok(StatusCode::OK, tenant)),
+                Ok(()) => Ok(ok(StatusCode::OK, TenantResponse::from(tenant))),
                 Err(e) if matches!(map_unique_error(&e), Some("pubkey-exists")) => {
                     match state.api.query.get_tenant(&pubkey).await {
-                        Ok(Some(t)) => Ok(ok(StatusCode::OK, t)),
+                        Ok(Some(t)) => Ok(ok(StatusCode::OK, TenantResponse::from(t))),
                         Ok(None) => Ok(err(
                             StatusCode::INTERNAL_SERVER_ERROR,
                             "internal",
@@ -585,7 +616,7 @@ async fn get_tenant(
     let auth = state.api.extract_auth_pubkey(&headers)?;
     state.api.require_admin_or_tenant(&auth, &pubkey)?;
     let tenant = state.api.get_tenant_or_404(&pubkey).await?;
-    Ok(ok(StatusCode::OK, tenant))
+    Ok(ok(StatusCode::OK, TenantResponse::from(tenant)))
 }
 
 async fn list_relays(
@@ -1103,7 +1134,12 @@ async fn update_tenant(
 
     let nwc_previously_empty = tenant.nwc_url.is_empty();
     if let Some(nwc_url) = payload.nwc_url {
-        tenant.nwc_url = nwc_url;
+        if nwc_url.is_empty() {
+            tenant.nwc_url = String::new();
+        } else {
+            tenant.nwc_url =
+                crate::cipher::encrypt(&nwc_url).map_err(|e| ApiError::Internal(e.to_string()))?;
+        }
     }
 
     match state.api.command.update_tenant(&tenant).await {
@@ -1122,7 +1158,7 @@ async fn update_tenant(
                     }
                 });
             }
-            Ok(ok(StatusCode::OK, tenant))
+            Ok(ok(StatusCode::OK, TenantResponse::from(tenant)))
         }
         Err(e) => Ok(err(
             StatusCode::INTERNAL_SERVER_ERROR,

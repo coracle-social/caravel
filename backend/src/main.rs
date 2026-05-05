@@ -1,5 +1,6 @@
 mod api;
 mod billing;
+mod cipher;
 mod command;
 mod infra;
 mod models;

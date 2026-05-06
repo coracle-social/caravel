@@ -275,9 +275,6 @@ impl Api {
             return Err(RelayValidationError::PremiumFeature);
         }
 
-        if relay.schema.is_empty() {
-            relay.schema = format!("{}_{}", relay.subdomain.replace('-', "_"), relay.id);
-        }
         if relay.status.is_empty() {
             relay.status = RELAY_STATUS_ACTIVE.to_string();
         }
@@ -754,10 +751,16 @@ async fn create_relay(
     let auth = state.api.extract_auth_pubkey(&headers)?;
     state.api.require_admin_or_tenant(&auth, &payload.tenant)?;
 
+    let relay_id = format!(
+        "{}_{}",
+        payload.subdomain.replace('-', "_"),
+        &uuid::Uuid::new_v4().simple().to_string()[..8]
+    );
+
     let mut relay = Relay {
-        id: uuid::Uuid::new_v4().to_string(),
+        id: relay_id.clone(),
         tenant: payload.tenant,
-        schema: String::new(),
+        schema: relay_id.clone(),
         subdomain: payload.subdomain,
         plan: payload.plan,
         stripe_subscription_item_id: None,

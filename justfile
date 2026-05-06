@@ -5,6 +5,9 @@ dev:
   cd frontend && bun dev &
   wait
 
+dev-backend:
+  cd backend && onchange src -ik -- bash -c 'RUST_LOG=backend=info cargo run'
+
 dev-frontend:
   cd frontend && bun run dev
 
@@ -27,7 +30,7 @@ build-backend:
   cd backend && cargo build
 
 build-frontend:
-  cd frontend && bun run build
+  cd frontend && bun i && bun run build
 
 fmt: fmt-backend
 

@@ -63,9 +63,9 @@ Tenants are customers of the service, identified by a nostr `pubkey`. Public met
 
 A relay is a nostr relay owned by a `tenant` and hosted by the attached zooid instance. Relay subdomains MUST be unique.
 
-- `id` - a random ID identifying the relay
+- `id` - calculated based on `subdomain` + 8 random hex chars
 - `tenant` - the tenant's pubkey
-- `schema` - the relay's db schema (read_only, calculated based on `subdomain` + `id`)
+- `schema` - the relay's db schema (read only, same as `id`)
 - `subdomain` - the relay's subdomain
 - `plan` - the relay's plan
 - `stripe_subscription_item_id` (nullable) - the Stripe subscription item id. Only set for relays on paid plans.

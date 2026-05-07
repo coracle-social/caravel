@@ -1,5 +1,5 @@
 import { useParams } from "@solidjs/router"
-import { createMemo, createResource, createSignal, Show } from "solid-js"
+import { createEffect, createMemo, createResource, createSignal, Show } from "solid-js"
 import BackLink from "@/components/BackLink"
 import PageContainer from "@/components/PageContainer"
 import PaymentDialog from "@/components/PaymentDialog"
@@ -28,12 +28,19 @@ export default function RelayDetail() {
   })
   const loading = useMinLoading(() => relay.loading && !relay())
   const [activity] = useRelayActivity(relayId)
-  const { busy, handleDeactivate, handleReactivate, handleUpdatePlan, pendingInvoice, clearPendingInvoice, toggles } = useRelayToggles(relayId, relay, { refetch, mutate })
+  const { busy, handleDeactivate, handleReactivate, handleUpdatePlan, pendingInvoice, clearPendingInvoice, pendingPaymentSetup, clearPendingPaymentSetup, toggles } = useRelayToggles(relayId, relay, { refetch, mutate })
 
   const [tenant, { refetch: refetchTenant }] = useTenant()
   const [paymentSetupOpen, setPaymentSetupOpen] = createSignal(false)
   const [invoiceDialogOpen, setInvoiceDialogOpen] = createSignal(false)
   const [paymentBannerDismissed, setPaymentBannerDismissed] = createSignal(false)
+
+  createEffect(() => {
+    if (pendingPaymentSetup() && !pendingInvoice()) {
+      setPaymentSetupOpen(true)
+      clearPendingPaymentSetup()
+    }
+  })
 
   const isPaidRelay = createMemo(() => {
     const r = relay()

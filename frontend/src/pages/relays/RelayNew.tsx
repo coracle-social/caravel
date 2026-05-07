@@ -3,13 +3,15 @@ import { useNavigate } from "@solidjs/router"
 import BackLink from "@/components/BackLink"
 import PageContainer from "@/components/PageContainer"
 import PaymentDialog from "@/components/PaymentDialog"
+import PaymentSetup from "@/components/PaymentSetup"
 import RelayForm, { type RelayFormValues } from "@/components/RelayForm"
-import { createRelayForActiveTenant, getLatestOpenInvoice } from "@/lib/hooks"
+import { createRelayForActiveTenant, getLatestOpenInvoice, tenantNeedsPaymentSetup } from "@/lib/hooks"
 import type { Invoice } from "@/lib/api"
 
 export default function RelayNew() {
   const navigate = useNavigate()
   const [pendingInvoice, setPendingInvoice] = createSignal<Invoice | undefined>()
+  const [paymentSetupOpen, setPaymentSetupOpen] = createSignal(false)
   let createdRelayId = ""
 
   async function handleSubmit(values: RelayFormValues) {
@@ -17,9 +19,14 @@ export default function RelayNew() {
     createdRelayId = relay.id
 
     if (values.plan !== "free") {
-      const invoice = await getLatestOpenInvoice()
-      if (invoice) {
-        setPendingInvoice(invoice)
+      const needsSetup = await tenantNeedsPaymentSetup()
+      if (needsSetup) {
+        const invoice = await getLatestOpenInvoice()
+        if (invoice) {
+          setPendingInvoice(invoice)
+          return
+        }
+        setPaymentSetupOpen(true)
         return
       }
     }
@@ -27,8 +34,13 @@ export default function RelayNew() {
     navigate(`/relays/${relay.id}`)
   }
 
-  function handleDialogClose() {
+  function handleInvoiceClose() {
     setPendingInvoice(undefined)
+    setPaymentSetupOpen(true)
+  }
+
+  function handleSetupClose() {
+    setPaymentSetupOpen(false)
     navigate(`/relays/${createdRelayId}`)
   }
 
@@ -47,10 +59,14 @@ export default function RelayNew() {
           <PaymentDialog
             invoice={inv()}
             open={true}
-            onClose={handleDialogClose}
+            onClose={handleInvoiceClose}
           />
         )}
       </Show>
+      <PaymentSetup
+        open={paymentSetupOpen()}
+        onClose={handleSetupClose}
+      />
     </PageContainer>
   )
 }

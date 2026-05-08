@@ -160,6 +160,25 @@ impl Robot {
         Ok(relays)
     }
 
+    pub async fn fetch_nostr_name(&self, pubkey: &str) -> Option<String> {
+        let pubkey = PublicKey::parse(pubkey).ok()?;
+        let filter = Filter::new().author(pubkey).kind(Kind::Metadata).limit(1);
+        let events = self
+            .indexer_client
+            .fetch_events(filter, Duration::from_secs(5))
+            .await
+            .ok()?;
+        let event = events.into_iter().max_by_key(|e| e.created_at)?;
+        let content: serde_json::Value = serde_json::from_str(&event.content).ok()?;
+        let name = content
+            .get("display_name")
+            .or_else(|| content.get("name"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())?;
+        Some(name)
+    }
+
     async fn fetch_messaging_relays_from_outbox(
         &self,
         recipient: &str,

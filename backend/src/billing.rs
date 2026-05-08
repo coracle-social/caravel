@@ -151,7 +151,11 @@ impl Billing {
             return Ok(());
         }
 
-        tracing::info!(source, relay_count = relays.len(), "reconciling relay billing state");
+        tracing::info!(
+            source,
+            relay_count = relays.len(),
+            "reconciling relay billing state"
+        );
 
         for relay in relays {
             if let Err(error) = self.sync_relay_subscription_for_relay(&relay).await {
@@ -765,8 +769,9 @@ impl Billing {
     }
 
     pub async fn stripe_create_customer(&self, tenant_pubkey: &str) -> Result<String> {
-        let short_pubkey: String = tenant_pubkey.chars().take(12).collect();
-        let display_name = format!("Caravel tenant {short_pubkey}");
+        let short_pubkey: String = tenant_pubkey.chars().take(8).collect();
+        let nostr_name = self.robot.fetch_nostr_name(tenant_pubkey).await;
+        let display_name = nostr_name.unwrap_or_else(|| short_pubkey.clone());
         let idempotency_key = self.idempotency_key(&["create_customer", tenant_pubkey]);
 
         let resp = self
@@ -998,8 +1003,7 @@ impl Billing {
         customer_id: &str,
         price_id: &str,
     ) -> Result<(String, String)> {
-        let idempotency_key =
-            self.idempotency_key(&["create_subscription", customer_id, price_id]);
+        let idempotency_key = self.idempotency_key(&["create_subscription", customer_id, price_id]);
         let resp = self
             .http
             .post(format!("{STRIPE_API}/subscriptions"))
@@ -1726,5 +1730,4 @@ mod tests {
         assert_eq!(billing.stripe_secret_key, "sk_test_dummy");
         assert_eq!(billing.stripe_webhook_secret, "whsec_test_dummy");
     }
-
 }

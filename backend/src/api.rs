@@ -3,7 +3,7 @@ use std::sync::Arc;
 use anyhow::{Result, anyhow};
 use axum::{
     Json, Router,
-    extract::{Path, State},
+    extract::{Path, Query as QueryParams, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -1101,10 +1101,16 @@ async fn get_invoice_bolt11(
     }
 }
 
+#[derive(serde::Deserialize)]
+struct StripeSessionParams {
+    return_url: Option<String>,
+}
+
 async fn create_stripe_session(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path(pubkey): Path<String>,
+    QueryParams(params): QueryParams<StripeSessionParams>,
 ) -> std::result::Result<Response, ApiError> {
     let auth = state.api.extract_auth_pubkey(&headers)?;
     state.api.require_admin_or_tenant(&auth, &pubkey)?;
@@ -1113,7 +1119,7 @@ async fn create_stripe_session(
     match state
         .api
         .billing
-        .stripe_create_portal_session(&tenant.stripe_customer_id)
+        .stripe_create_portal_session(&tenant.stripe_customer_id, params.return_url.as_deref())
         .await
     {
         Ok(url) => Ok(ok(StatusCode::OK, serde_json::json!({ "url": url }))),

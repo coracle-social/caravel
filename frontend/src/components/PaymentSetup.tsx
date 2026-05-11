@@ -40,7 +40,7 @@ export default function PaymentSetup(props: PaymentSetupProps) {
     setRedirecting(true)
     setError("")
     try {
-      const { url } = await createPortalSession(account()!.pubkey)
+      const { url } = await createPortalSession(account()!.pubkey, window.location.href)
       window.location.href = url
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to open billing portal")

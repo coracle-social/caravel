@@ -253,8 +253,9 @@ export function reactivateRelay(id: string) {
   return callApi<undefined, void>("POST", `/relays/${id}/reactivate`)
 }
 
-export function createPortalSession(pubkey: string) {
-  return callApi<undefined, { url: string }>("GET", `/tenants/${pubkey}/stripe/session`)
+export function createPortalSession(pubkey: string, returnUrl?: string) {
+  const query = returnUrl ? `?return_url=${encodeURIComponent(returnUrl)}` : ""
+  return callApi<undefined, { url: string }>("GET", `/tenants/${pubkey}/stripe/session${query}`)
 }
 
 export function getInvoiceBolt11(invoiceId: string) {

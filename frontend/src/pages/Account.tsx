@@ -49,7 +49,7 @@ export default function Account() {
   async function openPortal() {
     setPortalLoading(true)
     try {
-      const { url } = await createPortalSession(account()!.pubkey)
+      const { url } = await createPortalSession(account()!.pubkey, window.location.href)
       window.location.href = url
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to open billing portal")

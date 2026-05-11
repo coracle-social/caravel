@@ -966,12 +966,20 @@ impl Billing {
         Ok(())
     }
 
-    pub async fn stripe_create_portal_session(&self, customer_id: &str) -> Result<String> {
+    pub async fn stripe_create_portal_session(
+        &self,
+        customer_id: &str,
+        return_url: Option<&str>,
+    ) -> Result<String> {
+        let mut params = vec![("customer", customer_id.to_string())];
+        if let Some(url) = return_url {
+            params.push(("return_url", url.to_string()));
+        }
         let resp = self
             .http
             .post(format!("{STRIPE_API}/billing_portal/sessions"))
             .bearer_auth(&self.stripe_secret_key)
-            .form(&[("customer", customer_id)])
+            .form(&params)
             .send()
             .await?;
 

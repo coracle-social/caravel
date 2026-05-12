@@ -5,11 +5,10 @@ use nwc::prelude::{
     PayInvoiceRequest as NwcPayInvoiceRequest, TransactionState,
 };
 use sha2::Sha256;
+use std::collections::BTreeMap;
 
 use crate::command::Command;
-use crate::models::{
-    Activity, RELAY_STATUS_ACTIVE, RELAY_STATUS_DELINQUENT, RELAY_STATUS_INACTIVE, Relay,
-};
+use crate::models::{Activity, RELAY_STATUS_ACTIVE, RELAY_STATUS_DELINQUENT, Relay};
 use crate::query::Query;
 use crate::robot::Robot;
 
@@ -145,24 +144,24 @@ impl Billing {
     }
 
     async fn reconcile_relay_subscriptions(&self, source: &str) -> Result<()> {
-        let relays = self.query.list_relays().await?;
+        let tenants = self.query.list_tenants().await?;
 
-        if relays.is_empty() {
+        if tenants.is_empty() {
             return Ok(());
         }
 
         tracing::info!(
             source,
-            relay_count = relays.len(),
+            tenant_count = tenants.len(),
             "reconciling relay billing state"
         );
 
-        for relay in relays {
-            if let Err(error) = self.sync_relay_subscription_for_relay(&relay).await {
+        for tenant in tenants {
+            if let Err(error) = self.sync_tenant_subscription(&tenant.pubkey).await {
                 tracing::error!(
                     source,
-                    relay = %relay.id,
-                    error = %error,
+                    tenant = %tenant.pubkey,
+                    error = ?error,
                     "failed to reconcile relay billing state"
                 );
             }
@@ -194,113 +193,174 @@ impl Billing {
             return Ok(());
         };
 
-        self.sync_relay_subscription_for_relay(&relay).await
+        self.sync_tenant_subscription(&relay.tenant).await
     }
 
-    async fn sync_relay_subscription_for_relay(&self, relay: &Relay) -> Result<()> {
-        let Some(tenant) = self.query.get_tenant(&relay.tenant).await? else {
+    /// Reconciles a tenant's single Stripe subscription with the set of relays that
+    /// should be billed.
+    ///
+    /// Stripe forbids two subscription items on the same subscription from sharing a
+    /// price, so billing is modeled as one subscription item per plan (price) with
+    /// `quantity` equal to the number of the tenant's `active` relays on that plan.
+    /// Every such relay's `stripe_subscription_item_id` points at the shared item for
+    /// its plan; relays that aren't billed (free, inactive, delinquent) have it
+    /// cleared. Must be idempotent.
+    async fn sync_tenant_subscription(&self, tenant_pubkey: &str) -> Result<()> {
+        let Some(mut tenant) = self.query.get_tenant(tenant_pubkey).await? else {
             return Ok(());
         };
 
-        let plan = Query::get_plan(&relay.plan)
-            .ok_or_else(|| anyhow!("unknown relay plan id: {}", relay.plan))?;
+        let relays = self.query.list_relays_for_tenant(tenant_pubkey).await?;
 
-        // Free plan: remove subscription item if exists, then clean up
-        if plan.id == "free" {
-            if let Some(ref item_id) = relay.stripe_subscription_item_id {
-                self.stripe_delete_subscription_item(item_id).await?;
+        // Desired billed state: price id -> quantity, plus which relays map to which price.
+        let mut desired: BTreeMap<String, i64> = BTreeMap::new();
+        let mut relay_price: BTreeMap<String, String> = BTreeMap::new();
+        for relay in &relays {
+            if relay.status != RELAY_STATUS_ACTIVE {
+                continue;
+            }
+            let Some(plan) = Query::get_plan(&relay.plan) else {
+                tracing::warn!(relay = %relay.id, plan = %relay.plan, "active relay on unknown plan; not billed");
+                continue;
+            };
+            let Some(price_id) = plan.stripe_price_id else {
+                continue; // free plan: nothing to bill
+            };
+            if price_id.trim().is_empty() {
+                tracing::warn!(relay = %relay.id, plan = %relay.plan, "active relay on a paid plan with no configured Stripe price id; not billed");
+                continue;
+            }
+            *desired.entry(price_id.clone()).or_insert(0) += 1;
+            relay_price.insert(relay.id.clone(), price_id);
+        }
+
+        // Resolve the live subscription, dropping a stale reference to one that no
+        // longer exists or has been canceled.
+        let subscription = match tenant.stripe_subscription_id.as_deref() {
+            Some(subscription_id) => match self.stripe_get_subscription(subscription_id).await? {
+                Some(sub)
+                    if !matches!(
+                        sub["status"].as_str().unwrap_or_default(),
+                        "canceled" | "incomplete_expired"
+                    ) =>
+                {
+                    Some(sub)
+                }
+                _ => {
+                    self.command
+                        .clear_tenant_subscription(tenant_pubkey)
+                        .await?;
+                    tenant.stripe_subscription_id = None;
+                    None
+                }
+            },
+            None => None,
+        };
+
+        // No relays to bill: tear everything down.
+        if desired.is_empty() {
+            if let Some(ref subscription_id) = tenant.stripe_subscription_id {
+                self.stripe_cancel_subscription(subscription_id).await?;
                 self.command
-                    .delete_relay_subscription_item(&relay.id)
+                    .clear_tenant_subscription(tenant_pubkey)
                     .await?;
-                self.validate_downgrade_proration(&tenant, "free-plan-downgrade")
-                    .await;
             }
-            self.cleanup_empty_subscription(&tenant.pubkey).await?;
+            for relay in &relays {
+                if relay.stripe_subscription_item_id.is_some() {
+                    self.command
+                        .delete_relay_subscription_item(&relay.id)
+                        .await?;
+                }
+            }
             return Ok(());
         }
 
-        // Inactive relay: remove subscription item if exists, then clean up
-        if relay.status == RELAY_STATUS_INACTIVE || relay.status == RELAY_STATUS_DELINQUENT {
-            if let Some(ref item_id) = relay.stripe_subscription_item_id {
-                self.stripe_delete_subscription_item(item_id).await?;
+        // Bring the subscription's items in line with `desired`. `price_to_item` ends
+        // up mapping every desired price to its (possibly newly created) item id.
+        let mut price_to_item: BTreeMap<String, String> = BTreeMap::new();
+        let mut downgraded = false;
+
+        match subscription {
+            None => {
+                let (subscription_id, items) = self
+                    .stripe_create_subscription(&tenant.stripe_customer_id, &desired)
+                    .await?;
                 self.command
-                    .delete_relay_subscription_item(&relay.id)
+                    .set_tenant_subscription(tenant_pubkey, &subscription_id)
                     .await?;
+                tenant.stripe_subscription_id = Some(subscription_id);
+                price_to_item = items;
             }
-            self.cleanup_empty_subscription(&tenant.pubkey).await?;
-            return Ok(());
-        }
+            Some(sub) => {
+                let subscription_id = sub["id"]
+                    .as_str()
+                    .ok_or_else(|| anyhow!("missing subscription id"))?
+                    .to_string();
 
-        // Active relay on a paid plan
-        let Some(ref stripe_price_id) = plan.stripe_price_id else {
-            return Ok(());
-        };
+                // price id -> (item id, quantity) for items currently on the subscription.
+                let mut current: BTreeMap<String, (String, i64)> = BTreeMap::new();
+                for item in sub["items"]["data"].as_array().into_iter().flatten() {
+                    let (Some(item_id), Some(price_id)) =
+                        (item["id"].as_str(), item["price"]["id"].as_str())
+                    else {
+                        continue;
+                    };
+                    let quantity = item["quantity"].as_i64().unwrap_or(1);
+                    current.insert(price_id.to_string(), (item_id.to_string(), quantity));
+                }
 
-        // Ensure subscription exists
-        if tenant.stripe_subscription_id.is_none() {
-            let (subscription_id, item_id) = self
-                .stripe_create_subscription(&tenant.stripe_customer_id, stripe_price_id)
-                .await?;
-            self.command
-                .set_tenant_subscription(&tenant.pubkey, &subscription_id)
-                .await?;
-            self.command
-                .set_relay_subscription_item(&relay.id, &item_id)
-                .await?;
-            return Ok(());
-        }
+                for (price_id, &quantity) in &desired {
+                    if let Some((item_id, current_quantity)) = current.remove(price_id) {
+                        if current_quantity != quantity {
+                            if quantity < current_quantity {
+                                downgraded = true;
+                            }
+                            self.stripe_set_subscription_item_quantity(&item_id, quantity)
+                                .await?;
+                        }
+                        price_to_item.insert(price_id.clone(), item_id);
+                    } else {
+                        let item_id = self
+                            .stripe_create_subscription_item(&subscription_id, price_id, quantity)
+                            .await?;
+                        price_to_item.insert(price_id.clone(), item_id);
+                    }
+                }
 
-        // Sync the subscription item: create or update
-        let subscription_id = tenant.stripe_subscription_id.as_ref().unwrap();
-        let item_id = if let Some(ref existing_item_id) = relay.stripe_subscription_item_id {
-            let is_downgrade = self
-                .is_subscription_item_downgrade(existing_item_id, plan.amount)
-                .await
-                .unwrap_or_else(|error| {
-                    tracing::warn!(
-                        error = %error,
-                        relay_id = %relay.id,
-                        "failed to determine relay plan downgrade direction"
-                    );
-                    false
-                });
-
-            let updated_item_id = self
-                .stripe_update_subscription_item(existing_item_id, stripe_price_id)
-                .await?;
-
-            if is_downgrade {
-                self.validate_downgrade_proration(&tenant, "paid-plan-downgrade")
-                    .await;
+                // Items for plans no relay is on anymore.
+                for (_, (item_id, _)) in current {
+                    downgraded = true;
+                    self.stripe_delete_subscription_item(&item_id).await?;
+                }
             }
-
-            updated_item_id
-        } else {
-            self.stripe_create_subscription_item(subscription_id, stripe_price_id)
-                .await?
-        };
-        self.command
-            .set_relay_subscription_item(&relay.id, &item_id)
-            .await?;
-
-        Ok(())
-    }
-
-    async fn cleanup_empty_subscription(&self, tenant_pubkey: &str) -> Result<()> {
-        let has_paid = self.query.has_active_paid_relays(tenant_pubkey).await?;
-        if has_paid {
-            return Ok(());
         }
 
-        let Some(tenant) = self.query.get_tenant(tenant_pubkey).await? else {
-            return Ok(());
-        };
+        // Point each relay at the shared item for its plan (or clear it if unbilled).
+        for relay in &relays {
+            match relay_price.get(&relay.id) {
+                Some(price_id) => {
+                    let item_id = price_to_item
+                        .get(price_id)
+                        .ok_or_else(|| anyhow!("missing subscription item for price {price_id}"))?;
+                    if relay.stripe_subscription_item_id.as_deref() != Some(item_id.as_str()) {
+                        self.command
+                            .set_relay_subscription_item(&relay.id, item_id)
+                            .await?;
+                    }
+                }
+                None => {
+                    if relay.stripe_subscription_item_id.is_some() {
+                        self.command
+                            .delete_relay_subscription_item(&relay.id)
+                            .await?;
+                    }
+                }
+            }
+        }
 
-        if let Some(ref subscription_id) = tenant.stripe_subscription_id {
-            self.stripe_cancel_subscription(subscription_id).await?;
-            self.command
-                .clear_tenant_subscription(tenant_pubkey)
-                .await?;
+        if downgraded {
+            self.validate_downgrade_proration(&tenant, "tenant-subscription-sync")
+                .await;
         }
 
         Ok(())
@@ -624,33 +684,6 @@ impl Billing {
         Ok(())
     }
 
-    async fn is_subscription_item_downgrade(
-        &self,
-        item_id: &str,
-        next_plan_amount: i64,
-    ) -> Result<bool> {
-        let Some(current_price_id) = self.stripe_get_subscription_item_price_id(item_id).await?
-        else {
-            return Ok(false);
-        };
-
-        let Some(current_plan_amount) = Self::plan_amount_from_price_id(&current_price_id) else {
-            return Ok(false);
-        };
-
-        Ok(next_plan_amount < current_plan_amount)
-    }
-
-    fn plan_amount_from_price_id(price_id: &str) -> Option<i64> {
-        Query::list_plans().into_iter().find_map(|plan| {
-            if plan.stripe_price_id.as_deref() == Some(price_id) {
-                Some(plan.amount)
-            } else {
-                None
-            }
-        })
-    }
-
     async fn validate_downgrade_proration(&self, tenant: &crate::models::Tenant, context: &str) {
         match self
             .stripe_preview_upcoming_invoice(
@@ -786,7 +819,7 @@ impl Billing {
             .send()
             .await?;
 
-        let body: serde_json::Value = resp.error_for_status()?.json().await?;
+        let body: serde_json::Value = stripe_error_for_status(resp).await?.json().await?;
         let customer_id = body["id"]
             .as_str()
             .ok_or_else(|| anyhow!("missing customer id"))?;
@@ -807,7 +840,7 @@ impl Billing {
             .send()
             .await?;
 
-        let body: serde_json::Value = resp.error_for_status()?.json().await?;
+        let body: serde_json::Value = stripe_error_for_status(resp).await?.json().await?;
         Ok(body["data"].clone())
     }
 
@@ -828,7 +861,7 @@ impl Billing {
             });
         }
 
-        let body: serde_json::Value = resp.error_for_status()?.json().await?;
+        let body: serde_json::Value = stripe_error_for_status(resp).await?.json().await?;
         Ok(body)
     }
 
@@ -983,7 +1016,7 @@ impl Billing {
             .send()
             .await?;
 
-        let body: serde_json::Value = resp.error_for_status()?.json().await?;
+        let body: serde_json::Value = stripe_error_for_status(resp).await?.json().await?;
         let url = body["url"]
             .as_str()
             .ok_or_else(|| anyhow!("missing portal session url"))?
@@ -1006,55 +1039,105 @@ impl Billing {
         hex::encode(mac.finalize().into_bytes())
     }
 
+    /// Fetches a subscription, returning `None` if Stripe no longer knows about it
+    /// (so callers can recover from a stale `stripe_subscription_id`).
+    async fn stripe_get_subscription(
+        &self,
+        subscription_id: &str,
+    ) -> Result<Option<serde_json::Value>> {
+        let resp = self
+            .http
+            .get(format!("{STRIPE_API}/subscriptions/{subscription_id}"))
+            .bearer_auth(&self.stripe_secret_key)
+            .send()
+            .await?;
+
+        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+
+        let body: serde_json::Value = stripe_error_for_status(resp).await?.json().await?;
+        Ok(Some(body))
+    }
+
+    /// Creates a subscription with one item per `(price_id, quantity)` entry. Returns
+    /// the subscription id and a map from price id to the created subscription item id.
     async fn stripe_create_subscription(
         &self,
         customer_id: &str,
-        price_id: &str,
-    ) -> Result<(String, String)> {
-        let idempotency_key = self.idempotency_key(&["create_subscription", customer_id, price_id]);
+        items: &BTreeMap<String, i64>,
+    ) -> Result<(String, BTreeMap<String, String>)> {
+        let mut form: Vec<(String, String)> = vec![
+            ("customer".to_string(), customer_id.to_string()),
+            (
+                "collection_method".to_string(),
+                "charge_automatically".to_string(),
+            ),
+        ];
+        let mut key_parts: Vec<String> =
+            vec!["create_subscription".to_string(), customer_id.to_string()];
+        for (index, (price_id, quantity)) in items.iter().enumerate() {
+            form.push((format!("items[{index}][price]"), price_id.clone()));
+            form.push((format!("items[{index}][quantity]"), quantity.to_string()));
+            key_parts.push(format!("{price_id}={quantity}"));
+        }
+        let key_refs: Vec<&str> = key_parts.iter().map(String::as_str).collect();
+        let idempotency_key = self.idempotency_key(&key_refs);
+
         let resp = self
             .http
             .post(format!("{STRIPE_API}/subscriptions"))
             .bearer_auth(&self.stripe_secret_key)
             .header("Idempotency-Key", idempotency_key)
-            .form(&[
-                ("customer", customer_id),
-                ("collection_method", "charge_automatically"),
-                ("items[0][price]", price_id),
-            ])
+            .form(&form)
             .send()
             .await?;
 
-        let body: serde_json::Value = resp.error_for_status()?.json().await?;
+        let body: serde_json::Value = stripe_error_for_status(resp).await?.json().await?;
         let subscription_id = body["id"]
             .as_str()
             .ok_or_else(|| anyhow!("missing subscription id"))?
             .to_string();
-        let item_id = body["items"]["data"][0]["id"]
-            .as_str()
-            .ok_or_else(|| anyhow!("missing subscription item id"))?
-            .to_string();
+        let mut price_to_item = BTreeMap::new();
+        for item in body["items"]["data"]
+            .as_array()
+            .ok_or_else(|| anyhow!("missing subscription items"))?
+        {
+            let item_id = item["id"]
+                .as_str()
+                .ok_or_else(|| anyhow!("missing subscription item id"))?;
+            let price_id = item["price"]["id"]
+                .as_str()
+                .ok_or_else(|| anyhow!("missing subscription item price id"))?;
+            price_to_item.insert(price_id.to_string(), item_id.to_string());
+        }
 
-        Ok((subscription_id, item_id))
+        Ok((subscription_id, price_to_item))
     }
 
     async fn stripe_create_subscription_item(
         &self,
         subscription_id: &str,
         price_id: &str,
+        quantity: i64,
     ) -> Result<String> {
         let idempotency_key =
             self.idempotency_key(&["create_subscription_item", subscription_id, price_id]);
+        let quantity = quantity.to_string();
         let resp = self
             .http
             .post(format!("{STRIPE_API}/subscription_items"))
             .bearer_auth(&self.stripe_secret_key)
             .header("Idempotency-Key", idempotency_key)
-            .form(&[("subscription", subscription_id), ("price", price_id)])
+            .form(&[
+                ("subscription", subscription_id),
+                ("price", price_id),
+                ("quantity", quantity.as_str()),
+            ])
             .send()
             .await?;
 
-        let body: serde_json::Value = resp.error_for_status()?.json().await?;
+        let body: serde_json::Value = stripe_error_for_status(resp).await?.json().await?;
         let item_id = body["id"]
             .as_str()
             .ok_or_else(|| anyhow!("missing subscription item id"))?
@@ -1063,76 +1146,61 @@ impl Billing {
         Ok(item_id)
     }
 
-    async fn stripe_update_subscription_item(
+    /// Sets a subscription item's quantity. No idempotency key: this is a
+    /// reconcile-to-desired-state write, and re-applying the same target is a no-op.
+    async fn stripe_set_subscription_item_quantity(
         &self,
         item_id: &str,
-        price_id: &str,
-    ) -> Result<String> {
-        let idempotency_key =
-            self.idempotency_key(&["update_subscription_item", item_id, price_id]);
+        quantity: i64,
+    ) -> Result<()> {
         let resp = self
             .http
             .post(format!("{STRIPE_API}/subscription_items/{item_id}"))
             .bearer_auth(&self.stripe_secret_key)
-            .header("Idempotency-Key", idempotency_key)
-            .form(&[("price", price_id)])
+            .form(&[("quantity", quantity.to_string())])
             .send()
             .await?;
+        stripe_error_for_status(resp).await?;
 
-        let body: serde_json::Value = resp.error_for_status()?.json().await?;
-        let id = body["id"]
-            .as_str()
-            .ok_or_else(|| anyhow!("missing subscription item id"))?
-            .to_string();
-
-        Ok(id)
+        Ok(())
     }
 
     async fn stripe_delete_subscription_item(&self, item_id: &str) -> Result<()> {
-        self.http
+        let resp = self
+            .http
             .delete(format!("{STRIPE_API}/subscription_items/{item_id}"))
             .bearer_auth(&self.stripe_secret_key)
             .send()
-            .await?
-            .error_for_status()?;
+            .await?;
+        stripe_error_for_status(resp).await?;
 
         Ok(())
     }
 
     async fn stripe_cancel_subscription(&self, subscription_id: &str) -> Result<()> {
-        self.http
+        let resp = self
+            .http
             .delete(format!("{STRIPE_API}/subscriptions/{subscription_id}"))
             .bearer_auth(&self.stripe_secret_key)
             .send()
-            .await?
-            .error_for_status()?;
+            .await?;
+        stripe_error_for_status(resp).await?;
 
         Ok(())
     }
 
     async fn stripe_pay_invoice(&self, invoice_id: &str) -> Result<()> {
         let idempotency_key = self.idempotency_key(&["pay_invoice", invoice_id]);
-        self.http
+        let resp = self
+            .http
             .post(format!("{STRIPE_API}/invoices/{invoice_id}/pay"))
             .bearer_auth(&self.stripe_secret_key)
             .header("Idempotency-Key", idempotency_key)
             .send()
-            .await?
-            .error_for_status()?;
+            .await?;
+        stripe_error_for_status(resp).await?;
 
         Ok(())
-    }
-
-    async fn stripe_get_subscription_item_price_id(&self, item_id: &str) -> Result<Option<String>> {
-        let resp = self
-            .http
-            .get(format!("{STRIPE_API}/subscription_items/{item_id}"))
-            .bearer_auth(&self.stripe_secret_key)
-            .send()
-            .await?;
-
-        let body: serde_json::Value = resp.error_for_status()?.json().await?;
-        Ok(body["price"]["id"].as_str().map(ToString::to_string))
     }
 
     async fn stripe_preview_upcoming_invoice(
@@ -1150,20 +1218,24 @@ impl Billing {
             req = req.query(&[("subscription", subscription_id)]);
         }
 
-        let body: serde_json::Value = req.send().await?.error_for_status()?.json().await?;
+        let body: serde_json::Value = stripe_error_for_status(req.send().await?)
+            .await?
+            .json()
+            .await?;
         Ok(body)
     }
 
     async fn stripe_pay_invoice_out_of_band(&self, invoice_id: &str) -> Result<()> {
         let idempotency_key = self.idempotency_key(&["pay_invoice_oob", invoice_id]);
-        self.http
+        let resp = self
+            .http
             .post(format!("{STRIPE_API}/invoices/{invoice_id}/pay"))
             .bearer_auth(&self.stripe_secret_key)
             .header("Idempotency-Key", idempotency_key)
             .form(&[("paid_out_of_band", "true")])
             .send()
-            .await?
-            .error_for_status()?;
+            .await?;
+        stripe_error_for_status(resp).await?;
 
         Ok(())
     }
@@ -1177,7 +1249,7 @@ impl Billing {
             .send()
             .await?;
 
-        let body: serde_json::Value = resp.error_for_status()?.json().await?;
+        let body: serde_json::Value = stripe_error_for_status(resp).await?.json().await?;
         let has_method = body["data"]
             .as_array()
             .map(|a| !a.is_empty())
@@ -1389,6 +1461,45 @@ impl Billing {
 
         Ok(exponent)
     }
+}
+
+/// Like [`reqwest::Response::error_for_status`], but on a 4xx/5xx response it reads
+/// the body and folds Stripe's JSON error payload (`error.message`/`code`/`param`)
+/// into the returned error, so callers get an actionable message instead of a bare
+/// "400 Bad Request" with only the URL.
+async fn stripe_error_for_status(resp: reqwest::Response) -> Result<reqwest::Response> {
+    let status = resp.status();
+    if !status.is_client_error() && !status.is_server_error() {
+        return Ok(resp);
+    }
+
+    let url = resp.url().clone();
+    let body = resp.text().await.unwrap_or_default();
+    let detail = serde_json::from_str::<serde_json::Value>(&body)
+        .ok()
+        .and_then(|json| {
+            let error = &json["error"];
+            let message = error["message"].as_str()?.to_string();
+            let mut detail = message;
+            if let Some(code) = error["type"].as_str().or_else(|| error["code"].as_str()) {
+                detail.push_str(&format!(" [{code}]"));
+            }
+            if let Some(param) = error["param"].as_str() {
+                detail.push_str(&format!(" (param: {param})"));
+            }
+            Some(detail)
+        })
+        .unwrap_or_else(|| {
+            if body.trim().is_empty() {
+                "<empty response body>".to_string()
+            } else {
+                body
+            }
+        });
+
+    Err(anyhow!(
+        "Stripe API request to {url} failed with status {status}: {detail}"
+    ))
 }
 
 pub async fn fetch_btc_spot_price_from_base(

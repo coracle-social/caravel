@@ -39,10 +39,6 @@ Members:
 
 - Returns the tenant matching the given `stripe_customer_id`
 
-## `pub fn has_active_paid_relays(&self, tenant_id: &str) -> Result<bool>`
-
-- Returns true if the tenant has any relays where `status = 'active'` and `plan != 'free'`
-
 ## `pub fn list_activity_for_relay(&self, relay_id: &str) -> Result<Vec<Activity>>`
 
 - Returns all activity where `resource_type = 'relay'` and `resource_id = relay_id`

@@ -47,6 +47,8 @@ Environment variables:
 | `ENCRYPTION_SECRET`      | Nostr secret key (hex or nsec) used to encrypt tenant NWC URLs at rest  | _required_                           |
 | `STRIPE_SECRET_KEY`      | Stripe API secret key used for billing API operations                   | _required_                           |
 | `STRIPE_WEBHOOK_SECRET`  | Stripe webhook signing secret used to verify `Stripe-Signature` headers | _required_                           |
+| `STRIPE_PRICE_BASIC`     | Stripe price ID (`price_...`) backing the Basic plan                    | _required for paid plans_            |
+| `STRIPE_PRICE_GROWTH`    | Stripe price ID (`price_...`) backing the Growth plan                   | _required for paid plans_            |
 | `ROBOT_SECRET`           | Robot Nostr secret key                                                  | _required_                           |
 | `ROBOT_NAME`             | Robot display name (kind `0`)                                           | _optional_                           |
 | `ROBOT_DESCRIPTION`      | Robot description (kind `0`)                                            | _optional_                           |

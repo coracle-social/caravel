@@ -184,17 +184,6 @@ impl Query {
         Ok(bolt11)
     }
 
-    pub async fn has_active_paid_relays(&self, tenant_id: &str) -> Result<bool> {
-        let plans = sqlx::query_scalar::<_, String>(
-            "SELECT plan FROM relay WHERE tenant = ? AND status = 'active'",
-        )
-        .bind(tenant_id)
-        .fetch_all(&self.pool)
-        .await?;
-
-        Ok(plans.into_iter().any(|plan| Self::is_paid_plan(&plan)))
-    }
-
     pub async fn list_activity_for_relay(&self, relay_id: &str) -> Result<Vec<Activity>> {
         let rows = sqlx::query_as::<_, Activity>(
             "SELECT id, tenant, created_at, activity_type, resource_type, resource_id

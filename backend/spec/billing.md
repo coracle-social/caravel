@@ -24,18 +24,23 @@ Members:
 
 ## `pub fn sync_relay_subscription(&self, activity: &Activity)`
 
-Manages the Stripe subscription and subscription items for a relay's tenant. Only paid (non-free) relays interact with Stripe. Free-only tenants have no subscription. Must be idempotent.
+Resolves the relay associated with `activity` and reconciles that relay's tenant via `sync_tenant_subscription`. The startup/lagged reconcile loop calls `sync_tenant_subscription` for every tenant.
+
+## `fn sync_tenant_subscription(&self, tenant_pubkey: &str)`
+
+Reconciles a tenant's single Stripe subscription with the set of relays that should be billed. Only paid (non-free) relays interact with Stripe. Free-only tenants have no subscription. Must be idempotent.
+
+Stripe forbids two subscription items on the same subscription from sharing a price, so billing is modeled as **one subscription item per plan (price), with `quantity` equal to the number of the tenant's `active` relays on that plan**. Every such relay's `stripe_subscription_item_id` points at the shared item for its plan; relays that aren't billed (free, inactive, delinquent) have it cleared.
 
 Stripe uses **pay-in-advance** by default: when a subscription is first created, Stripe immediately generates an open invoice for the current period. The `invoice.created` webhook fires shortly after and `handle_invoice_created` attempts payment.
 
-- Fetch the relay and tenant associated with the `activity`
-- **If relay plan is `free`**: if the relay has a `stripe_subscription_item_id`, delete it via the Stripe API and call `command.delete_relay_subscription_item`. Then run downgrade proration validation by previewing the upcoming invoice and logging proration lines/amounts. Then check cleanup (below). Return early.
-- **If relay is `inactive` or `delinquent`**: if the relay has a `stripe_subscription_item_id`, delete it via the Stripe API and call `command.delete_relay_subscription_item`. Then check cleanup (below). Return early.
-- **If relay is `active` and on a paid plan**:
-  - **Ensure subscription exists**: If the tenant has no `stripe_subscription_id`, create a Stripe subscription for the customer with `collection_method: "charge_automatically"` and the relay's price as the first item. Save the subscription ID via `command.set_tenant_subscription` and the item ID via `command.set_relay_subscription_item`. Return early.
-  - **Sync the subscription item**: If the tenant already has a subscription, create or update the relay's Stripe subscription item to the plan's `stripe_price_id` via the Stripe API, then call `command.set_relay_subscription_item`.
-  - **Downgrade validation**: when changing an existing subscription item, detect if the new plan amount is lower than the current one. If yes, preview the upcoming Stripe invoice and log proration line/amount details to validate expected credit/proration behavior.
-- **Clean up empty subscription**: After any item deletion, check if the tenant has any remaining active paid relays. If none and the tenant has a `stripe_subscription_id`, cancel the Stripe subscription immediately and call `command.clear_tenant_subscription`.
+- Fetch the tenant and its relays. Build the desired state: for each `active` relay on a paid plan with a non-empty `stripe_price_id`, count relays per price.
+- **Resolve the live subscription**: if the tenant has a `stripe_subscription_id`, fetch it. If Stripe no longer knows about it, or its status is `canceled`/`incomplete_expired`, call `command.clear_tenant_subscription` and treat the tenant as having no subscription.
+- **No relays to bill** (desired state empty): if the tenant still has a `stripe_subscription_id`, cancel the Stripe subscription and call `command.clear_tenant_subscription`. Clear `stripe_subscription_item_id` on every relay that has one. Return.
+- **No subscription yet**: create a Stripe subscription for the customer with `collection_method: "charge_automatically"` and one item per `(price, quantity)`. Save the subscription ID via `command.set_tenant_subscription`.
+- **Existing subscription**: fetch its current items. For each desired `(price, quantity)`: update the matching item's quantity if it differs, otherwise create the item. Delete any item whose price no longer appears in the desired state.
+- **Point relays at items**: for each relay, set `stripe_subscription_item_id` (via `command.set_relay_subscription_item`) to the shared item for its plan, or clear it (via `command.delete_relay_subscription_item`) if the relay is not billed.
+- **Downgrade validation**: if any quantity decreased or any item was removed, preview the upcoming Stripe invoice and log proration line/amount details to validate expected credit/proration behavior.
 
 ## `pub fn handle_webhook(&self, payload: &str, signature: &str) -> Result<()>`
 

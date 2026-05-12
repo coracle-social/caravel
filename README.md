@@ -26,7 +26,7 @@ docker run -it \
   -v ./config:/app/config \
   -v ./media:/app/media \
   -v ./data:/app/data \
-  ghcr.io/coracle-social/zooid
+  gitea.coracle.social/coracle/zooid
 ```
 
 ### 2. Configure the backend

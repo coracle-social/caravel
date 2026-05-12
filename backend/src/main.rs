@@ -1,5 +1,6 @@
 mod api;
 mod billing;
+mod bitcoin;
 mod cipher;
 mod command;
 mod infra;
@@ -7,6 +8,7 @@ mod models;
 mod pool;
 mod query;
 mod robot;
+mod stripe;
 
 use anyhow::Result;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};

@@ -12,13 +12,14 @@ use base64::Engine;
 use nostr_sdk::{Event, JsonUtil, Kind};
 use serde::{Deserialize, Serialize};
 
-use crate::billing::{Billing, InvoiceLookupError};
+use crate::billing::Billing;
 use crate::command::Command;
 use crate::infra::Infra;
 use crate::models::{
     RELAY_STATUS_ACTIVE, RELAY_STATUS_DELINQUENT, RELAY_STATUS_INACTIVE, Relay, Tenant,
 };
 use crate::query::Query;
+use crate::stripe::InvoiceLookupError;
 use axum::body::Bytes;
 
 #[derive(Clone)]

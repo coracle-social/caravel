@@ -43,6 +43,11 @@ Environment variables:
 | `LIVEKIT_URL`            | LiveKit URL sent to zooid when relay livekit is enabled                 | _optional_                           |
 | `LIVEKIT_API_KEY`        | LiveKit API key sent to zooid                                           | _optional_                           |
 | `LIVEKIT_API_SECRET`     | LiveKit API secret sent to zooid                                        | _optional_                           |
+| `BLOSSOM_S3_ENDPOINT`    | S3-compatible endpoint URL for Blossom; omit for AWS S3                 | _optional_                           |
+| `BLOSSOM_S3_REGION`      | S3 region; with bucket, access key, and secret enables S3 for Blossom   | _optional_                           |
+| `BLOSSOM_S3_BUCKET`      | S3 bucket name                                                          | _optional_                           |
+| `BLOSSOM_S3_ACCESS_KEY`  | S3 access key ID                                                        | _optional_                           |
+| `BLOSSOM_S3_SECRET_KEY`  | S3 secret access key                                                    | _optional_                           |
 | `NWC_URL`                | Platform NWC URL used to generate BOLT11 invoices                       | _required for invoice generation_    |
 | `ENCRYPTION_SECRET`      | Nostr secret key (hex or nsec) used to encrypt tenant NWC URLs at rest  | _required_                           |
 | `STRIPE_SECRET_KEY`      | Stripe API secret key used for billing API operations                   | _required_                           |

@@ -10,6 +10,47 @@ const RELAY_SYNC_RETRY_BASE_DELAY_SECS: u64 = 30;
 const RELAY_SYNC_RETRY_MAX_DELAY_SECS: u64 = 15 * 60;
 const RELAY_SYNC_RETRY_MAX_ATTEMPTS: usize = 6;
 
+/// Blossom S3 settings from env; relay sync sets `key_prefix` to the relay schema.
+#[derive(Clone)]
+struct BlossomS3Sync {
+    endpoint: String,
+    region: String,
+    bucket: String,
+    access_key: String,
+    secret_key: String,
+}
+
+impl BlossomS3Sync {
+    fn from_env() -> Option<Self> {
+        let region = std::env::var("BLOSSOM_S3_REGION").unwrap_or_default();
+        let bucket = std::env::var("BLOSSOM_S3_BUCKET").unwrap_or_default();
+        let access_key = std::env::var("BLOSSOM_S3_ACCESS_KEY").unwrap_or_default();
+        let secret_key = std::env::var("BLOSSOM_S3_SECRET_KEY").unwrap_or_default();
+
+        let region = region.trim().to_string();
+        let bucket = bucket.trim().to_string();
+        let access_key = access_key.trim().to_string();
+        let secret_key = secret_key.trim().to_string();
+
+        if region.is_empty() || bucket.is_empty() || access_key.is_empty() || secret_key.is_empty() {
+            return None;
+        }
+
+        let endpoint = std::env::var("BLOSSOM_S3_ENDPOINT")
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+
+        Some(Self {
+            endpoint,
+            region,
+            bucket,
+            access_key,
+            secret_key,
+        })
+    }
+}
+
 #[derive(Clone)]
 pub struct Infra {
     api_url: String,
@@ -18,6 +59,7 @@ pub struct Infra {
     livekit_api_key: String,
     livekit_api_secret: String,
     api_secret: String,
+    blossom_s3: Option<BlossomS3Sync>,
     query: Query,
     command: Command,
 }
@@ -30,6 +72,7 @@ impl Infra {
         let livekit_api_key = std::env::var("LIVEKIT_API_KEY").unwrap_or_default();
         let livekit_api_secret = std::env::var("LIVEKIT_API_SECRET").unwrap_or_default();
         let api_secret = std::env::var("ZOOID_API_SECRET").unwrap_or_default();
+        let blossom_s3 = BlossomS3Sync::from_env();
 
         if api_url.trim().is_empty() {
             anyhow::bail!("missing ZOOID_API_URL");
@@ -45,6 +88,7 @@ impl Infra {
             livekit_api_key,
             livekit_api_secret,
             api_secret,
+            blossom_s3,
             query,
             command,
         })
@@ -254,6 +298,7 @@ impl Infra {
             host,
             livekit,
             is_new.then(|| Keys::generate().secret_key().to_secret_hex()),
+            self.blossom_s3.as_ref(),
         );
 
         let url = format!("{}/relay/{}", base, relay.id);
@@ -323,7 +368,10 @@ fn relay_sync_body(
     host: String,
     livekit: serde_json::Value,
     secret: Option<String>,
+    blossom_s3: Option<&BlossomS3Sync>,
 ) -> serde_json::Value {
+    let blossom = blossom_sync_json(relay, blossom_s3);
+
     let mut body = serde_json::json!({
         "host": host,
         "schema": relay.schema,
@@ -341,7 +389,7 @@ fn relay_sync_body(
         },
         "groups": { "enabled": relay.groups_enabled == 1 },
         "management": { "enabled": relay.management_enabled == 1 },
-        "blossom": { "enabled": relay.blossom_enabled == 1 },
+        "blossom": blossom,
         "livekit": livekit,
         "push": { "enabled": relay.push_enabled == 1 },
         "roles": {
@@ -355,6 +403,51 @@ fn relay_sync_body(
     }
 
     body
+}
+
+fn blossom_sync_json(relay: &Relay, blossom_s3: Option<&BlossomS3Sync>) -> serde_json::Value {
+    let enabled = relay.blossom_enabled == 1;
+    if !enabled {
+        return serde_json::json!({ "enabled": false });
+    }
+
+    let Some(s3) = blossom_s3 else {
+        return serde_json::json!({ "enabled": true });
+    };
+
+    let mut s3_obj = serde_json::Map::new();
+    if !s3.endpoint.trim().is_empty() {
+        s3_obj.insert(
+            "endpoint".to_string(),
+            serde_json::Value::String(s3.endpoint.clone()),
+        );
+    }
+    s3_obj.insert(
+        "region".to_string(),
+        serde_json::Value::String(s3.region.clone()),
+    );
+    s3_obj.insert(
+        "bucket".to_string(),
+        serde_json::Value::String(s3.bucket.clone()),
+    );
+    s3_obj.insert(
+        "access_key".to_string(),
+        serde_json::Value::String(s3.access_key.clone()),
+    );
+    s3_obj.insert(
+        "secret_key".to_string(),
+        serde_json::Value::String(s3.secret_key.clone()),
+    );
+    s3_obj.insert(
+        "key_prefix".to_string(),
+        serde_json::Value::String(relay.schema.clone()),
+    );
+
+    serde_json::json!({
+        "enabled": true,
+        "adapter": "s3",
+        "s3": serde_json::Value::Object(s3_obj),
+    })
 }
 
 fn should_sync_relay_activity(activity_type: &str) -> bool {

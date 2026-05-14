@@ -9,6 +9,7 @@ mod pool;
 mod query;
 mod robot;
 mod stripe;
+mod wallet;
 
 use anyhow::Result;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};

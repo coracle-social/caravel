@@ -1,12 +1,13 @@
 use anyhow::{Result, anyhow};
 use std::collections::BTreeMap;
 
-use crate::bitcoin::{Bitcoin, Wallet};
+use crate::bitcoin;
 use crate::command::Command;
 use crate::models::{Activity, RELAY_STATUS_ACTIVE, RELAY_STATUS_DELINQUENT, Relay};
 use crate::query::Query;
 use crate::robot::Robot;
 use crate::stripe::{InvoiceLookupError, Stripe};
+use crate::wallet::Wallet;
 
 const MANUAL_LIGHTNING_PAYMENT_DM: &str = "Payment is due for your relay subscription. Please visit the application to complete a manual Lightning payment.";
 const NWC_ERROR_DM_PREFIX: &str = "NWC auto-payment failed:";
@@ -22,7 +23,7 @@ enum NwcInvoicePaymentOutcome {
 #[derive(Clone)]
 pub struct Billing {
     stripe: Stripe,
-    bitcoin: Bitcoin,
+    wallet: Wallet,
     query: Query,
     command: Command,
     robot: Robot,
@@ -32,7 +33,7 @@ impl Billing {
     pub fn new(query: Query, command: Command, robot: Robot) -> Self {
         Self {
             stripe: Stripe::from_env(),
-            bitcoin: Bitcoin::from_env(),
+            wallet: Wallet::from_url(&std::env::var("NWC_URL").unwrap_or_default()).expect("invalid NWC_URL"),
             query,
             command,
             robot,
@@ -713,12 +714,8 @@ impl Billing {
     }
 
     pub async fn create_bolt11(&self, amount_due_minor: i64, currency: &str) -> Result<String> {
-        let amount_msats = self
-            .bitcoin
-            .fiat_minor_to_msats(amount_due_minor, currency)
-            .await?;
-        self.bitcoin
-            .system_wallet()?
+        let amount_msats = bitcoin::fiat_to_msats(amount_due_minor, currency).await?;
+        self.wallet
             .make_invoice(amount_msats, LIGHTNING_INVOICE_DESCRIPTION)
             .await
     }
@@ -891,7 +888,7 @@ impl Billing {
     }
 
     async fn is_manual_lightning_invoice_settled(&self, bolt11: &str) -> Result<bool> {
-        self.bitcoin.system_wallet()?.invoice_settled(bolt11).await
+        self.wallet.is_settled(bolt11).await
     }
 
     /// Charges a Stripe invoice over Lightning: the system wallet issues a bolt11
@@ -912,20 +909,13 @@ impl Billing {
             return Ok(existing_outcome);
         }
 
-        let amount_msats = match self
-            .bitcoin
-            .fiat_minor_to_msats(amount_due_minor, currency)
-            .await
-        {
-            Ok(amount_msats) => amount_msats,
+        let amount_msats = match bitcoin::fiat_to_msats(amount_due_minor, currency).await {
+            Ok(msats) => msats,
             Err(error) => return Ok(NwcInvoicePaymentOutcome::Fallback(error)),
         };
 
-        let system_wallet = match self.bitcoin.system_wallet() {
-            Ok(wallet) => wallet,
-            Err(error) => return Ok(NwcInvoicePaymentOutcome::Fallback(error)),
-        };
-        let bolt11 = match system_wallet
+        let bolt11 = match self
+            .wallet
             .make_invoice(amount_msats, LIGHTNING_INVOICE_DESCRIPTION)
             .await
         {
@@ -933,7 +923,7 @@ impl Billing {
             Err(error) => return Ok(NwcInvoicePaymentOutcome::Fallback(error)),
         };
 
-        let tenant_wallet = match Wallet::parse(tenant_nwc_url, "tenant") {
+        let tenant_wallet = match Wallet::from_url(tenant_nwc_url) {
             Ok(wallet) => wallet,
             Err(error) => return Ok(NwcInvoicePaymentOutcome::Fallback(error)),
         };
@@ -1078,6 +1068,18 @@ mod tests {
         }
     }
 
+    #[allow(unused_unsafe)]
+    fn set_nwc_url(value: Option<&str>) {
+        match value {
+            Some(v) => unsafe { std::env::set_var("NWC_URL", v) },
+            None => unsafe { std::env::remove_var("NWC_URL") },
+        }
+    }
+
+    /// A syntactically valid NWC URI usable for `Wallet::from_env()` in tests.
+    /// The keys are random fixtures — the wallet is never actually contacted.
+    const TEST_NWC_URL: &str = "nostr+walletconnect://ef9824790df75f1f71d3fb9ffe9d8350f169df5cdd56a7a38592b407c61f4be7?relay=wss://relay.example.com&secret=baee312da88dcc52e9315e3962c2ea1bc8fdb5682a7fd6e6559084a41387e797";
+
     struct StripeSecretKeyGuard {
         previous: Option<String>,
     }
@@ -1114,6 +1116,24 @@ mod tests {
         }
     }
 
+    struct NwcUrlGuard {
+        previous: Option<String>,
+    }
+
+    impl NwcUrlGuard {
+        fn set(value: Option<&str>) -> Self {
+            let previous = std::env::var("NWC_URL").ok();
+            set_nwc_url(value);
+            Self { previous }
+        }
+    }
+
+    impl Drop for NwcUrlGuard {
+        fn drop(&mut self) {
+            set_nwc_url(self.previous.as_deref());
+        }
+    }
+
     async fn test_pool() -> SqlitePool {
         let connect_options = SqliteConnectOptions::from_str("sqlite::memory:")
             .expect("valid sqlite memory url")
@@ -1138,6 +1158,7 @@ mod tests {
         let _lock = env_lock().lock().await;
         let _secret_env = StripeSecretKeyGuard::set(None);
         let _webhook_env = StripeWebhookSecretGuard::set(Some("whsec_test_dummy"));
+        let _nwc_env = NwcUrlGuard::set(None);
 
         let pool = test_pool().await;
         let query = Query::new(pool.clone());
@@ -1171,6 +1192,7 @@ mod tests {
         let _lock = env_lock().lock().await;
         let _secret_env = StripeSecretKeyGuard::set(Some("sk_test_dummy"));
         let _webhook_env = StripeWebhookSecretGuard::set(None);
+        let _nwc_env = NwcUrlGuard::set(None);
 
         let pool = test_pool().await;
         let query = Query::new(pool.clone());
@@ -1204,6 +1226,7 @@ mod tests {
         let _lock = env_lock().lock().await;
         let _secret_env = StripeSecretKeyGuard::set(Some("sk_test_dummy"));
         let _webhook_env = StripeWebhookSecretGuard::set(Some("   "));
+        let _nwc_env = NwcUrlGuard::set(None);
 
         let pool = test_pool().await;
         let query = Query::new(pool.clone());
@@ -1237,6 +1260,7 @@ mod tests {
         let _lock = env_lock().lock().await;
         let _secret_env = StripeSecretKeyGuard::set(Some("sk_test_dummy"));
         let _webhook_env = StripeWebhookSecretGuard::set(Some("whsec_test_dummy"));
+        let _nwc_env = NwcUrlGuard::set(Some(TEST_NWC_URL));
 
         let pool = test_pool().await;
         let billing = Billing::new(

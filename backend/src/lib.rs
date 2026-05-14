@@ -9,3 +9,4 @@ pub mod pool;
 pub mod query;
 pub mod robot;
 pub mod stripe;
+pub mod wallet;

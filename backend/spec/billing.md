@@ -2,20 +2,20 @@
 
 Billing encapsulates logic related to synchronizing state with Stripe, processing payments via NWC, and managing subscription lifecycle.
 
-It owns the domain logic only: every raw Stripe REST call goes through the `Stripe` wrapper (see `spec/stripe.md`), and every Lightning (NWC) wallet operation and the fiat-minor-units → millisatoshi conversion go through the helpers in `spec/bitcoin.md`.
+It owns the domain logic only: Stripe REST calls go through `Stripe` (see `spec/stripe.md`), NWC wallet operations through `Wallet` (see `spec/wallet.md`), and fiat → msats conversion through `bitcoin` (see `spec/bitcoin.md`).
 
 Members:
 
-- `stripe: Stripe` - thin wrapper around the Stripe REST API (see `spec/stripe.md`), built from `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET`
-- `bitcoin: Bitcoin` - the Bitcoin-facing config: system NWC wallet (`NWC_URL`) plus the BTC price-feed HTTP client (see `spec/bitcoin.md`)
+- `stripe: Stripe` - Stripe REST wrapper (see `spec/stripe.md`)
+- `wallet: Wallet` - the system NWC wallet, used to issue and look up bolt11 invoices (see `spec/wallet.md`)
 - `query: Query`
 - `command: Command`
 - `robot: Robot`
 
 ## `pub fn new(query: Query, command: Command, robot: Robot) -> Self`
 
-- Builds `stripe` via `Stripe::from_env()` and `bitcoin` via `Bitcoin::from_env()`
-- Panics if `STRIPE_SECRET_KEY` or `STRIPE_WEBHOOK_SECRET` is missing/empty (`NWC_URL` is optional)
+- Builds `stripe` via `Stripe::from_env()` and `wallet` from `NWC_URL`
+- Panics if `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, or `NWC_URL` is missing or malformed
 
 ## `pub fn start(&self)`
 
@@ -72,7 +72,7 @@ Stripe uses **pay-in-advance** by default: when a subscription is first created,
 
 ## `pub async fn reconcile_manual_lightning_invoice(&self, invoice_id: &str, invoice: &Value) -> Result<Value, InvoiceLookupError>`
 
-If `invoice.status == "open"` and a manual-Lightning bolt11 was previously issued for it (`query.get_invoice_manual_lightning_bolt11`), check whether that bolt11 has settled (`bitcoin.system_wallet().invoice_settled(...)`). If it has, mark the Stripe invoice paid out of band (`stripe.pay_invoice_out_of_band`) and return the refreshed invoice. On any lookup/settlement failure, log and return the invoice unchanged.
+If `invoice.status == "open"` and a manual-Lightning bolt11 was previously issued for it (`query.get_invoice_manual_lightning_bolt11`), check whether that bolt11 has settled (`self.wallet.is_settled(...)`). If it has, mark the Stripe invoice paid out of band (`stripe.pay_invoice_out_of_band`) and return the refreshed invoice. On any lookup/settlement failure, log and return the invoice unchanged.
 
 ## `pub async fn get_or_create_manual_lightning_bolt11(&self, invoice_id: &str, tenant_pubkey: &str, amount_due_minor: i64, currency: &str) -> Result<String>`
 
@@ -81,8 +81,8 @@ If `invoice.status == "open"` and a manual-Lightning bolt11 was previously issue
 
 ## `pub async fn create_bolt11(&self, amount_due_minor: i64, currency: &str) -> Result<String>`
 
-- Converts the fiat amount to msats via `bitcoin.fiat_minor_to_msats` (fetches the live BTC spot price — see `spec/bitcoin.md`)
-- Issues a bolt11 invoice for that amount on the system NWC wallet (`bitcoin.system_wallet().make_invoice(...)`)
+- Converts the fiat amount to msats via `bitcoin::fiat_to_msats` (fetches the live BTC spot price — see `spec/bitcoin.md`)
+- Issues a bolt11 invoice for that amount on the system NWC wallet (`self.wallet.make_invoice(...)`)
 - Returns the bolt11 invoice string
 
 ## `pub async fn pay_outstanding_nwc_invoices(&self, tenant: &Tenant) -> Result<()>`
@@ -111,7 +111,7 @@ Attempts Stripe-side collection for open invoices when the tenant has a card on 
 Attempts to pay a new subscription invoice. Because Stripe defaults to pay-in-advance, this webhook fires immediately when a subscription is created (i.e. when a paid relay is added or a plan is upgraded). Payment priority:
 
 1. **NWC auto-pay**: If the tenant has a `nwc_url`, run `nwc_pay_invoice` (decrypting the tenant's stored `nwc_url` first):
-   - The system wallet (`bitcoin.system_wallet()`) issues a bolt11 invoice for the fiat amount; the tenant's wallet (`Wallet::parse` of the decrypted URL) pays it. A `pending` row in `invoice_nwc_payment` guards against double-charging across retries.
+   - The system wallet (`self.wallet`) issues a bolt11 invoice for the fiat amount; the tenant's wallet (`Wallet::from_url` of the decrypted URL) pays it. A `pending` row in `invoice_nwc_payment` guards against double-charging across retries.
    - If payment succeeds: mark the Stripe invoice paid out of band (`stripe.pay_invoice_out_of_band`) and clear `nwc_error` via `command.clear_tenant_nwc_error`. Done.
    - If it fails before any charge could have gone out: set `nwc_error` on the tenant via `command.set_tenant_nwc_error`, and fall through to the next option (carrying a short summary of the error into the eventual DM).
    - If it fails after a charge may have gone out (needs reconciliation): set `nwc_error` and return the error without falling through — a human must reconcile before any retry.

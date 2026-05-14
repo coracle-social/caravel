@@ -5,15 +5,11 @@ use anyhow::{Result, anyhow};
 use nostr_sdk::prelude::*;
 use tokio::sync::Mutex;
 
+use crate::env::Env;
+
 #[derive(Clone)]
 pub struct Robot {
-    secret: String,
-    name: String,
-    description: String,
-    picture: String,
-    outbox_client: Client,
-    indexer_client: Client,
-    messaging_client: Client,
+    env: Env,
     outbox_cache: std::sync::Arc<Mutex<HashMap<String, CacheEntry>>>,
     dm_cache: std::sync::Arc<Mutex<HashMap<String, CacheEntry>>>,
 }
@@ -25,84 +21,61 @@ struct CacheEntry {
 }
 
 impl Robot {
-    pub async fn new() -> Result<Self> {
-        let secret = std::env::var("ROBOT_SECRET").unwrap_or_default();
-        if secret.trim().is_empty() {
-            return Err(anyhow!("ROBOT_SECRET is required"));
-        }
-
-        let name = std::env::var("ROBOT_NAME").unwrap_or_default();
-        let description = std::env::var("ROBOT_DESCRIPTION").unwrap_or_default();
-        let picture = std::env::var("ROBOT_PICTURE").unwrap_or_default();
-        let outbox_relays = split_relays("ROBOT_OUTBOX_RELAYS");
-        let indexer_relays = split_relays("ROBOT_INDEXER_RELAYS");
-        let messaging_relays = split_relays("ROBOT_MESSAGING_RELAYS");
-
-        if outbox_relays.is_empty() {
-            return Err(anyhow!("ROBOT_OUTBOX_RELAYS is required"));
-        }
-        if indexer_relays.is_empty() {
-            return Err(anyhow!("ROBOT_INDEXER_RELAYS is required"));
-        }
-        if messaging_relays.is_empty() {
-            return Err(anyhow!("ROBOT_MESSAGING_RELAYS is required"));
-        }
-
-        let outbox_client = client_with_relays(&secret, &outbox_relays).await?;
-        let indexer_client = client_with_relays(&secret, &indexer_relays).await?;
-        let messaging_client = client_with_relays(&secret, &messaging_relays).await?;
-
+    pub async fn new(env: &Env) -> Result<Self> {
         let robot = Self {
-            secret,
-            name,
-            description,
-            picture,
-            outbox_client,
-            indexer_client,
-            messaging_client,
+            env: env.clone(),
             outbox_cache: std::sync::Arc::new(Mutex::new(HashMap::new())),
             dm_cache: std::sync::Arc::new(Mutex::new(HashMap::new())),
         };
 
-        robot
-            .publish_identity(&outbox_relays, &messaging_relays)
-            .await?;
+        robot.publish_identity().await?;
         Ok(robot)
     }
 
+    async fn make_client(&self, relays: &[String]) -> Result<Client> {
+        let client = Client::new(self.env.keys.clone());
+        for relay in relays {
+            client.add_relay(relay).await?;
+        }
+        client.connect().await;
+        Ok(client)
+    }
+
+
     async fn publish_identity(
         &self,
-        outbox_relays: &[String],
-        messaging_relays: &[String],
     ) -> Result<()> {
         let mut metadata = Metadata::new();
-        if !self.name.is_empty() {
-            metadata = metadata.name(&self.name);
+        if !self.env.robot_name.is_empty() {
+            metadata = metadata.name(&self.env.robot_name);
         }
-        if !self.description.is_empty() {
-            metadata = metadata.about(&self.description);
+        if !self.env.robot_description.is_empty() {
+            metadata = metadata.about(&self.env.robot_description);
         }
-        if !self.picture.is_empty() {
-            metadata = metadata.picture(Url::parse(&self.picture)?);
+        if !self.env.robot_picture.is_empty() {
+            metadata = metadata.picture(Url::parse(&self.env.robot_picture)?);
         }
 
-        self.outbox_client
+        let outbox_client = self.make_client(&self.env.robot_outbox_relays).await?;
+        let indexer_client = self.make_client(&self.env.robot_indexer_relays).await?;
+
+        outbox_client
             .send_event_builder(EventBuilder::metadata(&metadata))
             .await?;
 
-        let outbox_tags = outbox_relays
+        let outbox_tags = self.env.robot_outbox_relays
             .iter()
             .map(|r| Tag::parse(["r", r.as_str()]))
             .collect::<std::result::Result<Vec<_>, _>>()?;
-        self.outbox_client
+        outbox_client
             .send_event_builder(EventBuilder::new(Kind::Custom(10002), "").tags(outbox_tags))
             .await?;
 
-        let messaging_tags = messaging_relays
+        let messaging_tags = self.env.robot_messaging_relays
             .iter()
             .map(|r| Tag::parse(["relay", r.as_str()]))
             .collect::<std::result::Result<Vec<_>, _>>()?;
-        self.indexer_client
+        indexer_client
             .send_event_builder(EventBuilder::new(Kind::Custom(10050), "").tags(messaging_tags))
             .await?;
 
@@ -123,14 +96,8 @@ impl Robot {
         }
 
         let recipient_pubkey = PublicKey::parse(recipient)?;
-        let client = self.messaging_client.clone();
-        for relay in dm_relays {
-            let _ = client.add_relay(relay).await;
-        }
-        client.connect().await;
-        client
-            .send_private_msg(recipient_pubkey, message, [])
-            .await?;
+        let client = self.make_client(&dm_relays).await?;
+        client.send_private_msg(recipient_pubkey, message, []).await?;
         Ok(())
     }
 
@@ -141,10 +108,8 @@ impl Robot {
 
         let pubkey = PublicKey::parse(recipient)?;
         let filter = Filter::new().author(pubkey).kind(Kind::Custom(10002));
-        let events = self
-            .indexer_client
-            .fetch_events(filter, Duration::from_secs(5))
-            .await?;
+        let client = self.make_client(&self.env.robot_indexer_relays).await?;
+        let events = client.fetch_events(filter, Duration::from_secs(5)).await?;
 
         let mut relays = Vec::new();
         if let Some(event) = events.into_iter().max_by_key(|e| e.created_at) {
@@ -163,11 +128,8 @@ impl Robot {
     pub async fn fetch_nostr_name(&self, pubkey: &str) -> Option<String> {
         let pubkey = PublicKey::parse(pubkey).ok()?;
         let filter = Filter::new().author(pubkey).kind(Kind::Metadata).limit(1);
-        let events = self
-            .indexer_client
-            .fetch_events(filter, Duration::from_secs(5))
-            .await
-            .ok()?;
+        let client = self.make_client(&self.env.robot_indexer_relays).await.ok()?;
+        let events = client.fetch_events(filter, Duration::from_secs(5)).await.ok()?;
         let event = events.into_iter().max_by_key(|e| e.created_at)?;
         let content: serde_json::Value = serde_json::from_str(&event.content).ok()?;
         let name = content
@@ -189,13 +151,7 @@ impl Robot {
         }
 
         let pubkey = PublicKey::parse(recipient)?;
-        let keys = Keys::parse(&self.secret)?;
-        let client = Client::new(keys);
-        for relay in outbox_relays {
-            client.add_relay(relay).await?;
-        }
-        client.connect().await;
-
+        let client = self.make_client(outbox_relays).await?;
         let filter = Filter::new().author(pubkey).kind(Kind::Custom(10050));
         let events = client.fetch_events(filter, Duration::from_secs(5)).await?;
 
@@ -212,37 +168,6 @@ impl Robot {
         set_cached(&self.dm_cache, recipient, relays.clone()).await;
         Ok(relays)
     }
-}
-
-fn split_relays(key: &str) -> Vec<String> {
-    std::env::var(key)
-        .unwrap_or_default()
-        .split(',')
-        .map(|v| normalize_relay_url(v.trim()))
-        .filter(|v| !v.is_empty())
-        .collect()
-}
-
-fn normalize_relay_url(url: &str) -> String {
-    if url.is_empty() {
-        return String::new();
-    }
-
-    if url.starts_with("ws://") || url.starts_with("wss://") {
-        url.to_string()
-    } else {
-        format!("wss://{url}")
-    }
-}
-
-async fn client_with_relays(secret: &str, relays: &[String]) -> Result<Client> {
-    let keys = Keys::parse(secret)?;
-    let client = Client::new(keys);
-    for relay in relays {
-        client.add_relay(relay).await?;
-    }
-    client.connect().await;
-    Ok(client)
 }
 
 async fn get_cached(
@@ -272,24 +197,4 @@ async fn set_cached(
             fetched_at: Instant::now(),
         },
     );
-}
-
-#[cfg(test)]
-impl Robot {
-    pub fn test_stub() -> Self {
-        let keys = Keys::generate();
-        let client = Client::new(keys);
-
-        Self {
-            secret: String::new(),
-            name: String::new(),
-            description: String::new(),
-            picture: String::new(),
-            outbox_client: client.clone(),
-            indexer_client: client.clone(),
-            messaging_client: client,
-            outbox_cache: std::sync::Arc::new(Mutex::new(HashMap::new())),
-            dm_cache: std::sync::Arc::new(Mutex::new(HashMap::new())),
-        }
-    }
 }

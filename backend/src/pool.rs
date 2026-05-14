@@ -7,10 +7,8 @@ use sqlx::{
     sqlite::{SqliteConnectOptions, SqlitePoolOptions},
 };
 
-pub async fn create_pool() -> Result<SqlitePool> {
-    let raw_database_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| format!("sqlite://{}/data/caravel.db", env!("CARGO_MANIFEST_DIR")));
-    let database_url = normalize_sqlite_url(&raw_database_url);
+pub async fn create_pool(database_url: &str) -> Result<SqlitePool> {
+    let database_url = normalize_sqlite_url(database_url);
 
     if let Some(path) = database_url.strip_prefix("sqlite://")
         && !path.is_empty()

@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::billing::Billing;
 use crate::command::Command;
+use crate::env::Env;
 use crate::infra::Infra;
 use crate::models::{
     RELAY_STATUS_ACTIVE, RELAY_STATUS_DELINQUENT, RELAY_STATUS_INACTIVE, Relay, Tenant,
@@ -24,8 +25,7 @@ use axum::body::Bytes;
 
 #[derive(Clone)]
 pub struct Api {
-    host: String,
-    admins: Vec<String>,
+    env: Env,
     query: Query,
     command: Command,
     billing: Billing,
@@ -120,17 +120,15 @@ fn map_invoice_lookup_error(error: InvoiceLookupError) -> ApiError {
 }
 
 impl Api {
-    pub fn new(query: Query, command: Command, billing: Billing, infra: Infra) -> Self {
-        let host = std::env::var("HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
-        let admins = std::env::var("ADMINS")
-            .unwrap_or_default()
-            .split(',')
-            .map(|v| v.trim().to_lowercase())
-            .filter(|v| !v.is_empty())
-            .collect();
+    pub fn new(
+        query: Query,
+        command: Command,
+        billing: Billing,
+        infra: Infra,
+        env: &Env,
+    ) -> Self {
         Self {
-            host,
-            admins,
+            env: env.clone(),
             query,
             command,
             billing,
@@ -218,7 +216,7 @@ impl Api {
         // Intentional session-style variant of NIP-98 for Caravel API auth.
         // We validate signer identity plus host affinity, and do not bind to exact
         // request URL/method or maintain replay state here.
-        if !self.host.is_empty() && !got_u.contains(&self.host) {
+        if !self.env.server_host.is_empty() && !got_u.contains(&self.env.server_host) {
             return Err(ApiError::Unauthorized(anyhow!(
                 "authorization host mismatch"
             )));
@@ -228,7 +226,12 @@ impl Api {
     }
 
     fn require_admin(&self, authorized_pubkey: &str) -> std::result::Result<(), ApiError> {
-        if self.admins.iter().any(|a| a == authorized_pubkey) {
+        if self
+            .env
+            .server_admin_pubkeys
+            .iter()
+            .any(|a| a == authorized_pubkey)
+        {
             Ok(())
         } else {
             Err(ApiError::Forbidden("admin required"))
@@ -240,7 +243,12 @@ impl Api {
         authorized_pubkey: &str,
         tenant_pubkey: &str,
     ) -> std::result::Result<(), ApiError> {
-        if self.admins.iter().any(|a| a == authorized_pubkey) || authorized_pubkey == tenant_pubkey
+        if self
+            .env
+            .server_admin_pubkeys
+            .iter()
+            .any(|a| a == authorized_pubkey)
+            || authorized_pubkey == tenant_pubkey
         {
             Ok(())
         } else {
@@ -267,7 +275,10 @@ impl Api {
     fn prepare_relay(&self, mut relay: Relay) -> std::result::Result<Relay, RelayValidationError> {
         validate_subdomain_label(&relay.subdomain)?;
 
-        let plan = Query::get_plan(&relay.plan).ok_or(RelayValidationError::InvalidPlan)?;
+        let plan = self
+            .query
+            .get_plan(&relay.plan)
+            .ok_or(RelayValidationError::InvalidPlan)?;
 
         if !plan.blossom && relay.blossom_enabled == 1 {
             return Err(RelayValidationError::PremiumFeature);
@@ -524,8 +535,8 @@ async fn list_tenants(
     }
 }
 
-async fn list_plans() -> Response {
-    ok(StatusCode::OK, Query::list_plans())
+async fn list_plans(State(state): State<AppState>) -> Response {
+    ok(StatusCode::OK, state.api.query.list_plans())
 }
 
 async fn get_identity(
@@ -533,7 +544,12 @@ async fn get_identity(
     headers: HeaderMap,
 ) -> std::result::Result<Response, ApiError> {
     let pubkey = state.api.extract_auth_pubkey(&headers)?;
-    let is_admin = state.api.admins.iter().any(|a| a == &pubkey);
+    let is_admin = state
+        .api
+        .env
+        .server_admin_pubkeys
+        .iter()
+        .any(|a| a == &pubkey);
     Ok(ok(StatusCode::OK, IdentityResponse { pubkey, is_admin }))
 }
 
@@ -599,8 +615,8 @@ async fn create_tenant(
     }
 }
 
-async fn get_plan(Path(id): Path<String>) -> Response {
-    match Query::get_plan(&id) {
+async fn get_plan(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    match state.api.query.get_plan(&id) {
         Some(plan) => ok(StatusCode::OK, plan),
         None => err(StatusCode::NOT_FOUND, "not-found", "plan not found"),
     }
@@ -881,7 +897,11 @@ async fn update_relay(
         .is_some_and(|requested| requested != current_plan);
 
     if plan_changed {
-        let selected_plan = Query::get_plan(&relay.plan).expect("validated plan must exist");
+        let selected_plan = state
+            .api
+            .query
+            .get_plan(&relay.plan)
+            .expect("validated plan must exist");
         if let Some(limit) = selected_plan.members {
             let current_members = match state.api.fetch_relay_members(&relay).await {
                 Ok(members) => members.len() as i64,
@@ -1147,8 +1167,11 @@ async fn update_tenant(
         if nwc_url.is_empty() {
             tenant.nwc_url = String::new();
         } else {
-            tenant.nwc_url =
-                crate::cipher::encrypt(&nwc_url).map_err(|e| ApiError::Internal(e.to_string()))?;
+            tenant.nwc_url = state
+                .api
+                .env
+                .encrypt(&nwc_url)
+                .map_err(|e| ApiError::Internal(e.to_string()))?;
         }
     }
 

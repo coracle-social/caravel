@@ -1,8 +1,8 @@
 mod api;
 mod billing;
 mod bitcoin;
-mod cipher;
 mod command;
+mod env;
 mod infra;
 mod models;
 mod pool;
@@ -19,6 +19,7 @@ use tower_http::cors::{AllowOrigin, CorsLayer};
 use crate::api::Api;
 use crate::billing::Billing;
 use crate::command::Command;
+use crate::env::Env;
 use crate::infra::Infra;
 use crate::query::Query;
 use crate::robot::Robot;
@@ -32,30 +33,21 @@ async fn main() -> Result<()> {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    let pool = pool::create_pool().await?;
-    let robot = Robot::new().await?;
-    let query = Query::new(pool.clone());
+    let env = Env::load();
+
+    let pool = pool::create_pool(&env.database_url).await?;
+    let robot = Robot::new(&env).await?;
+    let query = Query::new(pool.clone(), &env);
     let command = Command::new(pool);
-    let billing = Billing::new(query.clone(), command.clone(), robot.clone());
-    let infra = Infra::new(query.clone(), command.clone())?;
-    let api = Api::new(query, command, billing.clone(), infra.clone());
+    let billing = Billing::new(query.clone(), command.clone(), robot.clone(), &env);
+    let infra = Infra::new(query.clone(), command.clone(), &env);
+    let api = Api::new(query, command, billing.clone(), infra.clone(), &env);
 
-    let host = std::env::var("HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
-    let port: u16 = std::env::var("PORT")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(2892);
-    let origins: Vec<String> = std::env::var("ALLOW_ORIGINS")
-        .unwrap_or_default()
-        .split(',')
-        .map(|v| v.trim().to_string())
-        .filter(|v| !v.is_empty())
-        .collect();
-
-    let cors = if origins.is_empty() {
+    let cors = if env.server_allow_origins.is_empty() {
         CorsLayer::permissive()
     } else {
-        let parsed = origins
+        let parsed = env
+            .server_allow_origins
             .iter()
             .filter_map(|o| o.parse::<axum::http::HeaderValue>().ok())
             .collect::<Vec<_>>();
@@ -72,7 +64,8 @@ async fn main() -> Result<()> {
         billing.start().await;
     });
 
-    let listener = tokio::net::TcpListener::bind(format!("{host}:{port}")).await?;
+    let listener =
+        tokio::net::TcpListener::bind(format!("{}:{}", env.server_host, env.server_port)).await?;
     axum::serve(listener, app).await?;
     Ok(())
 }

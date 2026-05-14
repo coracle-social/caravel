@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 
 use crate::bitcoin;
 use crate::command::Command;
+use crate::env::Env;
 use crate::models::{Activity, RELAY_STATUS_ACTIVE, RELAY_STATUS_DELINQUENT, Relay};
 use crate::query::Query;
 use crate::robot::Robot;
@@ -24,16 +25,21 @@ enum NwcInvoicePaymentOutcome {
 pub struct Billing {
     stripe: Stripe,
     wallet: Wallet,
+    env: Env,
     query: Query,
     command: Command,
     robot: Robot,
 }
 
 impl Billing {
-    pub fn new(query: Query, command: Command, robot: Robot) -> Self {
+    pub fn new(query: Query, command: Command, robot: Robot, env: &Env) -> Self {
         Self {
-            stripe: Stripe::from_env(),
-            wallet: Wallet::from_url(&std::env::var("NWC_URL").unwrap_or_default()).expect("invalid NWC_URL"),
+            stripe: Stripe::new(
+                env.stripe_secret_key.clone(),
+                env.stripe_webhook_secret.clone(),
+            ),
+            wallet: Wallet::from_url(&env.robot_wallet).expect("invalid ROBOT_WALLET"),
+            env: env.clone(),
             query,
             command,
             robot,
@@ -136,7 +142,7 @@ impl Billing {
             if relay.status != RELAY_STATUS_ACTIVE {
                 continue;
             }
-            let Some(plan) = Query::get_plan(&relay.plan) else {
+            let Some(plan) = self.query.get_plan(&relay.plan) else {
                 tracing::warn!(relay = %relay.id, plan = %relay.plan, "active relay on unknown plan; not billed");
                 continue;
             };
@@ -370,7 +376,7 @@ impl Billing {
 
         // 1. NWC auto-pay: if the tenant has a nwc_url
         if !tenant.nwc_url.is_empty() {
-            let plain_nwc_url = crate::cipher::decrypt(&tenant.nwc_url)?;
+            let plain_nwc_url = self.env.decrypt(&tenant.nwc_url)?;
             match self
                 .nwc_pay_invoice(
                     invoice_id,
@@ -725,7 +731,7 @@ impl Billing {
             return Ok(());
         }
 
-        let plain_nwc_url = crate::cipher::decrypt(&tenant.nwc_url)?;
+        let plain_nwc_url = self.env.decrypt(&tenant.nwc_url)?;
 
         let invoices = self
             .stripe
@@ -1040,236 +1046,4 @@ mod tests {
         ));
     }
 
-    use super::*;
-    use sqlx::SqlitePool;
-    use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
-    use std::str::FromStr;
-    use std::sync::OnceLock;
-    use tokio::sync::Mutex;
-
-    fn env_lock() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-    }
-
-    #[allow(unused_unsafe)]
-    fn set_stripe_secret_key(value: Option<&str>) {
-        match value {
-            Some(v) => unsafe { std::env::set_var("STRIPE_SECRET_KEY", v) },
-            None => unsafe { std::env::remove_var("STRIPE_SECRET_KEY") },
-        }
-    }
-
-    #[allow(unused_unsafe)]
-    fn set_stripe_webhook_secret(value: Option<&str>) {
-        match value {
-            Some(v) => unsafe { std::env::set_var("STRIPE_WEBHOOK_SECRET", v) },
-            None => unsafe { std::env::remove_var("STRIPE_WEBHOOK_SECRET") },
-        }
-    }
-
-    #[allow(unused_unsafe)]
-    fn set_nwc_url(value: Option<&str>) {
-        match value {
-            Some(v) => unsafe { std::env::set_var("NWC_URL", v) },
-            None => unsafe { std::env::remove_var("NWC_URL") },
-        }
-    }
-
-    /// A syntactically valid NWC URI usable for `Wallet::from_env()` in tests.
-    /// The keys are random fixtures — the wallet is never actually contacted.
-    const TEST_NWC_URL: &str = "nostr+walletconnect://ef9824790df75f1f71d3fb9ffe9d8350f169df5cdd56a7a38592b407c61f4be7?relay=wss://relay.example.com&secret=baee312da88dcc52e9315e3962c2ea1bc8fdb5682a7fd6e6559084a41387e797";
-
-    struct StripeSecretKeyGuard {
-        previous: Option<String>,
-    }
-
-    impl StripeSecretKeyGuard {
-        fn set(value: Option<&str>) -> Self {
-            let previous = std::env::var("STRIPE_SECRET_KEY").ok();
-            set_stripe_secret_key(value);
-            Self { previous }
-        }
-    }
-
-    impl Drop for StripeSecretKeyGuard {
-        fn drop(&mut self) {
-            set_stripe_secret_key(self.previous.as_deref());
-        }
-    }
-
-    struct StripeWebhookSecretGuard {
-        previous: Option<String>,
-    }
-
-    impl StripeWebhookSecretGuard {
-        fn set(value: Option<&str>) -> Self {
-            let previous = std::env::var("STRIPE_WEBHOOK_SECRET").ok();
-            set_stripe_webhook_secret(value);
-            Self { previous }
-        }
-    }
-
-    impl Drop for StripeWebhookSecretGuard {
-        fn drop(&mut self) {
-            set_stripe_webhook_secret(self.previous.as_deref());
-        }
-    }
-
-    struct NwcUrlGuard {
-        previous: Option<String>,
-    }
-
-    impl NwcUrlGuard {
-        fn set(value: Option<&str>) -> Self {
-            let previous = std::env::var("NWC_URL").ok();
-            set_nwc_url(value);
-            Self { previous }
-        }
-    }
-
-    impl Drop for NwcUrlGuard {
-        fn drop(&mut self) {
-            set_nwc_url(self.previous.as_deref());
-        }
-    }
-
-    async fn test_pool() -> SqlitePool {
-        let connect_options = SqliteConnectOptions::from_str("sqlite::memory:")
-            .expect("valid sqlite memory url")
-            .create_if_missing(true);
-
-        let pool = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect_with(connect_options)
-            .await
-            .expect("connect sqlite memory db");
-
-        sqlx::migrate!("./migrations")
-            .run(&pool)
-            .await
-            .expect("run migrations");
-
-        pool
-    }
-
-    #[tokio::test]
-    async fn billing_new_panics_without_stripe_secret_key() {
-        let _lock = env_lock().lock().await;
-        let _secret_env = StripeSecretKeyGuard::set(None);
-        let _webhook_env = StripeWebhookSecretGuard::set(Some("whsec_test_dummy"));
-        let _nwc_env = NwcUrlGuard::set(None);
-
-        let pool = test_pool().await;
-        let query = Query::new(pool.clone());
-        let command = Command::new(pool);
-        let robot = Robot::test_stub();
-
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            Billing::new(query, command, robot)
-        }));
-
-        let panic_payload = match result {
-            Ok(_) => panic!("constructor should panic when STRIPE_SECRET_KEY is missing"),
-            Err(payload) => payload,
-        };
-        let panic_msg = if let Some(msg) = panic_payload.downcast_ref::<&str>() {
-            (*msg).to_string()
-        } else if let Some(msg) = panic_payload.downcast_ref::<String>() {
-            msg.clone()
-        } else {
-            String::new()
-        };
-
-        assert!(
-            panic_msg.contains("missing STRIPE_SECRET_KEY environment variable"),
-            "unexpected panic: {panic_msg}"
-        );
-    }
-
-    #[tokio::test]
-    async fn billing_new_panics_without_stripe_webhook_secret() {
-        let _lock = env_lock().lock().await;
-        let _secret_env = StripeSecretKeyGuard::set(Some("sk_test_dummy"));
-        let _webhook_env = StripeWebhookSecretGuard::set(None);
-        let _nwc_env = NwcUrlGuard::set(None);
-
-        let pool = test_pool().await;
-        let query = Query::new(pool.clone());
-        let command = Command::new(pool);
-        let robot = Robot::test_stub();
-
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            Billing::new(query, command, robot)
-        }));
-
-        let panic_payload = match result {
-            Ok(_) => panic!("constructor should panic when STRIPE_WEBHOOK_SECRET is missing"),
-            Err(payload) => payload,
-        };
-        let panic_msg = if let Some(msg) = panic_payload.downcast_ref::<&str>() {
-            (*msg).to_string()
-        } else if let Some(msg) = panic_payload.downcast_ref::<String>() {
-            msg.clone()
-        } else {
-            String::new()
-        };
-
-        assert!(
-            panic_msg.contains("missing STRIPE_WEBHOOK_SECRET environment variable"),
-            "unexpected panic: {panic_msg}"
-        );
-    }
-
-    #[tokio::test]
-    async fn billing_new_panics_with_blank_stripe_webhook_secret() {
-        let _lock = env_lock().lock().await;
-        let _secret_env = StripeSecretKeyGuard::set(Some("sk_test_dummy"));
-        let _webhook_env = StripeWebhookSecretGuard::set(Some("   "));
-        let _nwc_env = NwcUrlGuard::set(None);
-
-        let pool = test_pool().await;
-        let query = Query::new(pool.clone());
-        let command = Command::new(pool);
-        let robot = Robot::test_stub();
-
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            Billing::new(query, command, robot)
-        }));
-
-        let panic_payload = match result {
-            Ok(_) => panic!("constructor should panic when STRIPE_WEBHOOK_SECRET is blank"),
-            Err(payload) => payload,
-        };
-        let panic_msg = if let Some(msg) = panic_payload.downcast_ref::<&str>() {
-            (*msg).to_string()
-        } else if let Some(msg) = panic_payload.downcast_ref::<String>() {
-            msg.clone()
-        } else {
-            String::new()
-        };
-
-        assert!(
-            panic_msg.contains("missing STRIPE_WEBHOOK_SECRET environment variable"),
-            "unexpected panic: {panic_msg}"
-        );
-    }
-
-    #[tokio::test]
-    async fn billing_new_accepts_non_empty_stripe_secrets() {
-        let _lock = env_lock().lock().await;
-        let _secret_env = StripeSecretKeyGuard::set(Some("sk_test_dummy"));
-        let _webhook_env = StripeWebhookSecretGuard::set(Some("whsec_test_dummy"));
-        let _nwc_env = NwcUrlGuard::set(Some(TEST_NWC_URL));
-
-        let pool = test_pool().await;
-        let billing = Billing::new(
-            Query::new(pool.clone()),
-            Command::new(pool),
-            Robot::test_stub(),
-        );
-
-        assert_eq!(billing.stripe.secret_key, "sk_test_dummy");
-        assert_eq!(billing.stripe.webhook_secret, "whsec_test_dummy");
-    }
 }

@@ -73,20 +73,6 @@ pub struct Stripe {
 }
 
 impl Stripe {
-    /// Builds the client from the environment: `STRIPE_SECRET_KEY` and
-    /// `STRIPE_WEBHOOK_SECRET`, both required. Panics if either is missing or blank.
-    pub fn from_env() -> Self {
-        let secret_key = std::env::var("STRIPE_SECRET_KEY").unwrap_or_default();
-        if secret_key.trim().is_empty() {
-            panic!("missing STRIPE_SECRET_KEY environment variable");
-        }
-        let webhook_secret = std::env::var("STRIPE_WEBHOOK_SECRET").unwrap_or_default();
-        if webhook_secret.trim().is_empty() {
-            panic!("missing STRIPE_WEBHOOK_SECRET environment variable");
-        }
-        Self::new(secret_key, webhook_secret)
-    }
-
     pub fn new(secret_key: String, webhook_secret: String) -> Self {
         Self {
             secret_key,

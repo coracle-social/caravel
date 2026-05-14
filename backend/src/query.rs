@@ -1,16 +1,21 @@
 use anyhow::Result;
 use sqlx::SqlitePool;
 
+use crate::env::Env;
 use crate::models::{Activity, Plan, Relay, Tenant};
 
 #[derive(Clone)]
 pub struct Query {
     pool: SqlitePool,
+    env: Env,
 }
 
 impl Query {
-    pub fn new(pool: SqlitePool) -> Self {
-        Self { pool }
+    pub fn new(pool: SqlitePool, env: &Env) -> Self {
+        Self {
+            pool,
+            env: env.clone(),
+        }
     }
 
     pub async fn list_tenants(&self) -> Result<Vec<Tenant>> {
@@ -36,7 +41,7 @@ impl Query {
         Ok(row)
     }
 
-    pub fn list_plans() -> Vec<Plan> {
+    pub fn list_plans(&self) -> Vec<Plan> {
         vec![
             Plan {
                 id: "free".to_string(),
@@ -54,7 +59,7 @@ impl Query {
                 members: Some(100),
                 blossom: true,
                 livekit: true,
-                stripe_price_id: Some(std::env::var("STRIPE_PRICE_BASIC").unwrap_or_default()),
+                stripe_price_id: Some(self.env.stripe_price_basic.clone()),
             },
             Plan {
                 id: "growth".to_string(),
@@ -63,19 +68,19 @@ impl Query {
                 members: None,
                 blossom: true,
                 livekit: true,
-                stripe_price_id: Some(std::env::var("STRIPE_PRICE_GROWTH").unwrap_or_default()),
+                stripe_price_id: Some(self.env.stripe_price_growth.clone()),
             },
         ]
     }
 
-    pub fn get_plan(plan_id: &str) -> Option<Plan> {
-        Self::list_plans().into_iter().find(|p| p.id == plan_id)
+    pub fn get_plan(&self, plan_id: &str) -> Option<Plan> {
+        self.list_plans().into_iter().find(|p| p.id == plan_id)
     }
 
+    /// True for any plan that costs money. Doesn't require an instance because
+    /// the answer doesn't depend on Stripe price ids — only the canonical plan id.
     pub fn is_paid_plan(plan_id: &str) -> bool {
-        Self::get_plan(plan_id)
-            .map(|p| p.id != "free")
-            .unwrap_or(false)
+        matches!(plan_id, "basic" | "growth")
     }
 
     pub async fn list_relays(&self) -> Result<Vec<Relay>> {

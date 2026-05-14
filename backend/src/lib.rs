@@ -1,8 +1,8 @@
 pub mod api;
 pub mod billing;
 pub mod bitcoin;
-pub mod cipher;
 pub mod command;
+pub mod env;
 pub mod infra;
 pub mod models;
 pub mod pool;

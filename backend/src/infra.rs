@@ -3,6 +3,7 @@ use nostr_sdk::prelude::*;
 use std::time::Duration;
 
 use crate::command::Command;
+use crate::env::Env;
 use crate::models::{Activity, RELAY_STATUS_DELINQUENT, RELAY_STATUS_INACTIVE, Relay};
 use crate::query::Query;
 
@@ -10,88 +11,20 @@ const RELAY_SYNC_RETRY_BASE_DELAY_SECS: u64 = 30;
 const RELAY_SYNC_RETRY_MAX_DELAY_SECS: u64 = 15 * 60;
 const RELAY_SYNC_RETRY_MAX_ATTEMPTS: usize = 6;
 
-/// Blossom S3 settings from env; relay sync sets `key_prefix` to the relay schema.
-#[derive(Clone)]
-struct BlossomS3Sync {
-    endpoint: String,
-    region: String,
-    bucket: String,
-    access_key: String,
-    secret_key: String,
-}
-
-impl BlossomS3Sync {
-    fn from_env() -> Option<Self> {
-        let region = std::env::var("BLOSSOM_S3_REGION").unwrap_or_default();
-        let bucket = std::env::var("BLOSSOM_S3_BUCKET").unwrap_or_default();
-        let access_key = std::env::var("BLOSSOM_S3_ACCESS_KEY").unwrap_or_default();
-        let secret_key = std::env::var("BLOSSOM_S3_SECRET_KEY").unwrap_or_default();
-
-        let region = region.trim().to_string();
-        let bucket = bucket.trim().to_string();
-        let access_key = access_key.trim().to_string();
-        let secret_key = secret_key.trim().to_string();
-
-        if region.is_empty() || bucket.is_empty() || access_key.is_empty() || secret_key.is_empty() {
-            return None;
-        }
-
-        let endpoint = std::env::var("BLOSSOM_S3_ENDPOINT")
-            .unwrap_or_default()
-            .trim()
-            .to_string();
-
-        Some(Self {
-            endpoint,
-            region,
-            bucket,
-            access_key,
-            secret_key,
-        })
-    }
-}
-
 #[derive(Clone)]
 pub struct Infra {
-    api_url: String,
-    relay_domain: String,
-    livekit_url: String,
-    livekit_api_key: String,
-    livekit_api_secret: String,
-    api_secret: String,
-    blossom_s3: Option<BlossomS3Sync>,
+    env: Env,
     query: Query,
     command: Command,
 }
 
 impl Infra {
-    pub fn new(query: Query, command: Command) -> Result<Self> {
-        let api_url = std::env::var("ZOOID_API_URL").unwrap_or_default();
-        let relay_domain = std::env::var("RELAY_DOMAIN").unwrap_or_default();
-        let livekit_url = std::env::var("LIVEKIT_URL").unwrap_or_default();
-        let livekit_api_key = std::env::var("LIVEKIT_API_KEY").unwrap_or_default();
-        let livekit_api_secret = std::env::var("LIVEKIT_API_SECRET").unwrap_or_default();
-        let api_secret = std::env::var("ZOOID_API_SECRET").unwrap_or_default();
-        let blossom_s3 = BlossomS3Sync::from_env();
-
-        if api_url.trim().is_empty() {
-            anyhow::bail!("missing ZOOID_API_URL");
-        }
-        if api_secret.trim().is_empty() {
-            anyhow::bail!("missing ZOOID_API_SECRET");
-        }
-
-        Ok(Self {
-            api_url,
-            relay_domain,
-            livekit_url,
-            livekit_api_key,
-            livekit_api_secret,
-            api_secret,
-            blossom_s3,
+    pub fn new(query: Query, command: Command, env: &Env) -> Self {
+        Self {
+            env: env.clone(),
             query,
             command,
-        })
+        }
     }
 
     pub async fn start(self) {
@@ -241,20 +174,11 @@ impl Infra {
         }
     }
 
-    async fn nip98_auth(&self, url: &str, method: HttpMethod) -> Result<String> {
-        let keys = Keys::parse(&self.api_secret)?;
-        let server_url = Url::parse(url)?;
-        let auth = HttpData::new(server_url, method)
-            .to_authorization(&keys)
-            .await?;
-        Ok(auth)
-    }
-
     pub async fn list_relay_members(&self, relay_id: &str) -> Result<Vec<String>> {
         let client = reqwest::Client::new();
-        let base = self.api_url.trim_end_matches('/');
+        let base = self.env.zooid_api_url.trim_end_matches('/');
         let url = format!("{base}/relay/{relay_id}/members");
-        let auth = self.nip98_auth(&url, HttpMethod::GET).await?;
+        let auth = self.env.make_auth(&url, HttpMethod::GET).await?;
 
         let response = client
             .get(&url)
@@ -274,20 +198,20 @@ impl Infra {
 
     async fn sync_relay(&self, relay: &Relay, is_new: bool) -> Result<()> {
         let client = reqwest::Client::new();
-        let base = self.api_url.trim_end_matches('/');
+        let base = self.env.zooid_api_url.trim_end_matches('/');
 
-        let host = if self.relay_domain.is_empty() {
+        let host = if self.env.relay_domain.is_empty() {
             relay.subdomain.clone()
         } else {
-            format!("{}.{}", relay.subdomain, self.relay_domain)
+            format!("{}.{}", relay.subdomain, self.env.relay_domain)
         };
 
         let livekit = if relay.livekit_enabled == 1 {
             serde_json::json!({
                 "enabled": true,
-                "server_url": self.livekit_url,
-                "api_key": self.livekit_api_key,
-                "api_secret": self.livekit_api_secret,
+                "server_url": self.env.livekit_url,
+                "api_key": self.env.livekit_api_key,
+                "api_secret": self.env.livekit_api_secret,
             })
         } else {
             serde_json::json!({ "enabled": false })
@@ -298,12 +222,13 @@ impl Infra {
             host,
             livekit,
             is_new.then(|| Keys::generate().secret_key().to_secret_hex()),
-            self.blossom_s3.as_ref(),
+            &self.env,
         );
 
         let url = format!("{}/relay/{}", base, relay.id);
         let auth = self
-            .nip98_auth(&url, zooid_sync_http_method(is_new))
+            .env
+            .make_auth(&url, zooid_sync_http_method(is_new))
             .await?;
 
         let request = if is_new {
@@ -368,9 +293,9 @@ fn relay_sync_body(
     host: String,
     livekit: serde_json::Value,
     secret: Option<String>,
-    blossom_s3: Option<&BlossomS3Sync>,
+    env: &Env,
 ) -> serde_json::Value {
-    let blossom = blossom_sync_json(relay, blossom_s3);
+    let blossom = blossom_sync_json(relay, env);
 
     let mut body = serde_json::json!({
         "host": host,
@@ -405,38 +330,35 @@ fn relay_sync_body(
     body
 }
 
-fn blossom_sync_json(relay: &Relay, blossom_s3: Option<&BlossomS3Sync>) -> serde_json::Value {
-    let enabled = relay.blossom_enabled == 1;
-    if !enabled {
+/// Relay sync sets `key_prefix` to the relay schema so each relay gets its own
+/// blob namespace within the shared bucket.
+fn blossom_sync_json(relay: &Relay, env: &Env) -> serde_json::Value {
+    if relay.blossom_enabled != 1 {
         return serde_json::json!({ "enabled": false });
     }
 
-    let Some(s3) = blossom_s3 else {
-        return serde_json::json!({ "enabled": true });
-    };
-
     let mut s3_obj = serde_json::Map::new();
-    if !s3.endpoint.trim().is_empty() {
+    if !env.blossom_s3_endpoint.trim().is_empty() {
         s3_obj.insert(
             "endpoint".to_string(),
-            serde_json::Value::String(s3.endpoint.clone()),
+            serde_json::Value::String(env.blossom_s3_endpoint.clone()),
         );
     }
     s3_obj.insert(
         "region".to_string(),
-        serde_json::Value::String(s3.region.clone()),
+        serde_json::Value::String(env.blossom_s3_region.clone()),
     );
     s3_obj.insert(
         "bucket".to_string(),
-        serde_json::Value::String(s3.bucket.clone()),
+        serde_json::Value::String(env.blossom_s3_bucket.clone()),
     );
     s3_obj.insert(
         "access_key".to_string(),
-        serde_json::Value::String(s3.access_key.clone()),
+        serde_json::Value::String(env.blossom_s3_access_key.clone()),
     );
     s3_obj.insert(
         "secret_key".to_string(),
-        serde_json::Value::String(s3.secret_key.clone()),
+        serde_json::Value::String(env.blossom_s3_secret_key.clone()),
     );
     s3_obj.insert(
         "key_prefix".to_string(),

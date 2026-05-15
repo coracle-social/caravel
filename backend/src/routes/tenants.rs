@@ -73,12 +73,9 @@ pub async fn create_tenant(
 
     let tenant = Tenant {
         pubkey: pubkey.clone(),
-        nwc_url: String::new(),
-        nwc_error: None,
         created_at: Utc::now().timestamp(),
         stripe_customer_id,
-        stripe_subscription_id: None,
-        past_due_at: None,
+        ..Default::default()
     };
 
     match api.command.create_tenant(&tenant).await {

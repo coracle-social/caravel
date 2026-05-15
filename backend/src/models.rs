@@ -36,6 +36,20 @@ pub struct Tenant {
     pub past_due_at: Option<i64>,
 }
 
+impl Default for Tenant {
+    fn default() -> Self {
+        Self {
+            pubkey: String::new(),
+            nwc_url: String::new(),
+            nwc_error: None,
+            created_at: 0,
+            stripe_customer_id: String::new(),
+            stripe_subscription_id: None,
+            past_due_at: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Relay {
     pub id: String,
@@ -57,4 +71,30 @@ pub struct Relay {
     pub livekit_enabled: i64,
     pub push_enabled: i64,
     pub synced: i64,
+}
+
+impl Default for Relay {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            tenant: String::new(),
+            schema: String::new(),
+            subdomain: String::new(),
+            plan: String::new(),
+            stripe_subscription_item_id: None,
+            status: RELAY_STATUS_ACTIVE.to_string(),
+            sync_error: String::new(),
+            info_name: String::new(),
+            info_icon: String::new(),
+            info_description: String::new(),
+            policy_public_join: 0,
+            policy_strip_signatures: 0,
+            groups_enabled: 1,
+            management_enabled: 1,
+            blossom_enabled: 0,
+            livekit_enabled: 0,
+            push_enabled: 1,
+            synced: 0,
+        }
+    }
 }

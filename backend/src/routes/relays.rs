@@ -21,16 +21,16 @@ pub struct CreateRelayRequest {
     pub tenant: String,
     pub subdomain: String,
     pub plan: String,
-    pub info_name: Option<String>,
-    pub info_icon: Option<String>,
-    pub info_description: Option<String>,
-    pub policy_public_join: Option<i64>,
-    pub policy_strip_signatures: Option<i64>,
-    pub groups_enabled: Option<i64>,
-    pub management_enabled: Option<i64>,
-    pub blossom_enabled: Option<i64>,
-    pub livekit_enabled: Option<i64>,
-    pub push_enabled: Option<i64>,
+    pub info_name: String,
+    pub info_icon: String,
+    pub info_description: String,
+    pub policy_public_join: i64,
+    pub policy_strip_signatures: i64,
+    pub groups_enabled: i64,
+    pub management_enabled: i64,
+    pub blossom_enabled: i64,
+    pub livekit_enabled: i64,
+    pub push_enabled: i64,
 }
 
 #[derive(Deserialize)]
@@ -116,20 +116,17 @@ pub async fn create_relay(
         schema: relay_id.clone(),
         subdomain: payload.subdomain,
         plan: payload.plan,
-        stripe_subscription_item_id: None,
-        status: RELAY_STATUS_ACTIVE.to_string(),
-        sync_error: String::new(),
-        info_name: payload.info_name.unwrap_or_default(),
-        info_icon: payload.info_icon.unwrap_or_default(),
-        info_description: payload.info_description.unwrap_or_default(),
-        policy_public_join: payload.policy_public_join.unwrap_or(0),
-        policy_strip_signatures: payload.policy_strip_signatures.unwrap_or(0),
-        groups_enabled: payload.groups_enabled.unwrap_or(1),
-        management_enabled: payload.management_enabled.unwrap_or(1),
-        blossom_enabled: payload.blossom_enabled.unwrap_or(0),
-        livekit_enabled: payload.livekit_enabled.unwrap_or(0),
-        push_enabled: payload.push_enabled.unwrap_or(1),
-        synced: 0,
+        info_name: payload.info_name,
+        info_icon: payload.info_icon,
+        info_description: payload.info_description,
+        policy_public_join: payload.policy_public_join,
+        policy_strip_signatures: payload.policy_strip_signatures,
+        groups_enabled: payload.groups_enabled,
+        management_enabled: payload.management_enabled,
+        blossom_enabled: payload.blossom_enabled,
+        livekit_enabled: payload.livekit_enabled,
+        push_enabled: payload.push_enabled,
+        ..Default::default()
     };
 
     let relay = prepare_relay(&api, relay).map_err(validation_error)?;
@@ -286,9 +283,6 @@ fn prepare_relay(api: &Api, mut relay: Relay) -> Result<Relay, RelayValidationEr
         return Err(RelayValidationError::PremiumFeature);
     }
 
-    if relay.status.is_empty() {
-        relay.status = RELAY_STATUS_ACTIVE.to_string();
-    }
     relay.policy_public_join = parse_bool_default(relay.policy_public_join, 0);
     relay.policy_strip_signatures = parse_bool_default(relay.policy_strip_signatures, 0);
     relay.groups_enabled = parse_bool_default(relay.groups_enabled, 1);

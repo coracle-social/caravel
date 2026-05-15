@@ -1,7 +1,11 @@
 //! General-purpose HTTP helpers shared across route handlers.
 //!
-//! This module owns the wire response envelopes (`ok` / `err`), the
-//! `ApiError` type that route handlers return, and a few stateless utilities.
+//! Success builders (`res`, `ok`, `created`) return [`ApiResult`] so they
+//! can sit at the end of a handler without an `Ok(..)` wrap. Error builders
+//! (`err`, `not_found`, `forbidden`, …) return [`ApiError`] so they compose
+//! with `.map_err(...)` and with explicit `Err(...)` returns.
+
+use std::fmt::Display;
 
 use axum::{
     Json,
@@ -10,8 +14,24 @@ use axum::{
 };
 use serde::Serialize;
 
+pub struct ApiError(pub Box<Response>);
+
+impl IntoResponse for ApiError {
+    fn into_response(self) -> Response {
+        *self.0
+    }
+}
+
+impl From<Response> for ApiError {
+    fn from(r: Response) -> Self {
+        Self(Box::new(r))
+    }
+}
+
+pub type ApiResult = Result<Response, ApiError>;
+
 #[derive(Serialize)]
-pub struct OkResponse<T: Serialize> {
+pub struct DataResponse<T: Serialize> {
     pub data: T,
     pub code: &'static str,
 }
@@ -22,40 +42,23 @@ pub struct ErrorResponse {
     pub code: String,
 }
 
-#[derive(Debug)]
-pub enum ApiError {
-    Unauthorized(anyhow::Error),
-    Forbidden(&'static str),
-    NotFound(&'static str),
-    Client {
-        status: StatusCode,
-        code: &'static str,
-        message: &'static str,
-    },
-    Internal(String),
+// --- success builders (return ApiResult) ------------------------------------
+
+pub fn res<T: Serialize>(status: StatusCode, data: T) -> ApiResult {
+    Ok((status, Json(DataResponse { data, code: "ok" })).into_response())
 }
 
-impl IntoResponse for ApiError {
-    fn into_response(self) -> Response {
-        match self {
-            Self::Unauthorized(e) => err(StatusCode::UNAUTHORIZED, "unauthorized", &e.to_string()),
-            Self::Forbidden(message) => err(StatusCode::FORBIDDEN, "forbidden", message),
-            Self::NotFound(message) => err(StatusCode::NOT_FOUND, "not-found", message),
-            Self::Client {
-                status,
-                code,
-                message,
-            } => err(status, code, message),
-            Self::Internal(message) => err(StatusCode::INTERNAL_SERVER_ERROR, "internal", &message),
-        }
-    }
+pub fn ok<T: Serialize>(data: T) -> ApiResult {
+    res(StatusCode::OK, data)
 }
 
-pub fn ok<T: Serialize>(status: StatusCode, data: T) -> Response {
-    (status, Json(OkResponse { data, code: "ok" })).into_response()
+pub fn created<T: Serialize>(data: T) -> ApiResult {
+    res(StatusCode::CREATED, data)
 }
 
-pub fn err(status: StatusCode, code: &str, message: &str) -> Response {
+// --- error builders (return ApiError) ---------------------------------------
+
+pub fn err(status: StatusCode, code: &str, message: &str) -> ApiError {
     (
         status,
         Json(ErrorResponse {
@@ -64,7 +67,38 @@ pub fn err(status: StatusCode, code: &str, message: &str) -> Response {
         }),
     )
         .into_response()
+        .into()
 }
+
+pub fn unauthorized(reason: impl Display) -> ApiError {
+    err(StatusCode::UNAUTHORIZED, "unauthorized", &reason.to_string())
+}
+
+pub fn forbidden(message: &str) -> ApiError {
+    err(StatusCode::FORBIDDEN, "forbidden", message)
+}
+
+pub fn not_found(message: &str) -> ApiError {
+    err(StatusCode::NOT_FOUND, "not-found", message)
+}
+
+pub fn bad_request(code: &str, message: &str) -> ApiError {
+    err(StatusCode::BAD_REQUEST, code, message)
+}
+
+pub fn unprocessable(code: &str, message: &str) -> ApiError {
+    err(StatusCode::UNPROCESSABLE_ENTITY, code, message)
+}
+
+pub fn internal(reason: impl Display) -> ApiError {
+    err(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "internal",
+        &reason.to_string(),
+    )
+}
+
+// --- misc utilities ---------------------------------------------------------
 
 pub fn parse_bool_default(value: i64, default: i64) -> i64 {
     if value == 0 || value == 1 {

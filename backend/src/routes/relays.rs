@@ -4,8 +4,6 @@ use anyhow::Result;
 use axum::{
     Json,
     extract::{Path, State},
-    http::StatusCode,
-    response::Response,
 };
 use serde::Deserialize;
 
@@ -13,7 +11,10 @@ use crate::api::{Api, AuthedPubkey};
 use crate::models::{
     RELAY_STATUS_ACTIVE, RELAY_STATUS_DELINQUENT, RELAY_STATUS_INACTIVE, Relay,
 };
-use crate::web::{ApiError, err, map_unique_error, ok, parse_bool_default};
+use crate::web::{
+    ApiError, ApiResult, bad_request, created, internal, map_unique_error, ok,
+    parse_bool_default, unprocessable,
+};
 
 #[derive(Deserialize)]
 pub struct CreateRelayRequest {
@@ -51,106 +52,56 @@ pub struct UpdateRelayRequest {
 pub async fn list_relays(
     State(api): State<Arc<Api>>,
     AuthedPubkey(auth): AuthedPubkey,
-) -> Result<Response, ApiError> {
+) -> ApiResult {
     api.require_admin(&auth)?;
 
-    match api.query.list_relays().await {
-        Ok(relays) => Ok(ok(StatusCode::OK, relays)),
-        Err(e) => Err(ApiError::Internal(e.to_string())),
-    }
+    let relays = api.query.list_relays().await.map_err(internal)?;
+    ok(relays)
 }
 
 pub async fn get_relay(
     State(api): State<Arc<Api>>,
     AuthedPubkey(auth): AuthedPubkey,
     Path(id): Path<String>,
-) -> Result<Response, ApiError> {
-    let relay = match api.query.get_relay(&id).await {
-        Ok(Some(r)) => r,
-        Ok(None) => return Ok(err(StatusCode::NOT_FOUND, "not-found", "relay not found")),
-        Err(e) => {
-            return Ok(err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal",
-                &e.to_string(),
-            ));
-        }
-    };
-
+) -> ApiResult {
+    let relay = api.get_relay_or_404(&id).await?;
     api.require_admin_or_tenant(&auth, &relay.tenant)?;
-
-    Ok(ok(StatusCode::OK, relay))
+    ok(relay)
 }
 
 pub async fn list_relay_activity(
     State(api): State<Arc<Api>>,
     AuthedPubkey(auth): AuthedPubkey,
     Path(id): Path<String>,
-) -> Result<Response, ApiError> {
-    let relay = match api.query.get_relay(&id).await {
-        Ok(Some(r)) => r,
-        Ok(None) => return Ok(err(StatusCode::NOT_FOUND, "not-found", "relay not found")),
-        Err(e) => {
-            return Ok(err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal",
-                &e.to_string(),
-            ));
-        }
-    };
-
+) -> ApiResult {
+    let relay = api.get_relay_or_404(&id).await?;
     api.require_admin_or_tenant(&auth, &relay.tenant)?;
 
-    match api.query.list_activity_for_relay(&id).await {
-        Ok(activity) => Ok(ok(
-            StatusCode::OK,
-            serde_json::json!({ "activity": activity }),
-        )),
-        Err(e) => Ok(err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "internal",
-            &e.to_string(),
-        )),
-    }
+    let activity = api
+        .query
+        .list_activity_for_relay(&id)
+        .await
+        .map_err(internal)?;
+    ok(serde_json::json!({ "activity": activity }))
 }
 
 pub async fn list_relay_members(
     State(api): State<Arc<Api>>,
     AuthedPubkey(auth): AuthedPubkey,
     Path(id): Path<String>,
-) -> Result<Response, ApiError> {
-    let relay = match api.query.get_relay(&id).await {
-        Ok(Some(r)) => r,
-        Ok(None) => return Ok(err(StatusCode::NOT_FOUND, "not-found", "relay not found")),
-        Err(e) => {
-            return Ok(err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal",
-                &e.to_string(),
-            ));
-        }
-    };
-
+) -> ApiResult {
+    let relay = api.get_relay_or_404(&id).await?;
     api.require_admin_or_tenant(&auth, &relay.tenant)?;
 
-    match fetch_relay_members(&api, &relay).await {
-        Ok(members) => Ok(ok(
-            StatusCode::OK,
-            serde_json::json!({ "members": members }),
-        )),
-        Err(e) => Ok(err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "internal",
-            &e.to_string(),
-        )),
-    }
+    let members = fetch_relay_members(&api, &relay).await.map_err(internal)?;
+    ok(serde_json::json!({ "members": members }))
 }
 
 pub async fn create_relay(
     State(api): State<Arc<Api>>,
     AuthedPubkey(auth): AuthedPubkey,
     Json(payload): Json<CreateRelayRequest>,
-) -> Result<Response, ApiError> {
+) -> ApiResult {
     api.require_admin_or_tenant(&auth, &payload.tenant)?;
 
     let relay_id = format!(
@@ -159,7 +110,7 @@ pub async fn create_relay(
         &uuid::Uuid::new_v4().simple().to_string()[..8]
     );
 
-    let mut relay = Relay {
+    let relay = Relay {
         id: relay_id.clone(),
         tenant: payload.tenant,
         schema: relay_id.clone(),
@@ -181,31 +132,13 @@ pub async fn create_relay(
         synced: 0,
     };
 
-    relay = match prepare_relay(&api, relay) {
-        Ok(r) => r,
-        Err(e) => {
-            return Ok(relay_validation_error_response(e));
-        }
-    };
+    let relay = prepare_relay(&api, relay).map_err(validation_error)?;
 
-    match api.command.create_relay(&relay).await {
-        Ok(()) => Ok(ok(StatusCode::CREATED, relay)),
-        Err(e) => {
-            if matches!(map_unique_error(&e), Some("subdomain-exists")) {
-                Ok(err(
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                    "subdomain-exists",
-                    "subdomain already exists",
-                ))
-            } else {
-                Ok(err(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "internal",
-                    &e.to_string(),
-                ))
-            }
-        }
-    }
+    api.command
+        .create_relay(&relay)
+        .await
+        .map_err(map_relay_write_error)?;
+    created(relay)
 }
 
 pub async fn update_relay(
@@ -213,19 +146,8 @@ pub async fn update_relay(
     AuthedPubkey(auth): AuthedPubkey,
     Path(id): Path<String>,
     Json(payload): Json<UpdateRelayRequest>,
-) -> Result<Response, ApiError> {
-    let mut relay = match api.query.get_relay(&id).await {
-        Ok(Some(r)) => r,
-        Ok(None) => return Ok(err(StatusCode::NOT_FOUND, "not-found", "relay not found")),
-        Err(e) => {
-            return Ok(err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal",
-                &e.to_string(),
-            ));
-        }
-    };
-
+) -> ApiResult {
+    let mut relay = api.get_relay_or_404(&id).await?;
     api.require_admin_or_tenant(&auth, &relay.tenant)?;
 
     let current_plan = relay.plan.clone();
@@ -268,12 +190,7 @@ pub async fn update_relay(
         relay.push_enabled = v;
     }
 
-    relay = match prepare_relay(&api, relay) {
-        Ok(r) => r,
-        Err(e) => {
-            return Ok(relay_validation_error_response(e));
-        }
-    };
+    let relay = prepare_relay(&api, relay).map_err(validation_error)?;
 
     let plan_changed = requested_plan
         .as_deref()
@@ -285,123 +202,61 @@ pub async fn update_relay(
             .get_plan(&relay.plan)
             .expect("validated plan must exist");
         if let Some(limit) = selected_plan.members {
-            let current_members = match fetch_relay_members(&api, &relay).await {
-                Ok(members) => members.len() as i64,
-                Err(e) => {
-                    return Ok(err(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        "internal",
-                        &e.to_string(),
-                    ));
-                }
-            };
+            let current_members = fetch_relay_members(&api, &relay)
+                .await
+                .map_err(internal)?
+                .len() as i64;
 
             if current_members > limit {
                 let message = format!(
                     "relay has {current_members} members, which exceeds the {} plan limit of {limit}",
                     selected_plan.name.to_lowercase()
                 );
-                return Ok(err(
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                    "member-limit-exceeded",
-                    &message,
-                ));
+                return Err(unprocessable("member-limit-exceeded", &message));
             }
         }
     }
 
-    match api.command.update_relay(&relay).await {
-        Ok(()) => Ok(ok(StatusCode::OK, relay)),
-        Err(e) => {
-            if matches!(map_unique_error(&e), Some("subdomain-exists")) {
-                Ok(err(
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                    "subdomain-exists",
-                    "subdomain already exists",
-                ))
-            } else {
-                Ok(err(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "internal",
-                    &e.to_string(),
-                ))
-            }
-        }
-    }
+    api.command
+        .update_relay(&relay)
+        .await
+        .map_err(map_relay_write_error)?;
+    ok(relay)
 }
 
 pub async fn deactivate_relay(
     State(api): State<Arc<Api>>,
     AuthedPubkey(auth): AuthedPubkey,
     Path(id): Path<String>,
-) -> Result<Response, ApiError> {
-    let relay = match api.query.get_relay(&id).await {
-        Ok(Some(r)) => r,
-        Ok(None) => return Ok(err(StatusCode::NOT_FOUND, "not-found", "relay not found")),
-        Err(e) => {
-            return Ok(err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal",
-                &e.to_string(),
-            ));
-        }
-    };
-
+) -> ApiResult {
+    let relay = api.get_relay_or_404(&id).await?;
     api.require_admin_or_tenant(&auth, &relay.tenant)?;
 
     if relay.status == RELAY_STATUS_INACTIVE || relay.status == RELAY_STATUS_DELINQUENT {
-        return Ok(err(
-            StatusCode::BAD_REQUEST,
-            "relay-is-inactive",
-            "relay is already inactive",
-        ));
+        return Err(bad_request("relay-is-inactive", "relay is already inactive"));
     }
 
-    match api.command.deactivate_relay(&relay).await {
-        Ok(()) => Ok(ok(StatusCode::OK, ())),
-        Err(e) => Ok(err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "internal",
-            &e.to_string(),
-        )),
-    }
+    api.command
+        .deactivate_relay(&relay)
+        .await
+        .map_err(internal)?;
+    ok(())
 }
 
 pub async fn reactivate_relay(
     State(api): State<Arc<Api>>,
     AuthedPubkey(auth): AuthedPubkey,
     Path(id): Path<String>,
-) -> Result<Response, ApiError> {
-    let relay = match api.query.get_relay(&id).await {
-        Ok(Some(r)) => r,
-        Ok(None) => return Ok(err(StatusCode::NOT_FOUND, "not-found", "relay not found")),
-        Err(e) => {
-            return Ok(err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal",
-                &e.to_string(),
-            ));
-        }
-    };
-
+) -> ApiResult {
+    let relay = api.get_relay_or_404(&id).await?;
     api.require_admin_or_tenant(&auth, &relay.tenant)?;
 
     if relay.status == RELAY_STATUS_ACTIVE {
-        return Ok(err(
-            StatusCode::BAD_REQUEST,
-            "relay-is-active",
-            "relay is already active",
-        ));
+        return Err(bad_request("relay-is-active", "relay is already active"));
     }
 
-    match api.command.activate_relay(&relay).await {
-        Ok(()) => Ok(ok(StatusCode::OK, ())),
-        Err(e) => Ok(err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "internal",
-            &e.to_string(),
-        )),
-    }
+    api.command.activate_relay(&relay).await.map_err(internal)?;
+    ok(())
 }
 
 // --- helpers ----------------------------------------------------------------
@@ -445,6 +300,18 @@ fn prepare_relay(api: &Api, mut relay: Relay) -> Result<Relay, RelayValidationEr
     relay.push_enabled = parse_bool_default(relay.push_enabled, 1);
 
     Ok(relay)
+}
+
+fn validation_error(error: RelayValidationError) -> ApiError {
+    unprocessable(error.code(), error.message())
+}
+
+fn map_relay_write_error(e: anyhow::Error) -> ApiError {
+    if matches!(map_unique_error(&e), Some("subdomain-exists")) {
+        unprocessable("subdomain-exists", "subdomain already exists")
+    } else {
+        internal(e)
+    }
 }
 
 const SUBDOMAIN_LABEL_MAX_LEN: usize = 63;
@@ -535,12 +402,4 @@ fn validate_subdomain_label(subdomain: &str) -> Result<(), SubdomainValidationEr
     }
 
     Ok(())
-}
-
-fn relay_validation_error_response(error: RelayValidationError) -> Response {
-    err(
-        StatusCode::UNPROCESSABLE_ENTITY,
-        error.code(),
-        error.message(),
-    )
 }

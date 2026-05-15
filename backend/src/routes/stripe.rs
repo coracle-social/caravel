@@ -3,13 +3,12 @@ use std::sync::Arc;
 use axum::{
     body::Bytes,
     extract::{Path, Query as QueryParams, State},
-    http::{HeaderMap, StatusCode},
-    response::Response,
+    http::HeaderMap,
 };
 use serde::Deserialize;
 
 use crate::api::{Api, AuthedPubkey};
-use crate::web::{ApiError, err, ok};
+use crate::web::{ApiResult, bad_request, internal, ok};
 
 #[derive(Deserialize)]
 pub struct StripeSessionParams {
@@ -21,22 +20,16 @@ pub async fn create_stripe_session(
     AuthedPubkey(auth): AuthedPubkey,
     Path(pubkey): Path<String>,
     QueryParams(params): QueryParams<StripeSessionParams>,
-) -> Result<Response, ApiError> {
+) -> ApiResult {
     api.require_admin_or_tenant(&auth, &pubkey)?;
     let tenant = api.get_tenant_or_404(&pubkey).await?;
 
-    match api
+    let url = api
         .billing
         .stripe_create_portal_session(&tenant.stripe_customer_id, params.return_url.as_deref())
         .await
-    {
-        Ok(url) => Ok(ok(StatusCode::OK, serde_json::json!({ "url": url }))),
-        Err(e) => Ok(err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "internal",
-            &e.to_string(),
-        )),
-    }
+        .map_err(internal)?;
+    ok(serde_json::json!({ "url": url }))
 }
 
 /// Stripe webhook endpoint. Authenticated via `Stripe-Signature` verification
@@ -45,19 +38,18 @@ pub async fn stripe_webhook(
     State(api): State<Arc<Api>>,
     headers: HeaderMap,
     body: Bytes,
-) -> Response {
+) -> ApiResult {
     let signature = headers
         .get("Stripe-Signature")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
 
-    let payload = match std::str::from_utf8(&body) {
-        Ok(s) => s,
-        Err(_) => return err(StatusCode::BAD_REQUEST, "bad-request", "invalid payload"),
-    };
+    let payload = std::str::from_utf8(&body)
+        .map_err(|_| bad_request("bad-request", "invalid payload"))?;
 
-    match api.billing.handle_webhook(payload, signature).await {
-        Ok(()) => ok(StatusCode::OK, ()),
-        Err(e) => err(StatusCode::BAD_REQUEST, "webhook-error", &e.to_string()),
-    }
+    api.billing
+        .handle_webhook(payload, signature)
+        .await
+        .map_err(|e| bad_request("webhook-error", &e.to_string()))?;
+    ok(())
 }

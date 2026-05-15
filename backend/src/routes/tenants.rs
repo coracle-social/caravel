@@ -3,15 +3,13 @@ use std::sync::Arc;
 use axum::{
     Json,
     extract::{Path, State},
-    http::StatusCode,
-    response::Response,
 };
-use serde::{Deserialize, Serialize};
 use chrono::Utc;
+use serde::{Deserialize, Serialize};
 
 use crate::api::{Api, AuthedPubkey};
 use crate::models::Tenant;
-use crate::web::{ApiError, err, map_unique_error, ok};
+use crate::web::{ApiResult, internal, map_unique_error, ok};
 
 #[derive(Serialize)]
 pub struct TenantResponse {
@@ -46,23 +44,14 @@ pub struct UpdateTenantRequest {
 pub async fn list_tenants(
     State(api): State<Arc<Api>>,
     AuthedPubkey(auth): AuthedPubkey,
-) -> Result<Response, ApiError> {
+) -> ApiResult {
     api.require_admin(&auth)?;
 
-    match api.query.list_tenants().await {
-        Ok(tenants) => Ok(ok(
-            StatusCode::OK,
-            tenants
-                .into_iter()
-                .map(TenantResponse::from)
-                .collect::<Vec<_>>(),
-        )),
-        Err(e) => Ok(err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "internal",
-            &e.to_string(),
-        )),
-    }
+    let tenants = api.query.list_tenants().await.map_err(internal)?;
+    ok(tenants
+        .into_iter()
+        .map(TenantResponse::from)
+        .collect::<Vec<_>>())
 }
 
 /// Creates the tenant row for the calling pubkey. Idempotent: if the tenant
@@ -71,60 +60,37 @@ pub async fn list_tenants(
 pub async fn create_tenant(
     State(api): State<Arc<Api>>,
     AuthedPubkey(pubkey): AuthedPubkey,
-) -> Result<Response, ApiError> {
-    match api.query.get_tenant(&pubkey).await {
-        Ok(Some(t)) => Ok(ok(StatusCode::OK, TenantResponse::from(t))),
-        Ok(None) => {
-            let stripe_customer_id = match api.billing.stripe_create_customer(&pubkey).await {
-                Ok(id) => id,
-                Err(e) => {
-                    return Ok(err(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        "stripe-customer-create-failed",
-                        &e.to_string(),
-                    ));
-                }
-            };
+) -> ApiResult {
+    if let Some(t) = api.query.get_tenant(&pubkey).await.map_err(internal)? {
+        return ok(TenantResponse::from(t));
+    }
 
-            let tenant = Tenant {
-                pubkey: pubkey.clone(),
-                nwc_url: String::new(),
-                nwc_error: None,
-                created_at: Utc::now().timestamp(),
-                stripe_customer_id,
-                stripe_subscription_id: None,
-                past_due_at: None,
-            };
+    let stripe_customer_id = api
+        .billing
+        .stripe_create_customer(&pubkey)
+        .await
+        .map_err(internal)?;
 
-            match api.command.create_tenant(&tenant).await {
-                Ok(()) => Ok(ok(StatusCode::OK, TenantResponse::from(tenant))),
-                Err(e) if matches!(map_unique_error(&e), Some("pubkey-exists")) => {
-                    match api.query.get_tenant(&pubkey).await {
-                        Ok(Some(t)) => Ok(ok(StatusCode::OK, TenantResponse::from(t))),
-                        Ok(None) => Ok(err(
-                            StatusCode::INTERNAL_SERVER_ERROR,
-                            "internal",
-                            "tenant row missing after unique-constraint race",
-                        )),
-                        Err(e) => Ok(err(
-                            StatusCode::INTERNAL_SERVER_ERROR,
-                            "internal",
-                            &e.to_string(),
-                        )),
-                    }
-                }
-                Err(e) => Ok(err(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "internal",
-                    &e.to_string(),
-                )),
+    let tenant = Tenant {
+        pubkey: pubkey.clone(),
+        nwc_url: String::new(),
+        nwc_error: None,
+        created_at: Utc::now().timestamp(),
+        stripe_customer_id,
+        stripe_subscription_id: None,
+        past_due_at: None,
+    };
+
+    match api.command.create_tenant(&tenant).await {
+        Ok(()) => ok(TenantResponse::from(tenant)),
+        Err(e) if matches!(map_unique_error(&e), Some("pubkey-exists")) => {
+            match api.query.get_tenant(&pubkey).await {
+                Ok(Some(t)) => ok(TenantResponse::from(t)),
+                Ok(None) => Err(internal("tenant row missing after unique-constraint race")),
+                Err(e) => Err(internal(e)),
             }
         }
-        Err(e) => Ok(err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "internal",
-            &e.to_string(),
-        )),
+        Err(e) => Err(internal(e)),
     }
 }
 
@@ -132,10 +98,10 @@ pub async fn get_tenant(
     State(api): State<Arc<Api>>,
     AuthedPubkey(auth): AuthedPubkey,
     Path(pubkey): Path<String>,
-) -> Result<Response, ApiError> {
+) -> ApiResult {
     api.require_admin_or_tenant(&auth, &pubkey)?;
     let tenant = api.get_tenant_or_404(&pubkey).await?;
-    Ok(ok(StatusCode::OK, TenantResponse::from(tenant)))
+    ok(TenantResponse::from(tenant))
 }
 
 pub async fn update_tenant(
@@ -143,7 +109,7 @@ pub async fn update_tenant(
     AuthedPubkey(auth): AuthedPubkey,
     Path(pubkey): Path<String>,
     Json(payload): Json<UpdateTenantRequest>,
-) -> Result<Response, ApiError> {
+) -> ApiResult {
     api.require_admin_or_tenant(&auth, &pubkey)?;
     let mut tenant = api.get_tenant_or_404(&pubkey).await?;
 
@@ -152,52 +118,40 @@ pub async fn update_tenant(
         if nwc_url.is_empty() {
             tenant.nwc_url = String::new();
         } else {
-            tenant.nwc_url = api
-                .env
-                .encrypt(&nwc_url)
-                .map_err(|e| ApiError::Internal(e.to_string()))?;
+            tenant.nwc_url = api.env.encrypt(&nwc_url).map_err(internal)?;
         }
     }
 
-    match api.command.update_tenant(&tenant).await {
-        Ok(()) => {
-            // When NWC is first connected, attempt to pay any outstanding open invoices.
-            if nwc_previously_empty && !tenant.nwc_url.is_empty() {
-                let billing = api.billing.clone();
-                let tenant_clone = tenant.clone();
-                tokio::spawn(async move {
-                    if let Err(e) = billing.pay_outstanding_nwc_invoices(&tenant_clone).await {
-                        tracing::error!(
-                            error = %e,
-                            pubkey = %tenant_clone.pubkey,
-                            "pay_outstanding_nwc_invoices failed after NWC setup"
-                        );
-                    }
-                });
+    api.command.update_tenant(&tenant).await.map_err(internal)?;
+
+    // When NWC is first connected, attempt to pay any outstanding open invoices.
+    if nwc_previously_empty && !tenant.nwc_url.is_empty() {
+        let billing = api.billing.clone();
+        let tenant_clone = tenant.clone();
+        tokio::spawn(async move {
+            if let Err(e) = billing.pay_outstanding_nwc_invoices(&tenant_clone).await {
+                tracing::error!(
+                    error = %e,
+                    pubkey = %tenant_clone.pubkey,
+                    "pay_outstanding_nwc_invoices failed after NWC setup"
+                );
             }
-            Ok(ok(StatusCode::OK, TenantResponse::from(tenant)))
-        }
-        Err(e) => Ok(err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "internal",
-            &e.to_string(),
-        )),
+        });
     }
+    ok(TenantResponse::from(tenant))
 }
 
 pub async fn list_tenant_relays(
     State(api): State<Arc<Api>>,
     AuthedPubkey(auth): AuthedPubkey,
     Path(pubkey): Path<String>,
-) -> Result<Response, ApiError> {
+) -> ApiResult {
     api.require_admin_or_tenant(&auth, &pubkey)?;
 
-    match api.query.list_relays_for_tenant(&pubkey).await {
-        Ok(relays) => Ok(ok(StatusCode::OK, relays)),
-        Err(e) => Ok(err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "internal",
-            &e.to_string(),
-        )),
-    }
+    let relays = api
+        .query
+        .list_relays_for_tenant(&pubkey)
+        .await
+        .map_err(internal)?;
+    ok(relays)
 }

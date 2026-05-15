@@ -31,7 +31,7 @@ use crate::billing::Billing;
 use crate::command::Command;
 use crate::env::Env;
 use crate::infra::Infra;
-use crate::models::Tenant;
+use crate::models::{Relay, Tenant};
 use crate::query::Query;
 use crate::routes::identity::get_identity;
 use crate::routes::invoices::{get_invoice, get_invoice_bolt11, list_tenant_invoices};
@@ -44,7 +44,7 @@ use crate::routes::stripe::{create_stripe_session, stripe_webhook};
 use crate::routes::tenants::{
     create_tenant, get_tenant, list_tenant_relays, list_tenants, update_tenant,
 };
-use crate::web::ApiError;
+use crate::web::{ApiError, forbidden, internal, not_found, unauthorized};
 
 #[derive(Clone)]
 pub struct Api {
@@ -106,7 +106,7 @@ impl Api {
         if self.is_admin(authorized_pubkey) {
             Ok(())
         } else {
-            Err(ApiError::Forbidden("admin required"))
+            Err(forbidden("admin required"))
         }
     }
 
@@ -118,15 +118,23 @@ impl Api {
         if self.is_admin(authorized_pubkey) || authorized_pubkey == tenant_pubkey {
             Ok(())
         } else {
-            Err(ApiError::Forbidden("not authorized"))
+            Err(forbidden("not authorized"))
         }
     }
 
     pub async fn get_tenant_or_404(&self, pubkey: &str) -> Result<Tenant, ApiError> {
         match self.query.get_tenant(pubkey).await {
             Ok(Some(t)) => Ok(t),
-            Ok(None) => Err(ApiError::NotFound("tenant not found")),
-            Err(e) => Err(ApiError::Internal(e.to_string())),
+            Ok(None) => Err(not_found("tenant not found")),
+            Err(e) => Err(internal(e)),
+        }
+    }
+
+    pub async fn get_relay_or_404(&self, id: &str) -> Result<Relay, ApiError> {
+        match self.query.get_relay(id).await {
+            Ok(Some(r)) => Ok(r),
+            Ok(None) => Err(not_found("relay not found")),
+            Err(e) => Err(internal(e)),
         }
     }
 
@@ -137,10 +145,9 @@ impl Api {
     /// This is the intentional session-style variant of NIP-98 used by the
     /// Caravel API: it validates signer identity plus host affinity, and does
     /// not bind to exact request URL/method or maintain replay state. Any
-    /// failure surfaces as `ApiError::Unauthorized`, which renders as 401.
+    /// failure surfaces as a 401 response.
     fn extract_auth_pubkey(&self, headers: &HeaderMap) -> Result<String, ApiError> {
-        self.decode_nip98_pubkey(headers)
-            .map_err(ApiError::Unauthorized)
+        self.decode_nip98_pubkey(headers).map_err(unauthorized)
     }
 
     fn decode_nip98_pubkey(&self, headers: &HeaderMap) -> Result<String> {

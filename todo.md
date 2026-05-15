@@ -1,3 +1,0 @@
-- [ ] Split web utilities and controllers. Use decorators for implementing auth
-- [ ] Fix billing by using stripe as a backend to do proration, then mark invoices paid manually when using bitcoin.
-- [ ] Send a payment link instead of an invoice so we can generate/pay on the fly

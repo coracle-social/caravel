@@ -1,10 +1,11 @@
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use anyhow::Result;
 use axum::{
     Json,
     extract::{Path, State},
 };
+use regex::Regex;
 use serde::Deserialize;
 
 use crate::api::{Api, AuthedPubkey};
@@ -129,7 +130,7 @@ pub async fn create_relay(
         ..Default::default()
     };
 
-    let relay = prepare_relay(&api, relay).map_err(validation_error)?;
+    let relay = prepare_relay(&api, relay)?;
 
     api.command
         .create_relay(&relay)
@@ -187,7 +188,7 @@ pub async fn update_relay(
         relay.push_enabled = v;
     }
 
-    let relay = prepare_relay(&api, relay).map_err(validation_error)?;
+    let relay = prepare_relay(&api, relay)?;
 
     let plan_changed = requested_plan
         .as_deref()
@@ -229,7 +230,11 @@ pub async fn deactivate_relay(
     let relay = api.get_relay_or_404(&id).await?;
     api.require_admin_or_tenant(&auth, &relay.tenant)?;
 
-    if relay.status == RELAY_STATUS_INACTIVE || relay.status == RELAY_STATUS_DELINQUENT {
+    if relay.status == RELAY_STATUS_DELINQUENT {
+        return Err(bad_request("relay-is-delinquent", "relay is delinquent"));
+    }
+
+    if relay.status == RELAY_STATUS_INACTIVE {
         return Err(bad_request("relay-is-inactive", "relay is already inactive"));
     }
 
@@ -247,6 +252,10 @@ pub async fn reactivate_relay(
 ) -> ApiResult {
     let relay = api.get_relay_or_404(&id).await?;
     api.require_admin_or_tenant(&auth, &relay.tenant)?;
+
+    if relay.status == RELAY_STATUS_DELINQUENT {
+        return Err(bad_request("relay-is-delinquent", "relay is delinquent"));
+    }
 
     if relay.status == RELAY_STATUS_ACTIVE {
         return Err(bad_request("relay-is-active", "relay is already active"));
@@ -266,38 +275,35 @@ async fn fetch_relay_members(api: &Api, relay: &Relay) -> Result<Vec<String>> {
     api.infra.list_relay_members(&relay.id).await
 }
 
-/// Validate user-supplied fields and fill defaults for `policy_*` / feature
-/// flags. Premium feature flags are clamped against the plan's entitlements.
-fn prepare_relay(api: &Api, mut relay: Relay) -> Result<Relay, RelayValidationError> {
-    validate_subdomain_label(&relay.subdomain)?;
+const RESERVED_SUBDOMAINS: [&str; 3] = ["api", "admin", "internal"];
+
+static SUBDOMAIN_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$").unwrap());
+
+fn prepare_relay(api: &Api, mut relay: Relay) -> Result<Relay, ApiError> {
+    if !SUBDOMAIN_RE.is_match(&relay.subdomain)
+        || RESERVED_SUBDOMAINS.contains(&relay.subdomain.as_str()) {
+        return Err(unprocessable("invalid-subdomain", "subdomain is invalid"));
+    }
 
     let plan = api
         .query
         .get_plan(&relay.plan)
-        .ok_or(RelayValidationError::InvalidPlan)?;
+        .ok_or_else(|| unprocessable("invalid-plan", "plan not found"))?;
 
-    if !plan.blossom && relay.blossom_enabled == 1 {
-        return Err(RelayValidationError::PremiumFeature);
-    }
-    if !plan.livekit && relay.livekit_enabled == 1 {
-        return Err(RelayValidationError::PremiumFeature);
+    if (!plan.blossom && relay.blossom_enabled == 1) || (!plan.livekit && relay.livekit_enabled == 1) {
+        return Err(unprocessable("premium-feature", "feature requires a paid plan"));
     }
 
     relay.policy_public_join = parse_bool_default(relay.policy_public_join, 0);
     relay.policy_strip_signatures = parse_bool_default(relay.policy_strip_signatures, 0);
     relay.groups_enabled = parse_bool_default(relay.groups_enabled, 1);
     relay.management_enabled = parse_bool_default(relay.management_enabled, 1);
-    relay.blossom_enabled =
-        parse_bool_default(relay.blossom_enabled, if plan.blossom { 1 } else { 0 });
-    relay.livekit_enabled =
-        parse_bool_default(relay.livekit_enabled, if plan.livekit { 1 } else { 0 });
+    relay.blossom_enabled = parse_bool_default(relay.blossom_enabled, 0);
+    relay.livekit_enabled = parse_bool_default(relay.livekit_enabled, 0);
     relay.push_enabled = parse_bool_default(relay.push_enabled, 1);
 
     Ok(relay)
-}
-
-fn validation_error(error: RelayValidationError) -> ApiError {
-    unprocessable(error.code(), error.message())
 }
 
 fn map_relay_write_error(e: anyhow::Error) -> ApiError {
@@ -306,94 +312,4 @@ fn map_relay_write_error(e: anyhow::Error) -> ApiError {
     } else {
         internal(e)
     }
-}
-
-const SUBDOMAIN_LABEL_MAX_LEN: usize = 63;
-const RESERVED_SUBDOMAIN_LABELS: [&str; 2] = ["api", "admin"];
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SubdomainValidationError {
-    Empty,
-    TooLong,
-    Reserved,
-    EdgeHyphen,
-    InvalidCharacters,
-}
-
-impl SubdomainValidationError {
-    fn code(self) -> &'static str {
-        match self {
-            Self::Empty => "subdomain-empty",
-            Self::TooLong => "subdomain-too-long",
-            Self::Reserved => "subdomain-reserved",
-            Self::EdgeHyphen => "subdomain-invalid-hyphen",
-            Self::InvalidCharacters => "subdomain-invalid-characters",
-        }
-    }
-
-    fn message(self) -> &'static str {
-        match self {
-            Self::Empty => "subdomain is required",
-            Self::TooLong => "subdomain must be 63 characters or fewer",
-            Self::Reserved => "subdomain is reserved",
-            Self::EdgeHyphen => "subdomain cannot start or end with a hyphen",
-            Self::InvalidCharacters => {
-                "subdomain may only contain lowercase letters, numbers, and hyphens"
-            }
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RelayValidationError {
-    InvalidPlan,
-    PremiumFeature,
-    Subdomain(SubdomainValidationError),
-}
-
-impl RelayValidationError {
-    fn code(self) -> &'static str {
-        match self {
-            Self::InvalidPlan => "invalid-plan",
-            Self::PremiumFeature => "premium-feature",
-            Self::Subdomain(reason) => reason.code(),
-        }
-    }
-
-    fn message(self) -> &'static str {
-        match self {
-            Self::InvalidPlan => "plan not found",
-            Self::PremiumFeature => "feature requires a paid plan",
-            Self::Subdomain(reason) => reason.message(),
-        }
-    }
-}
-
-impl From<SubdomainValidationError> for RelayValidationError {
-    fn from(value: SubdomainValidationError) -> Self {
-        Self::Subdomain(value)
-    }
-}
-
-fn validate_subdomain_label(subdomain: &str) -> Result<(), SubdomainValidationError> {
-    if subdomain.is_empty() {
-        return Err(SubdomainValidationError::Empty);
-    }
-    if subdomain.len() > SUBDOMAIN_LABEL_MAX_LEN {
-        return Err(SubdomainValidationError::TooLong);
-    }
-    if subdomain.starts_with('-') || subdomain.ends_with('-') {
-        return Err(SubdomainValidationError::EdgeHyphen);
-    }
-    if RESERVED_SUBDOMAIN_LABELS.contains(&subdomain) {
-        return Err(SubdomainValidationError::Reserved);
-    }
-    if !subdomain
-        .chars()
-        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
-    {
-        return Err(SubdomainValidationError::InvalidCharacters);
-    }
-
-    Ok(())
 }

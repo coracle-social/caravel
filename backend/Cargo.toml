@@ -24,6 +24,7 @@ hmac = "0.12"
 sha2 = "0.10"
 dotenvy = "0.15.7"
 base64 = "0.22"
+regex = "1"
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }

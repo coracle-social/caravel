@@ -8,5 +8,7 @@ pub mod models;
 pub mod pool;
 pub mod query;
 pub mod robot;
+pub mod routes;
 pub mod stripe;
 pub mod wallet;
+pub mod web;

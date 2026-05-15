@@ -1,122 +1,58 @@
+//! HTTP surface: router assembly and authentication.
+//!
+//! This module owns the shared `Api`, the NIP-98 `AuthedPubkey`
+//! extractor that decorates protected handlers, and a small set of
+//! authorization helpers (`require_admin`, `require_admin_or_tenant`,
+//! `get_tenant_or_404`) that route handlers in [`crate::routes`] call
+//! once they have an authenticated pubkey.
+//!
+//! The route signature convention is:
+//! - `State<Arc<Api>>` for shared services,
+//! - `AuthedPubkey` if the route requires an authenticated caller,
+//! - then path / query / body extractors.
+//!
+//! Authentication is enforced at the extractor boundary; authorization
+//! (admin vs tenant ownership) is the handler's responsibility.
+
 use std::sync::Arc;
 
-use anyhow::{Result, anyhow};
+use anyhow::{Result, anyhow, ensure};
 use axum::{
-    Json, Router,
-    extract::{Path, Query as QueryParams, State},
-    http::{HeaderMap, StatusCode},
-    response::{IntoResponse, Response},
+    Router,
+    async_trait,
+    extract::FromRequestParts,
+    http::{HeaderMap, request::Parts},
     routing::{get, post},
 };
 use base64::Engine;
 use nostr_sdk::{Event, JsonUtil, Kind};
-use serde::{Deserialize, Serialize};
 
 use crate::billing::Billing;
 use crate::command::Command;
 use crate::env::Env;
 use crate::infra::Infra;
-use crate::models::{
-    RELAY_STATUS_ACTIVE, RELAY_STATUS_DELINQUENT, RELAY_STATUS_INACTIVE, Relay, Tenant,
-};
+use crate::models::Tenant;
 use crate::query::Query;
-use crate::stripe::InvoiceLookupError;
-use axum::body::Bytes;
+use crate::routes::identity::get_identity;
+use crate::routes::invoices::{get_invoice, get_invoice_bolt11, list_tenant_invoices};
+use crate::routes::plans::{get_plan, list_plans};
+use crate::routes::relays::{
+    create_relay, deactivate_relay, get_relay, list_relay_activity, list_relay_members,
+    list_relays, reactivate_relay, update_relay,
+};
+use crate::routes::stripe::{create_stripe_session, stripe_webhook};
+use crate::routes::tenants::{
+    create_tenant, get_tenant, list_tenant_relays, list_tenants, update_tenant,
+};
+use crate::web::ApiError;
 
 #[derive(Clone)]
 pub struct Api {
-    env: Env,
-    query: Query,
-    command: Command,
-    billing: Billing,
-    infra: Infra,
-}
-
-async fn stripe_webhook(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    body: Bytes,
-) -> Response {
-    let signature = headers
-        .get("Stripe-Signature")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
-
-    let payload = match std::str::from_utf8(&body) {
-        Ok(s) => s,
-        Err(_) => return err(StatusCode::BAD_REQUEST, "bad-request", "invalid payload"),
-    };
-
-    match state.api.billing.handle_webhook(payload, signature).await {
-        Ok(()) => ok(StatusCode::OK, ()),
-        Err(e) => err(StatusCode::BAD_REQUEST, "webhook-error", &e.to_string()),
-    }
-}
-
-#[derive(Clone)]
-struct AppState {
-    api: Arc<Api>,
-}
-
-#[derive(Serialize)]
-struct OkResponse<T: Serialize> {
-    data: T,
-    code: &'static str,
-}
-
-#[derive(Serialize)]
-struct ErrorResponse {
-    error: String,
-    code: String,
-}
-
-#[derive(Debug)]
-enum ApiError {
-    Unauthorized(anyhow::Error),
-    Forbidden(&'static str),
-    NotFound(&'static str),
-    Client {
-        status: StatusCode,
-        code: &'static str,
-        message: &'static str,
-    },
-    Internal(String),
-}
-
-impl IntoResponse for ApiError {
-    fn into_response(self) -> Response {
-        match self {
-            Self::Unauthorized(e) => err(StatusCode::UNAUTHORIZED, "unauthorized", &e.to_string()),
-            Self::Forbidden(message) => err(StatusCode::FORBIDDEN, "forbidden", message),
-            Self::NotFound(message) => err(StatusCode::NOT_FOUND, "not-found", message),
-            Self::Client {
-                status,
-                code,
-                message,
-            } => err(status, code, message),
-            Self::Internal(message) => err(StatusCode::INTERNAL_SERVER_ERROR, "internal", &message),
-        }
-    }
-}
-
-fn map_invoice_lookup_error(error: InvoiceLookupError) -> ApiError {
-    match error {
-        InvoiceLookupError::StripeClient { status } => {
-            let status = StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::BAD_REQUEST);
-            match status {
-                StatusCode::NOT_FOUND => ApiError::NotFound("invoice not found"),
-                StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
-                    ApiError::Forbidden("invoice access denied")
-                }
-                _ => ApiError::Client {
-                    status,
-                    code: "invoice-request-rejected",
-                    message: "invoice request rejected",
-                },
-            }
-        }
-        InvoiceLookupError::Internal(error) => ApiError::Internal(error.to_string()),
-    }
+    pub env: Env,
+    pub query: Query,
+    pub command: Command,
+    pub billing: Billing,
+    pub infra: Infra,
 }
 
 impl Api {
@@ -137,11 +73,9 @@ impl Api {
     }
 
     pub fn router(self) -> Router {
-        let state = AppState {
-            api: Arc::new(self),
-        };
+        let api = Arc::new(self);
 
-        let router = Router::new()
+        Router::new()
             .route("/identity", get(get_identity))
             .route("/plans", get(list_plans))
             .route("/plans/:id", get(get_plan))
@@ -157,106 +91,38 @@ impl Api {
             .route("/tenants/:pubkey/invoices", get(list_tenant_invoices))
             .route("/invoices/:id", get(get_invoice))
             .route("/invoices/:id/bolt11", get(get_invoice_bolt11))
-            .route(
-                "/tenants/:pubkey/stripe/session",
-                get(create_stripe_session),
-            )
-            .route("/stripe/webhook", post(stripe_webhook));
-
-        router.with_state(state)
+            .route("/tenants/:pubkey/stripe/session", get(create_stripe_session))
+            .route("/stripe/webhook", post(stripe_webhook))
+            .with_state(api)
     }
 
-    fn extract_auth_pubkey(&self, headers: &HeaderMap) -> std::result::Result<String, ApiError> {
-        let auth = headers
-            .get(axum::http::header::AUTHORIZATION)
-            .and_then(|v| v.to_str().ok())
-            .ok_or_else(|| anyhow!("missing authorization header"))
-            .map_err(ApiError::Unauthorized)?;
-        if !auth.starts_with("Nostr ") {
-            return Err(ApiError::Unauthorized(anyhow!(
-                "authorization must use Nostr scheme"
-            )));
-        }
+    // --- authorization helpers ----------------------------------------------
 
-        let (_, b64) = auth
-            .split_once(' ')
-            .ok_or_else(|| anyhow!("malformed authorization header"))
-            .map_err(ApiError::Unauthorized)?;
-        let bytes = base64::engine::general_purpose::STANDARD
-            .decode(b64)
-            .map_err(anyhow::Error::from)
-            .map_err(ApiError::Unauthorized)?;
-        let json = String::from_utf8(bytes)
-            .map_err(anyhow::Error::from)
-            .map_err(ApiError::Unauthorized)?;
-        let event = Event::from_json(json)
-            .map_err(anyhow::Error::from)
-            .map_err(ApiError::Unauthorized)?;
-
-        if event.kind != Kind::HttpAuth {
-            return Err(ApiError::Unauthorized(anyhow!("invalid nip98 kind")));
-        }
-        event
-            .verify()
-            .map_err(anyhow::Error::from)
-            .map_err(ApiError::Unauthorized)?;
-
-        let mut got_u = None::<String>;
-        for tag in event.tags.iter() {
-            let values = tag.as_slice();
-            if values.len() >= 2 && values[0] == "u" {
-                got_u = Some(values[1].to_string());
-            }
-        }
-
-        let Some(got_u) = got_u else {
-            return Err(ApiError::Unauthorized(anyhow!("missing u tag")));
-        };
-
-        // Intentional session-style variant of NIP-98 for Caravel API auth.
-        // We validate signer identity plus host affinity, and do not bind to exact
-        // request URL/method or maintain replay state here.
-        if !self.env.server_host.is_empty() && !got_u.contains(&self.env.server_host) {
-            return Err(ApiError::Unauthorized(anyhow!(
-                "authorization host mismatch"
-            )));
-        }
-
-        Ok(event.pubkey.to_hex())
+    pub fn is_admin(&self, pubkey: &str) -> bool {
+        self.env.server_admin_pubkeys.iter().any(|a| a == pubkey)
     }
 
-    fn require_admin(&self, authorized_pubkey: &str) -> std::result::Result<(), ApiError> {
-        if self
-            .env
-            .server_admin_pubkeys
-            .iter()
-            .any(|a| a == authorized_pubkey)
-        {
+    pub fn require_admin(&self, authorized_pubkey: &str) -> Result<(), ApiError> {
+        if self.is_admin(authorized_pubkey) {
             Ok(())
         } else {
             Err(ApiError::Forbidden("admin required"))
         }
     }
 
-    fn require_admin_or_tenant(
+    pub fn require_admin_or_tenant(
         &self,
         authorized_pubkey: &str,
         tenant_pubkey: &str,
-    ) -> std::result::Result<(), ApiError> {
-        if self
-            .env
-            .server_admin_pubkeys
-            .iter()
-            .any(|a| a == authorized_pubkey)
-            || authorized_pubkey == tenant_pubkey
-        {
+    ) -> Result<(), ApiError> {
+        if self.is_admin(authorized_pubkey) || authorized_pubkey == tenant_pubkey {
             Ok(())
         } else {
             Err(ApiError::Forbidden("not authorized"))
         }
     }
 
-    async fn get_tenant_or_404(&self, pubkey: &str) -> std::result::Result<Tenant, ApiError> {
+    pub async fn get_tenant_or_404(&self, pubkey: &str) -> Result<Tenant, ApiError> {
         match self.query.get_tenant(pubkey).await {
             Ok(Some(t)) => Ok(t),
             Ok(None) => Err(ApiError::NotFound("tenant not found")),
@@ -264,939 +130,73 @@ impl Api {
         }
     }
 
-    async fn fetch_relay_members(&self, relay: &Relay) -> Result<Vec<String>> {
-        if relay.synced == 0 {
-            return Ok(Vec::new());
-        }
+    // --- authentication -----------------------------------------------------
 
-        self.infra.list_relay_members(&relay.id).await
+    /// Decode the NIP-98 `Authorization` header and return the signer pubkey.
+    ///
+    /// This is the intentional session-style variant of NIP-98 used by the
+    /// Caravel API: it validates signer identity plus host affinity, and does
+    /// not bind to exact request URL/method or maintain replay state. Any
+    /// failure surfaces as `ApiError::Unauthorized`, which renders as 401.
+    fn extract_auth_pubkey(&self, headers: &HeaderMap) -> Result<String, ApiError> {
+        self.decode_nip98_pubkey(headers)
+            .map_err(ApiError::Unauthorized)
     }
 
-    fn prepare_relay(&self, mut relay: Relay) -> std::result::Result<Relay, RelayValidationError> {
-        validate_subdomain_label(&relay.subdomain)?;
+    fn decode_nip98_pubkey(&self, headers: &HeaderMap) -> Result<String> {
+        let auth = headers
+            .get(axum::http::header::AUTHORIZATION)
+            .and_then(|v| v.to_str().ok())
+            .ok_or_else(|| anyhow!("missing authorization header"))?;
+        ensure!(
+            auth.starts_with("Nostr "),
+            "authorization must use Nostr scheme"
+        );
 
-        let plan = self
-            .query
-            .get_plan(&relay.plan)
-            .ok_or(RelayValidationError::InvalidPlan)?;
+        let (_, b64) = auth
+            .split_once(' ')
+            .ok_or_else(|| anyhow!("malformed authorization header"))?;
+        let bytes = base64::engine::general_purpose::STANDARD.decode(b64)?;
+        let json = String::from_utf8(bytes)?;
+        let event = Event::from_json(json)?;
 
-        if !plan.blossom && relay.blossom_enabled == 1 {
-            return Err(RelayValidationError::PremiumFeature);
-        }
-        if !plan.livekit && relay.livekit_enabled == 1 {
-            return Err(RelayValidationError::PremiumFeature);
-        }
+        ensure!(event.kind == Kind::HttpAuth, "invalid nip98 kind");
+        event.verify()?;
 
-        if relay.status.is_empty() {
-            relay.status = RELAY_STATUS_ACTIVE.to_string();
-        }
-        relay.policy_public_join = parse_bool_default(relay.policy_public_join, 0);
-        relay.policy_strip_signatures = parse_bool_default(relay.policy_strip_signatures, 0);
-        relay.groups_enabled = parse_bool_default(relay.groups_enabled, 1);
-        relay.management_enabled = parse_bool_default(relay.management_enabled, 1);
-        relay.blossom_enabled =
-            parse_bool_default(relay.blossom_enabled, if plan.blossom { 1 } else { 0 });
-        relay.livekit_enabled =
-            parse_bool_default(relay.livekit_enabled, if plan.livekit { 1 } else { 0 });
-        relay.push_enabled = parse_bool_default(relay.push_enabled, 1);
+        let got_u = event
+            .tags
+            .iter()
+            .filter_map(|tag| {
+                let values = tag.as_slice();
+                (values.len() >= 2 && values[0] == "u").then(|| values[1].to_string())
+            })
+            .last()
+            .ok_or_else(|| anyhow!("missing u tag"))?;
 
-        Ok(relay)
-    }
-}
+        ensure!(
+            self.env.server_host.is_empty() || got_u.contains(&self.env.server_host),
+            "authorization host mismatch"
+        );
 
-const SUBDOMAIN_LABEL_MAX_LEN: usize = 63;
-const RESERVED_SUBDOMAIN_LABELS: [&str; 2] = ["api", "admin"];
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SubdomainValidationError {
-    Empty,
-    TooLong,
-    Reserved,
-    EdgeHyphen,
-    InvalidCharacters,
-}
-
-impl SubdomainValidationError {
-    fn code(self) -> &'static str {
-        match self {
-            Self::Empty => "subdomain-empty",
-            Self::TooLong => "subdomain-too-long",
-            Self::Reserved => "subdomain-reserved",
-            Self::EdgeHyphen => "subdomain-invalid-hyphen",
-            Self::InvalidCharacters => "subdomain-invalid-characters",
-        }
-    }
-
-    fn message(self) -> &'static str {
-        match self {
-            Self::Empty => "subdomain is required",
-            Self::TooLong => "subdomain must be 63 characters or fewer",
-            Self::Reserved => "subdomain is reserved",
-            Self::EdgeHyphen => "subdomain cannot start or end with a hyphen",
-            Self::InvalidCharacters => {
-                "subdomain may only contain lowercase letters, numbers, and hyphens"
-            }
-        }
+        Ok(event.pubkey.to_hex())
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RelayValidationError {
-    InvalidPlan,
-    PremiumFeature,
-    Subdomain(SubdomainValidationError),
-}
-
-impl RelayValidationError {
-    fn code(self) -> &'static str {
-        match self {
-            Self::InvalidPlan => "invalid-plan",
-            Self::PremiumFeature => "premium-feature",
-            Self::Subdomain(reason) => reason.code(),
-        }
-    }
-
-    fn message(self) -> &'static str {
-        match self {
-            Self::InvalidPlan => "plan not found",
-            Self::PremiumFeature => "feature requires a paid plan",
-            Self::Subdomain(reason) => reason.message(),
-        }
-    }
-}
-
-impl From<SubdomainValidationError> for RelayValidationError {
-    fn from(value: SubdomainValidationError) -> Self {
-        Self::Subdomain(value)
-    }
-}
-
-fn validate_subdomain_label(subdomain: &str) -> std::result::Result<(), SubdomainValidationError> {
-    if subdomain.is_empty() {
-        return Err(SubdomainValidationError::Empty);
-    }
-    if subdomain.len() > SUBDOMAIN_LABEL_MAX_LEN {
-        return Err(SubdomainValidationError::TooLong);
-    }
-    if subdomain.starts_with('-') || subdomain.ends_with('-') {
-        return Err(SubdomainValidationError::EdgeHyphen);
-    }
-    if RESERVED_SUBDOMAIN_LABELS.contains(&subdomain) {
-        return Err(SubdomainValidationError::Reserved);
-    }
-    if !subdomain
-        .chars()
-        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
-    {
-        return Err(SubdomainValidationError::InvalidCharacters);
-    }
-
-    Ok(())
-}
-
-fn ok<T: Serialize>(status: StatusCode, data: T) -> Response {
-    (status, Json(OkResponse { data, code: "ok" })).into_response()
-}
-
-fn err(status: StatusCode, code: &str, message: &str) -> Response {
-    (
-        status,
-        Json(ErrorResponse {
-            error: message.to_string(),
-            code: code.to_string(),
-        }),
-    )
-        .into_response()
-}
-
-fn now_ts() -> i64 {
-    chrono::Utc::now().timestamp()
-}
-
-fn parse_bool_default(value: i64, default: i64) -> i64 {
-    if value == 0 || value == 1 {
-        value
-    } else {
-        default
-    }
-}
-
-fn relay_validation_error_response(error: RelayValidationError) -> Response {
-    err(
-        StatusCode::UNPROCESSABLE_ENTITY,
-        error.code(),
-        error.message(),
-    )
-}
-
-fn map_unique_error(err: &anyhow::Error) -> Option<&'static str> {
-    let sqlx_err = err.downcast_ref::<sqlx::Error>()?;
-    let sqlx::Error::Database(db_err) = sqlx_err else {
-        return None;
-    };
-    if db_err.message().contains("pubkey") {
-        return Some("pubkey-exists");
-    }
-    if db_err.message().contains("subdomain") {
-        return Some("subdomain-exists");
-    }
-    None
-}
-
-#[derive(Deserialize)]
-struct UpdateTenantRequest {
-    nwc_url: Option<String>,
-}
-
-#[derive(Serialize)]
-struct IdentityResponse {
-    pubkey: String,
-    is_admin: bool,
-}
-
-#[derive(Serialize)]
-struct TenantResponse {
-    pubkey: String,
-    nwc_is_set: bool,
-    nwc_error: Option<String>,
-    created_at: i64,
-    stripe_customer_id: String,
-    stripe_subscription_id: Option<String>,
-    past_due_at: Option<i64>,
-}
-
-impl From<Tenant> for TenantResponse {
-    fn from(t: Tenant) -> Self {
-        TenantResponse {
-            nwc_is_set: !t.nwc_url.is_empty(),
-            pubkey: t.pubkey,
-            nwc_error: t.nwc_error,
-            created_at: t.created_at,
-            stripe_customer_id: t.stripe_customer_id,
-            stripe_subscription_id: t.stripe_subscription_id,
-            past_due_at: t.past_due_at,
-        }
-    }
-}
-
-#[derive(Deserialize)]
-struct CreateRelayRequest {
-    tenant: String,
-    subdomain: String,
-    plan: String,
-    info_name: Option<String>,
-    info_icon: Option<String>,
-    info_description: Option<String>,
-    policy_public_join: Option<i64>,
-    policy_strip_signatures: Option<i64>,
-    groups_enabled: Option<i64>,
-    management_enabled: Option<i64>,
-    blossom_enabled: Option<i64>,
-    livekit_enabled: Option<i64>,
-    push_enabled: Option<i64>,
-}
-
-#[derive(Deserialize)]
-struct UpdateRelayRequest {
-    subdomain: Option<String>,
-    plan: Option<String>,
-    info_name: Option<String>,
-    info_icon: Option<String>,
-    info_description: Option<String>,
-    policy_public_join: Option<i64>,
-    policy_strip_signatures: Option<i64>,
-    groups_enabled: Option<i64>,
-    management_enabled: Option<i64>,
-    blossom_enabled: Option<i64>,
-    livekit_enabled: Option<i64>,
-    push_enabled: Option<i64>,
-}
-
-async fn list_tenants(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> std::result::Result<Response, ApiError> {
-    let pubkey = state.api.extract_auth_pubkey(&headers)?;
-    state.api.require_admin(&pubkey)?;
-
-    match state.api.query.list_tenants().await {
-        Ok(tenants) => Ok(ok(
-            StatusCode::OK,
-            tenants
-                .into_iter()
-                .map(TenantResponse::from)
-                .collect::<Vec<_>>(),
-        )),
-        Err(e) => Ok(err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "internal",
-            &e.to_string(),
-        )),
-    }
-}
-
-async fn list_plans(State(state): State<AppState>) -> Response {
-    ok(StatusCode::OK, state.api.query.list_plans())
-}
-
-async fn get_identity(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> std::result::Result<Response, ApiError> {
-    let pubkey = state.api.extract_auth_pubkey(&headers)?;
-    let is_admin = state
-        .api
-        .env
-        .server_admin_pubkeys
-        .iter()
-        .any(|a| a == &pubkey);
-    Ok(ok(StatusCode::OK, IdentityResponse { pubkey, is_admin }))
-}
-
-async fn create_tenant(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> std::result::Result<Response, ApiError> {
-    let pubkey = state.api.extract_auth_pubkey(&headers)?;
-
-    match state.api.query.get_tenant(&pubkey).await {
-        Ok(Some(t)) => Ok(ok(StatusCode::OK, TenantResponse::from(t))),
-        Ok(None) => {
-            let stripe_customer_id = match state.api.billing.stripe_create_customer(&pubkey).await {
-                Ok(id) => id,
-                Err(e) => {
-                    return Ok(err(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        "stripe-customer-create-failed",
-                        &e.to_string(),
-                    ));
-                }
-            };
-
-            let tenant = Tenant {
-                pubkey: pubkey.clone(),
-                nwc_url: String::new(),
-                nwc_error: None,
-                created_at: now_ts(),
-                stripe_customer_id,
-                stripe_subscription_id: None,
-                past_due_at: None,
-            };
-
-            match state.api.command.create_tenant(&tenant).await {
-                Ok(()) => Ok(ok(StatusCode::OK, TenantResponse::from(tenant))),
-                Err(e) if matches!(map_unique_error(&e), Some("pubkey-exists")) => {
-                    match state.api.query.get_tenant(&pubkey).await {
-                        Ok(Some(t)) => Ok(ok(StatusCode::OK, TenantResponse::from(t))),
-                        Ok(None) => Ok(err(
-                            StatusCode::INTERNAL_SERVER_ERROR,
-                            "internal",
-                            "tenant row missing after unique-constraint race",
-                        )),
-                        Err(e) => Ok(err(
-                            StatusCode::INTERNAL_SERVER_ERROR,
-                            "internal",
-                            &e.to_string(),
-                        )),
-                    }
-                }
-                Err(e) => Ok(err(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "internal",
-                    &e.to_string(),
-                )),
-            }
-        }
-        Err(e) => Ok(err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "internal",
-            &e.to_string(),
-        )),
-    }
-}
-
-async fn get_plan(State(state): State<AppState>, Path(id): Path<String>) -> Response {
-    match state.api.query.get_plan(&id) {
-        Some(plan) => ok(StatusCode::OK, plan),
-        None => err(StatusCode::NOT_FOUND, "not-found", "plan not found"),
-    }
-}
-
-async fn get_tenant(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Path(pubkey): Path<String>,
-) -> std::result::Result<Response, ApiError> {
-    let auth = state.api.extract_auth_pubkey(&headers)?;
-    state.api.require_admin_or_tenant(&auth, &pubkey)?;
-    let tenant = state.api.get_tenant_or_404(&pubkey).await?;
-    Ok(ok(StatusCode::OK, TenantResponse::from(tenant)))
-}
-
-async fn list_relays(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> std::result::Result<Response, ApiError> {
-    let pubkey = state.api.extract_auth_pubkey(&headers)?;
-    state.api.require_admin(&pubkey)?;
-
-    match state.api.query.list_relays().await {
-        Ok(relays) => Ok(ok(StatusCode::OK, relays)),
-        Err(e) => Ok(err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "internal",
-            &e.to_string(),
-        )),
-    }
-}
-
-async fn list_tenant_relays(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Path(pubkey): Path<String>,
-) -> std::result::Result<Response, ApiError> {
-    let auth = state.api.extract_auth_pubkey(&headers)?;
-    state.api.require_admin_or_tenant(&auth, &pubkey)?;
-
-    match state.api.query.list_relays_for_tenant(&pubkey).await {
-        Ok(relays) => Ok(ok(StatusCode::OK, relays)),
-        Err(e) => Ok(err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "internal",
-            &e.to_string(),
-        )),
-    }
-}
-
-async fn get_relay(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Path(id): Path<String>,
-) -> std::result::Result<Response, ApiError> {
-    let auth = state.api.extract_auth_pubkey(&headers)?;
-
-    let relay = match state.api.query.get_relay(&id).await {
-        Ok(Some(r)) => r,
-        Ok(None) => return Ok(err(StatusCode::NOT_FOUND, "not-found", "relay not found")),
-        Err(e) => {
-            return Ok(err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal",
-                &e.to_string(),
-            ));
-        }
-    };
-
-    state.api.require_admin_or_tenant(&auth, &relay.tenant)?;
-
-    Ok(ok(StatusCode::OK, relay))
-}
-
-async fn list_relay_activity(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Path(id): Path<String>,
-) -> std::result::Result<Response, ApiError> {
-    let auth = state.api.extract_auth_pubkey(&headers)?;
-
-    let relay = match state.api.query.get_relay(&id).await {
-        Ok(Some(r)) => r,
-        Ok(None) => return Ok(err(StatusCode::NOT_FOUND, "not-found", "relay not found")),
-        Err(e) => {
-            return Ok(err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal",
-                &e.to_string(),
-            ));
-        }
-    };
-
-    state.api.require_admin_or_tenant(&auth, &relay.tenant)?;
-
-    match state.api.query.list_activity_for_relay(&id).await {
-        Ok(activity) => Ok(ok(
-            StatusCode::OK,
-            serde_json::json!({ "activity": activity }),
-        )),
-        Err(e) => Ok(err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "internal",
-            &e.to_string(),
-        )),
-    }
-}
-
-async fn list_relay_members(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Path(id): Path<String>,
-) -> std::result::Result<Response, ApiError> {
-    let auth = state.api.extract_auth_pubkey(&headers)?;
-
-    let relay = match state.api.query.get_relay(&id).await {
-        Ok(Some(r)) => r,
-        Ok(None) => return Ok(err(StatusCode::NOT_FOUND, "not-found", "relay not found")),
-        Err(e) => {
-            return Ok(err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal",
-                &e.to_string(),
-            ));
-        }
-    };
-
-    state.api.require_admin_or_tenant(&auth, &relay.tenant)?;
-
-    match state.api.fetch_relay_members(&relay).await {
-        Ok(members) => Ok(ok(
-            StatusCode::OK,
-            serde_json::json!({ "members": members }),
-        )),
-        Err(e) => Ok(err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "internal",
-            &e.to_string(),
-        )),
-    }
-}
-
-async fn create_relay(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Json(payload): Json<CreateRelayRequest>,
-) -> std::result::Result<Response, ApiError> {
-    let auth = state.api.extract_auth_pubkey(&headers)?;
-    state.api.require_admin_or_tenant(&auth, &payload.tenant)?;
-
-    let relay_id = format!(
-        "{}_{}",
-        payload.subdomain.replace('-', "_"),
-        &uuid::Uuid::new_v4().simple().to_string()[..8]
-    );
-
-    let mut relay = Relay {
-        id: relay_id.clone(),
-        tenant: payload.tenant,
-        schema: relay_id.clone(),
-        subdomain: payload.subdomain,
-        plan: payload.plan,
-        stripe_subscription_item_id: None,
-        status: RELAY_STATUS_ACTIVE.to_string(),
-        sync_error: String::new(),
-        info_name: payload.info_name.unwrap_or_default(),
-        info_icon: payload.info_icon.unwrap_or_default(),
-        info_description: payload.info_description.unwrap_or_default(),
-        policy_public_join: payload.policy_public_join.unwrap_or(0),
-        policy_strip_signatures: payload.policy_strip_signatures.unwrap_or(0),
-        groups_enabled: payload.groups_enabled.unwrap_or(1),
-        management_enabled: payload.management_enabled.unwrap_or(1),
-        blossom_enabled: payload.blossom_enabled.unwrap_or(0),
-        livekit_enabled: payload.livekit_enabled.unwrap_or(0),
-        push_enabled: payload.push_enabled.unwrap_or(1),
-        synced: 0,
-    };
-
-    relay = match state.api.prepare_relay(relay) {
-        Ok(r) => r,
-        Err(e) => {
-            return Ok(relay_validation_error_response(e));
-        }
-    };
-
-    match state.api.command.create_relay(&relay).await {
-        Ok(()) => Ok(ok(StatusCode::CREATED, relay)),
-        Err(e) => {
-            if matches!(map_unique_error(&e), Some("subdomain-exists")) {
-                Ok(err(
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                    "subdomain-exists",
-                    "subdomain already exists",
-                ))
-            } else {
-                Ok(err(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "internal",
-                    &e.to_string(),
-                ))
-            }
-        }
-    }
-}
-
-async fn update_relay(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Path(id): Path<String>,
-    Json(payload): Json<UpdateRelayRequest>,
-) -> std::result::Result<Response, ApiError> {
-    let auth = state.api.extract_auth_pubkey(&headers)?;
-
-    let mut relay = match state.api.query.get_relay(&id).await {
-        Ok(Some(r)) => r,
-        Ok(None) => return Ok(err(StatusCode::NOT_FOUND, "not-found", "relay not found")),
-        Err(e) => {
-            return Ok(err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal",
-                &e.to_string(),
-            ));
-        }
-    };
-
-    state.api.require_admin_or_tenant(&auth, &relay.tenant)?;
-
-    let current_plan = relay.plan.clone();
-    let requested_plan = payload.plan.clone();
-
-    if let Some(v) = payload.subdomain {
-        relay.subdomain = v;
-    }
-    if let Some(v) = requested_plan.clone() {
-        relay.plan = v;
-    }
-    if let Some(v) = payload.info_name {
-        relay.info_name = v;
-    }
-    if let Some(v) = payload.info_icon {
-        relay.info_icon = v;
-    }
-    if let Some(v) = payload.info_description {
-        relay.info_description = v;
-    }
-    if let Some(v) = payload.policy_public_join {
-        relay.policy_public_join = v;
-    }
-    if let Some(v) = payload.policy_strip_signatures {
-        relay.policy_strip_signatures = v;
-    }
-    if let Some(v) = payload.groups_enabled {
-        relay.groups_enabled = v;
-    }
-    if let Some(v) = payload.management_enabled {
-        relay.management_enabled = v;
-    }
-    if let Some(v) = payload.blossom_enabled {
-        relay.blossom_enabled = v;
-    }
-    if let Some(v) = payload.livekit_enabled {
-        relay.livekit_enabled = v;
-    }
-    if let Some(v) = payload.push_enabled {
-        relay.push_enabled = v;
-    }
-
-    relay = match state.api.prepare_relay(relay) {
-        Ok(r) => r,
-        Err(e) => {
-            return Ok(relay_validation_error_response(e));
-        }
-    };
-
-    let plan_changed = requested_plan
-        .as_deref()
-        .is_some_and(|requested| requested != current_plan);
-
-    if plan_changed {
-        let selected_plan = state
-            .api
-            .query
-            .get_plan(&relay.plan)
-            .expect("validated plan must exist");
-        if let Some(limit) = selected_plan.members {
-            let current_members = match state.api.fetch_relay_members(&relay).await {
-                Ok(members) => members.len() as i64,
-                Err(e) => {
-                    return Ok(err(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        "internal",
-                        &e.to_string(),
-                    ));
-                }
-            };
-
-            if current_members > limit {
-                let message = format!(
-                    "relay has {current_members} members, which exceeds the {} plan limit of {limit}",
-                    selected_plan.name.to_lowercase()
-                );
-                return Ok(err(
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                    "member-limit-exceeded",
-                    &message,
-                ));
-            }
-        }
-    }
-
-    match state.api.command.update_relay(&relay).await {
-        Ok(()) => Ok(ok(StatusCode::OK, relay)),
-        Err(e) => {
-            if matches!(map_unique_error(&e), Some("subdomain-exists")) {
-                Ok(err(
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                    "subdomain-exists",
-                    "subdomain already exists",
-                ))
-            } else {
-                Ok(err(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "internal",
-                    &e.to_string(),
-                ))
-            }
-        }
-    }
-}
-
-async fn deactivate_relay(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Path(id): Path<String>,
-) -> std::result::Result<Response, ApiError> {
-    let auth = state.api.extract_auth_pubkey(&headers)?;
-
-    let relay = match state.api.query.get_relay(&id).await {
-        Ok(Some(r)) => r,
-        Ok(None) => return Ok(err(StatusCode::NOT_FOUND, "not-found", "relay not found")),
-        Err(e) => {
-            return Ok(err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal",
-                &e.to_string(),
-            ));
-        }
-    };
-
-    state.api.require_admin_or_tenant(&auth, &relay.tenant)?;
-
-    if relay.status == RELAY_STATUS_INACTIVE || relay.status == RELAY_STATUS_DELINQUENT {
-        return Ok(err(
-            StatusCode::BAD_REQUEST,
-            "relay-is-inactive",
-            "relay is already inactive",
-        ));
-    }
-
-    match state.api.command.deactivate_relay(&relay).await {
-        Ok(()) => Ok(ok(StatusCode::OK, ())),
-        Err(e) => Ok(err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "internal",
-            &e.to_string(),
-        )),
-    }
-}
-
-async fn reactivate_relay(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Path(id): Path<String>,
-) -> std::result::Result<Response, ApiError> {
-    let auth = state.api.extract_auth_pubkey(&headers)?;
-
-    let relay = match state.api.query.get_relay(&id).await {
-        Ok(Some(r)) => r,
-        Ok(None) => return Ok(err(StatusCode::NOT_FOUND, "not-found", "relay not found")),
-        Err(e) => {
-            return Ok(err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal",
-                &e.to_string(),
-            ));
-        }
-    };
-
-    state.api.require_admin_or_tenant(&auth, &relay.tenant)?;
-
-    if relay.status == RELAY_STATUS_ACTIVE {
-        return Ok(err(
-            StatusCode::BAD_REQUEST,
-            "relay-is-active",
-            "relay is already active",
-        ));
-    }
-
-    match state.api.command.activate_relay(&relay).await {
-        Ok(()) => Ok(ok(StatusCode::OK, ())),
-        Err(e) => Ok(err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "internal",
-            &e.to_string(),
-        )),
-    }
-}
-
-async fn list_tenant_invoices(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Path(pubkey): Path<String>,
-) -> std::result::Result<Response, ApiError> {
-    let auth = state.api.extract_auth_pubkey(&headers)?;
-    state.api.require_admin_or_tenant(&auth, &pubkey)?;
-    let tenant = state.api.get_tenant_or_404(&pubkey).await?;
-
-    match state
-        .api
-        .billing
-        .stripe_list_invoices(&tenant.stripe_customer_id)
-        .await
-    {
-        Ok(invoices) => Ok(ok(StatusCode::OK, invoices)),
-        Err(e) => Ok(err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "internal",
-            &e.to_string(),
-        )),
-    }
-}
-
-async fn get_invoice(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Path(id): Path<String>,
-) -> std::result::Result<Response, ApiError> {
-    let auth = state.api.extract_auth_pubkey(&headers)?;
-    let (invoice, tenant) = state
-        .api
-        .billing
-        .get_invoice_with_tenant(&id)
-        .await
-        .map_err(map_invoice_lookup_error)?;
-    state.api.require_admin_or_tenant(&auth, &tenant.pubkey)?;
-
-    let invoice = state
-        .api
-        .billing
-        .reconcile_manual_lightning_invoice(&id, &invoice)
-        .await
-        .map_err(map_invoice_lookup_error)?;
-
-    Ok(ok(StatusCode::OK, invoice))
-}
-
-async fn get_invoice_bolt11(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Path(id): Path<String>,
-) -> std::result::Result<Response, ApiError> {
-    let auth = state.api.extract_auth_pubkey(&headers)?;
-    let (invoice, tenant) = state
-        .api
-        .billing
-        .get_invoice_with_tenant(&id)
-        .await
-        .map_err(map_invoice_lookup_error)?;
-    state.api.require_admin_or_tenant(&auth, &tenant.pubkey)?;
-
-    let invoice = state
-        .api
-        .billing
-        .reconcile_manual_lightning_invoice(&id, &invoice)
-        .await
-        .map_err(map_invoice_lookup_error)?;
-
-    let status = invoice["status"].as_str().unwrap_or_default();
-    if status != "open" {
-        return Ok(err(
-            StatusCode::BAD_REQUEST,
-            "invoice-not-open",
-            "invoice is not open",
-        ));
-    }
-
-    let amount_due = invoice["amount_due"].as_i64().unwrap_or(0);
-    let currency = invoice["currency"].as_str().unwrap_or("usd");
-
-    match state
-        .api
-        .billing
-        .get_or_create_manual_lightning_bolt11(&id, &tenant.pubkey, amount_due, currency)
-        .await
-    {
-        Ok(bolt11) => Ok(ok(StatusCode::OK, serde_json::json!({ "bolt11": bolt11 }))),
-        Err(e) => Ok(err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "internal",
-            &e.to_string(),
-        )),
-    }
-}
-
-#[derive(serde::Deserialize)]
-struct StripeSessionParams {
-    return_url: Option<String>,
-}
-
-async fn create_stripe_session(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Path(pubkey): Path<String>,
-    QueryParams(params): QueryParams<StripeSessionParams>,
-) -> std::result::Result<Response, ApiError> {
-    let auth = state.api.extract_auth_pubkey(&headers)?;
-    state.api.require_admin_or_tenant(&auth, &pubkey)?;
-    let tenant = state.api.get_tenant_or_404(&pubkey).await?;
-
-    match state
-        .api
-        .billing
-        .stripe_create_portal_session(&tenant.stripe_customer_id, params.return_url.as_deref())
-        .await
-    {
-        Ok(url) => Ok(ok(StatusCode::OK, serde_json::json!({ "url": url }))),
-        Err(e) => Ok(err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "internal",
-            &e.to_string(),
-        )),
-    }
-}
-
-async fn update_tenant(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Path(pubkey): Path<String>,
-    Json(payload): Json<UpdateTenantRequest>,
-) -> std::result::Result<Response, ApiError> {
-    let auth = state.api.extract_auth_pubkey(&headers)?;
-    state.api.require_admin_or_tenant(&auth, &pubkey)?;
-    let mut tenant = state.api.get_tenant_or_404(&pubkey).await?;
-
-    let nwc_previously_empty = tenant.nwc_url.is_empty();
-    if let Some(nwc_url) = payload.nwc_url {
-        if nwc_url.is_empty() {
-            tenant.nwc_url = String::new();
-        } else {
-            tenant.nwc_url = state
-                .api
-                .env
-                .encrypt(&nwc_url)
-                .map_err(|e| ApiError::Internal(e.to_string()))?;
-        }
-    }
-
-    match state.api.command.update_tenant(&tenant).await {
-        Ok(()) => {
-            // When NWC is first connected, attempt to pay any outstanding open invoices.
-            if nwc_previously_empty && !tenant.nwc_url.is_empty() {
-                let billing = state.api.billing.clone();
-                let tenant_clone = tenant.clone();
-                tokio::spawn(async move {
-                    if let Err(e) = billing.pay_outstanding_nwc_invoices(&tenant_clone).await {
-                        tracing::error!(
-                            error = %e,
-                            pubkey = %tenant_clone.pubkey,
-                            "pay_outstanding_nwc_invoices failed after NWC setup"
-                        );
-                    }
-                });
-            }
-            Ok(ok(StatusCode::OK, TenantResponse::from(tenant)))
-        }
-        Err(e) => Ok(err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "internal",
-            &e.to_string(),
-        )),
+/// Axum extractor that authenticates a request via NIP-98 and yields the
+/// signer's pubkey. Adding this parameter to a handler signature is the
+/// decoration that enforces "must be authenticated"; handlers that omit it
+/// remain anonymous.
+pub struct AuthedPubkey(pub String);
+
+#[async_trait]
+impl FromRequestParts<Arc<Api>> for AuthedPubkey {
+    type Rejection = ApiError;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        api: &Arc<Api>,
+    ) -> Result<Self, Self::Rejection> {
+        let pubkey = api.extract_auth_pubkey(&parts.headers)?;
+        Ok(Self(pubkey))
     }
 }

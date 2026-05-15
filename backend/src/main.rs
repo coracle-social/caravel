@@ -8,8 +8,10 @@ mod models;
 mod pool;
 mod query;
 mod robot;
+mod routes;
 mod stripe;
 mod wallet;
+mod web;
 
 use anyhow::Result;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};

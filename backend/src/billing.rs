@@ -7,7 +7,7 @@ use crate::env::Env;
 use crate::models::{Activity, RELAY_STATUS_ACTIVE, RELAY_STATUS_DELINQUENT};
 use crate::query::Query;
 use crate::robot::Robot;
-use crate::stripe::Stripe;
+use crate::stripe::{Stripe, StripeInvoice};
 use crate::wallet::Wallet;
 
 const MANUAL_LIGHTNING_PAYMENT_DM: &str = "Payment is due for your relay subscription. Please visit the application to complete a manual Lightning payment.";
@@ -161,12 +161,7 @@ impl Billing {
         // longer exists or has been canceled.
         let subscription = match tenant.stripe_subscription_id.as_deref() {
             Some(subscription_id) => match self.stripe.get_subscription(subscription_id).await? {
-                Some(sub)
-                    if !matches!(
-                        sub["status"].as_str().unwrap_or_default(),
-                        "canceled" | "incomplete_expired"
-                    ) =>
-                {
+                Some(sub) if !matches!(sub.status.as_str(), "canceled" | "incomplete_expired") => {
                     Some(sub)
                 }
                 _ => {
@@ -205,32 +200,25 @@ impl Billing {
 
         match subscription {
             None => {
-                let (subscription_id, items) = self
+                let sub = self
                     .stripe
                     .create_subscription(&tenant.stripe_customer_id, &desired)
                     .await?;
                 self.command
-                    .set_tenant_subscription(tenant_pubkey, &subscription_id)
+                    .set_tenant_subscription(tenant_pubkey, &sub.id)
                     .await?;
-                tenant.stripe_subscription_id = Some(subscription_id);
-                price_to_item = items;
+                for item in sub.items {
+                    price_to_item.insert(item.price.id, item.id);
+                }
+                tenant.stripe_subscription_id = Some(sub.id);
             }
             Some(sub) => {
-                let subscription_id = sub["id"]
-                    .as_str()
-                    .ok_or_else(|| anyhow!("missing subscription id"))?
-                    .to_string();
+                let subscription_id = sub.id;
 
                 // price id -> (item id, quantity) for items currently on the subscription.
                 let mut current: BTreeMap<String, (String, i64)> = BTreeMap::new();
-                for item in sub["items"]["data"].as_array().into_iter().flatten() {
-                    let (Some(item_id), Some(price_id)) =
-                        (item["id"].as_str(), item["price"]["id"].as_str())
-                    else {
-                        continue;
-                    };
-                    let quantity = item["quantity"].as_i64().unwrap_or(1);
-                    current.insert(price_id.to_string(), (item_id.to_string(), quantity));
+                for item in sub.items {
+                    current.insert(item.price.id, (item.id, item.quantity));
                 }
 
                 for (price_id, &quantity) in &desired {
@@ -310,7 +298,7 @@ impl Billing {
     }
 
     pub async fn handle_webhook(&self, payload: &str, signature: &str) -> Result<()> {
-        let event = self.stripe.construct_event(payload, signature)?;
+        let event = self.stripe.get_webhook_event(payload, signature)?;
         let obj = &event.data.object;
 
         match event.event_type.as_str() {
@@ -578,35 +566,22 @@ impl Billing {
     async fn validate_downgrade_proration(&self, tenant: &crate::models::Tenant, context: &str) {
         match self
             .stripe
-            .preview_upcoming_invoice(
+            .preview_invoice(
                 &tenant.stripe_customer_id,
                 tenant.stripe_subscription_id.as_deref(),
             )
             .await
         {
             Ok(upcoming) => {
-                let lines = upcoming["lines"]["data"]
-                    .as_array()
-                    .cloned()
-                    .unwrap_or_default();
-                let proration_lines = lines
-                    .iter()
-                    .filter(|line| line["proration"].as_bool().unwrap_or(false))
-                    .count();
-                let amount_due = upcoming["amount_due"]
-                    .as_i64()
-                    .unwrap_or_else(|| upcoming["total"].as_i64().unwrap_or(0));
-                let currency = upcoming["currency"].as_str().unwrap_or("usd");
-                let preview_id = upcoming["id"].as_str().unwrap_or_default();
+                let proration_lines = upcoming.lines.iter().filter(|line| line.proration).count();
 
                 tracing::info!(
                     tenant_pubkey = %tenant.pubkey,
                     stripe_customer_id = %tenant.stripe_customer_id,
                     context,
-                    preview_id,
                     proration_lines,
-                    amount_due,
-                    currency,
+                    amount_due = upcoming.amount_due,
+                    currency = %upcoming.currency,
                     "validated Stripe proration preview for downgrade"
                 );
 
@@ -635,16 +610,13 @@ impl Billing {
     pub async fn get_invoice_with_tenant(
         &self,
         invoice_id: &str,
-    ) -> Result<Option<(serde_json::Value, crate::models::Tenant)>> {
+    ) -> Result<Option<(StripeInvoice, crate::models::Tenant)>> {
         let Some(invoice) = self.stripe.get_invoice(invoice_id).await? else {
             return Ok(None);
         };
-        let customer_id = invoice["customer"]
-            .as_str()
-            .ok_or_else(|| anyhow!("invoice missing customer"))?;
         let tenant = self
             .query
-            .get_tenant_by_stripe_customer_id(customer_id)
+            .get_tenant_by_stripe_customer_id(&invoice.customer)
             .await?
             .ok_or_else(|| anyhow!("tenant not found for customer"))?;
         Ok(Some((invoice, tenant)))
@@ -653,8 +625,8 @@ impl Billing {
     pub async fn reconcile_manual_lightning_invoice(
         &self,
         invoice_id: &str,
-        invoice: &serde_json::Value,
-    ) -> Result<serde_json::Value> {
+        invoice: &StripeInvoice,
+    ) -> Result<StripeInvoice> {
         self.reconcile_manual_lightning_invoice_if_settled(invoice_id, invoice)
             .await
     }
@@ -702,11 +674,11 @@ impl Billing {
             .await
             .unwrap_or(short_pubkey);
         self.stripe
-            .create_customer(&display_name, tenant_pubkey)
+            .create_customer(tenant_pubkey, &display_name)
             .await
     }
 
-    pub async fn stripe_list_invoices(&self, customer_id: &str) -> Result<serde_json::Value> {
+    pub async fn stripe_list_invoices(&self, customer_id: &str) -> Result<Vec<StripeInvoice>> {
         self.stripe.list_invoices(customer_id).await
     }
 
@@ -738,24 +710,19 @@ impl Billing {
             .stripe
             .list_invoices(&tenant.stripe_customer_id)
             .await?;
-        let invoices_arr = invoices.as_array().cloned().unwrap_or_default();
 
-        for invoice in &invoices_arr {
-            let status = invoice["status"].as_str().unwrap_or_default();
-            let amount_due = invoice["amount_due"].as_i64().unwrap_or(0);
-            let invoice_id = invoice["id"].as_str().unwrap_or_default();
-            let currency = invoice["currency"].as_str().unwrap_or("usd");
-
-            if status != "open" || amount_due == 0 || invoice_id.is_empty() {
+        for invoice in &invoices {
+            if invoice.status != "open" || invoice.amount_due == 0 {
                 continue;
             }
+            let invoice_id = invoice.id.as_str();
 
             match self
                 .nwc_pay_invoice(
                     invoice_id,
                     &tenant.pubkey,
-                    amount_due,
-                    currency,
+                    invoice.amount_due,
+                    &invoice.currency,
                     &plain_nwc_url,
                 )
                 .await?
@@ -815,21 +782,15 @@ impl Billing {
             .stripe
             .list_invoices(&tenant.stripe_customer_id)
             .await?;
-        let invoices_arr = invoices.as_array().cloned().unwrap_or_default();
 
-        for invoice in &invoices_arr {
-            let status = invoice["status"].as_str().unwrap_or_default();
-            let amount_due = invoice["amount_due"].as_i64().unwrap_or(0);
-            let invoice_id = invoice["id"].as_str().unwrap_or_default();
-
-            if status != "open" || amount_due == 0 || invoice_id.is_empty() {
+        for invoice in &invoices {
+            if invoice.status != "open" || invoice.amount_due == 0 {
                 continue;
             }
-
-            if let Err(error) = self.stripe.pay_invoice(invoice_id).await {
+            if let Err(error) = self.stripe.pay_invoice(&invoice.id).await {
                 tracing::error!(
                     error = %error,
-                    invoice_id,
+                    invoice_id = %invoice.id,
                     "failed to retry card payment for outstanding invoice"
                 );
             }
@@ -853,9 +814,9 @@ impl Billing {
     async fn reconcile_manual_lightning_invoice_if_settled(
         &self,
         invoice_id: &str,
-        invoice: &serde_json::Value,
-    ) -> Result<serde_json::Value> {
-        if invoice["status"].as_str().unwrap_or_default() != "open" {
+        invoice: &StripeInvoice,
+    ) -> Result<StripeInvoice> {
+        if invoice.status != "open" {
             return Ok(invoice.clone());
         }
 

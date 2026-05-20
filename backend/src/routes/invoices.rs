@@ -62,17 +62,18 @@ pub async fn get_invoice_bolt11(
         .await
         .map_err(internal)?;
 
-    let status = invoice["status"].as_str().unwrap_or_default();
-    if status != "open" {
+    if invoice.status != "open" {
         return Err(bad_request("invoice-not-open", "invoice is not open"));
     }
 
-    let amount_due = invoice["amount_due"].as_i64().unwrap_or(0);
-    let currency = invoice["currency"].as_str().unwrap_or("usd");
-
     let bolt11 = api
         .billing
-        .get_or_create_manual_lightning_bolt11(&id, &tenant.pubkey, amount_due, currency)
+        .get_or_create_manual_lightning_bolt11(
+            &id,
+            &tenant.pubkey,
+            invoice.amount_due,
+            &invoice.currency,
+        )
         .await
         .map_err(internal)?;
     ok(serde_json::json!({ "bolt11": bolt11 }))

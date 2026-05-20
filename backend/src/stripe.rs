@@ -9,23 +9,90 @@ use hmac::{Hmac, Mac};
 use sha2::Sha256;
 use std::collections::BTreeMap;
 
-type HmacSha256 = Hmac<Sha256>;
-
 const STRIPE_API: &str = "https://api.stripe.com/v1";
+
+// Webhooks
+
 const WEBHOOK_TOLERANCE_SECS: i64 = 300;
 
-/// A Stripe webhook event with its signature already verified.
 #[derive(serde::Deserialize)]
-pub struct Event {
+pub struct StripeWebhookEvent {
     #[serde(rename = "type")]
     pub event_type: String,
-    pub data: EventData,
+    pub data: StripeWebhookEventData,
 }
 
 #[derive(serde::Deserialize)]
-pub struct EventData {
+pub struct StripeWebhookEventData {
     pub object: serde_json::Value,
 }
+
+// API return types
+
+#[derive(serde::Deserialize)]
+pub struct StripeSubscription {
+    pub id: String,
+    pub status: String,
+    #[serde(deserialize_with = "deserialize_list")]
+    pub items: Vec<StripeSubscriptionItem>,
+}
+
+#[derive(serde::Deserialize)]
+pub struct StripeSubscriptionItem {
+    pub id: String,
+    pub price: StripePrice,
+    #[serde(default = "default_quantity")]
+    pub quantity: i64,
+}
+
+#[derive(serde::Deserialize)]
+pub struct StripePrice {
+    pub id: String,
+}
+
+#[derive(serde::Deserialize, serde::Serialize, Clone)]
+pub struct StripeInvoice {
+    pub id: String,
+    pub customer: String,
+    pub status: String,
+    pub amount_due: i64,
+    pub currency: String,
+    #[serde(deserialize_with = "deserialize_list")]
+    pub lines: Vec<StripeInvoiceLine>,
+}
+
+#[derive(serde::Deserialize)]
+pub struct StripeInvoicePreview {
+    pub amount_due: i64,
+    pub currency: String,
+    #[serde(deserialize_with = "deserialize_list")]
+    pub lines: Vec<StripeInvoiceLine>,
+}
+
+#[derive(serde::Deserialize, serde::Serialize, Clone)]
+pub struct StripeInvoiceLine {
+    #[serde(default)]
+    pub proration: bool,
+}
+
+#[derive(serde::Deserialize)]
+struct StripeList<T> {
+    data: Vec<T>,
+}
+
+fn deserialize_list<'de, D, T>(deserializer: D) -> Result<Vec<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::Deserialize<'de>,
+{
+    Ok(<StripeList<T> as serde::Deserialize>::deserialize(deserializer)?.data)
+}
+
+fn default_quantity() -> i64 {
+    1
+}
+
+// Stripe struct and impl
 
 #[derive(Clone)]
 pub struct Stripe {
@@ -43,62 +110,76 @@ impl Stripe {
         }
     }
 
+    // --- Request helpers ---
+
+    fn get(&self, path: &str) -> reqwest::RequestBuilder {
+        self.http
+            .get(format!("{STRIPE_API}{path}"))
+            .bearer_auth(&self.secret_key)
+    }
+
+    fn post(&self, path: &str) -> reqwest::RequestBuilder {
+        self.http
+            .post(format!("{STRIPE_API}{path}"))
+            .bearer_auth(&self.secret_key)
+    }
+
+    fn delete(&self, path: &str) -> reqwest::RequestBuilder {
+        self.http
+            .delete(format!("{STRIPE_API}{path}"))
+            .bearer_auth(&self.secret_key)
+    }
+
+    fn idempotency_key(&self, parts: &[&str]) -> String {
+        let mut mac = Hmac::<Sha256>::new_from_slice(self.secret_key.as_bytes())
+            .expect("HMAC accepts any key length");
+        for (i, part) in parts.iter().enumerate() {
+            if i > 0 {
+                mac.update(b":");
+            }
+            mac.update(part.as_bytes());
+        }
+        hex::encode(mac.finalize().into_bytes())
+    }
+
     // --- Customers ---
 
-    /// Creates a customer with the given display name, tagging it with the tenant
-    /// pubkey in metadata. Idempotent on the tenant pubkey.
-    pub async fn create_customer(&self, name: &str, tenant_pubkey: &str) -> Result<String> {
-        let resp = self
-            .http
-            .post(format!("{STRIPE_API}/customers"))
-            .bearer_auth(&self.secret_key)
+    pub async fn create_customer(&self, tenant_pubkey: &str, name: &str) -> Result<String> {
+        let body = self
+            .post("/customers")
             .header(
                 "Idempotency-Key",
                 self.idempotency_key(&["create_customer", tenant_pubkey]),
             )
             .form(&[("name", name), ("metadata[tenant_pubkey]", tenant_pubkey)])
-            .send()
+            .send_json()
             .await?;
-
-        let body: serde_json::Value = error_for_status(resp).await?.json().await?;
         let customer_id = body["id"]
             .as_str()
             .ok_or_else(|| anyhow!("missing customer id"))?;
-        if !customer_id.starts_with("cus_") {
-            return Err(anyhow!("unexpected customer id format"));
-        }
         Ok(customer_id.to_string())
     }
 
     // --- Subscriptions ---
 
-    /// Fetches a subscription, returning `None` if Stripe no longer knows about it
-    /// (so callers can recover from a stale subscription id).
     pub async fn get_subscription(
         &self,
         subscription_id: &str,
-    ) -> Result<Option<serde_json::Value>> {
-        let resp = self
-            .http
-            .get(format!("{STRIPE_API}/subscriptions/{subscription_id}"))
-            .bearer_auth(&self.secret_key)
-            .send()
+    ) -> Result<Option<StripeSubscription>> {
+        let body = self
+            .get(&format!("/subscriptions/{subscription_id}"))
+            .send_optional_json()
             .await?;
-        if resp.status() == reqwest::StatusCode::NOT_FOUND {
-            return Ok(None);
-        }
-        let body: serde_json::Value = error_for_status(resp).await?.json().await?;
-        Ok(Some(body))
+        body.map(serde_json::from_value)
+            .transpose()
+            .map_err(Into::into)
     }
 
-    /// Creates a subscription with one item per `(price_id, quantity)` entry, billed
-    /// automatically. Returns the subscription id and a map from price id to the
-    /// created subscription item id. Idempotent on the customer and the item set.
     pub async fn create_subscription(
         &self,
         customer_id: &str,
         items: &BTreeMap<String, i64>,
-    ) -> Result<(String, BTreeMap<String, String>)> {
+    ) -> Result<StripeSubscription> {
         let mut form: Vec<(String, String)> = vec![
             ("customer".to_string(), customer_id.to_string()),
             (
@@ -115,34 +196,14 @@ impl Stripe {
         }
         let key_refs: Vec<&str> = key_parts.iter().map(String::as_str).collect();
 
-        let resp = self
-            .http
-            .post(format!("{STRIPE_API}/subscriptions"))
-            .bearer_auth(&self.secret_key)
+        Ok(self
+            .post("/subscriptions")
             .header("Idempotency-Key", self.idempotency_key(&key_refs))
             .form(&form)
-            .send()
-            .await?;
-        let body: serde_json::Value = error_for_status(resp).await?.json().await?;
-
-        let subscription_id = body["id"]
-            .as_str()
-            .ok_or_else(|| anyhow!("missing subscription id"))?
-            .to_string();
-        let mut price_to_item = BTreeMap::new();
-        for item in body["items"]["data"]
-            .as_array()
-            .ok_or_else(|| anyhow!("missing subscription items"))?
-        {
-            let item_id = item["id"]
-                .as_str()
-                .ok_or_else(|| anyhow!("missing subscription item id"))?;
-            let price_id = item["price"]["id"]
-                .as_str()
-                .ok_or_else(|| anyhow!("missing subscription item price id"))?;
-            price_to_item.insert(price_id.to_string(), item_id.to_string());
-        }
-        Ok((subscription_id, price_to_item))
+            .send_ok()
+            .await?
+            .json()
+            .await?)
     }
 
     pub async fn create_subscription_item(
@@ -152,10 +213,8 @@ impl Stripe {
         quantity: i64,
     ) -> Result<String> {
         let quantity = quantity.to_string();
-        let resp = self
-            .http
-            .post(format!("{STRIPE_API}/subscription_items"))
-            .bearer_auth(&self.secret_key)
+        let body = self
+            .post("/subscription_items")
             .header(
                 "Idempotency-Key",
                 self.idempotency_key(&["create_subscription_item", subscription_id, price_id]),
@@ -165,147 +224,106 @@ impl Stripe {
                 ("price", price_id),
                 ("quantity", quantity.as_str()),
             ])
-            .send()
+            .send_json()
             .await?;
-        let body: serde_json::Value = error_for_status(resp).await?.json().await?;
         body["id"]
             .as_str()
             .map(str::to_string)
             .ok_or_else(|| anyhow!("missing subscription item id"))
     }
 
-    /// Sets a subscription item's quantity. No idempotency key: this is a
-    /// reconcile-to-desired-state write, and re-applying the same target is a no-op.
     pub async fn set_subscription_item_quantity(&self, item_id: &str, quantity: i64) -> Result<()> {
-        let resp = self
-            .http
-            .post(format!("{STRIPE_API}/subscription_items/{item_id}"))
-            .bearer_auth(&self.secret_key)
+        self.post(&format!("/subscription_items/{item_id}"))
             .form(&[("quantity", quantity.to_string())])
-            .send()
+            .send_ok()
             .await?;
-        error_for_status(resp).await?;
         Ok(())
     }
 
     pub async fn delete_subscription_item(&self, item_id: &str) -> Result<()> {
-        let resp = self
-            .http
-            .delete(format!("{STRIPE_API}/subscription_items/{item_id}"))
-            .bearer_auth(&self.secret_key)
-            .send()
+        self.delete(&format!("/subscription_items/{item_id}"))
+            .send_ok()
             .await?;
-        error_for_status(resp).await?;
         Ok(())
     }
 
     pub async fn cancel_subscription(&self, subscription_id: &str) -> Result<()> {
-        let resp = self
-            .http
-            .delete(format!("{STRIPE_API}/subscriptions/{subscription_id}"))
-            .bearer_auth(&self.secret_key)
-            .send()
+        self.delete(&format!("/subscriptions/{subscription_id}"))
+            .send_ok()
             .await?;
-        error_for_status(resp).await?;
         Ok(())
     }
 
     // --- Invoices ---
 
-    /// Returns the `data` array of the customer's invoices.
-    pub async fn list_invoices(&self, customer_id: &str) -> Result<serde_json::Value> {
-        let resp = self
-            .http
-            .get(format!("{STRIPE_API}/invoices"))
-            .bearer_auth(&self.secret_key)
+    pub async fn list_invoices(&self, customer_id: &str) -> Result<Vec<StripeInvoice>> {
+        let list: StripeList<StripeInvoice> = self
+            .get("/invoices")
             .query(&[("customer", customer_id)])
-            .send()
+            .send_ok()
+            .await?
+            .json()
             .await?;
-        let body: serde_json::Value = error_for_status(resp).await?.json().await?;
-        Ok(body["data"].clone())
+        Ok(list.data)
     }
 
-    /// Fetches an invoice, returning `None` if Stripe no longer knows about it
-    /// (so callers can surface a 404 to the user).
-    pub async fn get_invoice(&self, invoice_id: &str) -> Result<Option<serde_json::Value>> {
-        let resp = self
-            .http
-            .get(format!("{STRIPE_API}/invoices/{invoice_id}"))
-            .bearer_auth(&self.secret_key)
-            .send()
+    pub async fn get_invoice(&self, invoice_id: &str) -> Result<Option<StripeInvoice>> {
+        let body = self
+            .get(&format!("/invoices/{invoice_id}"))
+            .send_optional_json()
             .await?;
-        if resp.status() == reqwest::StatusCode::NOT_FOUND {
-            return Ok(None);
-        }
-        let body: serde_json::Value = error_for_status(resp).await?.json().await?;
-        Ok(Some(body))
+        body.map(serde_json::from_value)
+            .transpose()
+            .map_err(Into::into)
     }
 
     pub async fn pay_invoice(&self, invoice_id: &str) -> Result<()> {
-        let resp = self
-            .http
-            .post(format!("{STRIPE_API}/invoices/{invoice_id}/pay"))
-            .bearer_auth(&self.secret_key)
+        self.post(&format!("/invoices/{invoice_id}/pay"))
             .header(
                 "Idempotency-Key",
                 self.idempotency_key(&["pay_invoice", invoice_id]),
             )
-            .send()
+            .send_ok()
             .await?;
-        error_for_status(resp).await?;
         Ok(())
     }
 
-    /// Marks an invoice paid out of band — used when we've collected payment over
-    /// Lightning rather than through Stripe.
     pub async fn pay_invoice_out_of_band(&self, invoice_id: &str) -> Result<()> {
-        let resp = self
-            .http
-            .post(format!("{STRIPE_API}/invoices/{invoice_id}/pay"))
-            .bearer_auth(&self.secret_key)
+        self.post(&format!("/invoices/{invoice_id}/pay"))
             .header(
                 "Idempotency-Key",
                 self.idempotency_key(&["pay_invoice_oob", invoice_id]),
             )
             .form(&[("paid_out_of_band", "true")])
-            .send()
+            .send_ok()
             .await?;
-        error_for_status(resp).await?;
         Ok(())
     }
 
-    pub async fn preview_upcoming_invoice(
+    pub async fn preview_invoice(
         &self,
         customer_id: &str,
         subscription_id: Option<&str>,
-    ) -> Result<serde_json::Value> {
-        let mut req = self
-            .http
-            .get(format!("{STRIPE_API}/invoices/upcoming"))
-            .bearer_auth(&self.secret_key)
-            .query(&[("customer", customer_id)]);
+    ) -> Result<StripeInvoicePreview> {
+        let mut req = self.get("/invoices/upcoming").query(&[("customer", customer_id)]);
         if let Some(subscription_id) = subscription_id {
             req = req.query(&[("subscription", subscription_id)]);
         }
-        let body: serde_json::Value = error_for_status(req.send().await?).await?.json().await?;
-        Ok(body)
+        Ok(req.send_ok().await?.json().await?)
     }
 
     // --- Payment methods ---
 
     pub async fn has_payment_method(&self, customer_id: &str) -> Result<bool> {
-        let resp = self
-            .http
-            .get(format!("{STRIPE_API}/payment_methods"))
-            .bearer_auth(&self.secret_key)
+        let body = self
+            .get("/payment_methods")
             .query(&[("customer", customer_id), ("type", "card")])
-            .send()
+            .send_json()
             .await?;
-        let body: serde_json::Value = error_for_status(resp).await?.json().await?;
         Ok(body["data"].as_array().is_some_and(|a| !a.is_empty()))
     }
 
-    // --- Billing portal ---
+    // --- Portal ---
 
     pub async fn create_portal_session(
         &self,
@@ -316,14 +334,11 @@ impl Stripe {
         if let Some(url) = return_url {
             params.push(("return_url", url.to_string()));
         }
-        let resp = self
-            .http
-            .post(format!("{STRIPE_API}/billing_portal/sessions"))
-            .bearer_auth(&self.secret_key)
+        let body = self
+            .post("/billing_portal/sessions")
             .form(&params)
-            .send()
+            .send_json()
             .await?;
-        let body: serde_json::Value = error_for_status(resp).await?.json().await?;
         body["url"]
             .as_str()
             .map(str::to_string)
@@ -332,28 +347,21 @@ impl Stripe {
 
     // --- Webhooks ---
 
-    /// Verifies the `Stripe-Signature` header against the configured webhook secret
-    /// (including the timestamp tolerance check) and parses the event body.
-    pub fn construct_event(&self, payload: &str, sig_header: &str) -> Result<Event> {
-        self.verify_webhook_signature(payload, sig_header)?;
-        Ok(serde_json::from_str(payload)?)
-    }
-
-    fn verify_webhook_signature(&self, payload: &str, sig_header: &str) -> Result<()> {
+    pub fn get_webhook_event(&self, payload: &str, signature: &str) -> Result<StripeWebhookEvent> {
         let mut timestamp = None;
-        let mut signature = None;
-        for part in sig_header.split(',') {
+        let mut sig = None;
+        for part in signature.split(',') {
             if let Some(t) = part.strip_prefix("t=") {
                 timestamp = Some(t);
             } else if let Some(v) = part.strip_prefix("v1=") {
-                signature = Some(v);
+                sig = Some(v);
             }
         }
         let timestamp = timestamp.ok_or_else(|| anyhow!("missing webhook timestamp"))?;
-        let signature = signature.ok_or_else(|| anyhow!("missing webhook signature"))?;
+        let signature = sig.ok_or_else(|| anyhow!("missing webhook signature"))?;
 
         let signed_payload = format!("{timestamp}.{payload}");
-        let mut mac = HmacSha256::new_from_slice(self.webhook_secret.as_bytes())
+        let mut mac = Hmac::<Sha256>::new_from_slice(self.webhook_secret.as_bytes())
             .map_err(|e| anyhow!("invalid webhook secret: {e}"))?;
         mac.update(signed_payload.as_bytes());
         let expected = hex::encode(mac.finalize().into_bytes());
@@ -368,29 +376,36 @@ impl Stripe {
         if (now - ts).abs() > WEBHOOK_TOLERANCE_SECS {
             return Err(anyhow!("webhook timestamp outside tolerance"));
         }
-        Ok(())
+        Ok(serde_json::from_str(payload)?)
     }
 
-    // --- Internals ---
+}
 
-    /// Derives a stable idempotency key by HMAC-ing `parts` with the secret key.
-    fn idempotency_key(&self, parts: &[&str]) -> String {
-        let mut mac = HmacSha256::new_from_slice(self.secret_key.as_bytes())
-            .expect("HMAC accepts any key length");
-        for (i, part) in parts.iter().enumerate() {
-            if i > 0 {
-                mac.update(b":");
-            }
-            mac.update(part.as_bytes());
+trait StripeRequest {
+    async fn send_ok(self) -> Result<reqwest::Response>;
+    async fn send_json(self) -> Result<serde_json::Value>;
+    async fn send_optional_json(self) -> Result<Option<serde_json::Value>>;
+}
+
+impl StripeRequest for reqwest::RequestBuilder {
+    async fn send_ok(self) -> Result<reqwest::Response> {
+        error_for_status(self.send().await?).await
+    }
+
+    async fn send_json(self) -> Result<serde_json::Value> {
+        Ok(self.send_ok().await?.json().await?)
+    }
+
+    async fn send_optional_json(self) -> Result<Option<serde_json::Value>> {
+        let resp = self.send().await?;
+        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
         }
-        hex::encode(mac.finalize().into_bytes())
+        Ok(Some(error_for_status(resp).await?.json().await?))
     }
 }
 
-/// Like [`reqwest::Response::error_for_status`], but on a 4xx/5xx response it reads
-/// the body and folds Stripe's JSON error payload (`error.message`/`code`/`param`)
-/// into the returned error, so callers get an actionable message instead of a bare
-/// "400 Bad Request" with only the URL.
+/// Give callers an actionable message instead of a bare "400 Bad Request"
 async fn error_for_status(resp: reqwest::Response) -> Result<reqwest::Response> {
     let status = resp.status();
     if !status.is_client_error() && !status.is_server_error() {

@@ -77,7 +77,7 @@ Constructs the client with a fresh `reqwest::Client` from explicit keys (does no
 - `POST /v1/invoices/:id/pay` with `paid_out_of_band: true` — used when payment was collected over Lightning rather than through Stripe
 - Idempotent on `invoice_id`
 
-## `pub async fn preview_upcoming_invoice(&self, customer_id: &str, subscription_id: Option<&str>) -> Result<Value>`
+## `pub async fn preview_invoice(&self, customer_id: &str, subscription_id: Option<&str>) -> Result<Value>`
 
 - `GET /v1/invoices/upcoming?customer=…[&subscription=…]`
 - Used to validate proration when a subscription is downgraded

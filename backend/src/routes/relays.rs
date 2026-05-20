@@ -80,7 +80,7 @@ pub async fn list_relay_activity(
 
     let activity = api
         .query
-        .list_activity_for_relay(&id)
+        .list_activity_for_resource(&id)
         .await
         .map_err(internal)?;
     ok(serde_json::json!({ "activity": activity }))

@@ -136,7 +136,7 @@ Notes:
 
 - Serves `GET /relays/:id/activity`
 - Authorizes admin or relay owner
-- Get activity from `query.list_activity_for_relay`
+- Get activity from `query.list_activity_for_resource`
 - Return `data` is `{activity}`
 
 ## `async fn deactivate_relay(...) -> Response`

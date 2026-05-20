@@ -112,7 +112,7 @@ impl Infra {
             Some(Duration::from_secs(delay_secs))
         }
 
-        let activities = self.query.list_activity_for_relay(relay_id).await?;
+        let activities = self.query.list_activity_for_resource(relay_id).await?;
         let consecutive_failures = activities
             .iter()
             .take_while(|activity| activity.activity_type == "fail_relay_sync")
@@ -177,7 +177,11 @@ impl Infra {
         // otherwise check the activity history so that a re-sync after an update
         // (which resets `synced` to 0) PATCHes instead of clobbering the secret.
         let is_new = relay.synced != 1
-            && !self.query.relay_has_completed_sync(&relay.id).await?;
+            && self
+                .query
+                .get_latest_activity_for_resource_and_type(&relay.id, "complete_relay_sync")
+                .await?
+                .is_none();
 
         let mut body = serde_json::json!({
             "host": format!("{}.{}", relay.subdomain, self.env.relay_domain),

@@ -39,7 +39,7 @@ Members:
 
 - Returns the tenant matching the given `stripe_customer_id`
 
-## `pub fn list_activity_for_relay(&self, relay_id: &str) -> Result<Vec<Activity>>`
+## `pub fn list_activity_for_resource(&self, relay_id: &str) -> Result<Vec<Activity>>`
 
 - Returns all activity where `resource_type = 'relay'` and `resource_id = relay_id`
 - Ordered newest-first

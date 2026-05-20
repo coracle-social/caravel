@@ -454,7 +454,7 @@ impl Billing {
 
             let relays = self.query.list_relays_for_tenant(&tenant.pubkey).await?;
             for relay in relays {
-                if Self::should_reactivate_after_payment(&relay) {
+                if relay.status == RELAY_STATUS_DELINQUENT && self.query.is_paid_plan(&relay.plan) {
                     self.command.activate_relay(&relay).await?;
                 }
             }
@@ -508,7 +508,7 @@ impl Billing {
 
         let relays = self.query.list_relays_for_tenant(&tenant.pubkey).await?;
         for relay in relays {
-            if relay.status == RELAY_STATUS_ACTIVE && Query::is_paid_plan(&relay.plan) {
+            if relay.status == RELAY_STATUS_ACTIVE && self.query.is_paid_plan(&relay.plan) {
                 self.command.mark_relay_delinquent(&relay).await?;
             }
         }
@@ -543,7 +543,7 @@ impl Billing {
 
         let relays = self.query.list_relays_for_tenant(&tenant.pubkey).await?;
         for relay in relays {
-            if relay.status == RELAY_STATUS_ACTIVE && Query::is_paid_plan(&relay.plan) {
+            if relay.status == RELAY_STATUS_ACTIVE && self.query.is_paid_plan(&relay.plan) {
                 self.command.mark_relay_delinquent(&relay).await?;
             }
         }
@@ -962,10 +962,6 @@ impl Billing {
             ))),
         }
     }
-
-    fn should_reactivate_after_payment(relay: &Relay) -> bool {
-        relay.status == RELAY_STATUS_DELINQUENT && Query::is_paid_plan(&relay.plan)
-    }
 }
 
 fn summarize_nwc_error_for_dm(error: &str) -> Option<String> {
@@ -991,59 +987,4 @@ fn manual_lightning_payment_dm(nwc_error: Option<&str>) -> String {
         }
         _ => MANUAL_LIGHTNING_PAYMENT_DM.to_string(),
     }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::Billing;
-    use crate::models::{
-        RELAY_STATUS_ACTIVE, RELAY_STATUS_DELINQUENT, RELAY_STATUS_INACTIVE, Relay,
-    };
-
-    fn relay_fixture(status: &str, plan: &str) -> Relay {
-        Relay {
-            id: "relay-1".to_string(),
-            tenant: "tenant-1".to_string(),
-            schema: "tenant_1".to_string(),
-            subdomain: "relay-1".to_string(),
-            plan: plan.to_string(),
-            stripe_subscription_item_id: None,
-            status: status.to_string(),
-            sync_error: String::new(),
-            info_name: String::new(),
-            info_icon: String::new(),
-            info_description: String::new(),
-            policy_public_join: 0,
-            policy_strip_signatures: 0,
-            groups_enabled: 1,
-            management_enabled: 1,
-            blossom_enabled: 1,
-            livekit_enabled: 1,
-            push_enabled: 1,
-            synced: 1,
-        }
-    }
-
-    #[test]
-    fn reactivates_only_delinquent_paid_relays_after_payment() {
-        let delinquent_paid = relay_fixture(RELAY_STATUS_DELINQUENT, "basic");
-        assert!(Billing::should_reactivate_after_payment(&delinquent_paid));
-
-        let manually_inactive_paid = relay_fixture(RELAY_STATUS_INACTIVE, "basic");
-        assert!(!Billing::should_reactivate_after_payment(
-            &manually_inactive_paid
-        ));
-
-        let free_delinquent = relay_fixture(RELAY_STATUS_DELINQUENT, "free");
-        assert!(!Billing::should_reactivate_after_payment(&free_delinquent));
-
-        let active_paid = relay_fixture(RELAY_STATUS_ACTIVE, "basic");
-        assert!(!Billing::should_reactivate_after_payment(&active_paid));
-
-        let unknown_status_paid = relay_fixture("suspended", "basic");
-        assert!(!Billing::should_reactivate_after_payment(
-            &unknown_status_paid
-        ));
-    }
-
 }

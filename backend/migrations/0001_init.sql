@@ -39,3 +39,39 @@ CREATE TABLE IF NOT EXISTS relay (
   push_enabled INTEGER NOT NULL DEFAULT 1,
   FOREIGN KEY (tenant) REFERENCES tenant(pubkey)
 );
+
+CREATE TABLE IF NOT EXISTS invoice_nwc_payment (
+  invoice_id TEXT PRIMARY KEY,
+  tenant_pubkey TEXT NOT NULL,
+  state TEXT NOT NULL CHECK (state IN ('pending', 'paid')),
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  FOREIGN KEY (tenant_pubkey) REFERENCES tenant(pubkey)
+);
+
+CREATE TABLE IF NOT EXISTS invoice_manual_lightning_payment (
+  invoice_id TEXT PRIMARY KEY,
+  tenant_pubkey TEXT NOT NULL,
+  bolt11 TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  FOREIGN KEY (tenant_pubkey) REFERENCES tenant(pubkey)
+);
+
+CREATE INDEX IF NOT EXISTS idx_tenant_stripe_customer_id
+  ON tenant (stripe_customer_id);
+
+CREATE INDEX IF NOT EXISTS idx_relay_tenant_id
+  ON relay (tenant, id);
+
+CREATE INDEX IF NOT EXISTS idx_relay_tenant_status_plan
+  ON relay (tenant, status, plan);
+
+CREATE INDEX IF NOT EXISTS idx_activity_resource_type_resource_id_created_at_id
+  ON activity (resource_type, resource_id, created_at DESC, id DESC);
+
+CREATE INDEX IF NOT EXISTS idx_invoice_nwc_payment_tenant_pubkey
+  ON invoice_nwc_payment (tenant_pubkey);
+
+CREATE INDEX IF NOT EXISTS idx_invoice_manual_lightning_payment_tenant_pubkey
+  ON invoice_manual_lightning_payment (tenant_pubkey);

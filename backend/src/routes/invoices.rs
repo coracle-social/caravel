@@ -1,11 +1,9 @@
 use std::sync::Arc;
 
 use axum::extract::{Path, State};
-use reqwest::StatusCode;
 
 use crate::api::{Api, AuthedPubkey};
-use crate::stripe::InvoiceLookupError;
-use crate::web::{ApiError, ApiResult, bad_request, internal, not_found, ok};
+use crate::web::{ApiResult, bad_request, internal, not_found, ok};
 
 pub async fn list_tenant_invoices(
     State(api): State<Arc<Api>>,
@@ -32,14 +30,15 @@ pub async fn get_invoice(
         .billing
         .get_invoice_with_tenant(&id)
         .await
-        .map_err(map_invoice_lookup_error)?;
+        .map_err(internal)?
+        .ok_or_else(|| not_found("invoice not found"))?;
     api.require_admin_or_tenant(&auth, &tenant.pubkey)?;
 
     let invoice = api
         .billing
         .reconcile_manual_lightning_invoice(&id, &invoice)
         .await
-        .map_err(map_invoice_lookup_error)?;
+        .map_err(internal)?;
 
     ok(invoice)
 }
@@ -53,14 +52,15 @@ pub async fn get_invoice_bolt11(
         .billing
         .get_invoice_with_tenant(&id)
         .await
-        .map_err(map_invoice_lookup_error)?;
+        .map_err(internal)?
+        .ok_or_else(|| not_found("invoice not found"))?;
     api.require_admin_or_tenant(&auth, &tenant.pubkey)?;
 
     let invoice = api
         .billing
         .reconcile_manual_lightning_invoice(&id, &invoice)
         .await
-        .map_err(map_invoice_lookup_error)?;
+        .map_err(internal)?;
 
     let status = invoice["status"].as_str().unwrap_or_default();
     if status != "open" {
@@ -76,17 +76,4 @@ pub async fn get_invoice_bolt11(
         .await
         .map_err(internal)?;
     ok(serde_json::json!({ "bolt11": bolt11 }))
-}
-
-fn map_invoice_lookup_error(error: InvoiceLookupError) -> ApiError {
-    match error {
-        InvoiceLookupError::StripeClient { status } => match status {
-            StatusCode::NOT_FOUND => not_found("invoice not found"),
-            _ => {
-                tracing::warn!(%status, "stripe invoice request returned unexpected status");
-                internal("invoice request rejected")
-            }
-        },
-        InvoiceLookupError::Internal(error) => internal(error),
-    }
 }

@@ -14,44 +14,6 @@ type HmacSha256 = Hmac<Sha256>;
 const STRIPE_API: &str = "https://api.stripe.com/v1";
 const WEBHOOK_TOLERANCE_SECS: i64 = 300;
 
-/// Error returned by invoice lookups, distinguishing a Stripe 4xx (e.g. "no such
-/// invoice") — which callers usually want to surface as a client error — from an
-/// internal failure.
-#[derive(Debug)]
-pub enum InvoiceLookupError {
-    StripeClient { status: reqwest::StatusCode },
-    Internal(anyhow::Error),
-}
-
-impl std::fmt::Display for InvoiceLookupError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::StripeClient { status } => {
-                write!(
-                    f,
-                    "stripe invoice lookup failed with status {}",
-                    status.as_u16()
-                )
-            }
-            Self::Internal(error) => write!(f, "{error}"),
-        }
-    }
-}
-
-impl std::error::Error for InvoiceLookupError {}
-
-impl From<anyhow::Error> for InvoiceLookupError {
-    fn from(value: anyhow::Error) -> Self {
-        Self::Internal(value)
-    }
-}
-
-impl From<reqwest::Error> for InvoiceLookupError {
-    fn from(value: reqwest::Error) -> Self {
-        Self::Internal(value.into())
-    }
-}
-
 /// A Stripe webhook event with its signature already verified.
 #[derive(serde::Deserialize)]
 pub struct Event {
@@ -263,23 +225,20 @@ impl Stripe {
         Ok(body["data"].clone())
     }
 
-    pub async fn get_invoice(
-        &self,
-        invoice_id: &str,
-    ) -> std::result::Result<serde_json::Value, InvoiceLookupError> {
+    /// Fetches an invoice, returning `None` if Stripe no longer knows about it
+    /// (so callers can surface a 404 to the user).
+    pub async fn get_invoice(&self, invoice_id: &str) -> Result<Option<serde_json::Value>> {
         let resp = self
             .http
             .get(format!("{STRIPE_API}/invoices/{invoice_id}"))
             .bearer_auth(&self.secret_key)
             .send()
             .await?;
-        if resp.status().is_client_error() {
-            return Err(InvoiceLookupError::StripeClient {
-                status: resp.status(),
-            });
+        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
         }
         let body: serde_json::Value = error_for_status(resp).await?.json().await?;
-        Ok(body)
+        Ok(Some(body))
     }
 
     pub async fn pay_invoice(&self, invoice_id: &str) -> Result<()> {

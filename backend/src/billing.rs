@@ -7,7 +7,7 @@ use crate::env::Env;
 use crate::models::{Activity, RELAY_STATUS_ACTIVE, RELAY_STATUS_DELINQUENT};
 use crate::query::Query;
 use crate::robot::Robot;
-use crate::stripe::{InvoiceLookupError, Stripe};
+use crate::stripe::Stripe;
 use crate::wallet::Wallet;
 
 const MANUAL_LIGHTNING_PAYMENT_DM: &str = "Payment is due for your relay subscription. Please visit the application to complete a manual Lightning payment.";
@@ -631,29 +631,30 @@ impl Billing {
 
     // --- Public API helpers ---
 
+    /// Returns `Ok(None)` if Stripe has no such invoice; the route turns that into a 404.
     pub async fn get_invoice_with_tenant(
         &self,
         invoice_id: &str,
-    ) -> std::result::Result<(serde_json::Value, crate::models::Tenant), InvoiceLookupError> {
-        let invoice = self.stripe.get_invoice(invoice_id).await?;
+    ) -> Result<Option<(serde_json::Value, crate::models::Tenant)>> {
+        let Some(invoice) = self.stripe.get_invoice(invoice_id).await? else {
+            return Ok(None);
+        };
         let customer_id = invoice["customer"]
             .as_str()
-            .ok_or_else(|| InvoiceLookupError::Internal(anyhow!("invoice missing customer")))?;
+            .ok_or_else(|| anyhow!("invoice missing customer"))?;
         let tenant = self
             .query
             .get_tenant_by_stripe_customer_id(customer_id)
             .await?
-            .ok_or_else(|| {
-                InvoiceLookupError::Internal(anyhow!("tenant not found for customer"))
-            })?;
-        Ok((invoice, tenant))
+            .ok_or_else(|| anyhow!("tenant not found for customer"))?;
+        Ok(Some((invoice, tenant)))
     }
 
     pub async fn reconcile_manual_lightning_invoice(
         &self,
         invoice_id: &str,
         invoice: &serde_json::Value,
-    ) -> std::result::Result<serde_json::Value, InvoiceLookupError> {
+    ) -> Result<serde_json::Value> {
         self.reconcile_manual_lightning_invoice_if_settled(invoice_id, invoice)
             .await
     }
@@ -853,7 +854,7 @@ impl Billing {
         &self,
         invoice_id: &str,
         invoice: &serde_json::Value,
-    ) -> std::result::Result<serde_json::Value, InvoiceLookupError> {
+    ) -> Result<serde_json::Value> {
         if invoice["status"].as_str().unwrap_or_default() != "open" {
             return Ok(invoice.clone());
         }
@@ -890,7 +891,14 @@ impl Billing {
             );
         }
 
-        self.stripe.get_invoice(invoice_id).await
+        // The invoice existed when we called pay_invoice_out_of_band a moment ago;
+        // if Stripe suddenly returns 404, fall back to the pre-reconcile snapshot
+        // rather than failing the request.
+        Ok(self
+            .stripe
+            .get_invoice(invoice_id)
+            .await?
+            .unwrap_or_else(|| invoice.clone()))
     }
 
     async fn is_manual_lightning_invoice_settled(&self, bolt11: &str) -> Result<bool> {

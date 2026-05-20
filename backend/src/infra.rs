@@ -234,13 +234,11 @@ impl Infra {
         });
 
         // Only provide a secret if the relay is new. This allows us to not store the relay secrets on our side.
-        if is_new {
-            if let Some(obj) = body.as_object_mut() {
-                obj.insert(
-                    "secret".to_string(),
-                    serde_json::Value::String(Keys::generate().secret_key().to_secret_hex()),
-                );
-            }
+        if is_new && let Some(obj) = body.as_object_mut() {
+            obj.insert(
+                "secret".to_string(),
+                serde_json::Value::String(Keys::generate().secret_key().to_secret_hex()),
+            );
         }
 
         let method = if is_new { HttpMethod::POST } else { HttpMethod::PATCH };

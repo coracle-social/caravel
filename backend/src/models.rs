@@ -25,7 +25,7 @@ pub struct Plan {
     pub stripe_price_id: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Tenant {
     pub pubkey: String,
     pub nwc_url: String,
@@ -34,20 +34,6 @@ pub struct Tenant {
     pub stripe_customer_id: String,
     pub stripe_subscription_id: Option<String>,
     pub past_due_at: Option<i64>,
-}
-
-impl Default for Tenant {
-    fn default() -> Self {
-        Self {
-            pubkey: String::new(),
-            nwc_url: String::new(),
-            nwc_error: None,
-            created_at: 0,
-            stripe_customer_id: String::new(),
-            stripe_subscription_id: None,
-            past_due_at: None,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]

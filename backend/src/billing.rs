@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use crate::bitcoin;
 use crate::command::Command;
 use crate::env::Env;
-use crate::models::{Activity, RELAY_STATUS_ACTIVE, RELAY_STATUS_DELINQUENT, Relay};
+use crate::models::{Activity, RELAY_STATUS_ACTIVE, RELAY_STATUS_DELINQUENT};
 use crate::query::Query;
 use crate::robot::Robot;
 use crate::stripe::{InvoiceLookupError, Stripe};
@@ -191,7 +191,7 @@ impl Billing {
             for relay in &relays {
                 if relay.stripe_subscription_item_id.is_some() {
                     self.command
-                        .delete_relay_subscription_item(&relay.id)
+                        .clear_relay_subscription_item(&relay.id)
                         .await?;
                 }
             }
@@ -277,7 +277,7 @@ impl Billing {
                 None => {
                     if relay.stripe_subscription_item_id.is_some() {
                         self.command
-                            .delete_relay_subscription_item(&relay.id)
+                            .clear_relay_subscription_item(&relay.id)
                             .await?;
                     }
                 }

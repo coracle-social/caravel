@@ -24,11 +24,11 @@ pub async fn get_bitcoin_price(currency: &str) -> Result<f64> {
     let resp = http.get(url).send().await?;
     let body: CoinbaseSpotPriceResponse = resp.error_for_status()?.json().await?;
 
-    Ok(body
+    body
         .data
         .amount
         .parse::<f64>()
-        .map_err(|e| anyhow!("invalid BTC spot quote for {currency}: {e}"))?)
+        .map_err(|e| anyhow!("invalid BTC spot quote for {currency}: {e}"))
 }
 
 /// Number of decimal places in `currency`'s minor unit, following Stripe's

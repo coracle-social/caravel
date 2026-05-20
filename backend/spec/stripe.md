@@ -37,11 +37,10 @@ Constructs the client with a fresh `reqwest::Client` from explicit keys (does no
 - Idempotent on the customer and the `(price, quantity)` set
 - Returns the subscription id and a map from price id to the created subscription item id
 
-## `pub async fn create_subscription_item(&self, subscription_id: &str, price_id: &str, quantity: i64) -> Result<String>`
+## `pub async fn create_subscription_item(&self, subscription_id: &str, price_id: &str, quantity: i64) -> Result<()>`
 
 - `POST /v1/subscription_items`
 - Idempotent on `(subscription_id, price_id)`
-- Returns the new subscription item id
 
 ## `pub async fn set_subscription_item_quantity(&self, item_id: &str, quantity: i64) -> Result<()>`
 

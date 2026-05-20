@@ -51,7 +51,6 @@ export type Relay = {
   plan: PlanId
   status: string
   sync_error: string
-  stripe_subscription_item_id: string | null
   synced: number
   info_name: string
   info_icon: string

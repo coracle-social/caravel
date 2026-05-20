@@ -68,16 +68,6 @@ Notes:
 - Sets `synced = 1`, clears `sync_error`
 - Logs activity as `(complete_relay_sync, relay_id)`
 
-## `pub fn delete_relay_subscription_item(&self, relay_id: &str) -> Result<()>`
-
-- Sets `stripe_subscription_item_id = null`
-- Does not log activity
-
-## `pub fn set_relay_subscription_item(&self, relay_id: &str, stripe_subscription_item_id: &str) -> Result<()>`
-
-- Sets `stripe_subscription_item_id`
-- Does not log activity
-
 ## `pub fn set_tenant_subscription(&self, pubkey: &str, stripe_subscription_id: &str) -> Result<()>`
 
 - Sets `stripe_subscription_id` on the tenant

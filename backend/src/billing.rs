@@ -125,9 +125,6 @@ impl Billing {
     /// Stripe forbids two subscription items on the same subscription from sharing a
     /// price, so billing is modeled as one subscription item per plan (price) with
     /// `quantity` equal to the number of the tenant's `active` relays on that plan.
-    /// Every such relay's `stripe_subscription_item_id` points at the shared item for
-    /// its plan; relays that aren't billed (free, inactive, delinquent) have it
-    /// cleared. Must be idempotent.
     async fn sync_tenant_subscription(&self, tenant_pubkey: &str) -> Result<()> {
         let Some(mut tenant) = self.query.get_tenant(tenant_pubkey).await? else {
             return Ok(());
@@ -135,9 +132,8 @@ impl Billing {
 
         let relays = self.query.list_relays_for_tenant(tenant_pubkey).await?;
 
-        // Desired billed state: price id -> quantity, plus which relays map to which price.
+        // Desired billed state: price id -> quantity.
         let mut desired: BTreeMap<String, i64> = BTreeMap::new();
-        let mut relay_price: BTreeMap<String, String> = BTreeMap::new();
         for relay in &relays {
             if relay.status != RELAY_STATUS_ACTIVE {
                 continue;
@@ -153,8 +149,7 @@ impl Billing {
                 tracing::warn!(relay = %relay.id, plan = %relay.plan, "active relay on a paid plan with no configured Stripe price id; not billed");
                 continue;
             }
-            *desired.entry(price_id.clone()).or_insert(0) += 1;
-            relay_price.insert(relay.id.clone(), price_id);
+            *desired.entry(price_id).or_insert(0) += 1;
         }
 
         // Resolve the live subscription, dropping a stale reference to one that no
@@ -183,19 +178,10 @@ impl Billing {
                     .clear_tenant_subscription(tenant_pubkey)
                     .await?;
             }
-            for relay in &relays {
-                if relay.stripe_subscription_item_id.is_some() {
-                    self.command
-                        .clear_relay_subscription_item(&relay.id)
-                        .await?;
-                }
-            }
             return Ok(());
         }
 
-        // Bring the subscription's items in line with `desired`. `price_to_item` ends
-        // up mapping every desired price to its (possibly newly created) item id.
-        let mut price_to_item: BTreeMap<String, String> = BTreeMap::new();
+        // Bring the subscription's items in line with `desired`.
         let mut downgraded = false;
 
         match subscription {
@@ -207,9 +193,6 @@ impl Billing {
                 self.command
                     .set_tenant_subscription(tenant_pubkey, &sub.id)
                     .await?;
-                for item in sub.items {
-                    price_to_item.insert(item.price.id, item.id);
-                }
                 tenant.stripe_subscription_id = Some(sub.id);
             }
             Some(sub) => {
@@ -231,13 +214,10 @@ impl Billing {
                                 .set_subscription_item_quantity(&item_id, quantity)
                                 .await?;
                         }
-                        price_to_item.insert(price_id.clone(), item_id);
                     } else {
-                        let item_id = self
-                            .stripe
+                        self.stripe
                             .create_subscription_item(&subscription_id, price_id, quantity)
                             .await?;
-                        price_to_item.insert(price_id.clone(), item_id);
                     }
                 }
 
@@ -245,29 +225,6 @@ impl Billing {
                 for (_, (item_id, _)) in current {
                     downgraded = true;
                     self.stripe.delete_subscription_item(&item_id).await?;
-                }
-            }
-        }
-
-        // Point each relay at the shared item for its plan (or clear it if unbilled).
-        for relay in &relays {
-            match relay_price.get(&relay.id) {
-                Some(price_id) => {
-                    let item_id = price_to_item
-                        .get(price_id)
-                        .ok_or_else(|| anyhow!("missing subscription item for price {price_id}"))?;
-                    if relay.stripe_subscription_item_id.as_deref() != Some(item_id.as_str()) {
-                        self.command
-                            .set_relay_subscription_item(&relay.id, item_id)
-                            .await?;
-                    }
-                }
-                None => {
-                    if relay.stripe_subscription_item_id.is_some() {
-                        self.command
-                            .clear_relay_subscription_item(&relay.id)
-                            .await?;
-                    }
                 }
             }
         }

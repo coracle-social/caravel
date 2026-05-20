@@ -296,27 +296,6 @@ impl Command {
         .await
     }
 
-    pub async fn clear_relay_subscription_item(&self, relay_id: &str) -> Result<()> {
-        sqlx::query("UPDATE relay SET stripe_subscription_item_id = NULL WHERE id = ?")
-            .bind(relay_id)
-            .execute(&self.pool)
-            .await?;
-        Ok(())
-    }
-
-    pub async fn set_relay_subscription_item(
-        &self,
-        relay_id: &str,
-        stripe_subscription_item_id: &str,
-    ) -> Result<()> {
-        sqlx::query("UPDATE relay SET stripe_subscription_item_id = ? WHERE id = ?")
-            .bind(stripe_subscription_item_id)
-            .bind(relay_id)
-            .execute(&self.pool)
-            .await?;
-        Ok(())
-    }
-
     // Invoices
 
     pub async fn insert_pending_invoice_nwc_payment(

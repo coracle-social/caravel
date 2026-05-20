@@ -23,7 +23,6 @@ CREATE TABLE IF NOT EXISTS relay (
   schema TEXT NOT NULL,
   subdomain TEXT NOT NULL UNIQUE,
   plan TEXT NOT NULL,
-  stripe_subscription_item_id TEXT,
   status TEXT NOT NULL,
   synced INTEGER NOT NULL DEFAULT 0,
   sync_error TEXT NOT NULL DEFAULT '',

@@ -211,10 +211,9 @@ impl Stripe {
         subscription_id: &str,
         price_id: &str,
         quantity: i64,
-    ) -> Result<String> {
+    ) -> Result<()> {
         let quantity = quantity.to_string();
-        let body = self
-            .post("/subscription_items")
+        self.post("/subscription_items")
             .header(
                 "Idempotency-Key",
                 self.idempotency_key(&["create_subscription_item", subscription_id, price_id]),
@@ -224,12 +223,9 @@ impl Stripe {
                 ("price", price_id),
                 ("quantity", quantity.as_str()),
             ])
-            .send_json()
+            .send_ok()
             .await?;
-        body["id"]
-            .as_str()
-            .map(str::to_string)
-            .ok_or_else(|| anyhow!("missing subscription item id"))
+        Ok(())
     }
 
     pub async fn set_subscription_item_quantity(&self, item_id: &str, quantity: i64) -> Result<()> {

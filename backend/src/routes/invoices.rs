@@ -26,12 +26,16 @@ pub async fn get_invoice(
     AuthedPubkey(auth): AuthedPubkey,
     Path(id): Path<String>,
 ) -> ApiResult {
-    let (invoice, tenant) = api
-        .billing
-        .get_invoice_with_tenant(&id)
-        .await
-        .map_err(internal)?
-        .ok_or_else(|| not_found("invoice not found"))?;
+    let Some(invoice) = self.stripe.get_invoice(id).await? else {
+        return not_found("invoice not found")
+    };
+
+    let tenant = api
+        .query
+        .get_tenant_by_stripe_customer_id(&invoice.customer)
+        .await?
+        .ok_or_else(|| anyhow!("invoice not found"))?;
+
     api.require_admin_or_tenant(&auth, &tenant.pubkey)?;
 
     let invoice = api
@@ -48,12 +52,16 @@ pub async fn get_invoice_bolt11(
     AuthedPubkey(auth): AuthedPubkey,
     Path(id): Path<String>,
 ) -> ApiResult {
-    let (invoice, tenant) = api
-        .billing
-        .get_invoice_with_tenant(&id)
-        .await
-        .map_err(internal)?
-        .ok_or_else(|| not_found("invoice not found"))?;
+    let Some(invoice) = self.stripe.get_invoice(id).await? else {
+        return not_found("invoice not found")
+    };
+
+    let tenant = api
+        .query
+        .get_tenant_by_stripe_customer_id(&invoice.customer)
+        .await?
+        .ok_or_else(|| anyhow!("invoice not found"))?;
+
     api.require_admin_or_tenant(&auth, &tenant.pubkey)?;
 
     let invoice = api

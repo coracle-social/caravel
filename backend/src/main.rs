@@ -43,7 +43,7 @@ async fn main() -> Result<()> {
     let stripe = Stripe::new(&env);
     let query = Query::new(pool.clone(), &env);
     let command = Command::new(pool);
-    let billing = Billing::new(query.clone(), command.clone(), robot.clone(), &env);
+    let billing = Billing::new(query.clone(), command.clone(), &env);
     let infra = Infra::new(query.clone(), command.clone(), &env);
     let api = Api::new(query, command, billing.clone(), stripe, robot, infra.clone(), &env);
 

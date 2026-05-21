@@ -4,18 +4,14 @@ use std::collections::BTreeMap;
 use crate::bitcoin;
 use crate::command::Command;
 use crate::env::Env;
-use crate::models::{Activity, Tenant, RELAY_STATUS_ACTIVE, RELAY_STATUS_DELINQUENT};
+use crate::models::{Activity, Tenant, RELAY_STATUS_ACTIVE};
 use crate::query::Query;
-use crate::robot::Robot;
 use crate::stripe::{Stripe, StripeInvoice, StripeSubscription};
 use crate::wallet::Wallet;
 
-const MANUAL_LIGHTNING_PAYMENT_DM: &str = "Payment is due for your relay subscription. Please visit the application to complete a manual Lightning payment.";
-const NWC_ERROR_DM_PREFIX: &str = "NWC auto-payment failed:";
-const NWC_ERROR_DM_MAX_CHARS: usize = 240;
 const LIGHTNING_INVOICE_DESCRIPTION: &str = "Relay subscription payment";
 
-enum NwcInvoicePaymentOutcome {
+pub enum NwcInvoicePaymentOutcome {
     Paid,
     Fallback(anyhow::Error),
     Pending(anyhow::Error),
@@ -25,21 +21,17 @@ enum NwcInvoicePaymentOutcome {
 pub struct Billing {
     stripe: Stripe,
     wallet: Wallet,
-    env: Env,
     query: Query,
     command: Command,
-    robot: Robot,
 }
 
 impl Billing {
-    pub fn new(query: Query, command: Command, robot: Robot, env: &Env) -> Self {
+    pub fn new(query: Query, command: Command, env: &Env) -> Self {
         Self {
             stripe: Stripe::new(env),
             wallet: Wallet::from_url(&env.robot_wallet).expect("invalid ROBOT_WALLET"),
-            env: env.clone(),
             query,
             command,
-            robot,
         }
     }
 
@@ -237,300 +229,7 @@ impl Billing {
         Ok(())
     }
 
-    // --Stripe Webhooks--
-
-    pub async fn handle_webhook(&self, payload: &str, signature: &str) -> Result<()> {
-        let event = self.stripe.get_webhook_event(payload, signature)?;
-        let obj = &event.data.object;
-
-        match event.event_type.as_str() {
-            "invoice.created" => {
-                let customer = obj["customer"].as_str().unwrap_or_default();
-                let amount_due = obj["amount_due"].as_i64().unwrap_or(0);
-                let currency = obj["currency"].as_str().unwrap_or("usd");
-                let invoice_id = obj["id"].as_str().unwrap_or_default();
-                self.handle_invoice_created(customer, amount_due, currency, invoice_id)
-                    .await?;
-            }
-            "invoice.paid" => {
-                let customer = obj["customer"].as_str().unwrap_or_default();
-                self.handle_invoice_paid(customer).await?;
-            }
-            "invoice.payment_failed" => {
-                let customer = obj["customer"].as_str().unwrap_or_default();
-                self.handle_invoice_payment_failed(customer).await?;
-            }
-            "invoice.overdue" => {
-                let customer = obj["customer"].as_str().unwrap_or_default();
-                self.handle_invoice_overdue(customer).await?;
-            }
-            "customer.subscription.updated" => {
-                let customer = obj["customer"].as_str().unwrap_or_default();
-                let status = obj["status"].as_str().unwrap_or_default();
-                self.handle_subscription_updated(customer, status).await?;
-            }
-            "customer.subscription.deleted" => {
-                let customer = obj["customer"].as_str().unwrap_or_default();
-                self.handle_subscription_deleted(customer).await?;
-            }
-            "payment_method.attached" => {
-                let customer = obj["customer"].as_str().unwrap_or_default();
-                self.handle_payment_method_attached(customer).await?;
-            }
-            _ => {}
-        }
-
-        Ok(())
-    }
-
-    async fn handle_invoice_created(
-        &self,
-        stripe_customer_id: &str,
-        amount_due: i64,
-        currency: &str,
-        invoice_id: &str,
-    ) -> Result<()> {
-        if amount_due == 0 {
-            return Ok(());
-        }
-
-        let Some(tenant) = self
-            .query
-            .get_tenant_by_stripe_customer_id(stripe_customer_id)
-            .await?
-        else {
-            return Ok(());
-        };
-
-        let mut nwc_error_for_dm: Option<String> = None;
-
-        // 1. NWC auto-pay: if the tenant has a nwc_url
-        if !tenant.nwc_url.is_empty() {
-            let plain_nwc_url = self.env.decrypt(&tenant.nwc_url)?;
-            match self
-                .nwc_pay_invoice(
-                    invoice_id,
-                    &tenant.pubkey,
-                    amount_due,
-                    currency,
-                    &plain_nwc_url,
-                )
-                .await?
-            {
-                NwcInvoicePaymentOutcome::Paid => {
-                    self.mark_invoice_paid_out_of_band_after_nwc(invoice_id, &tenant.pubkey)
-                        .await?;
-                    return Ok(());
-                }
-                NwcInvoicePaymentOutcome::Fallback(e) => {
-                    let error_msg = format!("{e}");
-                    self.command
-                        .set_tenant_nwc_error(&tenant.pubkey, &error_msg)
-                        .await?;
-                    tracing::warn!(
-                        error = %e,
-                        tenant_pubkey = %tenant.pubkey,
-                        stripe_customer_id,
-                        invoice_id,
-                        "nwc auto-payment failed for invoice.created"
-                    );
-                    nwc_error_for_dm = summarize_nwc_error_for_dm(&error_msg);
-                    // Fall through to next option
-                }
-                NwcInvoicePaymentOutcome::Pending(e) => {
-                    let error_msg = format!("{e}");
-                    self.command
-                        .set_tenant_nwc_error(&tenant.pubkey, &error_msg)
-                        .await?;
-                    tracing::error!(
-                        error = %e,
-                        tenant_pubkey = %tenant.pubkey,
-                        stripe_customer_id,
-                        invoice_id,
-                        "nwc auto-payment requires reconciliation before retry"
-                    );
-                    return Err(e);
-                }
-            }
-        }
-
-        // 2. Card on file: if the tenant has a payment method, Stripe charges automatically
-        if self
-            .stripe
-            .has_payment_method(&tenant.stripe_customer_id)
-            .await?
-        {
-            return Ok(());
-        }
-
-        // 3. Manual payment: send a DM
-        let dm_message = manual_lightning_payment_dm(nwc_error_for_dm.as_deref());
-        self.robot.send_dm(&tenant.pubkey, &dm_message).await?;
-
-        Ok(())
-    }
-
-    async fn handle_invoice_paid(&self, stripe_customer_id: &str) -> Result<()> {
-        let Some(tenant) = self
-            .query
-            .get_tenant_by_stripe_customer_id(stripe_customer_id)
-            .await?
-        else {
-            return Ok(());
-        };
-
-        if tenant.past_due_at.is_some() {
-            self.command.clear_tenant_past_due(&tenant.pubkey).await?;
-
-            let relays = self.query.list_relays_for_tenant(&tenant.pubkey).await?;
-            for relay in relays {
-                if relay.status == RELAY_STATUS_DELINQUENT && self.query.is_paid_plan(&relay.plan) {
-                    self.command.activate_relay(&relay).await?;
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    async fn handle_invoice_payment_failed(&self, stripe_customer_id: &str) -> Result<()> {
-        let Some(tenant) = self
-            .query
-            .get_tenant_by_stripe_customer_id(stripe_customer_id)
-            .await?
-        else {
-            return Ok(());
-        };
-
-        if tenant.past_due_at.is_none() {
-            self.command.set_tenant_past_due(&tenant.pubkey).await?;
-            self.robot
-                .send_dm(
-                    &tenant.pubkey,
-                    "Your payment has failed. Your relays may be deactivated if not resolved within a week.",
-                )
-                .await?;
-        }
-
-        Ok(())
-    }
-
-    async fn handle_subscription_updated(
-        &self,
-        stripe_customer_id: &str,
-        status: &str,
-    ) -> Result<()> {
-        if status != "canceled" && status != "unpaid" {
-            return Ok(());
-        }
-
-        let Some(tenant) = self
-            .query
-            .get_tenant_by_stripe_customer_id(stripe_customer_id)
-            .await?
-        else {
-            return Ok(());
-        };
-
-        self.command
-            .clear_tenant_subscription(&tenant.pubkey)
-            .await?;
-
-        let relays = self.query.list_relays_for_tenant(&tenant.pubkey).await?;
-        for relay in relays {
-            if relay.status == RELAY_STATUS_ACTIVE && self.query.is_paid_plan(&relay.plan) {
-                self.command.mark_relay_delinquent(&relay).await?;
-            }
-        }
-
-        Ok(())
-    }
-
-    async fn handle_subscription_deleted(&self, stripe_customer_id: &str) -> Result<()> {
-        let Some(tenant) = self
-            .query
-            .get_tenant_by_stripe_customer_id(stripe_customer_id)
-            .await?
-        else {
-            return Ok(());
-        };
-
-        self.command
-            .clear_tenant_subscription(&tenant.pubkey)
-            .await?;
-
-        Ok(())
-    }
-
-    async fn handle_invoice_overdue(&self, stripe_customer_id: &str) -> Result<()> {
-        let Some(tenant) = self
-            .query
-            .get_tenant_by_stripe_customer_id(stripe_customer_id)
-            .await?
-        else {
-            return Ok(());
-        };
-
-        let relays = self.query.list_relays_for_tenant(&tenant.pubkey).await?;
-        for relay in relays {
-            if relay.status == RELAY_STATUS_ACTIVE && self.query.is_paid_plan(&relay.plan) {
-                self.command.mark_relay_delinquent(&relay).await?;
-            }
-        }
-
-        self.robot
-            .send_dm(
-                &tenant.pubkey,
-                "Your paid relays have been deactivated due to non-payment.",
-            )
-            .await?;
-
-        Ok(())
-    }
-
-    async fn handle_payment_method_attached(&self, stripe_customer_id: &str) -> Result<()> {
-        if stripe_customer_id.is_empty() {
-            return Ok(());
-        }
-
-        let Some(tenant) = self
-            .query
-            .get_tenant_by_stripe_customer_id(stripe_customer_id)
-            .await?
-        else {
-            return Ok(());
-        };
-
-        self.pay_outstanding_card_invoices(&tenant).await?;
-        Ok(())
-    }
-
     // --- Public API helpers ---
-
-    /// Returns `Ok(None)` if Stripe has no such invoice; the route turns that into a 404.
-    pub async fn get_invoice_with_tenant(
-        &self,
-        invoice_id: &str,
-    ) -> Result<Option<(StripeInvoice, crate::models::Tenant)>> {
-        let Some(invoice) = self.stripe.get_invoice(invoice_id).await? else {
-            return Ok(None);
-        };
-        let tenant = self
-            .query
-            .get_tenant_by_stripe_customer_id(&invoice.customer)
-            .await?
-            .ok_or_else(|| anyhow!("tenant not found for customer"))?;
-        Ok(Some((invoice, tenant)))
-    }
-
-    pub async fn reconcile_manual_lightning_invoice(
-        &self,
-        invoice_id: &str,
-        invoice: &StripeInvoice,
-    ) -> Result<StripeInvoice> {
-        self.reconcile_manual_lightning_invoice_if_settled(invoice_id, invoice)
-            .await
-    }
 
     pub async fn get_or_create_manual_lightning_bolt11(
         &self,
@@ -644,7 +343,10 @@ impl Billing {
         Ok(())
     }
 
-    async fn pay_outstanding_card_invoices(&self, tenant: &crate::models::Tenant) -> Result<()> {
+    pub async fn pay_outstanding_card_invoices(
+        &self,
+        tenant: &crate::models::Tenant,
+    ) -> Result<()> {
         if !self
             .stripe
             .has_payment_method(&tenant.stripe_customer_id)
@@ -676,7 +378,7 @@ impl Billing {
 
     // --- Lightning / NWC orchestration ---
 
-    async fn mark_invoice_paid_out_of_band_after_nwc(
+    pub async fn mark_invoice_paid_out_of_band_after_nwc(
         &self,
         invoice_id: &str,
         tenant_pubkey: &str,
@@ -686,7 +388,7 @@ impl Billing {
         Ok(())
     }
 
-    async fn reconcile_manual_lightning_invoice_if_settled(
+    pub async fn reconcile_manual_lightning_invoice(
         &self,
         invoice_id: &str,
         invoice: &StripeInvoice,
@@ -744,7 +446,7 @@ impl Billing {
     /// Charges a Stripe invoice over Lightning: the system wallet issues a bolt11
     /// invoice for the fiat amount, the tenant's wallet pays it. A `pending` row in
     /// `invoice_nwc_payment` guards against double-charging across retries.
-    async fn nwc_pay_invoice(
+    pub async fn nwc_pay_invoice(
         &self,
         invoice_id: &str,
         tenant_pubkey: &str,
@@ -822,30 +524,5 @@ impl Billing {
             )),
             None => Ok(None),
         }
-    }
-}
-
-fn summarize_nwc_error_for_dm(error: &str) -> Option<String> {
-    let normalized = error.split_whitespace().collect::<Vec<_>>().join(" ");
-    if normalized.is_empty() {
-        return None;
-    }
-
-    if normalized.chars().count() <= NWC_ERROR_DM_MAX_CHARS {
-        return Some(normalized);
-    }
-
-    let prefix_len = NWC_ERROR_DM_MAX_CHARS.saturating_sub(3);
-    let mut truncated = normalized.chars().take(prefix_len).collect::<String>();
-    truncated.push_str("...");
-    Some(truncated)
-}
-
-fn manual_lightning_payment_dm(nwc_error: Option<&str>) -> String {
-    match nwc_error {
-        Some(error) if !error.is_empty() => {
-            format!("{MANUAL_LIGHTNING_PAYMENT_DM}\n\n{NWC_ERROR_DM_PREFIX} {error}")
-        }
-        _ => MANUAL_LIGHTNING_PAYMENT_DM.to_string(),
     }
 }

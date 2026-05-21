@@ -567,32 +567,6 @@ impl Billing {
             })
     }
 
-    pub async fn stripe_create_customer(&self, tenant_pubkey: &str) -> Result<String> {
-        let short_pubkey: String = tenant_pubkey.chars().take(8).collect();
-        let display_name = self
-            .robot
-            .fetch_nostr_name(tenant_pubkey)
-            .await
-            .unwrap_or(short_pubkey);
-        self.stripe
-            .create_customer(tenant_pubkey, &display_name)
-            .await
-    }
-
-    pub async fn stripe_list_invoices(&self, customer_id: &str) -> Result<Vec<StripeInvoice>> {
-        self.stripe.list_invoices(customer_id).await
-    }
-
-    pub async fn stripe_create_portal_session(
-        &self,
-        customer_id: &str,
-        return_url: Option<&str>,
-    ) -> Result<String> {
-        self.stripe
-            .create_portal_session(customer_id, return_url)
-            .await
-    }
-
     pub async fn create_bolt11(&self, amount_due_minor: i64, currency: &str) -> Result<String> {
         let amount_msats = bitcoin::fiat_to_msats(amount_due_minor, currency).await?;
         self.wallet

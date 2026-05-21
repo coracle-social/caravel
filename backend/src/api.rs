@@ -33,6 +33,8 @@ use crate::env::Env;
 use crate::infra::Infra;
 use crate::models::{Relay, Tenant};
 use crate::query::Query;
+use crate::robot::Robot;
+use crate::stripe::Stripe;
 use crate::routes::identity::get_identity;
 use crate::routes::invoices::{get_invoice, get_invoice_bolt11, list_tenant_invoices};
 use crate::routes::plans::{get_plan, list_plans};
@@ -52,6 +54,8 @@ pub struct Api {
     pub query: Query,
     pub command: Command,
     pub billing: Billing,
+    pub stripe: Stripe,
+    pub robot: Robot,
     pub infra: Infra,
 }
 
@@ -60,6 +64,8 @@ impl Api {
         query: Query,
         command: Command,
         billing: Billing,
+        stripe: Stripe,
+        robot: Robot,
         infra: Infra,
         env: &Env,
     ) -> Self {
@@ -68,6 +74,8 @@ impl Api {
             query,
             command,
             billing,
+            stripe,
+            robot,
             infra,
         }
     }

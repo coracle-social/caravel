@@ -65,9 +65,15 @@ pub async fn create_tenant(
         return ok(TenantResponse::from(t));
     }
 
+    let display_name = api
+        .robot
+        .fetch_nostr_name(&pubkey)
+        .await
+        .unwrap_or(pubkey.chars().take(8).collect());
+
     let stripe_customer_id = api
-        .billing
-        .stripe_create_customer(&pubkey)
+        .stripe
+        .create_customer(&pubkey, &display_name)
         .await
         .map_err(internal)?;
 

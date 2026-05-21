@@ -25,6 +25,7 @@ use crate::env::Env;
 use crate::infra::Infra;
 use crate::query::Query;
 use crate::robot::Robot;
+use crate::stripe::Stripe;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -39,11 +40,12 @@ async fn main() -> Result<()> {
 
     let pool = pool::create_pool(&env.database_url).await?;
     let robot = Robot::new(&env).await?;
+    let stripe = Stripe::new(&env);
     let query = Query::new(pool.clone(), &env);
     let command = Command::new(pool);
     let billing = Billing::new(query.clone(), command.clone(), robot.clone(), &env);
     let infra = Infra::new(query.clone(), command.clone(), &env);
-    let api = Api::new(query, command, billing.clone(), infra.clone(), &env);
+    let api = Api::new(query, command, billing.clone(), stripe, robot, infra.clone(), &env);
 
     let cors = if env.server_allow_origins.is_empty() {
         CorsLayer::permissive()

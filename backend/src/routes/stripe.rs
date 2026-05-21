@@ -25,8 +25,8 @@ pub async fn create_stripe_session(
     let tenant = api.get_tenant_or_404(&pubkey).await?;
 
     let url = api
-        .billing
-        .stripe_create_portal_session(&tenant.stripe_customer_id, params.return_url.as_deref())
+        .stripe
+        .create_portal_session(&tenant.stripe_customer_id, params.return_url.as_deref())
         .await
         .map_err(internal)?;
     ok(serde_json::json!({ "url": url }))

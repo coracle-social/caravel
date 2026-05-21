@@ -14,8 +14,8 @@ pub async fn list_tenant_invoices(
     let tenant = api.get_tenant_or_404(&pubkey).await?;
 
     let invoices = api
-        .billing
-        .stripe_list_invoices(&tenant.stripe_customer_id)
+        .stripe
+        .list_invoices(&tenant.stripe_customer_id)
         .await
         .map_err(internal)?;
     ok(invoices)

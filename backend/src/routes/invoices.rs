@@ -74,15 +74,39 @@ pub async fn get_invoice_bolt11(
         return Err(bad_request("invoice-not-open", "invoice is not open"));
     }
 
-    let bolt11 = api
-        .billing
-        .get_or_create_manual_lightning_bolt11(
-            &id,
-            &tenant.pubkey,
-            invoice.amount_due,
-            &invoice.currency,
-        )
+    let bolt11 = if let Some(existing_bolt11) = api
+        .query
+        .get_invoice_manual_lightning_bolt11(&id)
         .await
-        .map_err(internal)?;
+        .map_err(internal)?
+    {
+        existing_bolt11
+    } else {
+        let bolt11 = api
+            .billing
+            .create_bolt11(invoice.amount_due, &invoice.currency)
+            .await
+            .map_err(internal)?;
+
+        if api
+            .command
+            .insert_manual_lightning_invoice_payment(&id, &tenant.pubkey, &bolt11)
+            .await
+            .map_err(internal)?
+        {
+            bolt11
+        } else {
+            api.query
+                .get_invoice_manual_lightning_bolt11(&id)
+                .await
+                .map_err(internal)?
+                .ok_or_else(|| {
+                    internal(format!(
+                        "manual lightning payment row missing after insert race for invoice {id}"
+                    ))
+                })?
+        }
+    };
+
     ok(serde_json::json!({ "bolt11": bolt11 }))
 }

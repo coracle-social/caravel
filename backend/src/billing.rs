@@ -231,41 +231,6 @@ impl Billing {
 
     // --- Public API helpers ---
 
-    pub async fn get_or_create_manual_lightning_bolt11(
-        &self,
-        invoice_id: &str,
-        tenant_pubkey: &str,
-        amount_due_minor: i64,
-        currency: &str,
-    ) -> Result<String> {
-        if let Some(existing_bolt11) = self
-            .query
-            .get_invoice_manual_lightning_bolt11(invoice_id)
-            .await?
-        {
-            return Ok(existing_bolt11);
-        }
-
-        let bolt11 = self.create_bolt11(amount_due_minor, currency).await?;
-
-        if self
-            .command
-            .insert_manual_lightning_invoice_payment(invoice_id, tenant_pubkey, &bolt11)
-            .await?
-        {
-            return Ok(bolt11);
-        }
-
-        self.query
-            .get_invoice_manual_lightning_bolt11(invoice_id)
-            .await?
-            .ok_or_else(|| {
-                anyhow!(
-                    "manual lightning payment row missing after insert race for invoice {invoice_id}"
-                )
-            })
-    }
-
     pub async fn create_bolt11(&self, amount_due_minor: i64, currency: &str) -> Result<String> {
         let amount_msats = bitcoin::fiat_to_msats(amount_due_minor, currency).await?;
         self.wallet

@@ -298,19 +298,27 @@ impl Command {
 
     // Invoices
 
-    pub async fn insert_pending_invoice_nwc_payment(
+    /// Insert a freshly minted pending bolt11 for an invoice. Returns `false` if
+    /// a row already exists (lost an insert race), in which case the caller
+    /// should read and use the existing row's bolt11.
+    pub async fn insert_pending_lightning_invoice(
         &self,
-        invoice_id: &str,
+        stripe_invoice_id: &str,
         tenant_pubkey: &str,
+        bolt11: &str,
+        expires_at: i64,
     ) -> Result<bool> {
         let now = chrono::Utc::now().timestamp();
         let result = sqlx::query(
-            "INSERT INTO invoice_nwc_payment (invoice_id, tenant_pubkey, state, created_at, updated_at)
-             VALUES (?, ?, 'pending', ?, ?)
-             ON CONFLICT(invoice_id) DO NOTHING",
+            "INSERT INTO lightning_invoice
+             (stripe_invoice_id, tenant_pubkey, bolt11, status, expires_at, created_at, updated_at)
+             VALUES (?, ?, ?, 'pending', ?, ?, ?)
+             ON CONFLICT(stripe_invoice_id) DO NOTHING",
         )
-        .bind(invoice_id)
+        .bind(stripe_invoice_id)
         .bind(tenant_pubkey)
+        .bind(bolt11)
+        .bind(expires_at)
         .bind(now)
         .bind(now)
         .execute(&self.pool)
@@ -319,46 +327,48 @@ impl Command {
         Ok(result.rows_affected() > 0)
     }
 
-    pub async fn mark_invoice_nwc_payment_paid(&self, invoice_id: &str) -> Result<()> {
+    /// Replace the stored bolt11 for a still-pending invoice whose previous
+    /// invoice expired. No-op once the invoice is paid, so this can never
+    /// overwrite a settled invoice.
+    pub async fn regenerate_lightning_invoice(
+        &self,
+        stripe_invoice_id: &str,
+        bolt11: &str,
+        expires_at: i64,
+    ) -> Result<()> {
         let now = chrono::Utc::now().timestamp();
-        let result = sqlx::query(
-            "UPDATE invoice_nwc_payment
-             SET state = 'paid', updated_at = ?
-             WHERE invoice_id = ?",
+        sqlx::query(
+            "UPDATE lightning_invoice
+             SET bolt11 = ?, expires_at = ?, updated_at = ?
+             WHERE stripe_invoice_id = ? AND status = 'pending'",
         )
+        .bind(bolt11)
+        .bind(expires_at)
         .bind(now)
-        .bind(invoice_id)
+        .bind(stripe_invoice_id)
         .execute(&self.pool)
         .await?;
-
-        if result.rows_affected() == 0 {
-            anyhow::bail!("invoice_nwc_payment row missing for invoice_id: {invoice_id}");
-        }
 
         Ok(())
     }
 
-    pub async fn insert_manual_lightning_invoice_payment(
-        &self,
-        invoice_id: &str,
-        tenant_pubkey: &str,
-        bolt11: &str,
-    ) -> Result<bool> {
+    /// Mark a pending invoice paid, recording which method settled it. The
+    /// `status = 'pending'` guard makes this idempotent and first-writer-wins:
+    /// a later reconcile won't clobber the method recorded by whoever settled
+    /// it first.
+    pub async fn mark_lightning_invoice_paid(&self, stripe_invoice_id: &str, method: &str) -> Result<()> {
         let now = chrono::Utc::now().timestamp();
-        let result = sqlx::query(
-            "INSERT INTO invoice_manual_lightning_payment
-             (invoice_id, tenant_pubkey, bolt11, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?)
-             ON CONFLICT(invoice_id) DO NOTHING",
+        sqlx::query(
+            "UPDATE lightning_invoice
+             SET status = 'paid', paid_method = ?, updated_at = ?
+             WHERE stripe_invoice_id = ? AND status = 'pending'",
         )
-        .bind(invoice_id)
-        .bind(tenant_pubkey)
-        .bind(bolt11)
+        .bind(method)
         .bind(now)
-        .bind(now)
+        .bind(stripe_invoice_id)
         .execute(&self.pool)
         .await?;
 
-        Ok(result.rows_affected() > 0)
+        Ok(())
     }
 }

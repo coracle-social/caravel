@@ -172,7 +172,7 @@ Notes:
 - Return `data` is a single Stripe invoice object
 - If invoice does not exist, return `404` with `code=not-found`
 
-## `async fn get_invoice_bolt11(...) -> Response`
+## `async fn get_lightning_invoice(...) -> Response`
 
 - Serves `GET /invoices/:id/bolt11`
 - Fetches invoice from Stripe API by ID

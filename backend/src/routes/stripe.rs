@@ -9,7 +9,6 @@ use axum::{
 use serde::Deserialize;
 
 use crate::api::{Api, AuthedPubkey};
-use crate::billing::NwcInvoicePaymentOutcome;
 use crate::models::{RELAY_STATUS_ACTIVE, RELAY_STATUS_DELINQUENT};
 use crate::web::{ApiResult, bad_request, internal, ok};
 
@@ -75,8 +74,8 @@ async fn handle_webhook(api: &Api, payload: &str, signature: &str) -> Result<()>
             let customer = obj["customer"].as_str().unwrap_or_default();
             let amount_due = obj["amount_due"].as_i64().unwrap_or(0);
             let currency = obj["currency"].as_str().unwrap_or("usd");
-            let invoice_id = obj["id"].as_str().unwrap_or_default();
-            handle_invoice_created(api, customer, amount_due, currency, invoice_id).await?;
+            let stripe_invoice_id = obj["id"].as_str().unwrap_or_default();
+            handle_invoice_created(api, customer, amount_due, currency, stripe_invoice_id).await?;
         }
         "invoice.paid" => {
             let customer = obj["customer"].as_str().unwrap_or_default();
@@ -114,7 +113,7 @@ async fn handle_invoice_created(
     stripe_customer_id: &str,
     amount_due: i64,
     currency: &str,
-    invoice_id: &str,
+    stripe_invoice_id: &str,
 ) -> Result<()> {
     if amount_due == 0 {
         return Ok(());
@@ -128,6 +127,12 @@ async fn handle_invoice_created(
         return Ok(());
     };
 
+    // Mint (or reuse) the single bolt11 that both NWC and manual payment settle.
+    let bolt11 = api
+        .billing
+        .ensure_lightning_invoice(stripe_invoice_id, &tenant.pubkey, amount_due, currency)
+        .await?;
+
     let mut nwc_error_for_dm: Option<String> = None;
 
     // 1. NWC auto-pay: if the tenant has a nwc_url
@@ -135,22 +140,11 @@ async fn handle_invoice_created(
         let plain_nwc_url = api.env.decrypt(&tenant.nwc_url)?;
         match api
             .billing
-            .nwc_pay_invoice(
-                invoice_id,
-                &tenant.pubkey,
-                amount_due,
-                currency,
-                &plain_nwc_url,
-            )
-            .await?
+            .nwc_pay_invoice(stripe_invoice_id, &tenant.pubkey, &bolt11, &plain_nwc_url)
+            .await
         {
-            NwcInvoicePaymentOutcome::Paid => {
-                api.billing
-                    .mark_invoice_paid_out_of_band_after_nwc(invoice_id, &tenant.pubkey)
-                    .await?;
-                return Ok(());
-            }
-            NwcInvoicePaymentOutcome::Fallback(e) => {
+            Ok(()) => return Ok(()),
+            Err(e) => {
                 let error_msg = format!("{e}");
                 api.command
                     .set_tenant_nwc_error(&tenant.pubkey, &error_msg)
@@ -159,25 +153,11 @@ async fn handle_invoice_created(
                     error = %e,
                     tenant_pubkey = %tenant.pubkey,
                     stripe_customer_id,
-                    invoice_id,
+                    stripe_invoice_id,
                     "nwc auto-payment failed for invoice.created"
                 );
                 nwc_error_for_dm = summarize_nwc_error_for_dm(&error_msg);
-                // Fall through to next option
-            }
-            NwcInvoicePaymentOutcome::Pending(e) => {
-                let error_msg = format!("{e}");
-                api.command
-                    .set_tenant_nwc_error(&tenant.pubkey, &error_msg)
-                    .await?;
-                tracing::error!(
-                    error = %e,
-                    tenant_pubkey = %tenant.pubkey,
-                    stripe_customer_id,
-                    invoice_id,
-                    "nwc auto-payment requires reconciliation before retry"
-                );
-                return Err(e);
+                // Fall through to card / manual payment
             }
         }
     }

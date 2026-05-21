@@ -37,6 +37,18 @@ pub struct Tenant {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct LightningInvoice {
+    pub stripe_invoice_id: String,
+    pub tenant_pubkey: String,
+    pub bolt11: String,
+    pub status: String,
+    pub paid_method: Option<String>,
+    pub expires_at: i64,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Relay {
     pub id: String,
     pub tenant: String,

@@ -11,11 +11,10 @@ use crate::wallet::Wallet;
 
 const LIGHTNING_INVOICE_DESCRIPTION: &str = "Relay subscription payment";
 
-pub enum NwcInvoicePaymentOutcome {
-    Paid,
-    Fallback(anyhow::Error),
-    Pending(anyhow::Error),
-}
+/// How long a freshly minted bolt11 stays valid. Once it lapses, an unpaid
+/// invoice's bolt11 is regenerated on next access, so the tenant is never shown
+/// a dead invoice and the sat amount stays pegged to the current BTC price.
+const BOLT11_EXPIRY_SECS: i64 = 3600;
 
 #[derive(Clone)]
 pub struct Billing {
@@ -234,78 +233,65 @@ impl Billing {
     pub async fn create_bolt11(&self, amount_due_minor: i64, currency: &str) -> Result<String> {
         let amount_msats = bitcoin::fiat_to_msats(amount_due_minor, currency).await?;
         self.wallet
-            .make_invoice(amount_msats, LIGHTNING_INVOICE_DESCRIPTION)
+            .make_invoice(
+                amount_msats,
+                LIGHTNING_INVOICE_DESCRIPTION,
+                BOLT11_EXPIRY_SECS as u64,
+            )
             .await
     }
 
-    pub async fn pay_outstanding_nwc_invoices(&self, tenant: &crate::models::Tenant) -> Result<()> {
-        if tenant.nwc_url.is_empty() {
-            return Ok(());
+    /// Return the current valid bolt11 for an open invoice, minting one if none
+    /// exists and regenerating it if the stored one has expired. There is
+    /// exactly one bolt11 per invoice: whoever pays it — the tenant's NWC wallet
+    /// or a human — settles the same Lightning invoice, so the bolt11 itself is
+    /// the double-charge guard.
+    pub async fn ensure_lightning_invoice(
+        &self,
+        stripe_invoice_id: &str,
+        tenant_pubkey: &str,
+        amount_due_minor: i64,
+        currency: &str,
+    ) -> Result<String> {
+        let now = chrono::Utc::now().timestamp();
+
+        if let Some(existing) = self.query.get_lightning_invoice(stripe_invoice_id).await? {
+            // Keep a still-valid invoice, or any bolt11 we've already settled.
+            if existing.status != "pending" || now < existing.expires_at {
+                return Ok(existing.bolt11);
+            }
+            // The stored invoice expired unpaid, so mint a fresh one. The old
+            // invoice can no longer be paid, so no settlement can be missed.
+            let bolt11 = self.create_bolt11(amount_due_minor, currency).await?;
+            self.command
+                .regenerate_lightning_invoice(stripe_invoice_id, &bolt11, now + BOLT11_EXPIRY_SECS)
+                .await?;
+            return Ok(bolt11);
         }
 
-        let plain_nwc_url = self.env.decrypt(&tenant.nwc_url)?;
-
-        let invoices = self
-            .stripe
-            .list_invoices(&tenant.stripe_customer_id)
-            .await?;
-
-        for invoice in &invoices {
-            if invoice.status != "open" || invoice.amount_due == 0 {
-                continue;
-            }
-            let invoice_id = invoice.id.as_str();
-
-            match self
-                .nwc_pay_invoice(
-                    invoice_id,
-                    &tenant.pubkey,
-                    invoice.amount_due,
-                    &invoice.currency,
-                    &plain_nwc_url,
-                )
+        let bolt11 = self.create_bolt11(amount_due_minor, currency).await?;
+        if self
+            .command
+            .insert_pending_lightning_invoice(
+                stripe_invoice_id,
+                tenant_pubkey,
+                &bolt11,
+                now + BOLT11_EXPIRY_SECS,
+            )
+            .await?
+        {
+            Ok(bolt11)
+        } else {
+            // Lost the insert race; use whatever the winner stored.
+            Ok(self
+                .query
+                .get_lightning_invoice(stripe_invoice_id)
                 .await?
-            {
-                NwcInvoicePaymentOutcome::Paid => {
-                    if let Err(e) = self
-                        .mark_invoice_paid_out_of_band_after_nwc(invoice_id, &tenant.pubkey)
-                        .await
-                    {
-                        tracing::error!(
-                            error = %e,
-                            invoice_id,
-                            "failed to mark invoice paid out of band"
-                        );
-                    }
-                }
-                NwcInvoicePaymentOutcome::Fallback(e) => {
-                    let error_msg = format!("{e}");
-                    tracing::error!(
-                        error = %e,
-                        invoice_id,
-                        "nwc payment failed for outstanding invoice"
-                    );
-                    let _ = self
-                        .command
-                        .set_tenant_nwc_error(&tenant.pubkey, &error_msg)
-                        .await;
-                }
-                NwcInvoicePaymentOutcome::Pending(e) => {
-                    let error_msg = format!("{e}");
-                    tracing::error!(
-                        error = %e,
-                        invoice_id,
-                        "outstanding invoice requires NWC reconciliation before retry"
-                    );
-                    let _ = self
-                        .command
-                        .set_tenant_nwc_error(&tenant.pubkey, &error_msg)
-                        .await;
-                }
-            }
+                .ok_or_else(|| {
+                    anyhow!("lightning_invoice row missing after insert race for invoice {stripe_invoice_id}")
+                })?
+                .bolt11)
         }
-
-        Ok(())
     }
 
     pub async fn pay_outstanding_card_invoices(
@@ -332,7 +318,7 @@ impl Billing {
             if let Err(error) = self.stripe.pay_invoice(&invoice.id).await {
                 tracing::error!(
                     error = %error,
-                    invoice_id = %invoice.id,
+                    stripe_invoice_id = %invoice.id,
                     "failed to retry card payment for outstanding invoice"
                 );
             }
@@ -343,40 +329,58 @@ impl Billing {
 
     // --- Lightning / NWC orchestration ---
 
-    pub async fn mark_invoice_paid_out_of_band_after_nwc(
+    /// Push a payment for an invoice's persisted bolt11 from the tenant's NWC
+    /// wallet, then confirm settlement against the system wallet. On success the
+    /// Stripe invoice is marked paid out of band and `Ok(())` is returned; on
+    /// failure the returned error is the reason to surface to the tenant (the
+    /// caller falls through to other payment methods rather than propagating
+    /// it). Reusing the same bolt11 means a retry — or a concurrent manual
+    /// payment — can never double-charge.
+    pub async fn nwc_pay_invoice(
         &self,
-        invoice_id: &str,
+        stripe_invoice_id: &str,
         tenant_pubkey: &str,
+        bolt11: &str,
+        tenant_nwc_url: &str,
     ) -> Result<()> {
-        self.stripe.pay_invoice_out_of_band(invoice_id).await?;
-        self.command.clear_tenant_nwc_error(tenant_pubkey).await?;
-        Ok(())
+        let tenant_wallet = Wallet::from_url(tenant_nwc_url)?;
+
+        match tenant_wallet.pay_invoice(bolt11.to_string()).await {
+            Ok(()) => self.settle_invoice(stripe_invoice_id, tenant_pubkey, "nwc").await,
+            Err(pay_error) => {
+                // The pay request errored, but the payment may have landed
+                // before the response was lost. Confirm against the system
+                // wallet before reporting failure.
+                if self.wallet.is_settled(bolt11).await.unwrap_or(false) {
+                    self.settle_invoice(stripe_invoice_id, tenant_pubkey, "nwc").await
+                } else {
+                    Err(pay_error)
+                }
+            }
+        }
     }
 
-    pub async fn reconcile_manual_lightning_invoice(
-        &self,
-        invoice_id: &str,
-        invoice: &StripeInvoice,
-    ) -> Result<StripeInvoice> {
+    /// If an open invoice's bolt11 has settled on Lightning, record it as paid.
+    /// This is the shared settlement path for both NWC payments that landed late
+    /// and manual payments; it is driven by the actual Lightning settlement
+    /// rather than our local state, so it self-corrects if a previous attempt
+    /// updated Stripe but not our row (or vice versa).
+    pub async fn reconcile_invoice(&self, invoice: &StripeInvoice) -> Result<StripeInvoice> {
         if invoice.status != "open" {
             return Ok(invoice.clone());
         }
 
-        let Some(bolt11) = self
-            .query
-            .get_invoice_manual_lightning_bolt11(invoice_id)
-            .await?
-        else {
+        let Some(row) = self.query.get_lightning_invoice(&invoice.id).await? else {
             return Ok(invoice.clone());
         };
 
-        let settled = match self.is_manual_lightning_invoice_settled(&bolt11).await {
+        let settled = match self.wallet.is_settled(&row.bolt11).await {
             Ok(settled) => settled,
             Err(error) => {
                 tracing::warn!(
                     error = %error,
-                    invoice_id,
-                    "failed to lookup manual lightning invoice settlement"
+                    stripe_invoice_id = %invoice.id,
+                    "failed to look up bolt11 invoice settlement"
                 );
                 return Ok(invoice.clone());
             }
@@ -386,108 +390,38 @@ impl Billing {
             return Ok(invoice.clone());
         }
 
-        if let Err(error) = self.stripe.pay_invoice_out_of_band(invoice_id).await {
+        if let Err(error) = self.settle_invoice(&invoice.id, &row.tenant_pubkey, "manual").await {
             tracing::warn!(
                 error = %error,
-                invoice_id,
-                "failed to mark settled manual lightning invoice as paid_out_of_band"
+                stripe_invoice_id = %invoice.id,
+                "failed to mark settled bolt11 invoice as paid"
             );
         }
 
-        // The invoice existed when we called pay_invoice_out_of_band a moment ago;
-        // if Stripe suddenly returns 404, fall back to the pre-reconcile snapshot
-        // rather than failing the request.
+        // The invoice existed a moment ago; if Stripe suddenly returns 404, fall
+        // back to the pre-reconcile snapshot rather than failing the request.
         Ok(self
             .stripe
-            .get_invoice(invoice_id)
+            .get_invoice(&invoice.id)
             .await?
             .unwrap_or_else(|| invoice.clone()))
     }
 
-    async fn is_manual_lightning_invoice_settled(&self, bolt11: &str) -> Result<bool> {
-        self.wallet.is_settled(bolt11).await
-    }
-
-    /// Charges a Stripe invoice over Lightning: the system wallet issues a bolt11
-    /// invoice for the fiat amount, the tenant's wallet pays it. A `pending` row in
-    /// `invoice_nwc_payment` guards against double-charging across retries.
-    pub async fn nwc_pay_invoice(
+    /// Record a settled bolt11 invoice as paid by `method`, mark the Stripe
+    /// invoice paid out of band, and clear any lingering NWC error. The Stripe
+    /// call is idempotent across retries, and `mark_lightning_invoice_paid` is
+    /// first-writer-wins, so the recorded method reflects whoever settled first.
+    async fn settle_invoice(
         &self,
-        invoice_id: &str,
+        stripe_invoice_id: &str,
         tenant_pubkey: &str,
-        amount_due_minor: i64,
-        currency: &str,
-        tenant_nwc_url: &str,
-    ) -> Result<NwcInvoicePaymentOutcome> {
-        if let Some(existing_outcome) = self
-            .existing_invoice_nwc_payment_outcome(invoice_id)
-            .await?
-        {
-            return Ok(existing_outcome);
-        }
-
-        let amount_msats = match bitcoin::fiat_to_msats(amount_due_minor, currency).await {
-            Ok(msats) => msats,
-            Err(error) => return Ok(NwcInvoicePaymentOutcome::Fallback(error)),
-        };
-
-        let bolt11 = match self
-            .wallet
-            .make_invoice(amount_msats, LIGHTNING_INVOICE_DESCRIPTION)
-            .await
-        {
-            Ok(bolt11) => bolt11,
-            Err(error) => return Ok(NwcInvoicePaymentOutcome::Fallback(error)),
-        };
-
-        let tenant_wallet = match Wallet::from_url(tenant_nwc_url) {
-            Ok(wallet) => wallet,
-            Err(error) => return Ok(NwcInvoicePaymentOutcome::Fallback(error)),
-        };
-
-        if !self
-            .command
-            .insert_pending_invoice_nwc_payment(invoice_id, tenant_pubkey)
-            .await?
-        {
-            if let Some(existing_outcome) = self
-                .existing_invoice_nwc_payment_outcome(invoice_id)
-                .await?
-            {
-                return Ok(existing_outcome);
-            }
-            return Err(anyhow!(
-                "invoice_nwc_payment row missing after insert race for invoice {invoice_id}"
-            ));
-        }
-
-        match tenant_wallet.pay_invoice(bolt11).await {
-            Ok(()) => match self.command.mark_invoice_nwc_payment_paid(invoice_id).await {
-                Ok(()) => Ok(NwcInvoicePaymentOutcome::Paid),
-                Err(error) => Ok(NwcInvoicePaymentOutcome::Pending(anyhow!(
-                    "invoice {invoice_id} was charged over NWC but failed to persist paid state: {error}"
-                ))),
-            },
-            Err(error) => Ok(NwcInvoicePaymentOutcome::Pending(anyhow!(
-                "invoice {invoice_id} NWC payment attempt requires reconciliation: {error}"
-            ))),
-        }
-    }
-
-    async fn existing_invoice_nwc_payment_outcome(
-        &self,
-        invoice_id: &str,
-    ) -> Result<Option<NwcInvoicePaymentOutcome>> {
-        let state = self.query.get_invoice_nwc_payment_state(invoice_id).await?;
-        match state.as_deref() {
-            Some("paid") => Ok(Some(NwcInvoicePaymentOutcome::Paid)),
-            Some("pending") => Ok(Some(NwcInvoicePaymentOutcome::Pending(anyhow!(
-                "invoice {invoice_id} has a pending NWC reconciliation; refusing to create a new Lightning charge"
-            )))),
-            Some(other) => Err(anyhow!(
-                "unknown invoice_nwc_payment state '{other}' for invoice {invoice_id}"
-            )),
-            None => Ok(None),
-        }
+        method: &str,
+    ) -> Result<()> {
+        self.command
+            .mark_lightning_invoice_paid(stripe_invoice_id, method)
+            .await?;
+        self.stripe.pay_invoice_out_of_band(stripe_invoice_id).await?;
+        self.command.clear_tenant_nwc_error(tenant_pubkey).await?;
+        Ok(())
     }
 }

@@ -26,47 +26,30 @@ pub async fn get_invoice(
     AuthedPubkey(auth): AuthedPubkey,
     Path(id): Path<String>,
 ) -> ApiResult {
-    let Some(invoice) = self.stripe.get_invoice(id).await? else {
-        return not_found("invoice not found")
-    };
-
-    let tenant = api
-        .query
-        .get_tenant_by_stripe_customer_id(&invoice.customer)
-        .await?
-        .ok_or_else(|| anyhow!("invoice not found"))?;
-
-    api.require_admin_or_tenant(&auth, &tenant.pubkey)?;
+    let (invoice, _tenant) = load_authorized_invoice(&api, &auth, &id).await?;
 
     let invoice = api
         .billing
-        .reconcile_manual_lightning_invoice(&id, &invoice)
+        .reconcile_invoice(&invoice)
         .await
         .map_err(internal)?;
 
     ok(invoice)
 }
 
-pub async fn get_invoice_bolt11(
+pub async fn get_lightning_invoice(
     State(api): State<Arc<Api>>,
     AuthedPubkey(auth): AuthedPubkey,
     Path(id): Path<String>,
 ) -> ApiResult {
-    let Some(invoice) = self.stripe.get_invoice(id).await? else {
-        return not_found("invoice not found")
-    };
+    let (invoice, tenant) = load_authorized_invoice(&api, &auth, &id).await?;
 
-    let tenant = api
-        .query
-        .get_tenant_by_stripe_customer_id(&invoice.customer)
-        .await?
-        .ok_or_else(|| anyhow!("invoice not found"))?;
-
-    api.require_admin_or_tenant(&auth, &tenant.pubkey)?;
-
+    // Settle first: this checks the currently-stored bolt11 against the wallet,
+    // so a payment that landed before expiry is always caught before we'd
+    // consider regenerating below.
     let invoice = api
         .billing
-        .reconcile_manual_lightning_invoice(&id, &invoice)
+        .reconcile_invoice(&invoice)
         .await
         .map_err(internal)?;
 
@@ -74,39 +57,37 @@ pub async fn get_invoice_bolt11(
         return Err(bad_request("invoice-not-open", "invoice is not open"));
     }
 
-    let bolt11 = if let Some(existing_bolt11) = api
-        .query
-        .get_invoice_manual_lightning_bolt11(&id)
+    let bolt11 = api
+        .billing
+        .ensure_lightning_invoice(&invoice.id, &tenant.pubkey, invoice.amount_due, &invoice.currency)
         .await
-        .map_err(internal)?
-    {
-        existing_bolt11
-    } else {
-        let bolt11 = api
-            .billing
-            .create_bolt11(invoice.amount_due, &invoice.currency)
-            .await
-            .map_err(internal)?;
-
-        if api
-            .command
-            .insert_manual_lightning_invoice_payment(&id, &tenant.pubkey, &bolt11)
-            .await
-            .map_err(internal)?
-        {
-            bolt11
-        } else {
-            api.query
-                .get_invoice_manual_lightning_bolt11(&id)
-                .await
-                .map_err(internal)?
-                .ok_or_else(|| {
-                    internal(format!(
-                        "manual lightning payment row missing after insert race for invoice {id}"
-                    ))
-                })?
-        }
-    };
+        .map_err(internal)?;
 
     ok(serde_json::json!({ "bolt11": bolt11 }))
+}
+
+/// Fetch a Stripe invoice and the tenant that owns it, enforcing that the
+/// caller is that tenant (or an admin). Returns 404 if the invoice or its
+/// tenant can't be found.
+async fn load_authorized_invoice(
+    api: &Api,
+    auth: &str,
+    stripe_invoice_id: &str,
+) -> Result<(crate::stripe::StripeInvoice, crate::models::Tenant), crate::web::ApiError> {
+    let Some(invoice) = api.stripe.get_invoice(stripe_invoice_id).await.map_err(internal)? else {
+        return Err(not_found("invoice not found"));
+    };
+
+    let Some(tenant) = api
+        .query
+        .get_tenant_by_stripe_customer_id(&invoice.customer)
+        .await
+        .map_err(internal)?
+    else {
+        return Err(not_found("invoice not found"));
+    };
+
+    api.require_admin_or_tenant(auth, &tenant.pubkey)?;
+
+    Ok((invoice, tenant))
 }

@@ -17,14 +17,19 @@ impl Wallet {
         Ok(Self { url })
     }
 
-    pub async fn make_invoice(&self, amount_msats: u64, description: &str) -> Result<String> {
+    pub async fn make_invoice(
+        &self,
+        amount_msats: u64,
+        description: &str,
+        expiry_secs: u64,
+    ) -> Result<String> {
         let nwc = NWC::new(self.url.clone());
         let result = nwc
             .make_invoice(MakeInvoiceRequest {
                 amount: amount_msats,
                 description: Some(description.to_string()),
                 description_hash: None,
-                expiry: None,
+                expiry: Some(expiry_secs),
             })
             .await;
         nwc.shutdown().await;

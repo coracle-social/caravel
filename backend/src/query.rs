@@ -2,7 +2,7 @@ use anyhow::Result;
 use sqlx::SqlitePool;
 
 use crate::env::Env;
-use crate::models::{Activity, Plan, Relay, Tenant};
+use crate::models::{Activity, LightningInvoice, Plan, Relay, Tenant};
 
 fn select_tenant(tail: &str) -> String {
     format!("SELECT * FROM tenant {tail}")
@@ -134,29 +134,19 @@ impl Query {
         Ok(row)
     }
 
-    // Invoice state
+    // Invoices
 
-    pub async fn get_invoice_nwc_payment_state(&self, invoice_id: &str) -> Result<Option<String>> {
-        let state = sqlx::query_scalar::<_, String>(
-            "SELECT state FROM invoice_nwc_payment WHERE invoice_id = ?",
-        )
-        .bind(invoice_id)
-        .fetch_optional(&self.pool)
-        .await?;
-        Ok(state)
-    }
-
-    pub async fn get_invoice_manual_lightning_bolt11(
+    pub async fn get_lightning_invoice(
         &self,
-        invoice_id: &str,
-    ) -> Result<Option<String>> {
-        let bolt11 = sqlx::query_scalar::<_, String>(
-            "SELECT bolt11 FROM invoice_manual_lightning_payment WHERE invoice_id = ?",
+        stripe_invoice_id: &str,
+    ) -> Result<Option<LightningInvoice>> {
+        let row = sqlx::query_as::<_, LightningInvoice>(
+            "SELECT * FROM lightning_invoice WHERE stripe_invoice_id = ?",
         )
-        .bind(invoice_id)
+        .bind(stripe_invoice_id)
         .fetch_optional(&self.pool)
         .await?;
-        Ok(bolt11)
+        Ok(row)
     }
 
     // Activity

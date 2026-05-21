@@ -9,6 +9,8 @@ use hmac::{Hmac, Mac};
 use sha2::Sha256;
 use std::collections::BTreeMap;
 
+use crate::env::Env;
+
 const STRIPE_API: &str = "https://api.stripe.com/v1";
 
 // Webhooks
@@ -57,22 +59,6 @@ pub struct StripeInvoice {
     pub status: String,
     pub amount_due: i64,
     pub currency: String,
-    #[serde(deserialize_with = "deserialize_list")]
-    pub lines: Vec<StripeInvoiceLine>,
-}
-
-#[derive(serde::Deserialize)]
-pub struct StripeInvoicePreview {
-    pub amount_due: i64,
-    pub currency: String,
-    #[serde(deserialize_with = "deserialize_list")]
-    pub lines: Vec<StripeInvoiceLine>,
-}
-
-#[derive(serde::Deserialize, serde::Serialize, Clone)]
-pub struct StripeInvoiceLine {
-    #[serde(default)]
-    pub proration: bool,
 }
 
 #[derive(serde::Deserialize)]
@@ -96,16 +82,14 @@ fn default_quantity() -> i64 {
 
 #[derive(Clone)]
 pub struct Stripe {
-    pub(crate) secret_key: String,
-    pub(crate) webhook_secret: String,
+    env: Env,
     http: reqwest::Client,
 }
 
 impl Stripe {
-    pub fn new(secret_key: String, webhook_secret: String) -> Self {
+    pub fn new(env: &Env) -> Self {
         Self {
-            secret_key,
-            webhook_secret,
+            env: env.clone(),
             http: reqwest::Client::new(),
         }
     }
@@ -115,23 +99,23 @@ impl Stripe {
     fn get(&self, path: &str) -> reqwest::RequestBuilder {
         self.http
             .get(format!("{STRIPE_API}{path}"))
-            .bearer_auth(&self.secret_key)
+            .bearer_auth(&self.env.stripe_secret_key)
     }
 
     fn post(&self, path: &str) -> reqwest::RequestBuilder {
         self.http
             .post(format!("{STRIPE_API}{path}"))
-            .bearer_auth(&self.secret_key)
+            .bearer_auth(&self.env.stripe_secret_key)
     }
 
     fn delete(&self, path: &str) -> reqwest::RequestBuilder {
         self.http
             .delete(format!("{STRIPE_API}{path}"))
-            .bearer_auth(&self.secret_key)
+            .bearer_auth(&self.env.stripe_secret_key)
     }
 
     fn idempotency_key(&self, parts: &[&str]) -> String {
-        let mut mac = Hmac::<Sha256>::new_from_slice(self.secret_key.as_bytes())
+        let mut mac = Hmac::<Sha256>::new_from_slice(self.env.stripe_secret_key.as_bytes())
             .expect("HMAC accepts any key length");
         for (i, part) in parts.iter().enumerate() {
             if i > 0 {
@@ -175,6 +159,8 @@ impl Stripe {
             .map_err(Into::into)
     }
 
+    /// Stripe requires at least one item to create a subscription, so the desired
+    /// items are sent inline here; [`crate::billing`] reconciles from there.
     pub async fn create_subscription(
         &self,
         customer_id: &str,
@@ -296,18 +282,6 @@ impl Stripe {
         Ok(())
     }
 
-    pub async fn preview_invoice(
-        &self,
-        customer_id: &str,
-        subscription_id: Option<&str>,
-    ) -> Result<StripeInvoicePreview> {
-        let mut req = self.get("/invoices/upcoming").query(&[("customer", customer_id)]);
-        if let Some(subscription_id) = subscription_id {
-            req = req.query(&[("subscription", subscription_id)]);
-        }
-        Ok(req.send_ok().await?.json().await?)
-    }
-
     // --- Payment methods ---
 
     pub async fn has_payment_method(&self, customer_id: &str) -> Result<bool> {
@@ -357,7 +331,7 @@ impl Stripe {
         let signature = sig.ok_or_else(|| anyhow!("missing webhook signature"))?;
 
         let signed_payload = format!("{timestamp}.{payload}");
-        let mut mac = Hmac::<Sha256>::new_from_slice(self.webhook_secret.as_bytes())
+        let mut mac = Hmac::<Sha256>::new_from_slice(self.env.stripe_webhook_secret.as_bytes())
             .map_err(|e| anyhow!("invalid webhook secret: {e}"))?;
         mac.update(signed_payload.as_bytes());
         let expected = hex::encode(mac.finalize().into_bytes());

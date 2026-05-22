@@ -8,7 +8,7 @@ Rust backend for Caravel. It manages tenants, relays, invoices, and background w
 - Axum (HTTP API)
 - SQLx + SQLite
 - Tokio (async runtime + workers)
-- Nostr SDK (NIP-98 auth, NIP-17 DMs, NIP-47 wallet connect)
+- Nostr SDK (NIP-98 auth, NIP-17 DMs, NIP-47 wallet connect, NIP-44 encryption at rest)
 
 ## Layout
 
@@ -16,52 +16,82 @@ Rust backend for Caravel. It manages tenants, relays, invoices, and background w
 backend/
   migrations/
     0001_init.sql
+  spec/            # Module-by-module design notes
   src/
-    api.rs       # Axum routes + NIP-98 auth checks
-    billing.rs   # Invoice generation + collection worker
-    infra.rs     # Zooid sync worker
-    main.rs      # App bootstrap
-    models.rs    # DB models
-    repo.rs      # Data access layer
-    robot.rs     # Nostr robot identity + DM sending
+    main.rs        # App bootstrap: load Env, build services, serve + spawn workers
+    env.rs         # Configuration from the environment (+ NIP-44 encryption, NIP-98 signing)
+    api.rs         # Shared Api state, router, NIP-98 auth + authorization helpers
+    web.rs         # HTTP response envelope + helpers
+    routes/        # HTTP route handlers (identity, plans, tenants, relays, invoices, stripe)
+    models.rs      # Domain models + sqlite rows
+    query.rs       # Database reads
+    command.rs     # Database writes + activity broadcast
+    pool.rs        # SQLite pool + migrations
+    billing.rs     # Stripe subscription reconciliation + Lightning collection worker
+    stripe.rs      # Thin Stripe REST client
+    wallet.rs      # NWC wallet handle (NIP-47)
+    bitcoin.rs     # Fiat ↔ BTC/msats conversion
+    infra.rs       # Zooid relay-sync worker
+    robot.rs       # Nostr robot identity + DM sending
 ```
 
 ## Configuration
 
-Environment variables:
+All configuration is read from the environment by `Env::load()` at startup. **Every variable below is required**: `Env::load()` panics if any is missing or blank, and comma-separated lists must contain at least one entry. Copy `.env.template` to `.env` to get started.
 
-| Variable                 | Description                                                             | Default                              |
-| ------------------------ | ----------------------------------------------------------------------- | ------------------------------------ |
-| `DATABASE_URL`           | SQLite URL. Relative paths are resolved under `backend/`.               | `sqlite://<backend>/data/caravel.db` |
-| `HOST`                   | API bind host (also used for NIP-98 `u` host check)                     | `127.0.0.1`                          |
-| `PORT`                   | API bind port                                                           | `2892`                               |
-| `ADMINS`                 | Comma-separated admin pubkeys (hex)                                     | _optional_                           |
-| `ALLOW_ORIGINS`          | Comma-separated CORS origins. If empty, CORS is permissive.             | _optional_                           |
-| `ZOOID_API_URL`          | Zooid API base URL used by infra worker                                 | _required for infra sync_            |
-| `RELAY_DOMAIN`           | Base domain appended to relay subdomains                                | empty                                |
-| `LIVEKIT_URL`            | LiveKit URL sent to zooid when relay livekit is enabled                 | _optional_                           |
-| `LIVEKIT_API_KEY`        | LiveKit API key sent to zooid                                           | _optional_                           |
-| `LIVEKIT_API_SECRET`     | LiveKit API secret sent to zooid                                        | _optional_                           |
-| `BLOSSOM_S3_ENDPOINT`    | S3-compatible endpoint URL for Blossom; omit for AWS S3                 | _optional_                           |
-| `BLOSSOM_S3_REGION`      | S3 region; with bucket, access key, and secret enables S3 for Blossom   | _optional_                           |
-| `BLOSSOM_S3_BUCKET`      | S3 bucket name                                                          | _optional_                           |
-| `BLOSSOM_S3_ACCESS_KEY`  | S3 access key ID                                                        | _optional_                           |
-| `BLOSSOM_S3_SECRET_KEY`  | S3 secret access key                                                    | _optional_                           |
-| `NWC_URL`                | Platform NWC URL used to generate BOLT11 invoices                       | _required for invoice generation_    |
-| `ENCRYPTION_SECRET`      | Nostr secret key (hex or nsec) used to encrypt tenant NWC URLs at rest  | _required_                           |
-| `STRIPE_SECRET_KEY`      | Stripe API secret key used for billing API operations                   | _required_                           |
-| `STRIPE_WEBHOOK_SECRET`  | Stripe webhook signing secret used to verify `Stripe-Signature` headers | _required_                           |
-| `STRIPE_PRICE_BASIC`     | Stripe price ID (`price_...`) backing the Basic plan                    | _required for paid plans_            |
-| `STRIPE_PRICE_GROWTH`    | Stripe price ID (`price_...`) backing the Growth plan                   | _required for paid plans_            |
-| `ROBOT_SECRET`           | Robot Nostr secret key                                                  | _required_                           |
-| `ROBOT_NAME`             | Robot display name (kind `0`)                                           | _optional_                           |
-| `ROBOT_DESCRIPTION`      | Robot description (kind `0`)                                            | _optional_                           |
-| `ROBOT_PICTURE`          | Robot picture URL (kind `0`)                                            | _optional_                           |
-| `ROBOT_OUTBOX_RELAYS`    | Comma-separated relays published as kind `10002`                        | _required_                           |
-| `ROBOT_INDEXER_RELAYS`   | Comma-separated relays used for recipient relay discovery               | _required_                           |
-| `ROBOT_MESSAGING_RELAYS` | Comma-separated relays published as kind `10050`                        | _required_                           |
+**Server**
 
-Relay list env vars are comma-separated and trimmed. If a relay has no `ws://` or `wss://` scheme, `wss://` is prepended.
+| Variable               | Description                                                          |
+| ---------------------- | ------------------------------------------------------------------- |
+| `SERVER_HOST`          | API bind host; also the value the NIP-98 `u` tag must contain       |
+| `SERVER_PORT`          | API bind port                                                       |
+| `SERVER_ADMIN_PUBKEYS` | Comma-separated admin pubkeys (hex)                                 |
+| `SERVER_ALLOW_ORIGINS` | Comma-separated allowed CORS origins                                |
+| `DATABASE_URL`         | SQLite URL; relative `sqlite://` paths are resolved under `backend/` |
+
+**Robot identity**
+
+| Variable                 | Description                                                                                        |
+| ------------------------ | -------------------------------------------------------------------------------------------------- |
+| `ROBOT_SECRET`           | Robot Nostr secret key; used for signing, NIP-44 encryption of stored NWC URLs, and NIP-98 auth    |
+| `ROBOT_NAME`             | Robot display name (kind `0`)                                                                      |
+| `ROBOT_DESCRIPTION`      | Robot description (kind `0`)                                                                        |
+| `ROBOT_PICTURE`          | Robot picture URL (kind `0`)                                                                        |
+| `ROBOT_WALLET`           | System NWC URL used to issue and look up BOLT11 invoices                                            |
+| `ROBOT_OUTBOX_RELAYS`    | Comma-separated relays the robot publishes its profile and kind `10002` relay list to              |
+| `ROBOT_INDEXER_RELAYS`   | Comma-separated relays used for recipient relay/profile discovery                                  |
+| `ROBOT_MESSAGING_RELAYS` | Comma-separated DM relays published as kind `10050`                                                |
+
+**Relay hosting (zooid / livekit)**
+
+| Variable             | Description                                             |
+| -------------------- | ------------------------------------------------------- |
+| `ZOOID_API_URL`      | Zooid API base URL used by the infra sync worker        |
+| `RELAY_DOMAIN`       | Base domain appended to relay subdomains                |
+| `LIVEKIT_URL`        | LiveKit URL sent to zooid when a relay enables livekit   |
+| `LIVEKIT_API_KEY`    | LiveKit API key sent to zooid                           |
+| `LIVEKIT_API_SECRET` | LiveKit API secret sent to zooid                        |
+
+**Blossom S3** — sent to zooid as the S3 adapter config (with `key_prefix` = relay schema) when a relay enables blossom.
+
+| Variable                | Description           |
+| ----------------------- | --------------------- |
+| `BLOSSOM_S3_ENDPOINT`   | S3 endpoint URL       |
+| `BLOSSOM_S3_REGION`     | S3 region             |
+| `BLOSSOM_S3_BUCKET`     | S3 bucket name        |
+| `BLOSSOM_S3_ACCESS_KEY` | S3 access key ID      |
+| `BLOSSOM_S3_SECRET_KEY` | S3 secret access key  |
+
+**Billing (Stripe)**
+
+| Variable                | Description                                                             |
+| ----------------------- | ----------------------------------------------------------------------- |
+| `STRIPE_SECRET_KEY`     | Stripe API secret key used for billing API operations                   |
+| `STRIPE_WEBHOOK_SECRET` | Stripe webhook signing secret used to verify `Stripe-Signature` headers |
+| `STRIPE_PRICE_BASIC`    | Stripe price ID (`price_...`) backing the Basic plan                    |
+| `STRIPE_PRICE_GROWTH`   | Stripe price ID (`price_...`) backing the Growth plan                   |
+
+Comma-separated list variables are split on commas and trimmed; empty entries are dropped.
 
 ## Schema and Architecture
 
@@ -101,7 +131,7 @@ Public exceptions:
 Caravel intentionally uses a session-style variant of NIP-98 for client-to-backend API auth.
 
 - Frontend signs one kind `27235` event with `u = VITE_API_URL` and caches that header for about 10 minutes.
-- Backend verifies event kind, signature, and that `u` contains configured `HOST`.
+- Backend verifies event kind, signature, and that `u` contains configured `SERVER_HOST`.
 - Backend intentionally does not bind auth to exact request URL/method/query, and does not enforce payload hash, timestamp freshness window, or replay cache.
 - Goal: reduce repeated wallet signing prompts and avoid cookie-based sessions.
 - Tradeoff: this is weaker request-intent binding than strict NIP-98 semantics.

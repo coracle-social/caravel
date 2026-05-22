@@ -47,16 +47,12 @@ async fn main() -> Result<()> {
     let infra = Infra::new(query.clone(), command.clone(), &env);
     let api = Api::new(query, command, billing.clone(), stripe, robot, infra.clone(), &env);
 
-    let cors = if env.server_allow_origins.is_empty() {
-        CorsLayer::permissive()
-    } else {
-        let parsed = env
-            .server_allow_origins
-            .iter()
-            .filter_map(|o| o.parse::<axum::http::HeaderValue>().ok())
-            .collect::<Vec<_>>();
-        CorsLayer::new().allow_origin(AllowOrigin::list(parsed))
-    };
+    let parsed = env
+        .server_allow_origins
+        .iter()
+        .filter_map(|o| o.parse::<axum::http::HeaderValue>().ok())
+        .collect::<Vec<_>>();
+    let cors = CorsLayer::new().allow_origin(AllowOrigin::list(parsed));
 
     let app = api.router().layer(cors);
 

@@ -1,8 +1,8 @@
 # `pub struct Billing`
 
-Billing encapsulates logic related to synchronizing state with Stripe, processing payments via NWC, and managing subscription lifecycle.
+Billing encapsulates the domain logic for synchronizing a tenant's Stripe subscription with their relays and for collecting Stripe invoices over Lightning (NWC auto-pay and manual payment).
 
-It owns the domain logic only: Stripe REST calls go through `Stripe` (see `spec/stripe.md`), NWC wallet operations through `Wallet` (see `spec/wallet.md`), and fiat → msats conversion through `bitcoin` (see `spec/bitcoin.md`).
+It owns the domain logic only: Stripe REST calls go through `Stripe` (see `spec/stripe.md`), NWC wallet operations through `Wallet` (see `spec/wallet.md`), and fiat → msats conversion through `bitcoin` (see `spec/bitcoin.md`). The Stripe webhook dispatch that calls into `Billing` lives in `spec/api.md`.
 
 Members:
 
@@ -10,149 +10,87 @@ Members:
 - `wallet: Wallet` - the system NWC wallet, used to issue and look up bolt11 invoices (see `spec/wallet.md`)
 - `query: Query`
 - `command: Command`
-- `robot: Robot`
+- `env: Env` - used to decrypt a tenant's stored `nwc_url`
 
-## `pub fn new(query: Query, command: Command, robot: Robot) -> Self`
+## `pub fn new(query: Query, command: Command, env: &Env) -> Self`
 
-- Builds `stripe` via `Stripe::from_env()` and `wallet` from `NWC_URL`
-- Panics if `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, or `NWC_URL` is missing or malformed
+- Builds `stripe` via `Stripe::new(env)` and `wallet` via `Wallet::from_url(&env.robot_wallet)`
+- Panics if `ROBOT_WALLET` is not a valid NWC URL
 
-## `pub fn start(&self)`
+## `pub async fn start(self)`
 
 - Subscribes to `command.notify.subscribe()`
-- On `create_relay`, `update_relay`, `activate_relay`, `deactivate_relay`, `fail_relay_sync`, and `complete_relay_sync`: resolve the relay named by the activity (skip if it no longer exists) and reconcile its tenant via `sync_tenant_subscription`.
-- The startup/lagged reconcile loop calls `sync_tenant_subscription` for every tenant.
+- Runs a full reconcile (`reconcile_subscriptions("startup")`) before entering the loop
+- Loops on `rx.recv()`, calling `handle_activity` for each `Activity`
+- On `Lagged`, runs a full reconcile (`reconcile_subscriptions("lagged")`); on `Closed`, exits
 
-## `fn sync_tenant_subscription(&self, tenant_pubkey: &str)`
+## `async fn reconcile_subscriptions(&self, source: &str)`
 
-Reconciles a tenant's single Stripe subscription with the set of relays that should be billed. Only paid (non-free) relays interact with Stripe. Free-only tenants have no subscription. Must be idempotent.
+- Calls `reconcile_subscription` for every tenant, logging (but not aborting on) per-tenant errors
 
-Stripe forbids two subscription items on the same subscription from sharing a price, so billing is modeled as **one subscription item per plan (price), with `quantity` equal to the number of the tenant's `active` relays on that plan**. The relay → item mapping is fully derivable from `relay.plan → plan.stripe_price_id` and the live subscription's items, so we don't persist it on the relay.
+## `async fn handle_activity(&self, activity: &Activity)`
 
-Stripe uses **pay-in-advance** by default: when a subscription is first created, Stripe immediately generates an open invoice for the current period. The `invoice.created` webhook fires shortly after and `handle_invoice_created` attempts payment.
+- On `create_relay`, `update_relay`, `activate_relay`, `deactivate_relay`, `fail_relay_sync`, or `complete_relay_sync`: resolve the tenant named by the activity (skip if it no longer exists) and call `reconcile_subscription`
 
-- Fetch the tenant and its relays. Build the desired state: for each `active` relay on a paid plan with a non-empty `stripe_price_id`, count relays per price.
-- **Resolve the live subscription**: if the tenant has a `stripe_subscription_id`, fetch it. If Stripe no longer knows about it, or its status is `canceled`/`incomplete_expired`, call `command.clear_tenant_subscription` and treat the tenant as having no subscription.
-- **No relays to bill** (desired state empty): if the tenant still has a `stripe_subscription_id`, cancel the Stripe subscription and call `command.clear_tenant_subscription`. Return.
-- **No subscription yet**: create a Stripe subscription for the customer with `collection_method: "charge_automatically"` and one item per `(price, quantity)`. Save the subscription ID via `command.set_tenant_subscription`.
-- **Existing subscription**: fetch its current items. For each desired `(price, quantity)`: update the matching item's quantity if it differs, otherwise create the item. Delete any item whose price no longer appears in the desired state.
-- **Downgrade validation**: if any quantity decreased or any item was removed, preview the upcoming Stripe invoice and log proration line/amount details to validate expected credit/proration behavior.
+## `async fn reconcile_subscription(&self, tenant: &Tenant)`
 
-## `pub fn handle_webhook(&self, payload: &str, signature: &str) -> Result<()>`
+Reconciles a tenant's single Stripe subscription with the set of relays that should be billed. Only paid (non-free) relays interact with Stripe; free-only tenants have no subscription. Idempotent.
 
-- Verify and parse the event via `self.stripe.construct_event(payload, signature)` (checks the `Stripe-Signature` HMAC and timestamp tolerance — see `spec/stripe.md`)
-- Dispatch by type:
-  - `invoice.created` -> `self.handle_invoice_created`
-  - `invoice.paid` -> `self.handle_invoice_paid`
-  - `invoice.payment_failed` -> `self.handle_invoice_payment_failed`
-  - `invoice.overdue` -> `self.handle_invoice_overdue`
-  - `customer.subscription.updated` -> `self.handle_subscription_updated`
-  - `customer.subscription.deleted` -> `self.handle_subscription_deleted`
-  - `payment_method.attached` -> `self.handle_payment_method_attached`
-- Unknown event types are ignored (return Ok)
+Stripe forbids two subscription items on the same subscription from sharing a price, so billing is modeled as **one subscription item per plan (price), with `quantity` equal to the number of the tenant's `active` relays on that plan**. The relay → item mapping is fully derivable from `relay.plan → plan.stripe_price_id` and the live subscription's items, so nothing is persisted on the relay.
 
-## `pub async fn stripe_create_customer(&self, tenant_pubkey: &str) -> Result<String>`
+Stripe uses **pay-in-advance** by default: when a subscription is first created, Stripe immediately generates an open invoice for the current period. The `invoice.created` webhook fires shortly after and the webhook handler attempts payment (see `spec/api.md`).
 
-- Resolves a display name via `robot.fetch_nostr_name(tenant_pubkey)`, falling back to the first 8 chars of the pubkey
-- Creates the Stripe customer via `stripe.create_customer(display_name, tenant_pubkey)` and returns its id
+- Build the desired state via `get_quantity_by_price_id`.
+- **No relays to bill** (desired state empty): `ensure_subscription_is_inactive` and return.
+- Otherwise `ensure_subscription_is_active` to resolve/create the subscription, then `ensure_subscription_items` to sync its items.
 
-## `pub async fn stripe_list_invoices(&self, customer_id: &str) -> Result<Value>`
+## `async fn get_quantity_by_price_id(&self, tenant: &Tenant) -> Result<BTreeMap<String, i64>>`
 
-- Delegates to `stripe.list_invoices` — returns the `data` array of the customer's invoices
+- For each `active` relay whose plan has a `stripe_price_id`, count relays per price. Returns the price → quantity map.
 
-## `pub async fn stripe_create_portal_session(&self, customer_id: &str, return_url: Option<&str>) -> Result<String>`
+## `async fn get_subscription(&self, tenant: &Tenant) -> Result<Option<StripeSubscription>>`
 
-- Delegates to `stripe.create_portal_session` — returns the Customer Portal session URL
+- If the tenant has a `stripe_subscription_id`, fetch it from Stripe (`None` if Stripe 404s)
+- If the fetched subscription's status is `canceled`/`incomplete_expired`, call `command.clear_tenant_subscription` and return `None`
 
-## `pub async fn get_invoice_with_tenant(&self, invoice_id: &str) -> Result<(Value, Tenant), InvoiceLookupError>`
+## `async fn ensure_subscription_is_active(&self, tenant, quantity_by_price_id) -> Result<StripeSubscription>`
 
-- Fetches the invoice via `stripe.get_invoice` (a Stripe 4xx surfaces as `InvoiceLookupError::StripeClient`)
-- Looks up the tenant by the invoice's `customer` field; errors if the invoice has no customer or no tenant matches
+- Returns the existing subscription if there is one
+- Otherwise creates a Stripe subscription with the desired items (Stripe rejects an itemless subscription) and saves the id via `command.set_tenant_subscription`
 
-## `pub async fn reconcile_manual_lightning_invoice(&self, invoice_id: &str, invoice: &Value) -> Result<Value, InvoiceLookupError>`
+## `async fn ensure_subscription_is_inactive(&self, tenant: &Tenant)`
 
-If `invoice.status == "open"` and a manual-Lightning bolt11 was previously issued for it (`query.get_invoice_manual_lightning_bolt11`), check whether that bolt11 has settled (`self.wallet.is_settled(...)`). If it has, mark the Stripe invoice paid out of band (`stripe.pay_invoice_out_of_band`) and return the refreshed invoice. On any lookup/settlement failure, log and return the invoice unchanged.
+- If the tenant still has a live subscription, cancel it via Stripe and call `command.clear_tenant_subscription`
 
-## `pub async fn get_or_create_manual_lightning_bolt11(&self, invoice_id: &str, tenant_pubkey: &str, amount_due_minor: i64, currency: &str) -> Result<String>`
+## `async fn ensure_subscription_items(&self, subscription, quantity_by_price_id)`
 
-- Returns the existing bolt11 if one is already recorded for the invoice
-- Otherwise creates one via `create_bolt11`, records it with `command.insert_manual_lightning_invoice_payment`, and returns it (re-reading the stored row if the insert lost a race)
+- For each desired `(price, quantity)`: update the matching item's quantity if it differs, otherwise create the item
+- Delete any existing item whose price no longer appears in the desired state
 
-## `pub async fn create_bolt11(&self, amount_due_minor: i64, currency: &str) -> Result<String>`
+## `pub async fn ensure_lightning_invoice(&self, stripe_invoice_id: &str, tenant_pubkey: &str, amount_due: i64, currency: &str) -> Result<LightningInvoice>`
 
-- Converts the fiat amount to msats via `bitcoin::fiat_to_msats` (fetches the live BTC spot price — see `spec/bitcoin.md`)
-- Issues a bolt11 invoice for that amount on the system NWC wallet (`self.wallet.make_invoice(...)`)
-- Returns the bolt11 invoice string
+- Returns the existing `lightning_invoice` row if it is already `paid`, or still `pending` and not expired
+- Otherwise converts `amount_due` to msats via `bitcoin::fiat_to_msats`, issues a fresh bolt11 (1 hour expiry) on the system wallet, and upserts it via `command.insert_lightning_invoice` (re-reading the stored row if the upsert was a no-op because the invoice was already paid)
 
-## `pub async fn pay_outstanding_nwc_invoices(&self, tenant: &Tenant) -> Result<()>`
+## `pub async fn pay_invoice_nwc(&self, tenant: &Tenant, invoice: &LightningInvoice) -> Result<()>`
 
-Called when a tenant first sets their NWC URL (via `PUT /tenants/:pubkey`). Attempts to pay any currently open invoices for the tenant using their NWC wallet, so that invoices created before NWC was configured are not left unpaid.
+Pays a Lightning invoice from the tenant's own wallet.
 
-- If `tenant.nwc_url` is empty, return early.
-- List all Stripe invoices for `tenant.stripe_customer_id` via `stripe.list_invoices`.
-- For each invoice with `status == "open"` and `amount_due > 0`:
-  - Attempt NWC payment via `pay_invoice_nwc`.
-  - On success: mark the Stripe invoice paid out of band (`stripe.pay_invoice_out_of_band`) and call `command.clear_tenant_nwc_error`.
-  - On failure: call `command.set_tenant_nwc_error` and log the error; continue to the next invoice.
+- Decrypt the tenant's `nwc_url` (`env.decrypt`) and build a tenant `Wallet`
+- Pay `invoice.bolt11` from the tenant wallet
+- On success, `settle_invoice(..., "nwc")`
+- On a pay error, the payment may still have landed before the response was lost: check `wallet.is_settled(invoice.bolt11)` on the system wallet and `settle_invoice(..., "nwc")` if it settled; otherwise return the pay error
 
-## `pub async fn pay_outstanding_card_invoices(&self, tenant: &Tenant) -> Result<()>`
+## `pub async fn reconcile_invoice(&self, invoice: &StripeInvoice) -> Result<StripeInvoice>`
 
-Attempts Stripe-side collection for open invoices when the tenant has a card on file.
+Catches an out-of-band Lightning payment we never recorded (e.g. the user paid but the frontend failed to notify us). Meant to run before presenting a payable invoice so we never hand back one that's already been paid.
 
-- If tenant has no card payment method (`stripe.has_payment_method`), return early.
-- List all Stripe invoices for `tenant.stripe_customer_id` via `stripe.list_invoices`.
-- For each invoice with `status == "open"` and `amount_due > 0`:
-  - Call `stripe.pay_invoice` to retry collection using the card on file.
-  - Log and continue on failures.
+- If the invoice is not `open`, or has no `lightning_invoice` row, return it unchanged
+- If its bolt11 has settled on the system wallet, `settle_invoice(..., "manual")` and return the re-fetched (now paid) Stripe invoice; fall back to the original snapshot if Stripe momentarily 404s
+- On any settlement-lookup failure, log and return the invoice unchanged
 
-## `fn handle_invoice_created(&self, invoice: &Invoice)`
+## `async fn settle_invoice(&self, stripe_invoice_id: &str, tenant_pubkey: &str, method: &str)`
 
-Attempts to pay a new subscription invoice. Because Stripe defaults to pay-in-advance, this webhook fires immediately when a subscription is created (i.e. when a paid relay is added or a plan is upgraded). Payment priority:
-
-1. **NWC auto-pay**: If the tenant has a `nwc_url`, run `pay_invoice_nwc` (decrypting the tenant's stored `nwc_url` first):
-   - The system wallet (`self.wallet`) issues a bolt11 invoice for the fiat amount; the tenant's wallet (`Wallet::from_url` of the decrypted URL) pays it. A `pending` row in `invoice_nwc_payment` guards against double-charging across retries.
-   - If payment succeeds: mark the Stripe invoice paid out of band (`stripe.pay_invoice_out_of_band`) and clear `nwc_error` via `command.clear_tenant_nwc_error`. Done.
-   - If it fails before any charge could have gone out: set `nwc_error` on the tenant via `command.set_tenant_nwc_error`, and fall through to the next option (carrying a short summary of the error into the eventual DM).
-   - If it fails after a charge may have gone out (needs reconciliation): set `nwc_error` and return the error without falling through — a human must reconcile before any retry.
-2. **Card on file**: If the tenant has a payment method on the Stripe customer, do nothing here — Stripe will charge automatically for this invoice attempt.
-3. **Manual payment**: If neither NWC nor card is available, send a DM via `robot.send_dm` notifying the tenant that payment is due with a link to the application for manual Lightning payment.
-
-Skip invoices with `amount_due` of 0.
-
-## `fn handle_invoice_paid(&self, invoice: &Invoice)`
-
-- Look up tenant by `stripe_customer_id`
-- If tenant has `past_due_at` set:
-  - Clear `past_due_at` via `command.clear_tenant_past_due`
-  - Find all `delinquent` relays on paid plans for the tenant (relays marked delinquent by the billing system due to non-payment)
-  - Reactivate each one via `command.activate_relay`
-
-## `fn handle_invoice_payment_failed(&self, invoice: &Invoice)`
-
-- Look up tenant by `stripe_customer_id`
-- If tenant does not already have `past_due_at` set:
-  - Set `past_due_at` to now via `command.set_tenant_past_due`
-  - Send a DM via `robot.send_dm` notifying the tenant that their payment has failed and their relays may be deactivated if not resolved.
-
-## `fn handle_invoice_overdue(&self, invoice: &Invoice)`
-
-- Look up tenant by `stripe_customer_id`
-- Mark all active relays on paid plans as delinquent via `command.mark_relay_delinquent` (sets status to `delinquent`, distinct from user-initiated `deactivate_relay`)
-- Send a DM via `robot.send_dm` notifying the tenant that their paid relays have been deactivated due to non-payment
-
-## `fn handle_subscription_updated(&self, subscription: &Subscription)`
-
-- Look up tenant by `stripe_customer_id`
-- If subscription status is `canceled` or `unpaid`:
-  - Clear `stripe_subscription_id` via `command.clear_tenant_subscription`
-  - Mark all active paid relays as delinquent via `command.mark_relay_delinquent`
-
-## `fn handle_subscription_deleted(&self, subscription: &Subscription)`
-
-- Look up tenant by `stripe_customer_id`
-- Clear `stripe_subscription_id` via `command.clear_tenant_subscription`
-
-## `fn handle_payment_method_attached(&self, stripe_customer_id: &str)`
-
-- Look up tenant by `stripe_customer_id`
-- Call `pay_outstanding_card_invoices` so invoices that were due before card setup are retried immediately
+- `command.mark_lightning_invoice_paid(stripe_invoice_id, method)` (first-writer-wins)
+- `stripe.pay_invoice_out_of_band(stripe_invoice_id)` (idempotent)
+- `command.clear_tenant_nwc_error(tenant_pubkey)`

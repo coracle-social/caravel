@@ -1,14 +1,15 @@
-# `pub async fn create_pool() -> Result<SqlitePool>`
+# `pub async fn create_pool(database_url: &str) -> Result<SqlitePool>`
 
 Creates and returns a sqlite connection pool.
 
 Notes:
 
-- Database table names are singular: `activity`, `tenant`, `relay`
+- Database table names are singular: `activity`, `tenant`, `relay`, `lightning_invoice`
 
 Steps:
 
-- Reads `DATABASE_URL` from environment
-- Ensures that any directories referred to in `DATABASE_URL` exist
-- Initializes the sqlx pool
+- Normalizes `database_url`: a relative `sqlite://` path is resolved under the crate manifest directory (`CARGO_MANIFEST_DIR`); absolute paths and `:memory:` are left as-is
+- Ensures any directory referred to in the (normalized) URL exists
+- Opens the pool with `create_if_missing` enabled
+- Enables WAL journaling (`PRAGMA journal_mode = WAL`)
 - Runs migrations found in the `migrations` directory

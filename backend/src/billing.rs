@@ -284,53 +284,6 @@ impl Billing {
         }
     }
 
-    /// If an open invoice's bolt11 has settled on Lightning, record it as paid.
-    /// This is the shared settlement path for both NWC payments that landed late
-    /// and manual payments; it is driven by the actual Lightning settlement
-    /// rather than our local state, so it self-corrects if a previous attempt
-    /// updated Stripe but not our row (or vice versa).
-    pub async fn reconcile_invoice(&self, invoice: &StripeInvoice) -> Result<StripeInvoice> {
-        if invoice.status != "open" {
-            return Ok(invoice.clone());
-        }
-
-        let Some(row) = self.query.get_lightning_invoice(&invoice.id).await? else {
-            return Ok(invoice.clone());
-        };
-
-        let settled = match self.wallet.is_settled(&row.bolt11).await {
-            Ok(settled) => settled,
-            Err(error) => {
-                tracing::warn!(
-                    error = %error,
-                    stripe_invoice_id = %invoice.id,
-                    "failed to look up bolt11 invoice settlement"
-                );
-                return Ok(invoice.clone());
-            }
-        };
-
-        if !settled {
-            return Ok(invoice.clone());
-        }
-
-        if let Err(error) = self.settle_invoice(&invoice.id, &row.tenant_pubkey, "manual").await {
-            tracing::warn!(
-                error = %error,
-                stripe_invoice_id = %invoice.id,
-                "failed to mark settled bolt11 invoice as paid"
-            );
-        }
-
-        // The invoice existed a moment ago; if Stripe suddenly returns 404, fall
-        // back to the pre-reconcile snapshot rather than failing the request.
-        Ok(self
-            .stripe
-            .get_invoice(&invoice.id)
-            .await?
-            .unwrap_or_else(|| invoice.clone()))
-    }
-
     /// Record a settled bolt11 invoice as paid by `method`, mark the Stripe
     /// invoice paid out of band, and clear any lingering NWC error. The Stripe
     /// call is idempotent across retries, and `mark_lightning_invoice_paid` is

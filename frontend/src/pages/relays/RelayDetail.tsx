@@ -59,7 +59,7 @@ export default function RelayDetail() {
     if (!isPaidRelay()) return false
     const t = tenant()
     if (!t) return false
-    return !t.nwc_url
+    return !t.nwc_is_set
   })
 
   return (

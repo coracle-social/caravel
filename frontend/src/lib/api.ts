@@ -97,7 +97,7 @@ export type UpdateRelayInput = {
 
 export type Tenant = {
   pubkey: string
-  nwc_url: string
+  nwc_is_set: boolean
   created_at: number
   stripe_customer_id: string
   stripe_subscription_id: string | null
@@ -107,10 +107,10 @@ export type Tenant = {
 
 export type Invoice = {
   id: string
+  customer: string
   status: string
   amount_due: number
   currency: string
-  hosted_invoice_url: string
   period_start: number
   period_end: number
 }

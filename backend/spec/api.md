@@ -178,7 +178,7 @@ Handlers take `State<Arc<Api>>`, an optional `AuthedPubkey`, then path/query/bod
 
 - Admin or matching tenant
 - Looks up the tenant, then lists invoices from Stripe by `stripe_customer_id`
-- `data` is a list of `StripeInvoice` objects: `{ id, customer, status, amount_due, currency }`
+- `data` is a list of `StripeInvoice` objects: `{ id, customer, status, amount_due, currency, period_start, period_end }`
 
 ## `get_invoice` — `GET /invoices/:id`
 

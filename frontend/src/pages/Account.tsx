@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createResource, createSignal, For, Show } from "solid-js"
+import { createMemo, createResource, createSignal, For, Show } from "solid-js"
 import PageContainer from "@/components/PageContainer"
 import LoadingState from "@/components/LoadingState"
 import PaymentDialog from "@/components/PaymentDialog"
@@ -17,15 +17,9 @@ export default function Account() {
   const [portalLoading, setPortalLoading] = createSignal(false)
   const invoicesLoading = useMinLoading(() => invoices.loading)
 
-  const hasBillingChanges = createMemo(() => {
-    const current = tenant()?.nwc_url?.trim() ?? ""
-    const next = nwcUrl().trim()
-    return current !== next
-  })
-
-  createEffect(() => {
-    setNwcUrl(tenant()?.nwc_url ?? "")
-  })
+  // The backend never returns the stored nwc_url (it's private), so the input is
+  // write-only: we can only act on a newly entered URL, not prefill the saved one.
+  const hasBillingChanges = createMemo(() => nwcUrl().trim().length > 0)
 
   async function saveBilling() {
     setError("")
@@ -33,6 +27,7 @@ export default function Account() {
     try {
       const next = nwcUrl().trim()
       await updateActiveTenant({ nwc_url: next })
+      setNwcUrl("")
       await refetchTenant()
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to update billing")
@@ -111,6 +106,9 @@ export default function Account() {
           <p class="text-sm text-gray-600 mb-4">
             Enable automatic payments by providing your Nostr Wallet Connect URL.
           </p>
+          <Show when={tenant()?.nwc_is_set}>
+            <p class="text-sm text-green-700 mb-4">A wallet is connected. Enter a new URL to replace it.</p>
+          </Show>
           <div class="flex gap-2">
             <input
               type="text"

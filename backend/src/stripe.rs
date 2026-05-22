@@ -59,6 +59,8 @@ pub struct StripeInvoice {
     pub status: String,
     pub amount_due: i64,
     pub currency: String,
+    pub period_start: i64,
+    pub period_end: i64,
 }
 
 #[derive(serde::Deserialize)]

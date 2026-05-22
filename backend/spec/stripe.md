@@ -95,4 +95,4 @@ Verifies the `Stripe-Signature` header against `env.stripe_webhook_secret` and p
 - `StripeSubscription { id, status, items: Vec<StripeSubscriptionItem> }` (`items` flattened from Stripe's `{ data: [...] }` list)
 - `StripeSubscriptionItem { id, price: StripePrice, quantity }` (`quantity` defaults to 1 when absent)
 - `StripePrice { id }`
-- `StripeInvoice { id, customer, status, amount_due, currency }` (the subset of invoice fields the API surfaces; `Serialize` + `Clone`)
+- `StripeInvoice { id, customer, status, amount_due, currency, period_start, period_end }` (the subset of invoice fields the API surfaces; `Serialize` + `Clone`)

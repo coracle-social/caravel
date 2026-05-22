@@ -57,13 +57,13 @@ pub async fn get_lightning_invoice(
         return Err(bad_request("invoice-not-open", "invoice is not open"));
     }
 
-    let bolt11 = api
+    let invoice = api
         .billing
         .ensure_lightning_invoice(&invoice.id, &tenant.pubkey, invoice.amount_due, &invoice.currency)
         .await
         .map_err(internal)?;
 
-    ok(serde_json::json!({ "bolt11": bolt11 }))
+    ok(serde_json::json!(invoice))
 }
 
 /// Fetch a Stripe invoice and the tenant that owns it, enforcing that the

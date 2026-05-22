@@ -4,17 +4,10 @@ use std::collections::BTreeMap;
 use crate::bitcoin;
 use crate::command::Command;
 use crate::env::Env;
-use crate::models::{Activity, Tenant, RELAY_STATUS_ACTIVE};
+use crate::models::{Activity, LightningInvoice, Tenant, RELAY_STATUS_ACTIVE};
 use crate::query::Query;
 use crate::stripe::{Stripe, StripeInvoice, StripeSubscription};
 use crate::wallet::Wallet;
-
-const LIGHTNING_INVOICE_DESCRIPTION: &str = "Relay subscription payment";
-
-/// How long a freshly minted bolt11 stays valid. Once it lapses, an unpaid
-/// invoice's bolt11 is regenerated on next access, so the tenant is never shown
-/// a dead invoice and the sat amount stays pegged to the current BTC price.
-const BOLT11_EXPIRY_SECS: i64 = 3600;
 
 #[derive(Clone)]
 pub struct Billing {
@@ -22,6 +15,7 @@ pub struct Billing {
     wallet: Wallet,
     query: Query,
     command: Command,
+    env: Env,
 }
 
 impl Billing {
@@ -31,8 +25,11 @@ impl Billing {
             wallet: Wallet::from_url(&env.robot_wallet).expect("invalid ROBOT_WALLET"),
             query,
             command,
+            env: env.clone(),
         }
     }
+
+    // --- lifecycle methods ---
 
     pub async fn start(self) {
         let mut rx = self.command.notify.subscribe();
@@ -131,7 +128,7 @@ impl Billing {
         self.ensure_subscription_items(subscription, quantity_by_price_id).await
     }
 
-    // --Stripe helpers--
+    // --- Stripe helpers ---
 
     /// Gets a map of stripe_price_id -> quantity based on the tenant's current relays
     async fn get_quantity_by_price_id(&self, tenant: &Tenant) -> Result<BTreeMap<String, i64>> {
@@ -228,131 +225,58 @@ impl Billing {
         Ok(())
     }
 
-    // --- Public API helpers ---
+    // --- lightning helpers ---
 
-    pub async fn create_bolt11(&self, amount_due_minor: i64, currency: &str) -> Result<String> {
-        let amount_msats = bitcoin::fiat_to_msats(amount_due_minor, currency).await?;
-        self.wallet
-            .make_invoice(
-                amount_msats,
-                LIGHTNING_INVOICE_DESCRIPTION,
-                BOLT11_EXPIRY_SECS as u64,
-            )
-            .await
-    }
-
-    /// Return the current valid bolt11 for an open invoice, minting one if none
-    /// exists and regenerating it if the stored one has expired. There is
-    /// exactly one bolt11 per invoice: whoever pays it — the tenant's NWC wallet
-    /// or a human — settles the same Lightning invoice, so the bolt11 itself is
-    /// the double-charge guard.
+    /// return or generate a lightning invoice for an open stripe invoice
     pub async fn ensure_lightning_invoice(
         &self,
         stripe_invoice_id: &str,
         tenant_pubkey: &str,
-        amount_due_minor: i64,
+        amount_due: i64,
         currency: &str,
-    ) -> Result<String> {
+    ) -> Result<LightningInvoice> {
         let now = chrono::Utc::now().timestamp();
 
-        if let Some(existing) = self.query.get_lightning_invoice(stripe_invoice_id).await? {
-            // Keep a still-valid invoice, or any bolt11 we've already settled.
-            if existing.status != "pending" || now < existing.expires_at {
-                return Ok(existing.bolt11);
-            }
-            // The stored invoice expired unpaid, so mint a fresh one. The old
-            // invoice can no longer be paid, so no settlement can be missed.
-            let bolt11 = self.create_bolt11(amount_due_minor, currency).await?;
-            self.command
-                .regenerate_lightning_invoice(stripe_invoice_id, &bolt11, now + BOLT11_EXPIRY_SECS)
-                .await?;
-            return Ok(bolt11);
+        if let Some(existing) = self.query.get_lightning_invoice(stripe_invoice_id).await?
+            && (existing.status != "pending" || now < existing.expires_at)
+        {
+            return Ok(existing);
         }
 
-        let bolt11 = self.create_bolt11(amount_due_minor, currency).await?;
-        if self
+        let expiry: i64 = 3600;
+        let info = "Relay subscription payment";
+        let msats = bitcoin::fiat_to_msats(amount_due, currency).await?;
+        let bolt11 = self.wallet.make_invoice(msats, info, expiry as u64).await?;
+
+        let invoice = match self
             .command
-            .insert_pending_lightning_invoice(
-                stripe_invoice_id,
-                tenant_pubkey,
-                &bolt11,
-                now + BOLT11_EXPIRY_SECS,
-            )
+            .insert_lightning_invoice(stripe_invoice_id, tenant_pubkey, &bolt11, now + expiry)
             .await?
         {
-            Ok(bolt11)
-        } else {
-            // Lost the insert race; use whatever the winner stored.
-            Ok(self
+            Some(invoice) => invoice,
+            None => self
                 .query
                 .get_lightning_invoice(stripe_invoice_id)
                 .await?
-                .ok_or_else(|| {
-                    anyhow!("lightning_invoice row missing after insert race for invoice {stripe_invoice_id}")
-                })?
-                .bolt11)
-        }
+                .ok_or_else(|| anyhow!("lightning_invoice {stripe_invoice_id} missing after upsert"))?,
+        };
+
+        Ok(invoice)
     }
 
-    pub async fn pay_outstanding_card_invoices(
-        &self,
-        tenant: &crate::models::Tenant,
-    ) -> Result<()> {
-        if !self
-            .stripe
-            .has_payment_method(&tenant.stripe_customer_id)
-            .await?
-        {
-            return Ok(());
-        }
+    /// Attempt to pay and settle an invoice via nwc
+    pub async fn nwc_pay_invoice(&self, tenant: &Tenant, invoice: &LightningInvoice) -> Result<()> {
+        let nwc_url = self.env.decrypt(&tenant.nwc_url)?;
+        let tenant_wallet = Wallet::from_url(&nwc_url)?;
 
-        let invoices = self
-            .stripe
-            .list_invoices(&tenant.stripe_customer_id)
-            .await?;
-
-        for invoice in &invoices {
-            if invoice.status != "open" || invoice.amount_due == 0 {
-                continue;
-            }
-            if let Err(error) = self.stripe.pay_invoice(&invoice.id).await {
-                tracing::error!(
-                    error = %error,
-                    stripe_invoice_id = %invoice.id,
-                    "failed to retry card payment for outstanding invoice"
-                );
-            }
-        }
-
-        Ok(())
-    }
-
-    // --- Lightning / NWC orchestration ---
-
-    /// Push a payment for an invoice's persisted bolt11 from the tenant's NWC
-    /// wallet, then confirm settlement against the system wallet. On success the
-    /// Stripe invoice is marked paid out of band and `Ok(())` is returned; on
-    /// failure the returned error is the reason to surface to the tenant (the
-    /// caller falls through to other payment methods rather than propagating
-    /// it). Reusing the same bolt11 means a retry — or a concurrent manual
-    /// payment — can never double-charge.
-    pub async fn nwc_pay_invoice(
-        &self,
-        stripe_invoice_id: &str,
-        tenant_pubkey: &str,
-        bolt11: &str,
-        tenant_nwc_url: &str,
-    ) -> Result<()> {
-        let tenant_wallet = Wallet::from_url(tenant_nwc_url)?;
-
-        match tenant_wallet.pay_invoice(bolt11.to_string()).await {
-            Ok(()) => self.settle_invoice(stripe_invoice_id, tenant_pubkey, "nwc").await,
+        match tenant_wallet.pay_invoice(invoice.bolt11.clone()).await {
+            Ok(()) => self.settle_invoice(&invoice.stripe_invoice_id, &tenant.pubkey, "nwc").await,
             Err(pay_error) => {
                 // The pay request errored, but the payment may have landed
                 // before the response was lost. Confirm against the system
                 // wallet before reporting failure.
-                if self.wallet.is_settled(bolt11).await.unwrap_or(false) {
-                    self.settle_invoice(stripe_invoice_id, tenant_pubkey, "nwc").await
+                if self.wallet.is_settled(&invoice.bolt11).await.unwrap_or(false) {
+                    self.settle_invoice(&invoice.stripe_invoice_id, &tenant.pubkey, "nwc").await
                 } else {
                     Err(pay_error)
                 }

@@ -127,8 +127,7 @@ async fn handle_invoice_created(
         return Ok(());
     };
 
-    // Mint (or reuse) the single bolt11 that both NWC and manual payment settle.
-    let bolt11 = api
+    let invoice = api
         .billing
         .ensure_lightning_invoice(stripe_invoice_id, &tenant.pubkey, amount_due, currency)
         .await?;
@@ -137,12 +136,7 @@ async fn handle_invoice_created(
 
     // 1. NWC auto-pay: if the tenant has a nwc_url
     if !tenant.nwc_url.is_empty() {
-        let plain_nwc_url = api.env.decrypt(&tenant.nwc_url)?;
-        match api
-            .billing
-            .nwc_pay_invoice(stripe_invoice_id, &tenant.pubkey, &bolt11, &plain_nwc_url)
-            .await
-        {
+        match api.billing.nwc_pay_invoice(&tenant, &invoice).await {
             Ok(()) => return Ok(()),
             Err(e) => {
                 let error_msg = format!("{e}");
@@ -309,7 +303,24 @@ async fn handle_payment_method_attached(api: &Api, stripe_customer_id: &str) -> 
         return Ok(());
     };
 
-    api.billing.pay_outstanding_card_invoices(&tenant).await?;
+    let invoices = api
+        .stripe
+        .list_invoices(&tenant.stripe_customer_id)
+        .await?;
+
+    for invoice in &invoices {
+        if invoice.status != "open" || invoice.amount_due == 0 {
+            continue;
+        }
+        if let Err(error) = api.stripe.pay_invoice(&invoice.id).await {
+            tracing::error!(
+                error = %error,
+                stripe_invoice_id = %invoice.id,
+                "failed to retry card payment for outstanding invoice"
+            );
+        }
+    }
+
     Ok(())
 }
 

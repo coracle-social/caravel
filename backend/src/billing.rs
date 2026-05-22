@@ -71,7 +71,7 @@ impl Billing {
         );
 
         for tenant in tenants {
-            if let Err(error) = self.sync_tenant(&tenant.pubkey).await {
+            if let Err(error) = self.reconcile_subscription(&tenant).await {
                 tracing::error!(
                     source,
                     tenant = %tenant.pubkey,
@@ -95,12 +95,16 @@ impl Billing {
                 | "complete_relay_sync"
         );
 
-        if needs_billing_sync {
-            self.sync_tenant(&activity.tenant).await?;
+        if needs_billing_sync
+            && let Some(tenant) = self.query.get_tenant(&activity.tenant).await?
+        {
+            self.reconcile_subscription(&tenant).await?;
         }
 
         Ok(())
     }
+
+    // --- Subscriptions ---
 
     /// Reconciles a tenant's single Stripe subscription with the set of relays that
     /// should be billed.
@@ -108,27 +112,21 @@ impl Billing {
     /// Stripe forbids two subscription items on the same subscription from sharing a
     /// price, so billing is modeled as one subscription item per plan (price) with
     /// `quantity` equal to the number of the tenant's `active` relays on that plan.
-    async fn sync_tenant(&self, tenant_pubkey: &str) -> Result<()> {
-        let Some(tenant) = self.query.get_tenant(tenant_pubkey).await? else {
-            return Ok(());
-        };
-
-        let quantity_by_price_id = self.get_quantity_by_price_id(&tenant).await?;
+    async fn reconcile_subscription(&self, tenant: &Tenant) -> Result<()> {
+        let quantity_by_price_id = self.get_quantity_by_price_id(tenant).await?;
 
         // If we've got no subscription items, we can cancel and clear the tenant's subscription
         if quantity_by_price_id.is_empty() {
-            self.ensure_subscription_is_inactive(&tenant).await?;
+            self.ensure_subscription_is_inactive(tenant).await?;
             return Ok(());
         }
 
         let subscription = self
-            .ensure_subscription_is_active(&tenant, &quantity_by_price_id)
+            .ensure_subscription_is_active(tenant, &quantity_by_price_id)
             .await?;
 
         self.ensure_subscription_items(subscription, quantity_by_price_id).await
     }
-
-    // --- Stripe helpers ---
 
     /// Gets a map of stripe_price_id -> quantity based on the tenant's current relays
     async fn get_quantity_by_price_id(&self, tenant: &Tenant) -> Result<BTreeMap<String, i64>> {
@@ -225,7 +223,7 @@ impl Billing {
         Ok(())
     }
 
-    // --- lightning helpers ---
+    // --- Invoices ---
 
     /// return or generate a lightning invoice for an open stripe invoice
     pub async fn ensure_lightning_invoice(
@@ -265,7 +263,7 @@ impl Billing {
     }
 
     /// Attempt to pay and settle an invoice via nwc
-    pub async fn nwc_pay_invoice(&self, tenant: &Tenant, invoice: &LightningInvoice) -> Result<()> {
+    pub async fn pay_invoice_nwc(&self, tenant: &Tenant, invoice: &LightningInvoice) -> Result<()> {
         let nwc_url = self.env.decrypt(&tenant.nwc_url)?;
         let tenant_wallet = Wallet::from_url(&nwc_url)?;
 
@@ -282,6 +280,53 @@ impl Billing {
                 }
             }
         }
+    }
+
+    /// Catch an out-of-band payment we never recorded — e.g. the user paid the
+    /// invoice but the frontend failed to notify us. If the invoice's bolt11 has
+    /// settled on the robot wallet, mark it paid and return the refreshed Stripe
+    /// invoice; otherwise return it unchanged. Meant to run before presenting a
+    /// payable invoice so we never hand back one that's already been paid.
+    pub async fn reconcile_invoice(&self, invoice: &StripeInvoice) -> Result<StripeInvoice> {
+        if invoice.status != "open" {
+            return Ok(invoice.clone());
+        }
+
+        let Some(row) = self.query.get_lightning_invoice(&invoice.id).await? else {
+            return Ok(invoice.clone());
+        };
+
+        let settled = match self.wallet.is_settled(&row.bolt11).await {
+            Ok(settled) => settled,
+            Err(error) => {
+                tracing::warn!(
+                    error = %error,
+                    stripe_invoice_id = %invoice.id,
+                    "failed to look up bolt11 invoice settlement"
+                );
+                return Ok(invoice.clone());
+            }
+        };
+
+        if !settled {
+            return Ok(invoice.clone());
+        }
+
+        if let Err(error) = self.settle_invoice(&invoice.id, &row.tenant_pubkey, "manual").await {
+            tracing::warn!(
+                error = %error,
+                stripe_invoice_id = %invoice.id,
+                "failed to record settled bolt11 invoice as paid"
+            );
+        }
+
+        // Re-fetch so the caller sees the now-paid status; fall back to the
+        // pre-reconcile snapshot if Stripe momentarily 404s.
+        Ok(self
+            .stripe
+            .get_invoice(&invoice.id)
+            .await?
+            .unwrap_or_else(|| invoice.clone()))
     }
 
     /// Record a settled bolt11 invoice as paid by `method`, mark the Stripe

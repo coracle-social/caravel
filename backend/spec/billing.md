@@ -91,7 +91,7 @@ Called when a tenant first sets their NWC URL (via `PUT /tenants/:pubkey`). Atte
 - If `tenant.nwc_url` is empty, return early.
 - List all Stripe invoices for `tenant.stripe_customer_id` via `stripe.list_invoices`.
 - For each invoice with `status == "open"` and `amount_due > 0`:
-  - Attempt NWC payment via `nwc_pay_invoice`.
+  - Attempt NWC payment via `pay_invoice_nwc`.
   - On success: mark the Stripe invoice paid out of band (`stripe.pay_invoice_out_of_band`) and call `command.clear_tenant_nwc_error`.
   - On failure: call `command.set_tenant_nwc_error` and log the error; continue to the next invoice.
 
@@ -109,7 +109,7 @@ Attempts Stripe-side collection for open invoices when the tenant has a card on 
 
 Attempts to pay a new subscription invoice. Because Stripe defaults to pay-in-advance, this webhook fires immediately when a subscription is created (i.e. when a paid relay is added or a plan is upgraded). Payment priority:
 
-1. **NWC auto-pay**: If the tenant has a `nwc_url`, run `nwc_pay_invoice` (decrypting the tenant's stored `nwc_url` first):
+1. **NWC auto-pay**: If the tenant has a `nwc_url`, run `pay_invoice_nwc` (decrypting the tenant's stored `nwc_url` first):
    - The system wallet (`self.wallet`) issues a bolt11 invoice for the fiat amount; the tenant's wallet (`Wallet::from_url` of the decrypted URL) pays it. A `pending` row in `invoice_nwc_payment` guards against double-charging across retries.
    - If payment succeeds: mark the Stripe invoice paid out of band (`stripe.pay_invoice_out_of_band`) and clear `nwc_error` via `command.clear_tenant_nwc_error`. Done.
    - If it fails before any charge could have gone out: set `nwc_error` on the tenant via `command.set_tenant_nwc_error`, and fall through to the next option (carrying a short summary of the error into the eventual DM).

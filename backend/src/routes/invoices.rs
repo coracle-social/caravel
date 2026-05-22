@@ -3,7 +3,7 @@ use std::sync::Arc;
 use axum::extract::{Path, State};
 
 use crate::api::{Api, AuthedPubkey};
-use crate::web::{ApiResult, bad_request, internal, not_found, ok};
+use crate::web::{ApiResult, internal, not_found, ok};
 
 pub async fn list_tenant_invoices(
     State(api): State<Arc<Api>>,
@@ -26,32 +26,7 @@ pub async fn get_invoice(
     AuthedPubkey(auth): AuthedPubkey,
     Path(id): Path<String>,
 ) -> ApiResult {
-    let Some(invoice) = api.stripe.get_invoice(stripe_invoice_id).await.map_err(internal)? else {
-        return Err(not_found("invoice not found"));
-    };
-
-    let Some(_) = api
-        .query
-        .get_tenant_by_stripe_customer_id(&invoice.customer)
-        .await
-        .map_err(internal)?
-    else {
-        return Err(not_found("invoice not found"));
-    };
-
-    api.require_admin_or_tenant(auth, &tenant.pubkey)?;
-
-    Ok((invoice, tenant))
-
-    ok(invoice)
-}
-
-pub async fn get_lightning_invoice(
-    State(api): State<Arc<Api>>,
-    AuthedPubkey(auth): AuthedPubkey,
-    Path(id): Path<String>,
-) -> ApiResult {
-    let Some(invoice) = api.stripe.get_invoice(stripe_invoice_id).await.map_err(internal)? else {
+    let Some(invoice) = api.stripe.get_invoice(&id).await.map_err(internal)? else {
         return Err(not_found("invoice not found"));
     };
 
@@ -63,6 +38,43 @@ pub async fn get_lightning_invoice(
     else {
         return Err(not_found("invoice not found"));
     };
+
+    api.require_admin_or_tenant(&auth, &tenant.pubkey)?;
+
+    let invoice = api
+        .billing
+        .reconcile_invoice(&invoice)
+        .await
+        .map_err(internal)?;
+
+    ok(invoice)
+}
+
+pub async fn get_lightning_invoice(
+    State(api): State<Arc<Api>>,
+    AuthedPubkey(auth): AuthedPubkey,
+    Path(id): Path<String>,
+) -> ApiResult {
+    let Some(invoice) = api.stripe.get_invoice(&id).await.map_err(internal)? else {
+        return Err(not_found("invoice not found"));
+    };
+
+    let Some(tenant) = api
+        .query
+        .get_tenant_by_stripe_customer_id(&invoice.customer)
+        .await
+        .map_err(internal)?
+    else {
+        return Err(not_found("invoice not found"));
+    };
+
+    api.require_admin_or_tenant(&auth, &tenant.pubkey)?;
+
+    let invoice = api
+        .billing
+        .reconcile_invoice(&invoice)
+        .await
+        .map_err(internal)?;
 
     let lightning_invoice = api
         .billing

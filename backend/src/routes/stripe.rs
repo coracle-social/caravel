@@ -136,7 +136,7 @@ async fn handle_invoice_created(
 
     // 1. NWC auto-pay: if the tenant has a nwc_url
     if !tenant.nwc_url.is_empty() {
-        match api.billing.nwc_pay_invoice(&tenant, &invoice).await {
+        match api.billing.pay_invoice_nwc(&tenant, &invoice).await {
             Ok(()) => return Ok(()),
             Err(e) => {
                 let error_msg = format!("{e}");

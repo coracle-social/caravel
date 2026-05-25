@@ -114,7 +114,6 @@ pub async fn create_relay(
     let relay = Relay {
         id: relay_id.clone(),
         tenant: payload.tenant,
-        schema: relay_id.clone(),
         subdomain: payload.subdomain,
         plan: payload.plan,
         info_name: payload.info_name,

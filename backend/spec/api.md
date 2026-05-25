@@ -143,7 +143,7 @@ Handlers take `State<Arc<Api>>`, an optional `AuthedPubkey`, then path/query/bod
 ## `create_relay` — `POST /relays`
 
 - Admin or the `tenant` pubkey in the request body
-- Generates the relay `id`/`schema`, validates and normalizes the relay via `prepare_relay`, and creates it via `command.create_relay`
+- Generates the relay `id`, validates and normalizes the relay via `prepare_relay`, and creates it via `command.create_relay`
 - Duplicate subdomain → `422` `subdomain-exists`
 - `data` is the relay; HTTP `201`
 

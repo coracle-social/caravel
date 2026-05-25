@@ -52,7 +52,6 @@ pub struct LightningInvoice {
 pub struct Relay {
     pub id: String,
     pub tenant: String,
-    pub schema: String,
     pub subdomain: String,
     pub plan: String,
     pub status: String,
@@ -75,7 +74,6 @@ impl Default for Relay {
         Self {
             id: String::new(),
             tenant: String::new(),
-            schema: String::new(),
             subdomain: String::new(),
             plan: String::new(),
             status: RELAY_STATUS_ACTIVE.to_string(),

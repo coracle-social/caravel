@@ -72,7 +72,7 @@ All configuration is read from the environment by `Env::load()` at startup. **Ev
 | `LIVEKIT_API_KEY`    | LiveKit API key sent to zooid                           |
 | `LIVEKIT_API_SECRET` | LiveKit API secret sent to zooid                        |
 
-**Blossom S3** — sent to zooid as the S3 adapter config (with `key_prefix` = relay schema) when a relay enables blossom.
+**Blossom S3** — sent to zooid as the S3 adapter config (with `key_prefix` = relay id) when a relay enables blossom.
 
 | Variable                | Description           |
 | ----------------------- | --------------------- |

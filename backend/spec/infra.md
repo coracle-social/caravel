@@ -45,7 +45,7 @@ Members:
 - A relay is "new" only if it has never completed a sync (`synced != 1` and no `complete_relay_sync` activity exists). New relays are created with `POST /relay/:id`; existing relays are updated with `PATCH /relay/:id`.
 - A freshly generated `secret` is included only for creation (`POST`), so updates don't rotate relay identity and we never store the secret.
 - The body carries relay configuration: `host` (= `subdomain.relay_domain`), `schema`, `inactive` (true when status is `inactive` or `delinquent`), `info` (name/icon/description/pubkey), `policy`, `groups`, `management`, `blossom`, `livekit`, `push`, and hard-coded `roles`.
-- When `blossom_enabled`, the blossom section uses `adapter: "s3"` with the `BLOSSOM_S3_*` settings and `s3.key_prefix` set to the relay's `schema`; otherwise it sends `{ "enabled": false }`.
+- When `blossom_enabled`, the blossom section uses `adapter: "s3"` with the `BLOSSOM_S3_*` settings and `s3.key_prefix` set to the relay's `id`; otherwise it sends `{ "enabled": false }`.
 - When `livekit_enabled`, the livekit section carries the `LIVEKIT_*` settings; otherwise `{ "enabled": false }`.
 
 ## `pub async fn list_relay_members(&self, relay_id: &str) -> Result<Vec<String>>`

@@ -177,16 +177,15 @@ impl Command {
         self.with_activity("create_relay", "relay", &relay.id, async |tx| {
             sqlx::query(
                 "INSERT INTO relay (
-                    id, tenant, schema, subdomain, plan, status, synced, sync_error,
+                    id, tenant, subdomain, plan, status, synced, sync_error,
                     info_name, info_icon, info_description,
                     policy_public_join, policy_strip_signatures,
                     groups_enabled, management_enabled, blossom_enabled,
                     livekit_enabled, push_enabled
-                ) VALUES (?, ?, ?, ?, ?, 'active', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                ) VALUES (?, ?, ?, ?, 'active', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(&relay.id)
             .bind(&relay.tenant)
-            .bind(&relay.schema)
             .bind(&relay.subdomain)
             .bind(&relay.plan)
             .bind(&relay.sync_error)
@@ -211,7 +210,7 @@ impl Command {
         self.with_activity("update_relay", "relay", &relay.id, async |tx| {
             sqlx::query(
                 "UPDATE relay
-                 SET tenant = ?, schema = ?, subdomain = ?, plan = ?, status = ?, sync_error = ?, synced = 0,
+                 SET tenant = ?, subdomain = ?, plan = ?, status = ?, sync_error = ?, synced = 0,
                      info_name = ?, info_icon = ?, info_description = ?,
                      policy_public_join = ?, policy_strip_signatures = ?,
                      groups_enabled = ?, management_enabled = ?, blossom_enabled = ?,
@@ -219,7 +218,6 @@ impl Command {
                  WHERE id = ?",
             )
             .bind(&relay.tenant)
-            .bind(&relay.schema)
             .bind(&relay.subdomain)
             .bind(&relay.plan)
             .bind(&relay.status)

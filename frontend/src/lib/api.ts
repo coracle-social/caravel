@@ -46,7 +46,6 @@ export type PlanId = string
 export type Relay = {
   id: string
   tenant: string
-  schema: string
   subdomain: string
   plan: PlanId
   status: string

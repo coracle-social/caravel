@@ -66,7 +66,6 @@ A relay is a nostr relay owned by a `tenant` and hosted by the attached zooid in
 
 - `id` - calculated based on `subdomain` (with `-` replaced by `_`) + `_` + 8 random hex chars
 - `tenant` - the tenant's pubkey
-- `schema` - the relay's db schema (read only, same as `id`)
 - `subdomain` - the relay's subdomain
 - `plan` - the relay's plan
 - `status` - one of `active|inactive|delinquent`. Only `active` relays count toward billing. `delinquent` is set by the billing system when a relay's subscription becomes past due; `inactive` is set when a user or admin manually deactivates a relay.

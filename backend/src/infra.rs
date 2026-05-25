@@ -185,7 +185,7 @@ impl Infra {
 
         let mut body = serde_json::json!({
             "host": format!("{}.{}", relay.subdomain, self.env.relay_domain),
-            "schema": relay.schema,
+            "schema": relay.id,
             "inactive": relay.status == RELAY_STATUS_INACTIVE
                 || relay.status == RELAY_STATUS_DELINQUENT,
             "info": {
@@ -210,7 +210,7 @@ impl Infra {
                         "bucket": self.env.blossom_s3_bucket,
                         "access_key": self.env.blossom_s3_access_key,
                         "secret_key": self.env.blossom_s3_secret_key,
-                        "key_prefix": relay.schema,
+                        "key_prefix": relay.id,
                     },
                 })
             } else {

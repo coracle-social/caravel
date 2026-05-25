@@ -92,7 +92,7 @@ export default function Home() {
 
           <h1 class="text-5xl sm:text-6xl font-extrabold tracking-tight text-gray-900 mb-6 leading-tight">
             Your community,<br />
-            <span class="text-blue-600">your relay.</span>
+            <span class="text-blue-600">your server.</span>
           </h1>
 
           <p class="text-xl text-gray-500 mb-10 max-w-2xl mx-auto leading-relaxed">

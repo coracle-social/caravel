@@ -11,10 +11,7 @@ pub struct Wallet {
 
 impl Wallet {
     pub fn from_url(url: &str) -> Result<Self> {
-        let url = url
-            .parse::<NostrWalletConnectURI>()
-            .map_err(|_| anyhow!("invalid NWC URL"))?;
-        Ok(Self { url })
+        Ok(Self { url: url.parse::<NostrWalletConnectURI>()? })
     }
 
     pub async fn make_invoice(

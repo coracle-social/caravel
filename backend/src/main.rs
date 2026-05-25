@@ -16,7 +16,7 @@ mod web;
 use anyhow::Result;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-use tower_http::cors::{AllowOrigin, CorsLayer};
+use tower_http::cors::{AllowOrigin, CorsLayer, Any};
 
 use crate::api::Api;
 use crate::billing::Billing;
@@ -52,7 +52,10 @@ async fn main() -> Result<()> {
         .iter()
         .filter_map(|o| o.parse::<axum::http::HeaderValue>().ok())
         .collect::<Vec<_>>();
-    let cors = CorsLayer::new().allow_origin(AllowOrigin::list(parsed));
+    let cors = CorsLayer::new()
+        .allow_origin(AllowOrigin::list(parsed))
+        .allow_methods(Any)
+        .allow_headers(Any);
 
     let app = api.router().layer(cors);
 

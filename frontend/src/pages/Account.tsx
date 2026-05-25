@@ -1,10 +1,11 @@
-import { createMemo, createResource, createSignal, For, Show } from "solid-js"
+import { createEffect, createMemo, createResource, createSignal, For, Show } from "solid-js"
+import { useSearchParams } from "@solidjs/router"
 import PageContainer from "@/components/PageContainer"
 import LoadingState from "@/components/LoadingState"
 import PaymentDialog from "@/components/PaymentDialog"
 import useMinLoading from "@/components/useMinLoading"
 import { updateActiveTenant, useTenant } from "@/lib/hooks"
-import { createPortalSession, listTenantInvoices, type Invoice } from "@/lib/api"
+import { createPortalSession, getInvoice, listTenantInvoices, type Invoice } from "@/lib/api"
 import { account } from "@/lib/state"
 
 export default function Account() {
@@ -16,6 +17,19 @@ export default function Account() {
   const [selectedInvoice, setSelectedInvoice] = createSignal<Invoice | undefined>()
   const [portalLoading, setPortalLoading] = createSignal(false)
   const invoicesLoading = useMinLoading(() => invoices.loading)
+
+  // Deep link: /account?invoice=<id> (e.g. from the billing DM) fetches that
+  // invoice and opens the payment dialog. The fetched invoice takes precedence
+  // over a row the user clicked in the list.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const [deepLinkedInvoice] = createResource(
+    () => searchParams.invoice as string | undefined,
+    (id) => getInvoice(id),
+  )
+  createEffect(() => {
+    if (deepLinkedInvoice.error) setError("Couldn't load that invoice. It may no longer be available.")
+  })
+  const activeInvoice = () => selectedInvoice() ?? deepLinkedInvoice()
 
   // The backend never returns the stored nwc_url (it's private), so the input is
   // write-only: we can only act on a newly entered URL, not prefill the saved one.
@@ -38,6 +52,8 @@ export default function Account() {
 
   function handleInvoiceDialogClose() {
     setSelectedInvoice(undefined)
+    // Clearing the query param drops the deep-linked invoice and closes the dialog.
+    if (searchParams.invoice) setSearchParams({ invoice: undefined })
     void refetchInvoices()
   }
 
@@ -186,7 +202,7 @@ export default function Account() {
         </section>
       </div>
 
-      <Show when={selectedInvoice()}>
+      <Show when={activeInvoice()}>
         {(invoice) => (
           <PaymentDialog
             invoice={invoice()}

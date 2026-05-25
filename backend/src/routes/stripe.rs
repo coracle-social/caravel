@@ -12,7 +12,7 @@ use crate::api::{Api, AuthedPubkey};
 use crate::models::{RELAY_STATUS_ACTIVE, RELAY_STATUS_DELINQUENT};
 use crate::web::{ApiResult, bad_request, internal, ok};
 
-const MANUAL_LIGHTNING_PAYMENT_DM: &str = "Payment is due for your relay subscription. Please visit the application to complete a manual Lightning payment.";
+const MANUAL_LIGHTNING_PAYMENT_DM: &str = "Payment is due for your relay subscription. Open the link below to review the invoice and pay by Lightning or card:";
 const NWC_ERROR_DM_PREFIX: &str = "NWC auto-payment failed:";
 const NWC_ERROR_DM_MAX_CHARS: usize = 240;
 
@@ -165,8 +165,16 @@ async fn handle_invoice_created(
         return Ok(());
     }
 
-    // 3. Manual payment: send a DM
-    let dm_message = manual_lightning_payment_dm(nwc_error_for_dm.as_deref());
+    // 3. Manual payment: DM a link to the in-app payment page for this invoice
+    let url_base = &api.env.app_url;
+    let payment_url = format!("{url_base}/account?invoice={stripe_invoice_id}");
+    let base = format!("{MANUAL_LIGHTNING_PAYMENT_DM}\n\n{payment_url}");
+    let dm_message = match nwc_error_for_dm {
+        Some(error) if !error.is_empty() => {
+            format!("{base}\n\n{NWC_ERROR_DM_PREFIX} {error}")
+        }
+        _ => base,
+    };
     api.robot.send_dm(&tenant.pubkey, &dm_message).await?;
 
     Ok(())
@@ -338,13 +346,4 @@ fn summarize_nwc_error_for_dm(error: &str) -> Option<String> {
     let mut truncated = normalized.chars().take(prefix_len).collect::<String>();
     truncated.push_str("...");
     Some(truncated)
-}
-
-fn manual_lightning_payment_dm(nwc_error: Option<&str>) -> String {
-    match nwc_error {
-        Some(error) if !error.is_empty() => {
-            format!("{MANUAL_LIGHTNING_PAYMENT_DM}\n\n{NWC_ERROR_DM_PREFIX} {error}")
-        }
-        _ => MANUAL_LIGHTNING_PAYMENT_DM.to_string(),
-    }
 }

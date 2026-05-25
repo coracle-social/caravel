@@ -219,7 +219,7 @@ Attempts to pay a new subscription invoice (Stripe is pay-in-advance, so this fi
 
 1. **NWC auto-pay**: if the tenant has a `nwc_url`, run `billing.pay_invoice_nwc`. On success, done. On failure, record the error via `command.set_tenant_nwc_error`, log it, summarize it for the eventual DM, and fall through.
 2. **Card on file**: if `stripe.has_payment_method`, do nothing — Stripe charges automatically for this attempt.
-3. **Manual payment**: send a DM via `robot.send_dm` telling the tenant payment is due (including the summarized NWC error, if any), with a link to the app for manual Lightning payment.
+3. **Manual payment**: send a DM via `robot.send_dm` telling the tenant payment is due (including the summarized NWC error, if any). The DM includes a link to the dashboard payment view for this invoice — `{env.app_url}/account?invoice={stripe_invoice_id}` — where the tenant can review the invoice and pay by Lightning or card.
 
 ## `invoice.paid`
 

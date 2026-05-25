@@ -8,6 +8,7 @@ Members (all populated from environment variables):
 - `server_port: u16` - from `SERVER_PORT`
 - `server_admin_pubkeys: Vec<String>` - admin pubkeys from `SERVER_ADMIN_PUBKEYS`
 - `server_allow_origins: Vec<String>` - CORS origins from `SERVER_ALLOW_ORIGINS`
+- `app_url: String` - public base URL of the frontend app from `APP_URL`, with any trailing slash stripped; used to build tenant-facing links such as the invoice payment link in billing DMs
 - `database_url: String` - from `DATABASE_URL`
 - `robot_name: String` - from `ROBOT_NAME`
 - `robot_wallet: String` - the system NWC URL from `ROBOT_WALLET`, used to issue/look up bolt11 invoices

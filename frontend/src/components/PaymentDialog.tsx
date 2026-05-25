@@ -1,16 +1,16 @@
-import { createEffect, createSignal, Show } from "solid-js"
+import { createEffect, createMemo, createSignal, For, Show } from "solid-js"
 import QRCode from "qrcode"
 import Modal from "@/components/Modal"
 import PaymentSetup from "@/components/PaymentSetup"
-import { getInvoice, getInvoiceBolt11 } from "@/lib/api"
+import { getInvoice, getInvoiceBolt11, type Invoice } from "@/lib/api"
+import { useTenantRelays } from "@/lib/hooks"
+import { plans } from "@/lib/state"
 
 type PayStatus = "idle" | "loading" | "success" | "error"
 type Bolt11Status = "idle" | "loading" | "ready" | "error"
 
-type PaymentInvoice = {
-  id: string
-  amount_due: number
-}
+type PaymentInvoice = Pick<Invoice, "id" | "amount_due"> &
+  Partial<Pick<Invoice, "period_start" | "period_end">>
 
 type PaymentDialogProps = {
   invoice: PaymentInvoice
@@ -27,6 +27,14 @@ export default function PaymentDialog(props: PaymentDialogProps) {
   const [payError, setPayError] = createSignal("")
   const [showPaymentSetup, setShowPaymentSetup] = createSignal(false)
   const [setupSaved, setSetupSaved] = createSignal(false)
+  const [relays] = useTenantRelays()
+
+  const billedRelays = createMemo(() => {
+    const planById = new Map(plans().map((p) => [p.id, p]))
+    return (relays() ?? [])
+      .map((relay) => ({ relay, plan: planById.get(relay.plan) }))
+      .filter((entry) => entry.plan?.stripe_price_id)
+  })
 
   async function loadBolt11() {
     if (!props.invoice.id) return
@@ -84,6 +92,14 @@ export default function PaymentDialog(props: PaymentDialogProps) {
 
   const amountLabel = () => `$${(props.invoice.amount_due / 100).toFixed(2)}`
 
+  const periodLabel = () => {
+    const { period_start, period_end } = props.invoice
+    if (!period_start || !period_end) return ""
+    const start = new Date(period_start * 1000).toLocaleDateString()
+    const end = new Date(period_end * 1000).toLocaleDateString()
+    return `${start} – ${end}`
+  }
+
   return (
     <>
     <Modal
@@ -98,6 +114,9 @@ export default function PaymentDialog(props: PaymentDialogProps) {
           <div>
             <h2 class="text-lg font-semibold text-gray-900">Pay Invoice</h2>
             <p class="text-2xl font-bold text-gray-900 mt-1">{amountLabel()}</p>
+            <Show when={periodLabel()}>
+              <p class="text-xs text-gray-500 mt-0.5">Billing period {periodLabel()}</p>
+            </Show>
           </div>
           <button
             type="button"
@@ -117,7 +136,28 @@ export default function PaymentDialog(props: PaymentDialogProps) {
         <Show
           when={payStatus() === "success"}
           fallback={
-            <div class="w-full space-y-3">
+            <div class="w-full space-y-4">
+              {/* What's being paid for */}
+              <Show when={billedRelays().length > 0}>
+                <div class="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                  <p class="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Relays on this invoice</p>
+                  <ul class="space-y-1.5">
+                    <For each={billedRelays()}>
+                      {({ relay, plan }) => (
+                        <li class="flex items-center justify-between gap-3 text-sm">
+                          <span class="truncate text-gray-900">{relay.info_name || relay.subdomain}</span>
+                          <span class="flex-shrink-0 text-xs text-gray-500">
+                            {plan?.name ?? relay.plan}
+                            <Show when={plan}> · ${(plan!.amount / 100).toFixed(2)}/mo</Show>
+                          </span>
+                        </li>
+                      )}
+                    </For>
+                  </ul>
+                </div>
+              </Show>
+
+              <p class="text-xs font-medium text-gray-500 uppercase tracking-wide text-center">Pay with Lightning</p>
               <Show when={bolt11Status() === "idle" || bolt11Status() === "loading"}>
                 <div class="flex items-center justify-center py-12 text-sm text-gray-400">Generating invoice...</div>
               </Show>
@@ -157,16 +197,19 @@ export default function PaymentDialog(props: PaymentDialogProps) {
                     </button>
                   </div>
                 </Show>
-                <div class="text-center pt-1">
-                  <button
-                    type="button"
-                    onClick={() => setShowPaymentSetup(true)}
-                    class="text-sm text-blue-600 hover:text-blue-700"
-                  >
-                    Set up payment method instead
-                  </button>
-                </div>
               </Show>
+
+              {/* Card / automatic payment alternative */}
+              <div class="border-t border-gray-100 pt-3 text-center">
+                <p class="text-xs text-gray-500 mb-1">Prefer to pay with a card?</p>
+                <button
+                  type="button"
+                  onClick={() => setShowPaymentSetup(true)}
+                  class="text-sm font-medium text-blue-600 hover:text-blue-700"
+                >
+                  Pay with card or set up automatic payments
+                </button>
+              </div>
             </div>
           }
         >

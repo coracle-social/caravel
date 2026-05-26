@@ -3,84 +3,41 @@ use std::sync::Arc;
 use axum::extract::{Path, State};
 
 use crate::api::{Api, AuthedPubkey};
+use crate::query;
 use crate::web::{ApiResult, internal, not_found, ok};
-
-pub async fn list_tenant_invoices(
-    State(api): State<Arc<Api>>,
-    AuthedPubkey(auth): AuthedPubkey,
-    Path(pubkey): Path<String>,
-) -> ApiResult {
-    api.require_admin_or_tenant(&auth, &pubkey)?;
-    let tenant = api.get_tenant_or_404(&pubkey).await?;
-
-    let invoices = api
-        .stripe
-        .list_invoices(&tenant.stripe_customer_id)
-        .await
-        .map_err(internal)?;
-    ok(invoices)
-}
 
 pub async fn get_invoice(
     State(api): State<Arc<Api>>,
     AuthedPubkey(auth): AuthedPubkey,
     Path(id): Path<String>,
 ) -> ApiResult {
-    let Some(invoice) = api.stripe.get_invoice(&id).await.map_err(internal)? else {
-        return Err(not_found("invoice not found"));
-    };
-
-    let Some(tenant) = api
-        .query
-        .get_tenant_by_stripe_customer_id(&invoice.customer)
+    let invoice = query::get_invoice(&id)
         .await
         .map_err(internal)?
-    else {
-        return Err(not_found("invoice not found"));
-    };
+        .ok_or_else(|| not_found("invoice not found"))?;
 
-    api.require_admin_or_tenant(&auth, &tenant.pubkey)?;
-
-    let invoice = api
-        .billing
-        .reconcile_invoice(&invoice)
-        .await
-        .map_err(internal)?;
+    api.require_admin_or_tenant(&auth, &invoice.tenant_pubkey)?;
 
     ok(invoice)
 }
 
-pub async fn get_lightning_invoice(
+pub async fn get_invoice_bolt11(
     State(api): State<Arc<Api>>,
     AuthedPubkey(auth): AuthedPubkey,
-    Path(id): Path<String>,
+    Path(invoice_id): Path<String>,
 ) -> ApiResult {
-    let Some(invoice) = api.stripe.get_invoice(&id).await.map_err(internal)? else {
-        return Err(not_found("invoice not found"));
-    };
-
-    let Some(tenant) = api
-        .query
-        .get_tenant_by_stripe_customer_id(&invoice.customer)
+    let invoice = query::get_invoice(&invoice_id)
         .await
         .map_err(internal)?
-    else {
-        return Err(not_found("invoice not found"));
-    };
+        .ok_or_else(|| not_found("invoice not found"))?;
 
-    api.require_admin_or_tenant(&auth, &tenant.pubkey)?;
+    api.require_admin_or_tenant(&auth, &invoice.tenant_pubkey)?;
 
-    let invoice = api
+    let bolt11 = api
         .billing
-        .reconcile_invoice(&invoice)
+        .ensure_and_reconcile_bolt11(&invoice_id)
         .await
         .map_err(internal)?;
 
-    let lightning_invoice = api
-        .billing
-        .ensure_lightning_invoice(&invoice.id, &tenant.pubkey, invoice.amount_due, &invoice.currency)
-        .await
-        .map_err(internal)?;
-
-    ok(serde_json::json!(lightning_invoice))
+    ok(serde_json::json!(bolt11))
 }

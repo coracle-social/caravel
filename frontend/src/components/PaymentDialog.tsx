@@ -33,7 +33,7 @@ export default function PaymentDialog(props: PaymentDialogProps) {
     const planById = new Map(plans().map((p) => [p.id, p]))
     return (relays() ?? [])
       .map((relay) => ({ relay, plan: planById.get(relay.plan) }))
-      .filter((entry) => entry.plan?.stripe_price_id)
+      .filter((entry) => entry.plan?.amount > 0)
   })
 
   async function loadBolt11() {

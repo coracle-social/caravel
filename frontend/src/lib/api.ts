@@ -35,7 +35,6 @@ export type Plan = {
   id: string
   name: string
   amount: number
-  stripe_price_id: string | null
   members: number | null
   blossom: boolean
   livekit: boolean

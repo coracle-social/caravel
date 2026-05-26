@@ -1,41 +1,44 @@
 use anyhow::{Result, anyhow};
-use std::collections::BTreeMap;
+use std::time::Duration;
 
 use crate::bitcoin;
-use crate::command::Command;
-use crate::env::Env;
-use crate::models::{Activity, LightningInvoice, Tenant, RELAY_STATUS_ACTIVE};
-use crate::query::Query;
-use crate::stripe::{Stripe, StripeInvoice, StripeSubscription};
+use crate::command;
+use crate::db;
+use crate::env;
+use crate::models::{Activity, Bolt11, Invoice, InvoiceItem, Tenant};
+use crate::query;
+use crate::robot::Robot;
+use crate::stripe::Stripe;
 use crate::wallet::Wallet;
 
 #[derive(Clone)]
 pub struct Billing {
     stripe: Stripe,
     wallet: Wallet,
-    query: Query,
-    command: Command,
-    env: Env,
+    robot: Robot,
 }
 
 impl Billing {
-    pub fn new(query: Query, command: Command, env: &Env) -> Self {
+    pub fn new(robot: Robot) -> Self {
         Self {
-            stripe: Stripe::new(env),
-            wallet: Wallet::from_url(&env.robot_wallet).expect("invalid ROBOT_WALLET"),
-            query,
-            command,
-            env: env.clone(),
+            stripe: Stripe::new(),
+            wallet: Wallet::from_url(&env::get().robot_wallet).expect("invalid ROBOT_WALLET"),
+            robot,
         }
     }
 
     // --- lifecycle methods ---
 
     pub async fn start(self) {
-        let mut rx = self.command.notify.subscribe();
+        let mut rx = db::subscribe();
+
+        tokio::spawn({
+            let billing = self.clone();
+            async move { billing.poll().await }
+        });
 
         if let Err(error) = self.reconcile_subscriptions("startup").await {
-            tracing::error!(error = %error, "failed to reconcile relay billing state on startup");
+            tracing::error!(error = %error, "failed to reconcile subscriptions on startup");
         }
 
         loop {
@@ -46,10 +49,10 @@ impl Billing {
                     }
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                    tracing::warn!(missed = n, "billing lagged");
+                    tracing::warn!(missed = n, "billing lagged, reconciling all subscriptions");
 
                     if let Err(error) = self.reconcile_subscriptions("lagged").await {
-                        tracing::error!(error = %error, "failed to reconcile relay billing state after lag");
+                        tracing::error!(error = %error, "failed to reconcile after lag");
                     }
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
@@ -57,17 +60,78 @@ impl Billing {
         }
     }
 
-    async fn reconcile_subscriptions(&self, source: &str) -> Result<()> {
-        let tenants = self.query.list_tenants().await?;
+    async fn poll(&self) {
+        let mut interval = tokio::time::interval(POLL_INTERVAL);
 
-        if tenants.is_empty() {
-            return Ok(());
+        loop {
+            interval.tick().await;
+
+            if let Err(error) = self.autogenerate_invoices().await {
+                tracing::error!(error = %error, "billing poll failed");
+            }
         }
+    }
+
+    async fn autogenerate_invoices(&self) -> Result<()> {
+        let tenants = query::list_tenants().await?;
+
+        tracing::info!(
+            tenant_count = tenants.len(),
+            "polling tenants for subscription renewal"
+        );
+
+        for tenant in tenants {
+            if let Err(error) = self.autogenerate_invoice(&tenant).await {
+                tracing::error!(
+                    tenant = %tenant.pubkey,
+                    error = ?error,
+                    "failed to autogenerate invoice"
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    /// If `tenant`'s subscription has rolled into a new billing period, claim it by
+    /// atomically recording an `autogenerate_invoice` activity, then turn that into an invoice.
+    async fn autogenerate_invoice(&self, tenant: &Tenant) -> Result<()> {
+        // A subscription only exists once a billing anchor is set; until then
+        // there is no schedule to renew against.
+        let Some(billing_anchor) = tenant.billing_anchor else {
+            return Ok(());
+        };
+
+        let now = chrono::Utc::now().timestamp();
+        let period_start = period_start_at(billing_anchor, now);
+
+        command::try_autogenerate_invoice(&tenant.pubkey, period_start).await?;
+
+        Ok(())
+    }
+
+    async fn handle_activity(&self, activity: &Activity) -> Result<()> {
+        let should_sync = matches!(
+            activity.activity_type.as_str(),
+            "create_relay" | "update_relay" | "activate_relay" | "deactivate_relay" | "autogenerate_invoice"
+        );
+
+        if should_sync
+            && let Some(tenant) = query::get_tenant(&activity.tenant).await?
+        {
+            self.reconcile_subscription(&tenant).await?;
+        }
+
+        Ok(())
+    }
+
+    async fn reconcile_subscriptions(&self, source: &str) -> Result<()> {
+        let tenants = query::list_tenants().await?;
 
         tracing::info!(
             source,
             tenant_count = tenants.len(),
-            "reconciling relay billing state"
+            "reconciling all subscriptions"
         );
 
         for tenant in tenants {
@@ -76,7 +140,7 @@ impl Billing {
                     source,
                     tenant = %tenant.pubkey,
                     error = ?error,
-                    "failed to reconcile relay billing state"
+                    "failed to reconcile subscription"
                 );
             }
         }
@@ -84,197 +148,148 @@ impl Billing {
         Ok(())
     }
 
-    async fn handle_activity(&self, activity: &Activity) -> Result<()> {
-        let needs_billing_sync = matches!(
-            activity.activity_type.as_str(),
-            "create_relay"
-                | "update_relay"
-                | "activate_relay"
-                | "deactivate_relay"
-                | "fail_relay_sync"
-                | "complete_relay_sync"
-        );
+    // --- Invoice generation and autopayment ---
 
-        if needs_billing_sync
-            && let Some(tenant) = self.query.get_tenant(&activity.tenant).await?
-        {
-            self.reconcile_subscription(&tenant).await?;
+    /// Scan a tenant's activity for changes not yet reflected in an invoice and,
+    /// if there are any, create an invoice with the corresponding line items and
+    /// attempt to collect payment.
+    async fn reconcile_subscription(&self, tenant: &Tenant) -> Result<()> {
+        let now = chrono::Utc::now().timestamp();
+        let invoice_id = uuid::Uuid::new_v4().to_string();
+
+        let activities = query::list_billable_activity_for_tenant(&tenant.pubkey).await?;
+        let billed_activity_ids: Vec<String> = activities.iter().map(|a| a.id.clone()).collect();
+
+        let mut invoice_items: Vec<InvoiceItem> = Vec::new();
+
+        for activity in &activities {
+            // TODO: this is gross
+            let relay = if activity.resource_type == "relay" {
+                query::get_relay(&activity.resource_id).await?
+            } else {
+                None
+            };
+
+            match activity.activity_type.as_str() {
+                "create_relay" => {
+                    if let Some(relay) = &relay
+                        && let Some(plan) = query::get_plan(&relay.plan)
+                        && plan.amount > 0
+                    {
+                        // TODO: prorate amount based on billing anchor
+                        invoice_items.push(InvoiceItem {
+                            id: uuid::Uuid::new_v4().to_string(),
+                            invoice_id: invoice_id.clone(),
+                            activity_id: activity.id.clone(),
+                            tenant_pubkey: tenant.pubkey.clone(),
+                            relay_id: activity.resource_id.clone(),
+                            plan: plan.id,
+                            amount: plan.amount,
+                            description: "New relay created".to_string(),
+                            created_at: activity.created_at,
+                        });
+                    }
+                }
+                "update_relay" => {
+                    // TODO: refund/charge prorated amount
+                }
+                "activate_relay" => {
+                    // TODO: charge prorated amount
+                }
+                "deactivate_relay" => {
+                    // TODO: refund prorated amount
+                }
+                "autogenerate_invoice" => {
+                    // TODO: we're at the beginning of a new period, add invoice
+                    // items for all active/paid relays
+                }
+                _ => {}
+            }
         }
 
-        Ok(())
-    }
-
-    // --- Subscriptions ---
-
-    /// Reconciles a tenant's single Stripe subscription with the set of relays that
-    /// should be billed.
-    ///
-    /// Stripe forbids two subscription items on the same subscription from sharing a
-    /// price, so billing is modeled as one subscription item per plan (price) with
-    /// `quantity` equal to the number of the tenant's `active` relays on that plan.
-    async fn reconcile_subscription(&self, tenant: &Tenant) -> Result<()> {
-        let quantity_by_price_id = self.get_quantity_by_price_id(tenant).await?;
-
-        // If we've got no subscription items, we can cancel and clear the tenant's subscription
-        if quantity_by_price_id.is_empty() {
-            self.ensure_subscription_is_inactive(tenant).await?;
+        // No line items (e.g. only free-plan or not-yet-prorated changes): still
+        // stamp the activities billed so a recovery pass doesn't re-scan them.
+        if invoice_items.is_empty() {
+            command::mark_activities_billed(&billed_activity_ids).await?;
             return Ok(());
         }
 
-        let subscription = self
-            .ensure_subscription_is_active(tenant, &quantity_by_price_id)
-            .await?;
+        let period_start = invoice_items
+            .iter()
+            .map(|item| item.created_at)
+            .max()
+            .unwrap_or(now);
+        let period_end = add_one_month(period_start);
 
-        self.ensure_subscription_items(subscription, quantity_by_price_id).await
+        let invoice = command::create_invoice(
+            &invoice_id,
+            &tenant.pubkey,
+            period_start,
+            period_end,
+            &invoice_items,
+            &billed_activity_ids,
+            tenant.billing_anchor.is_none().then_some(now),
+        )
+        .await?;
+
+        self.attempt_payment(tenant, &invoice).await?;
+
+        Ok(())
     }
 
-    /// Gets a map of stripe_price_id -> quantity based on the tenant's current relays
-    async fn get_quantity_by_price_id(&self, tenant: &Tenant) -> Result<BTreeMap<String, i64>> {
-        let mut quantity_by_price_id = BTreeMap::new();
-        for relay in self.query.list_relays_for_tenant(&tenant.pubkey).await? {
-            if relay.status != RELAY_STATUS_ACTIVE {
-                continue;
+    pub async fn attempt_payment(&self, tenant: &Tenant, invoice: &Invoice) -> Result<()> {
+        let mut error_message: Option<String> = None;
+
+        // 1. NWC auto-pay: if the tenant has configured an nwc_url, try it first.
+        if !tenant.nwc_url.is_empty() {
+            match self.attempt_payment_using_nwc(tenant, invoice).await {
+                Ok(()) => return Ok(()),
+                Err(e) => error_message = Some(format!("{e}")),
             }
-            let Some(price_id) = self.query.get_plan(&relay.plan).and_then(|p| p.stripe_price_id) else {
-                continue;
-            };
-            *quantity_by_price_id.entry(price_id).or_insert(0) += 1;
         }
-        Ok(quantity_by_price_id)
-    }
 
-    /// Fetch the tenant's current subscription from Stripe, if it has one
-    async fn get_subscription(&self, tenant: &Tenant) -> Result<Option<StripeSubscription>> {
-        let subscription = match &tenant.stripe_subscription_id {
-            Some(id) => self.stripe.get_subscription(id).await?,
-            None => None,
-        };
-
-        // If it's canceled, clear the subscription id and return nothing for simplicity
-        if subscription
-            .as_ref()
-            .is_some_and(|s| matches!(s.status.as_str(), "canceled" | "incomplete_expired"))
+        // 2. Payment method on file: if the tenant has one saved, charge it via Stripe.
+        if let Some(payment_method) =
+            self.stripe.get_saved_payment_method(&tenant.stripe_customer_id).await?
         {
-            self.command.clear_tenant_subscription(&tenant.pubkey).await?;
-            return Ok(None);
+            match self
+                .attempt_payment_using_stripe(tenant, invoice, &payment_method)
+                .await
+            {
+                Ok(()) => return Ok(()),
+                Err(e) => error_message = Some(format!("{e}")),
+            }
         }
 
-        Ok(subscription)
-    }
-
-    /// Make sure the tenant has an active subscription, creating one with the desired
-    /// items if it doesn't (Stripe rejects an itemless subscription).
-    async fn ensure_subscription_is_active(
-        &self,
-        tenant: &Tenant,
-        quantity_by_price_id: &BTreeMap<String, i64>,
-    ) -> Result<StripeSubscription> {
-        if let Some(sub) = self.get_subscription(tenant).await? {
-            return Ok(sub);
-        }
-
-        let sub = self
-            .stripe
-            .create_subscription(&tenant.stripe_customer_id, quantity_by_price_id)
-            .await?;
-        self.command.set_tenant_subscription(&tenant.pubkey, &sub.id).await?;
-        Ok(sub)
-    }
-
-    /// If the tenant has a subscription, cancel and clear it
-    async fn ensure_subscription_is_inactive(&self, tenant: &Tenant) -> Result<()> {
-        if let Some(s) = self.get_subscription(tenant).await? {
-            self.stripe.cancel_subscription(&s.id).await?;
-            self.command.clear_tenant_subscription(&tenant.pubkey).await?;
+        // 3. Manual payment: DM a link to the in-app payment page for this invoice.
+        let summary = error_message.as_deref().and_then(summarize_error_message);
+        if let Err(e) = self.attempt_payment_using_dm(tenant, invoice, summary).await {
+            tracing::error!(
+                tenant = %tenant.pubkey,
+                error = %e,
+                "failed to send manual payment DM"
+            );
         }
 
         Ok(())
     }
 
-    /// Sync desired quantity_by_price_id with stripe
-    async fn ensure_subscription_items(
-        &self,
-        subscription: StripeSubscription,
-        quantity_by_price_id: BTreeMap<String, i64>,
-    ) -> Result<()> {
-        let mut current: BTreeMap<String, (String, i64)> = BTreeMap::new();
-        for item in subscription.items {
-            current.insert(item.price.id, (item.id, item.quantity));
-        }
-
-        for (price_id, &quantity) in &quantity_by_price_id {
-            if let Some((item_id, current_quantity)) = current.remove(price_id) {
-                if current_quantity != quantity {
-                    self.stripe
-                        .set_subscription_item_quantity(&item_id, quantity)
-                        .await?;
-                }
-            } else {
-                self.stripe
-                    .create_subscription_item(&subscription.id, price_id, quantity)
-                    .await?;
-            }
-        }
-
-        for (_, (item_id, _)) in current {
-            self.stripe.delete_subscription_item(&item_id).await?;
-        }
-
-        Ok(())
-    }
-
-    // --- Invoices ---
-
-    /// return or generate a lightning invoice for an open stripe invoice
-    pub async fn ensure_lightning_invoice(
-        &self,
-        stripe_invoice_id: &str,
-        tenant_pubkey: &str,
-        amount_due: i64,
-        currency: &str,
-    ) -> Result<LightningInvoice> {
-        let now = chrono::Utc::now().timestamp();
-
-        if let Some(existing) = self.query.get_lightning_invoice(stripe_invoice_id).await?
-            && (existing.status != "pending" || now < existing.expires_at)
-        {
-            return Ok(existing);
-        }
-
-        let expiry: i64 = 3600;
-        let info = "Relay subscription payment";
-        let msats = bitcoin::fiat_to_msats(amount_due, currency).await?;
-        let bolt11 = self.wallet.make_invoice(msats, info, expiry as u64).await?;
-
-        let invoice = match self
-            .command
-            .insert_lightning_invoice(stripe_invoice_id, tenant_pubkey, &bolt11, now + expiry)
-            .await?
-        {
-            Some(invoice) => invoice,
-            None => self
-                .query
-                .get_lightning_invoice(stripe_invoice_id)
-                .await?
-                .ok_or_else(|| anyhow!("lightning_invoice {stripe_invoice_id} missing after upsert"))?,
-        };
-
-        Ok(invoice)
-    }
-
-    /// Attempt to pay and settle an invoice via nwc
-    pub async fn pay_invoice_nwc(&self, tenant: &Tenant, invoice: &LightningInvoice) -> Result<()> {
-        let nwc_url = self.env.decrypt(&tenant.nwc_url)?;
+    async fn attempt_payment_using_nwc(&self, tenant: &Tenant, invoice: &Invoice) -> Result<()> {
+        let nwc_url = env::get().decrypt(&tenant.nwc_url)?;
         let tenant_wallet = Wallet::from_url(&nwc_url)?;
+        let bolt11 = self.ensure_bolt11(&invoice.id).await?;
 
-        match tenant_wallet.pay_invoice(invoice.bolt11.clone()).await {
-            Ok(()) => self.settle_invoice(&invoice.stripe_invoice_id, &tenant.pubkey, "nwc").await,
+        match tenant_wallet.pay_invoice(bolt11.lnbc.clone()).await {
+            Ok(()) => {
+                command::clear_tenant_nwc_error(&tenant.pubkey).await?;
+                command::mark_bolt11_settled(&bolt11.id).await?;
+                command::mark_invoice_paid(&invoice.id, "nwc").await
+            }
             Err(pay_error) => {
-                // The pay request errored, but the payment may have landed
-                // before the response was lost. Confirm against the system
-                // wallet before reporting failure.
-                if self.wallet.is_settled(&invoice.bolt11).await.unwrap_or(false) {
-                    self.settle_invoice(&invoice.stripe_invoice_id, &tenant.pubkey, "nwc").await
+                // The pay request errored, but the invoice may have been paid out of band.
+                if self.wallet.is_settled(&bolt11.lnbc).await.unwrap_or(false) {
+                    command::mark_bolt11_settled(&bolt11.id).await?;
+                    command::mark_invoice_paid(&invoice.id, "oob").await
                 } else {
                     Err(pay_error)
                 }
@@ -282,68 +297,149 @@ impl Billing {
         }
     }
 
+    async fn attempt_payment_using_stripe(
+        &self,
+        tenant: &Tenant,
+        invoice: &Invoice,
+        payment_method_id: &str,
+    ) -> Result<()> {
+        let amount = self.get_invoice_amount(&invoice.id).await?;
+
+        // A decline or an off-session authentication demand comes back as Err, so
+        // the cascade falls back to the manual DM.
+        let intent_id = self
+            .stripe
+            .create_payment_intent(
+                &tenant.stripe_customer_id,
+                payment_method_id,
+                &invoice.id,
+                amount,
+                "usd",
+            )
+            .await?;
+
+        command::insert_intent(&intent_id, &invoice.id).await?;
+        command::mark_invoice_paid(&invoice.id, "stripe").await
+    }
+
+    async fn attempt_payment_using_dm(
+        &self,
+        tenant: &Tenant,
+        invoice: &Invoice,
+        error_message: Option<String>,
+    ) -> Result<()> {
+        let invoice_id = &invoice.id;
+        let url_base = &env::get().app_url;
+        let payment_url = format!("{url_base}/account?invoice={invoice_id}");
+        let base = format!("{MANUAL_PAYMENT_DM}\n\n{payment_url}");
+        let dm_message = match error_message {
+            Some(error_message) if !error_message.is_empty() => {
+                format!("{base}\n\n{USER_ERROR_PREFIX} {error_message}")
+            }
+            _ => base,
+        };
+
+        self.robot.send_dm(&tenant.pubkey, &dm_message).await
+    }
+
+    // --- Invoice utils ---
+
+    pub async fn get_invoice_amount(&self, invoice_id: &str) -> Result<i64> {
+        let invoice_items = query::get_invoice_items_for_invoice(invoice_id).await?;
+
+        Ok(invoice_items.iter().map(|item| item.amount).sum())
+    }
+
+    // --- Bolt11 utils ---
+
+    pub async fn ensure_bolt11(&self, invoice_id: &str) -> Result<Bolt11> {
+        let now = chrono::Utc::now().timestamp();
+
+        if let Some(existing) = query::get_bolt11_for_invoice(invoice_id).await?
+            && (existing.settled_at.is_none() || now < existing.expires_at)
+        {
+            return Ok(existing);
+        }
+
+        let expiry: i64 = 3600;
+        let info = "Relay subscription payment";
+        let amount = self.get_invoice_amount(invoice_id).await?;
+        let msats = bitcoin::fiat_to_msats(amount, "usd").await?;
+        let lnbc = self.wallet.make_invoice(msats, info, expiry as u64).await?;
+
+        command::insert_bolt11(invoice_id, &lnbc, msats as i64, now + expiry)
+            .await?
+            .ok_or_else(|| anyhow!("failed to insert bolt11"))
+    }
+
     /// Catch an out-of-band payment we never recorded — e.g. the user paid the
     /// invoice but the frontend failed to notify us. If the invoice's bolt11 has
-    /// settled on the robot wallet, mark it paid and return the refreshed Stripe
-    /// invoice; otherwise return it unchanged. Meant to run before presenting a
-    /// payable invoice so we never hand back one that's already been paid.
-    pub async fn reconcile_invoice(&self, invoice: &StripeInvoice) -> Result<StripeInvoice> {
-        if invoice.status != "open" {
-            return Ok(invoice.clone());
+    /// settled on the robot wallet, mark it paid and return the refreshed record;
+    /// otherwise return it unchanged. Meant to run before presenting a payable
+    /// invoice so we never hand back one that's already been paid.
+    pub async fn ensure_and_reconcile_bolt11(&self, invoice_id: &str) -> Result<Bolt11> {
+        let bolt11 = self.ensure_bolt11(invoice_id).await?;
+
+        if bolt11.settled_at.is_none() && self.wallet.is_settled(&bolt11.lnbc).await? {
+            command::mark_bolt11_settled(&bolt11.id).await?;
+
+            // Re-fetch so the caller sees that it's been settled.
+            Ok(query::get_bolt11(&bolt11.id).await?.unwrap_or(bolt11))
+        } else {
+            Ok(bolt11)
         }
+    }
+}
 
-        let Some(row) = self.query.get_lightning_invoice(&invoice.id).await? else {
-            return Ok(invoice.clone());
-        };
+const POLL_INTERVAL: Duration = Duration::from_secs(60 * 60);
+const MANUAL_PAYMENT_DM: &str = "Payment is due for your relay subscription. Open the link below to review the invoice and pay by Lightning or card:";
+const USER_ERROR_PREFIX: &str = "NWC auto-payment failed:";
+const USER_ERROR_MAX_CHARS: usize = 240;
 
-        let settled = match self.wallet.is_settled(&row.bolt11).await {
-            Ok(settled) => settled,
-            Err(error) => {
-                tracing::warn!(
-                    error = %error,
-                    stripe_invoice_id = %invoice.id,
-                    "failed to look up bolt11 invoice settlement"
-                );
-                return Ok(invoice.clone());
-            }
-        };
+/// The start of the billing period containing `now`, for monthly periods
+/// anchored at `anchor`. Steps forward in whole calendar months so boundaries
+/// track months (28–31 days) rather than a fixed span of seconds.
+fn period_start_at(anchor: i64, now: i64) -> i64 {
+    use chrono::{DateTime, Months, Utc};
 
-        if !settled {
-            return Ok(invoice.clone());
+    let anchor_dt = DateTime::<Utc>::from_timestamp(anchor, 0).unwrap_or_default();
+
+    let mut start = anchor_dt;
+    let mut months = 1u32;
+    while let Some(next) = anchor_dt.checked_add_months(Months::new(months)) {
+        if next.timestamp() > now {
+            break;
         }
-
-        if let Err(error) = self.settle_invoice(&invoice.id, &row.tenant_pubkey, "manual").await {
-            tracing::warn!(
-                error = %error,
-                stripe_invoice_id = %invoice.id,
-                "failed to record settled bolt11 invoice as paid"
-            );
-        }
-
-        // Re-fetch so the caller sees the now-paid status; fall back to the
-        // pre-reconcile snapshot if Stripe momentarily 404s.
-        Ok(self
-            .stripe
-            .get_invoice(&invoice.id)
-            .await?
-            .unwrap_or_else(|| invoice.clone()))
+        start = next;
+        months += 1;
     }
 
-    /// Record a settled bolt11 invoice as paid by `method`, mark the Stripe
-    /// invoice paid out of band, and clear any lingering NWC error. The Stripe
-    /// call is idempotent across retries, and `mark_lightning_invoice_paid` is
-    /// first-writer-wins, so the recorded method reflects whoever settled first.
-    async fn settle_invoice(
-        &self,
-        stripe_invoice_id: &str,
-        tenant_pubkey: &str,
-        method: &str,
-    ) -> Result<()> {
-        self.command
-            .mark_lightning_invoice_paid(stripe_invoice_id, method)
-            .await?;
-        self.stripe.pay_invoice_out_of_band(stripe_invoice_id).await?;
-        self.command.clear_tenant_nwc_error(tenant_pubkey).await?;
-        Ok(())
+    start.timestamp()
+}
+
+/// One calendar month after `ts` (a unix timestamp), falling back to `ts` if the
+/// shifted date can't be represented.
+fn add_one_month(ts: i64) -> i64 {
+    use chrono::{DateTime, Months, Utc};
+
+    DateTime::<Utc>::from_timestamp(ts, 0)
+        .and_then(|dt| dt.checked_add_months(Months::new(1)))
+        .map(|dt| dt.timestamp())
+        .unwrap_or(ts)
+}
+
+fn summarize_error_message(error: &str) -> Option<String> {
+    let normalized = error.split_whitespace().collect::<Vec<_>>().join(" ");
+    if normalized.is_empty() {
+        return None;
     }
+
+    if normalized.chars().count() <= USER_ERROR_MAX_CHARS {
+        return Some(normalized);
+    }
+
+    let prefix_len = USER_ERROR_MAX_CHARS.saturating_sub(3);
+    let mut truncated = normalized.chars().take(prefix_len).collect::<String>();
+    truncated.push_str("...");
+    Some(truncated)
 }

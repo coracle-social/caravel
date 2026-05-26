@@ -5,11 +5,10 @@ use anyhow::{Result, anyhow};
 use nostr_sdk::prelude::*;
 use tokio::sync::Mutex;
 
-use crate::env::Env;
+use crate::env;
 
 #[derive(Clone)]
 pub struct Robot {
-    env: Env,
     outbox_cache: std::sync::Arc<Mutex<HashMap<String, CacheEntry>>>,
     dm_cache: std::sync::Arc<Mutex<HashMap<String, CacheEntry>>>,
 }
@@ -21,9 +20,8 @@ struct CacheEntry {
 }
 
 impl Robot {
-    pub async fn new(env: &Env) -> Result<Self> {
+    pub async fn new() -> Result<Self> {
         let robot = Self {
-            env: env.clone(),
             outbox_cache: std::sync::Arc::new(Mutex::new(HashMap::new())),
             dm_cache: std::sync::Arc::new(Mutex::new(HashMap::new())),
         };
@@ -33,7 +31,7 @@ impl Robot {
     }
 
     async fn make_client(&self, relays: &[String]) -> Result<Client> {
-        let client = Client::new(self.env.keys.clone());
+        let client = Client::new(env::get().keys.clone());
         for relay in relays {
             client.add_relay(relay).await?;
         }
@@ -46,24 +44,24 @@ impl Robot {
         &self,
     ) -> Result<()> {
         let mut metadata = Metadata::new();
-        if !self.env.robot_name.is_empty() {
-            metadata = metadata.name(&self.env.robot_name);
+        if !env::get().robot_name.is_empty() {
+            metadata = metadata.name(&env::get().robot_name);
         }
-        if !self.env.robot_description.is_empty() {
-            metadata = metadata.about(&self.env.robot_description);
+        if !env::get().robot_description.is_empty() {
+            metadata = metadata.about(&env::get().robot_description);
         }
-        if !self.env.robot_picture.is_empty() {
-            metadata = metadata.picture(Url::parse(&self.env.robot_picture)?);
+        if !env::get().robot_picture.is_empty() {
+            metadata = metadata.picture(Url::parse(&env::get().robot_picture)?);
         }
 
-        let outbox_client = self.make_client(&self.env.robot_outbox_relays).await?;
-        let indexer_client = self.make_client(&self.env.robot_indexer_relays).await?;
+        let outbox_client = self.make_client(&env::get().robot_outbox_relays).await?;
+        let indexer_client = self.make_client(&env::get().robot_indexer_relays).await?;
 
         outbox_client
             .send_event_builder(EventBuilder::metadata(&metadata))
             .await?;
 
-        let outbox_tags = self.env.robot_outbox_relays
+        let outbox_tags = env::get().robot_outbox_relays
             .iter()
             .map(|r| Tag::parse(["r", r.as_str()]))
             .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -71,7 +69,7 @@ impl Robot {
             .send_event_builder(EventBuilder::new(Kind::Custom(10002), "").tags(outbox_tags))
             .await?;
 
-        let messaging_tags = self.env.robot_messaging_relays
+        let messaging_tags = env::get().robot_messaging_relays
             .iter()
             .map(|r| Tag::parse(["relay", r.as_str()]))
             .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -108,7 +106,7 @@ impl Robot {
 
         let pubkey = PublicKey::parse(recipient)?;
         let filter = Filter::new().author(pubkey).kind(Kind::Custom(10002));
-        let client = self.make_client(&self.env.robot_indexer_relays).await?;
+        let client = self.make_client(&env::get().robot_indexer_relays).await?;
         let events = client.fetch_events(filter, Duration::from_secs(5)).await?;
 
         let mut relays = Vec::new();
@@ -128,7 +126,7 @@ impl Robot {
     pub async fn fetch_nostr_name(&self, pubkey: &str) -> Option<String> {
         let pubkey = PublicKey::parse(pubkey).ok()?;
         let filter = Filter::new().author(pubkey).kind(Kind::Metadata).limit(1);
-        let client = self.make_client(&self.env.robot_indexer_relays).await.ok()?;
+        let client = self.make_client(&env::get().robot_indexer_relays).await.ok()?;
         let events = client.fetch_events(filter, Duration::from_secs(5)).await.ok()?;
         let event = events.into_iter().max_by_key(|e| e.created_at)?;
         let content: serde_json::Value = serde_json::from_str(&event.content).ok()?;

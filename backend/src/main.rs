@@ -5,7 +5,7 @@ mod command;
 mod env;
 mod infra;
 mod models;
-mod pool;
+mod db;
 mod query;
 mod robot;
 mod routes;
@@ -20,10 +20,7 @@ use tower_http::cors::{AllowOrigin, CorsLayer, Any};
 
 use crate::api::Api;
 use crate::billing::Billing;
-use crate::command::Command;
-use crate::env::Env;
 use crate::infra::Infra;
-use crate::query::Query;
 use crate::robot::Robot;
 use crate::stripe::Stripe;
 
@@ -36,18 +33,17 @@ async fn main() -> Result<()> {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    let env = Env::load();
+    env::init();
 
-    let pool = pool::create_pool(&env.database_url).await?;
-    let robot = Robot::new(&env).await?;
-    let stripe = Stripe::new(&env);
-    let query = Query::new(pool.clone(), &env);
-    let command = Command::new(pool);
-    let billing = Billing::new(query.clone(), command.clone(), &env);
-    let infra = Infra::new(query.clone(), command.clone(), &env);
-    let api = Api::new(query, command, billing.clone(), stripe, robot, infra.clone(), &env);
+    db::init().await?;
 
-    let parsed = env
+    let robot = Robot::new().await?;
+    let stripe = Stripe::new();
+    let infra = Infra::new();
+    let billing = Billing::new(robot.clone());
+    let api = Api::new(billing.clone(), stripe, robot, infra.clone());
+
+    let parsed = env::get()
         .server_allow_origins
         .iter()
         .filter_map(|o| o.parse::<axum::http::HeaderValue>().ok())
@@ -68,7 +64,12 @@ async fn main() -> Result<()> {
     });
 
     let listener =
-        tokio::net::TcpListener::bind(format!("{}:{}", env.server_host, env.server_port)).await?;
+        tokio::net::TcpListener::bind(format!(
+        "{}:{}",
+        env::get().server_host,
+        env::get().server_port
+    ))
+    .await?;
     axum::serve(listener, app).await?;
     Ok(())
 }

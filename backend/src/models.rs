@@ -12,6 +12,7 @@ pub struct Activity {
     pub activity_type: String,
     pub resource_type: String,
     pub resource_id: String,
+    pub billed_at: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -22,7 +23,6 @@ pub struct Plan {
     pub members: Option<i64>,
     pub blossom: bool,
     pub livekit: bool,
-    pub stripe_price_id: Option<String>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -31,21 +31,8 @@ pub struct Tenant {
     pub nwc_url: String,
     pub nwc_error: Option<String>,
     pub created_at: i64,
+    pub billing_anchor: Option<i64>,
     pub stripe_customer_id: String,
-    pub stripe_subscription_id: Option<String>,
-    pub past_due_at: Option<i64>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
-pub struct LightningInvoice {
-    pub stripe_invoice_id: String,
-    pub tenant_pubkey: String,
-    pub bolt11: String,
-    pub status: String,
-    pub paid_method: Option<String>,
-    pub expires_at: i64,
-    pub created_at: i64,
-    pub updated_at: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -91,4 +78,47 @@ impl Default for Relay {
             synced: 0,
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct Invoice {
+  pub id: String,
+  pub tenant_pubkey: String,
+  pub status: String,
+  pub period_start: i64,
+  pub period_end: i64,
+  pub created_at: i64,
+  pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct InvoiceItem {
+  pub id: String,
+  pub invoice_id: String,
+  pub activity_id: String,
+  pub tenant_pubkey: String,
+  pub relay_id: String,
+  pub plan: String,
+  pub amount: i64,
+  pub description: String,
+  pub created_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct Bolt11 {
+  pub id: String,
+  pub invoice_id: String,
+  pub lnbc: String,
+  pub msats: i64,
+  pub created_at: i64,
+  pub expires_at: i64,
+  pub settled_at: Option<i64>,
+}
+
+#[allow(dead_code)] // backs the `intent` table for the (not yet implemented) Stripe intent flow
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct Intent {
+  pub id: String,
+  pub invoice_id: String,
+  pub created_at: i64,
 }

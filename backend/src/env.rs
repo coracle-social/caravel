@@ -1,5 +1,23 @@
+use std::sync::OnceLock;
+
 use anyhow::{Result, anyhow};
 use nostr_sdk::prelude::*;
+
+/// Process-wide configuration, loaded once from the environment at startup via
+/// [`init`] and read everywhere else via [`get`].
+static ENV: OnceLock<Env> = OnceLock::new();
+
+/// Load configuration from the environment and store it as the global. Panics
+/// if a required variable is missing or if called more than once.
+pub fn init() {
+    ENV.set(Env::load())
+        .unwrap_or_else(|_| panic!("env already initialized"));
+}
+
+/// The global configuration. Panics if [`init`] hasn't run yet.
+pub fn get() -> &'static Env {
+    ENV.get().expect("env not initialized")
+}
 
 #[derive(Clone)]
 pub struct Env {
@@ -27,15 +45,12 @@ pub struct Env {
     pub livekit_api_key: String,
     pub livekit_api_secret: String,
     pub stripe_secret_key: String,
-    pub stripe_webhook_secret: String,
-    pub stripe_price_basic: String,
-    pub stripe_price_growth: String,
     /// Parsed from `robot_secret`; used for nostr signing and nip44 encryption.
     pub keys: Keys,
 }
 
 impl Env {
-    pub fn load() -> Self {
+    fn load() -> Self {
         let keys = Keys::parse(&require_str("ROBOT_SECRET"))
             .expect("ROBOT_SECRET is not a valid nostr secret key");
 
@@ -64,9 +79,6 @@ impl Env {
             livekit_api_key: require_str("LIVEKIT_API_KEY"),
             livekit_api_secret: require_str("LIVEKIT_API_SECRET"),
             stripe_secret_key: require_str("STRIPE_SECRET_KEY"),
-            stripe_webhook_secret: require_str("STRIPE_WEBHOOK_SECRET"),
-            stripe_price_basic: require_str("STRIPE_PRICE_BASIC"),
-            stripe_price_growth: require_str("STRIPE_PRICE_GROWTH"),
             keys,
         }
     }

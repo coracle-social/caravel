@@ -5,7 +5,7 @@ pub mod command;
 pub mod env;
 pub mod infra;
 pub mod models;
-pub mod pool;
+pub mod db;
 pub mod query;
 pub mod robot;
 pub mod routes;

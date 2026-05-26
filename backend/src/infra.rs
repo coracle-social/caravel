@@ -2,33 +2,26 @@ use anyhow::Result;
 use nostr_sdk::prelude::*;
 use std::time::Duration;
 
-use crate::command::Command;
-use crate::env::Env;
+use crate::command;
+use crate::db;
+use crate::env;
 use crate::models::{Activity, RELAY_STATUS_DELINQUENT, RELAY_STATUS_INACTIVE, Relay};
-use crate::query::Query;
+use crate::query;
 
 const RELAY_SYNC_RETRY_BASE_DELAY_SECS: u64 = 30;
 const RELAY_SYNC_RETRY_MAX_DELAY_SECS: u64 = 15 * 60;
 const RELAY_SYNC_RETRY_MAX_ATTEMPTS: usize = 6;
 
 #[derive(Clone)]
-pub struct Infra {
-    env: Env,
-    query: Query,
-    command: Command,
-}
+pub struct Infra;
 
 impl Infra {
-    pub fn new(query: Query, command: Command, env: &Env) -> Self {
-        Self {
-            env: env.clone(),
-            query,
-            command,
-        }
+    pub fn new() -> Self {
+        Self
     }
 
     pub async fn start(self) {
-        let mut rx = self.command.notify.subscribe();
+        let mut rx = db::subscribe();
 
         if let Err(error) = self.reconcile_relay_state("startup").await {
             tracing::error!(error = %error, "failed to reconcile relay state on startup");
@@ -68,7 +61,7 @@ impl Infra {
             return Ok(());
         }
 
-        let Some(relay) = self.query.get_relay(&activity.resource_id).await? else {
+        let Some(relay) = query::get_relay(&activity.resource_id).await? else {
             return Ok(());
         };
 
@@ -77,7 +70,7 @@ impl Infra {
     }
 
     async fn reconcile_relay_state(&self, source: &str) -> Result<()> {
-        let relays = self.query.list_relays_pending_sync().await?;
+        let relays = query::list_relays_pending_sync().await?;
 
         if relays.is_empty() {
             return Ok(());
@@ -112,7 +105,7 @@ impl Infra {
             Some(Duration::from_secs(delay_secs))
         }
 
-        let activities = self.query.list_activity_for_resource(relay_id).await?;
+        let activities = query::list_activity_for_resource(relay_id).await?;
         let consecutive_failures = activities
             .iter()
             .take_while(|activity| activity.activity_type == "fail_relay_sync")
@@ -142,7 +135,7 @@ impl Infra {
         tokio::spawn(async move {
             tokio::time::sleep(delay).await;
 
-            match infra.query.get_relay(&relay_id).await {
+            match query::get_relay(&relay_id).await {
                 Ok(Some(relay)) => infra.sync_relay(&relay).await,
                 Ok(None) => {}
                 Err(e) => {
@@ -158,13 +151,13 @@ impl Infra {
         match self.try_sync_relay(relay).await {
             Ok(()) => {
                 tracing::info!(relay = %relay.id, "relay sync succeeded");
-                if let Err(e) = self.command.complete_relay_sync(&relay.id).await {
+                if let Err(e) = command::complete_relay_sync(&relay.id).await {
                     tracing::error!(relay = %relay.id, error = %e, "failed to mark sync complete");
                 }
             }
             Err(e) => {
                 tracing::warn!(relay = %relay.id, error = %e, "relay sync failed");
-                if let Err(e2) = self.command.fail_relay_sync(relay, e.to_string()).await {
+                if let Err(e2) = command::fail_relay_sync(relay, e.to_string()).await {
                     tracing::error!(relay = %relay.id, error = %e2, "failed to record sync failure");
                 }
             }
@@ -177,14 +170,12 @@ impl Infra {
         // otherwise check the activity history so that a re-sync after an update
         // (which resets `synced` to 0) PATCHes instead of clobbering the secret.
         let is_new = relay.synced != 1
-            && self
-                .query
-                .get_latest_activity_for_resource_and_type(&relay.id, "complete_relay_sync")
+            && query::get_latest_activity_for_resource_and_type(&relay.id, "complete_relay_sync")
                 .await?
                 .is_none();
 
         let mut body = serde_json::json!({
-            "host": format!("{}.{}", relay.subdomain, self.env.relay_domain),
+            "host": format!("{}.{}", relay.subdomain, env::get().relay_domain),
             "schema": relay.id,
             "inactive": relay.status == RELAY_STATUS_INACTIVE
                 || relay.status == RELAY_STATUS_DELINQUENT,
@@ -205,11 +196,11 @@ impl Infra {
                     "enabled": true,
                     "adapter": "s3",
                     "s3": {
-                        "endpoint": self.env.blossom_s3_endpoint,
-                        "region": self.env.blossom_s3_region,
-                        "bucket": self.env.blossom_s3_bucket,
-                        "access_key": self.env.blossom_s3_access_key,
-                        "secret_key": self.env.blossom_s3_secret_key,
+                        "endpoint": env::get().blossom_s3_endpoint,
+                        "region": env::get().blossom_s3_region,
+                        "bucket": env::get().blossom_s3_bucket,
+                        "access_key": env::get().blossom_s3_access_key,
+                        "secret_key": env::get().blossom_s3_secret_key,
                         "key_prefix": relay.id,
                     },
                 })
@@ -219,9 +210,9 @@ impl Infra {
             "livekit": if relay.livekit_enabled == 1 {
                 serde_json::json!({
                     "enabled": true,
-                    "server_url": self.env.livekit_url,
-                    "api_key": self.env.livekit_api_key,
-                    "api_secret": self.env.livekit_api_secret,
+                    "server_url": env::get().livekit_url,
+                    "api_key": env::get().livekit_api_key,
+                    "api_secret": env::get().livekit_api_secret,
                 })
             } else {
                 serde_json::json!({ "enabled": false })
@@ -274,10 +265,10 @@ impl Infra {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(5))
             .build()?;
-        let base = self.env.zooid_api_url.trim_end_matches('/');
+        let base = env::get().zooid_api_url.trim_end_matches('/');
         let path = path.trim_start_matches('/');
         let url = format!("{base}/{path}");
-        let auth = self.env.make_auth(&url, method).await?;
+        let auth = env::get().make_auth(&url, method).await?;
 
         let reqwest_method = match method {
             HttpMethod::GET => reqwest::Method::GET,

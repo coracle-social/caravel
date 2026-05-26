@@ -28,31 +28,27 @@ use base64::Engine;
 use nostr_sdk::{Event, JsonUtil, Kind};
 
 use crate::billing::Billing;
-use crate::command::Command;
-use crate::env::Env;
+use crate::env;
 use crate::infra::Infra;
 use crate::models::{Relay, Tenant};
-use crate::query::Query;
+use crate::query;
 use crate::robot::Robot;
 use crate::stripe::Stripe;
 use crate::routes::identity::get_identity;
-use crate::routes::invoices::{get_invoice, get_lightning_invoice, list_tenant_invoices};
+use crate::routes::invoices::{get_invoice, get_invoice_bolt11};
 use crate::routes::plans::{get_plan, list_plans};
 use crate::routes::relays::{
     create_relay, deactivate_relay, get_relay, list_relay_activity, list_relay_members,
     list_relays, reactivate_relay, update_relay,
 };
-use crate::routes::stripe::{create_stripe_session, stripe_webhook};
 use crate::routes::tenants::{
-    create_tenant, get_tenant, list_tenant_relays, list_tenants, update_tenant,
+    create_stripe_session, create_tenant, get_tenant, list_tenant_invoices, list_tenant_relays,
+    list_tenants, update_tenant,
 };
 use crate::web::{ApiError, forbidden, internal, not_found, unauthorized};
 
 #[derive(Clone)]
 pub struct Api {
-    pub env: Env,
-    pub query: Query,
-    pub command: Command,
     pub billing: Billing,
     pub stripe: Stripe,
     pub robot: Robot,
@@ -60,19 +56,8 @@ pub struct Api {
 }
 
 impl Api {
-    pub fn new(
-        query: Query,
-        command: Command,
-        billing: Billing,
-        stripe: Stripe,
-        robot: Robot,
-        infra: Infra,
-        env: &Env,
-    ) -> Self {
+    pub fn new(billing: Billing, stripe: Stripe, robot: Robot, infra: Infra) -> Self {
         Self {
-            env: env.clone(),
-            query,
-            command,
             billing,
             stripe,
             robot,
@@ -90,24 +75,23 @@ impl Api {
             .route("/tenants", get(list_tenants).post(create_tenant))
             .route("/tenants/:pubkey", get(get_tenant).put(update_tenant))
             .route("/tenants/:pubkey/relays", get(list_tenant_relays))
+            .route("/tenants/:pubkey/invoices", get(list_tenant_invoices))
+            .route("/tenants/:pubkey/stripe/session", get(create_stripe_session))
             .route("/relays", get(list_relays).post(create_relay))
             .route("/relays/:id", get(get_relay).put(update_relay))
             .route("/relays/:id/members", get(list_relay_members))
             .route("/relays/:id/activity", get(list_relay_activity))
             .route("/relays/:id/deactivate", post(deactivate_relay))
             .route("/relays/:id/reactivate", post(reactivate_relay))
-            .route("/tenants/:pubkey/invoices", get(list_tenant_invoices))
             .route("/invoices/:id", get(get_invoice))
-            .route("/invoices/:id/bolt11", get(get_lightning_invoice))
-            .route("/tenants/:pubkey/stripe/session", get(create_stripe_session))
-            .route("/stripe/webhook", post(stripe_webhook))
+            .route("/invoices/:id/bolt11", get(get_invoice_bolt11))
             .with_state(api)
     }
 
     // --- authorization helpers ----------------------------------------------
 
     pub fn is_admin(&self, pubkey: &str) -> bool {
-        self.env.server_admin_pubkeys.iter().any(|a| a == pubkey)
+        env::get().server_admin_pubkeys.iter().any(|a| a == pubkey)
     }
 
     pub fn require_admin(&self, authorized_pubkey: &str) -> Result<(), ApiError> {
@@ -115,6 +99,18 @@ impl Api {
             Ok(())
         } else {
             Err(forbidden("admin required"))
+        }
+    }
+
+    pub fn require_tenant(
+        &self,
+        authorized_pubkey: &str,
+        tenant_pubkey: &str,
+    ) -> Result<(), ApiError> {
+        if authorized_pubkey == tenant_pubkey {
+            Ok(())
+        } else {
+            Err(forbidden("not authorized"))
         }
     }
 
@@ -131,7 +127,7 @@ impl Api {
     }
 
     pub async fn get_tenant_or_404(&self, pubkey: &str) -> Result<Tenant, ApiError> {
-        match self.query.get_tenant(pubkey).await {
+        match query::get_tenant(pubkey).await {
             Ok(Some(t)) => Ok(t),
             Ok(None) => Err(not_found("tenant not found")),
             Err(e) => Err(internal(e)),
@@ -139,7 +135,7 @@ impl Api {
     }
 
     pub async fn get_relay_or_404(&self, id: &str) -> Result<Relay, ApiError> {
-        match self.query.get_relay(id).await {
+        match query::get_relay(id).await {
             Ok(Some(r)) => Ok(r),
             Ok(None) => Err(not_found("relay not found")),
             Err(e) => Err(internal(e)),
@@ -188,10 +184,7 @@ impl Api {
             .last()
             .ok_or_else(|| anyhow!("missing u tag"))?;
 
-        ensure!(
-            self.env.server_host.is_empty() || got_u.contains(&self.env.server_host),
-            "authorization host mismatch"
-        );
+        ensure!(got_u == env::get().server_host, "authorization host mismatch");
 
         Ok(event.pubkey.to_hex())
     }

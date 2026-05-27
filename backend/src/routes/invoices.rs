@@ -6,6 +6,31 @@ use crate::api::{Api, AuthedPubkey};
 use crate::query;
 use crate::web::{ApiResult, internal, not_found, ok};
 
+/// The tenant's most recent invoice, after first materializing any outstanding
+/// line items into a fresh one — so the frontend can collect payment right after
+/// a change (e.g. creating a relay). Payment isn't attempted here; the caller
+/// drives it via the bolt11/Stripe endpoints. `null` when the tenant has no
+/// invoices and nothing is outstanding.
+pub async fn get_tenant_latest_invoice(
+    State(api): State<Arc<Api>>,
+    AuthedPubkey(auth): AuthedPubkey,
+    Path(pubkey): Path<String>,
+) -> ApiResult {
+    api.require_admin_or_tenant(&auth, &pubkey)?;
+    let tenant = api.get_tenant_or_404(&pubkey).await?;
+
+    // Roll any outstanding charges (and due renewals) into an invoice, then
+    // return the latest.
+    api.billing
+        .generate_invoice(&tenant)
+        .await
+        .map_err(internal)?;
+
+    let invoice = query::get_latest_invoice(&pubkey).await.map_err(internal)?;
+
+    ok(invoice)
+}
+
 pub async fn get_invoice(
     State(api): State<Arc<Api>>,
     AuthedPubkey(auth): AuthedPubkey,

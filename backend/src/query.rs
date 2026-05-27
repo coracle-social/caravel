@@ -113,6 +113,15 @@ pub async fn list_invoices(tenant_pubkey: &str) -> Result<Vec<Invoice>> {
     .await?)
 }
 
+pub async fn get_latest_invoice(tenant_pubkey: &str) -> Result<Option<Invoice>> {
+    Ok(sqlx::query_as::<_, Invoice>(
+        "SELECT * FROM invoice WHERE tenant_pubkey = ? ORDER BY created_at DESC LIMIT 1",
+    )
+    .bind(tenant_pubkey)
+    .fetch_optional(pool())
+    .await?)
+}
+
 pub async fn get_invoice_items_for_invoice(invoice_id: &str) -> Result<Vec<InvoiceItem>> {
     Ok(
         sqlx::query_as::<_, InvoiceItem>("SELECT * FROM invoice_item WHERE invoice_id = ?")
@@ -120,6 +129,25 @@ pub async fn get_invoice_items_for_invoice(invoice_id: &str) -> Result<Vec<Invoi
             .fetch_all(pool())
             .await?,
     )
+}
+
+/// The relay's plan immediately before `before`, read from the activity log
+/// (the most recent `create_relay`/`update_relay` with `created_at < before`).
+/// Billing uses this as the `old` side of a plan-change delta.
+pub async fn get_relay_plan_before(relay_id: &str, before: i64) -> Result<Option<String>> {
+    Ok(sqlx::query_scalar::<_, String>(
+        "SELECT plan_id FROM activity
+         WHERE resource_id = ?
+           AND created_at < ?
+           AND activity_type IN ('create_relay', 'update_relay')
+           AND plan_id IS NOT NULL
+         ORDER BY created_at DESC
+         LIMIT 1",
+    )
+    .bind(relay_id)
+    .bind(before)
+    .fetch_optional(pool())
+    .await?)
 }
 
 pub async fn get_bolt11(bolt11_id: &str) -> Result<Option<Bolt11>> {
@@ -149,12 +177,34 @@ pub async fn list_billable_activity_for_tenant(tenant_pubkey: &str) -> Result<Ve
         "WHERE tenant = ?
            AND billed_at IS NULL
            AND activity_type IN (
-               'create_relay', 'update_relay', 'activate_relay',
-               'deactivate_relay', 'autogenerate_invoice'
+               'create_relay', 'update_relay', 'activate_relay', 'deactivate_relay'
            )
          ORDER BY created_at ASC",
     ))
     .bind(tenant_pubkey)
+    .fetch_all(pool())
+    .await?)
+}
+
+/// A tenant's relay status/plan activity strictly before `before`, oldest-first
+/// — folded by billing to reconstruct each relay's state as of a period boundary.
+/// Strict `<` so a relay created exactly at the boundary isn't counted active
+/// there (its own creation charge covers that period).
+pub async fn list_relay_activity_before(
+    tenant_pubkey: &str,
+    before: i64,
+) -> Result<Vec<Activity>> {
+    Ok(sqlx::query_as::<_, Activity>(&select_activity(
+        "WHERE tenant = ?
+           AND resource_type = 'relay'
+           AND activity_type IN (
+               'create_relay', 'update_relay', 'activate_relay', 'deactivate_relay'
+           )
+           AND created_at < ?
+         ORDER BY created_at ASC",
+    ))
+    .bind(tenant_pubkey)
+    .bind(before)
     .fetch_all(pool())
     .await?)
 }

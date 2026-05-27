@@ -5,7 +5,8 @@ CREATE TABLE IF NOT EXISTS activity (
   activity_type TEXT NOT NULL,
   resource_type TEXT NOT NULL,
   resource_id TEXT NOT NULL,
-  billed_at INTEGER
+  billed_at INTEGER,
+  plan_id TEXT
 );
 
 CREATE TABLE IF NOT EXISTS tenant (
@@ -52,14 +53,15 @@ CREATE TABLE IF NOT EXISTS invoice (
 
 CREATE TABLE IF NOT EXISTS invoice_item (
   id TEXT PRIMARY KEY,
-  invoice_id TEXT NOT NULL,
-  activity_id TEXT NOT NULL,
+  invoice_id TEXT,
+  activity_id TEXT,
   tenant_pubkey TEXT NOT NULL,
   relay_id TEXT NOT NULL,
   plan TEXT NOT NULL,
   amount INTEGER NOT NULL,
   description TEXT NOT NULL DEFAULT '',
   created_at INTEGER NOT NULL,
+  period_start INTEGER,
   FOREIGN KEY (invoice_id) REFERENCES invoice(id),
   FOREIGN KEY (tenant_pubkey) REFERENCES tenant(pubkey)
 );
@@ -90,11 +92,13 @@ CREATE INDEX IF NOT EXISTS idx_activity_resource_created ON activity (resource_i
 
 CREATE INDEX IF NOT EXISTS idx_activity_unbilled ON activity (tenant, created_at) WHERE billed_at IS NULL;
 
-CREATE UNIQUE INDEX IF NOT EXISTS uniq_invoice_tenant_period ON invoice (tenant_pubkey, period_start);
-
 CREATE INDEX IF NOT EXISTS idx_invoice_tenant_created ON invoice (tenant_pubkey, created_at);
 
 CREATE INDEX IF NOT EXISTS idx_invoice_item_invoice ON invoice_item (invoice_id);
+
+CREATE INDEX IF NOT EXISTS idx_invoice_item_outstanding ON invoice_item (tenant_pubkey) WHERE invoice_id IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_invoice_item_renewal ON invoice_item (tenant_pubkey, period_start);
 
 CREATE INDEX IF NOT EXISTS idx_bolt11_invoice_created ON bolt11 (invoice_id, created_at);
 

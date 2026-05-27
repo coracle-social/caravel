@@ -35,7 +35,7 @@ use crate::query;
 use crate::robot::Robot;
 use crate::stripe::Stripe;
 use crate::routes::identity::get_identity;
-use crate::routes::invoices::{get_invoice, get_invoice_bolt11};
+use crate::routes::invoices::{get_invoice, get_invoice_bolt11, get_tenant_latest_invoice};
 use crate::routes::plans::{get_plan, list_plans};
 use crate::routes::relays::{
     create_relay, deactivate_relay, get_relay, list_relay_activity, list_relay_members,
@@ -76,6 +76,10 @@ impl Api {
             .route("/tenants/:pubkey", get(get_tenant).put(update_tenant))
             .route("/tenants/:pubkey/relays", get(list_tenant_relays))
             .route("/tenants/:pubkey/invoices", get(list_tenant_invoices))
+            .route(
+                "/tenants/:pubkey/invoices/latest",
+                get(get_tenant_latest_invoice),
+            )
             .route("/tenants/:pubkey/stripe/session", get(create_stripe_session))
             .route("/relays", get(list_relays).post(create_relay))
             .route("/relays/:id", get(get_relay).put(update_relay))

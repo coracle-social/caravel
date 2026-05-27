@@ -13,6 +13,9 @@ pub struct Activity {
     pub resource_type: String,
     pub resource_id: String,
     pub billed_at: Option<i64>,
+    /// The relay's plan at the time of a `create_relay`/`update_relay` activity;
+    /// `None` for all other activity types.
+    pub plan_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -94,14 +97,19 @@ pub struct Invoice {
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct InvoiceItem {
   pub id: String,
-  pub invoice_id: String,
-  pub activity_id: String,
+  /// `None` while outstanding; set once the item is claimed onto an invoice.
+  pub invoice_id: Option<String>,
+  /// `None` for renewal items, which have no source activity.
+  pub activity_id: Option<String>,
   pub tenant_pubkey: String,
   pub relay_id: String,
   pub plan: String,
   pub amount: i64,
   pub description: String,
   pub created_at: i64,
+  /// Set only on renewal items: the billing period this item renews. Doubles as
+  /// the marker that prevents a period from being renewed twice.
+  pub period_start: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]

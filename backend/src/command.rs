@@ -212,30 +212,37 @@ pub async fn mark_activity_billed(activity_id: &str) -> Result<()> {
 /// `period_start`. The per-relay existence check and insert are a single
 /// statement, so neither a re-tick nor a relay's own creation/activation charge
 /// (which also stamps `period_start`) can bill the same relay-period twice.
-pub async fn create_renewal_items(items: &[InvoiceItem]) -> Result<()> {
+pub async fn renew_tenant(
+    tenant_pubkey: &str,
+    period_start: i64,
+    items: &[InvoiceItem],
+) -> Result<()> {
     with_tx(async |tx| {
+        // In-tx guard: bail if this tenant has already been renewed for this
+        // period (or later). This is the correctness backstop — it keeps renewal
+        // idempotent under a crash mid-renewal or a poll racing the eager
+        // endpoint, since the item inserts and the `renewed_at` write commit
+        // together.
+        let renewed_at = sqlx::query_scalar::<_, Option<i64>>(
+            "SELECT renewed_at FROM tenant WHERE pubkey = ?",
+        )
+        .bind(tenant_pubkey)
+        .fetch_one(&mut **tx)
+        .await?;
+
+        if renewed_at.is_some_and(|at| at >= period_start) {
+            return Ok(());
+        }
+
         for item in items {
-            sqlx::query(
-                "INSERT INTO invoice_item
-                    (id, invoice_id, activity_id, tenant_pubkey, relay_id, plan, amount, description, created_at, period_start)
-                 SELECT ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?
-                 WHERE NOT EXISTS (
-                     SELECT 1 FROM invoice_item WHERE relay_id = ? AND period_start = ?
-                 )",
-            )
-            .bind(&item.id)
-            .bind(&item.tenant_pubkey)
-            .bind(&item.relay_id)
-            .bind(&item.plan)
-            .bind(item.amount)
-            .bind(&item.description)
-            .bind(item.created_at)
-            .bind(item.period_start)
-            .bind(&item.relay_id)
-            .bind(item.period_start)
+            insert_invoice_item_tx(tx, item).await?;
+        }
+
+        sqlx::query("UPDATE tenant SET renewed_at = ? WHERE pubkey = ?")
+            .bind(period_start)
+            .bind(tenant_pubkey)
             .execute(&mut **tx)
             .await?;
-        }
 
         Ok(())
     })
@@ -433,8 +440,8 @@ async fn insert_invoice_tx(
 async fn insert_invoice_item_tx(tx: &mut Transaction<'_, Sqlite>, item: &InvoiceItem) -> Result<()> {
     sqlx::query(
         "INSERT INTO invoice_item
-            (id, invoice_id, activity_id, tenant_pubkey, relay_id, plan, amount, description, created_at, period_start)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (id, invoice_id, activity_id, tenant_pubkey, relay_id, plan, amount, description, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&item.id)
     .bind(&item.invoice_id)
@@ -445,7 +452,6 @@ async fn insert_invoice_item_tx(tx: &mut Transaction<'_, Sqlite>, item: &Invoice
     .bind(item.amount)
     .bind(&item.description)
     .bind(item.created_at)
-    .bind(item.period_start)
     .execute(&mut **tx)
     .await?;
     Ok(())

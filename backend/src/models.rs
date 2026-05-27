@@ -36,6 +36,9 @@ pub struct Tenant {
     pub created_at: i64,
     pub billing_anchor: Option<i64>,
     pub stripe_customer_id: String,
+    /// `period_start` of the most recent period this tenant was renewed for, or
+    /// `None` if never renewed. The per-period renewal idempotency marker.
+    pub renewed_at: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -107,9 +110,6 @@ pub struct InvoiceItem {
   pub amount: i64,
   pub description: String,
   pub created_at: i64,
-  /// Set only on renewal items: the billing period this item renews. Doubles as
-  /// the marker that prevents a period from being renewed twice.
-  pub period_start: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]

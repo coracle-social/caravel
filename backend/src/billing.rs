@@ -213,7 +213,7 @@ impl Billing {
         let fraction = period_fraction_remaining(anchor, activity.created_at);
         let amount = sign * prorate(plan.amount, fraction);
 
-        Ok(Some(line_item(activity, &relay.id, plan.id, amount, description, None)))
+        Ok(Some(line_item(activity, &relay.id, plan.id, amount, description)))
     }
 
     /// The prorated delta for a plan change, read straight from the activity log:
@@ -259,7 +259,6 @@ impl Billing {
             new_plan.id,
             amount,
             &description,
-            None,
         )))
     }
 
@@ -283,7 +282,13 @@ impl Billing {
         let period_start = period_start_at(anchor, now);
         let period_end = add_one_month(period_start);
 
-        self.renew_period(&tenant, period_start).await?;
+        // Short-circuit the renewal scan once this period is already renewed — the
+        // common case on all but the first poll of a period (saving ~720 scans a
+        // month per tenant). renew_tenant re-checks this in-tx as the real guard.
+        if tenant.renewed_at.is_none_or(|at| at < period_start) {
+            self.renew_period(&tenant, period_start).await?;
+        }
+
         self.claim_outstanding(&tenant, period_start, period_end).await
     }
 
@@ -317,11 +322,12 @@ impl Billing {
                 amount: plan.amount,
                 description: "Subscription renewal".to_string(),
                 created_at: period_start,
-                period_start: Some(period_start),
             });
         }
 
-        command::create_renewal_items(&renewal_items).await
+        // Inserts the items and advances `renewed_at` to `period_start` in one
+        // transaction (idempotent via an in-tx guard), so a re-tick is a no-op.
+        command::renew_tenant(&tenant.pubkey, period_start, &renewal_items).await
     }
 
     /// Claim the tenant's outstanding items onto a fresh invoice if they net
@@ -562,7 +568,6 @@ fn line_item(
     plan: String,
     amount: i64,
     description: &str,
-    period_start: Option<i64>,
 ) -> InvoiceItem {
     InvoiceItem {
         id: uuid::Uuid::new_v4().to_string(),
@@ -574,7 +579,6 @@ fn line_item(
         amount,
         description: description.to_string(),
         created_at: activity.created_at,
-        period_start,
     }
 }
 

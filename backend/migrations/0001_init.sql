@@ -15,7 +15,8 @@ CREATE TABLE IF NOT EXISTS tenant (
   nwc_error TEXT,
   created_at INTEGER NOT NULL,
   billing_anchor INTEGER,
-  stripe_customer_id TEXT NOT NULL
+  stripe_customer_id TEXT NOT NULL,
+  renewed_at INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS relay (
@@ -61,7 +62,6 @@ CREATE TABLE IF NOT EXISTS invoice_item (
   amount INTEGER NOT NULL,
   description TEXT NOT NULL DEFAULT '',
   created_at INTEGER NOT NULL,
-  period_start INTEGER,
   FOREIGN KEY (invoice_id) REFERENCES invoice(id),
   FOREIGN KEY (tenant_pubkey) REFERENCES tenant(pubkey)
 );
@@ -97,8 +97,6 @@ CREATE INDEX IF NOT EXISTS idx_invoice_tenant_created ON invoice (tenant_pubkey,
 CREATE INDEX IF NOT EXISTS idx_invoice_item_invoice ON invoice_item (invoice_id);
 
 CREATE INDEX IF NOT EXISTS idx_invoice_item_outstanding ON invoice_item (tenant_pubkey) WHERE invoice_id IS NULL;
-
-CREATE INDEX IF NOT EXISTS idx_invoice_item_renewal ON invoice_item (tenant_pubkey, period_start);
 
 CREATE INDEX IF NOT EXISTS idx_bolt11_invoice_created ON bolt11 (invoice_id, created_at);
 

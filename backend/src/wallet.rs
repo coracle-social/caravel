@@ -4,6 +4,9 @@ use nwc::prelude::{
     TransactionState,
 };
 
+/// A Nostr Wallet Connect wallet, used both as the service's receiving wallet
+/// and as a tenant's paying wallet. Each call spins up and shuts down its own
+/// short-lived NWC client; nothing is pooled across calls.
 #[derive(Clone)]
 pub struct Wallet {
     url: NostrWalletConnectURI,

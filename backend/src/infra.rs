@@ -12,14 +12,25 @@ const RELAY_SYNC_RETRY_BASE_DELAY_SECS: u64 = 30;
 const RELAY_SYNC_RETRY_MAX_DELAY_SECS: u64 = 15 * 60;
 const RELAY_SYNC_RETRY_MAX_ATTEMPTS: usize = 6;
 
+/// The relay-provisioning reactor: it keeps the external relay backend (the
+/// zooid API) in sync with our relay rows, reacting to relay activity and
+/// retrying failed syncs with backoff.
 #[derive(Clone)]
 pub struct Infra;
+
+impl Default for Infra {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl Infra {
     pub fn new() -> Self {
         Self
     }
 
+    /// Run the reactor for the life of the process: reconcile any relays left
+    /// unsynced from a previous run, then sync each relay as its activity arrives.
     pub async fn start(self) {
         let mut rx = db::subscribe();
 
@@ -238,6 +249,7 @@ impl Infra {
         Ok(())
     }
 
+    /// Fetch the member pubkeys of a relay from the zooid API.
     pub async fn list_relay_members(&self, relay_id: &str) -> Result<Vec<String>> {
         #[derive(serde::Deserialize)]
         struct MembersResponse {

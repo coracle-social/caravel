@@ -7,6 +7,9 @@ use tokio::sync::Mutex;
 
 use crate::env;
 
+/// The service's Nostr identity: it publishes the robot's profile and relay
+/// lists and sends encrypted direct messages to tenants, caching recipients'
+/// relay lists between sends.
 #[derive(Clone)]
 pub struct Robot {
     outbox_cache: std::sync::Arc<Mutex<HashMap<String, CacheEntry>>>,
@@ -20,6 +23,7 @@ struct CacheEntry {
 }
 
 impl Robot {
+    /// Build the robot and publish its Nostr identity (profile and relay lists).
     pub async fn new() -> Result<Self> {
         let robot = Self {
             outbox_cache: std::sync::Arc::new(Mutex::new(HashMap::new())),
@@ -80,6 +84,7 @@ impl Robot {
         Ok(())
     }
 
+    /// Send an encrypted direct message to a recipient over their messaging relays.
     pub async fn send_dm(&self, recipient: &str, message: &str) -> Result<()> {
         let outbox = self.fetch_outbox_relays(recipient).await?;
         if outbox.is_empty() {
@@ -123,6 +128,7 @@ impl Robot {
         Ok(relays)
     }
 
+    /// The recipient's display name from their Nostr profile, if they have one.
     pub async fn fetch_nostr_name(&self, pubkey: &str) -> Option<String> {
         let pubkey = PublicKey::parse(pubkey).ok()?;
         let filter = Filter::new().author(pubkey).kind(Kind::Metadata).limit(1);

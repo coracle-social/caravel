@@ -188,6 +188,8 @@ pub async fn complete_relay_sync(relay_id: &str) -> Result<()> {
 
 // --- Invoice items (the outstanding-charge ledger) ---
 
+/// Persist a reconciled activity's line item and mark the activity billed in one
+/// transaction, so a recovery pass never re-bills it.
 pub async fn insert_invoice_item_for_activity(invoice_item: &InvoiceItem, activity_id: &str) -> Result<()> {
     let now = chrono::Utc::now().timestamp();
 
@@ -208,21 +210,18 @@ pub async fn mark_activity_billed(activity_id: &str) -> Result<()> {
     with_tx(async |tx| mark_activity_billed_tx(tx, activity_id, now).await).await
 }
 
-/// Insert renewal line items, skipping any relay already covered for the item's
-/// `period_start`. The per-relay existence check and insert are a single
-/// statement, so neither a re-tick nor a relay's own creation/activation charge
-/// (which also stamps `period_start`) can bill the same relay-period twice.
+/// Insert this period's renewal items and advance the tenant's `renewed_at`
+/// marker to `period_start`, atomically. Idempotent: a repeat call for an
+/// already-renewed period is a no-op, so a crash mid-renewal or a poll racing
+/// the on-demand endpoint can't bill the same period twice.
 pub async fn renew_tenant(
     tenant_pubkey: &str,
     period_start: i64,
     items: &[InvoiceItem],
 ) -> Result<()> {
     with_tx(async |tx| {
-        // In-tx guard: bail if this tenant has already been renewed for this
-        // period (or later). This is the correctness backstop — it keeps renewal
-        // idempotent under a crash mid-renewal or a poll racing the eager
-        // endpoint, since the item inserts and the `renewed_at` write commit
-        // together.
+        // Re-read the marker inside the transaction so the guard and the writes
+        // commit together — this is the real idempotency backstop.
         let renewed_at = sqlx::query_scalar::<_, Option<i64>>(
             "SELECT renewed_at FROM tenant WHERE pubkey = ?",
         )
@@ -254,8 +253,7 @@ pub async fn renew_tenant(
 /// Claim all of a tenant's outstanding items onto a new invoice — but only if
 /// they sum to a positive amount. A non-positive balance (net credit or nothing
 /// owed) leaves the items outstanding so the credit carries to the next positive
-/// invoice. The sum, insert, and claim run in one transaction. Returns the
-/// invoice, or `None` when there's nothing to bill.
+/// invoice. Returns the invoice, or `None` when there's nothing to bill.
 pub async fn claim_outstanding_into_invoice(
     invoice_id: &str,
     tenant_pubkey: &str,

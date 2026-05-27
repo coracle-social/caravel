@@ -278,6 +278,9 @@ const RESERVED_SUBDOMAINS: [&str; 3] = ["api", "admin", "internal"];
 static SUBDOMAIN_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$").unwrap());
 
+/// Validate and normalize a relay before persistence: enforce the subdomain
+/// format and reserved names, require an existing plan that permits any enabled
+/// premium features, and coerce the boolean columns to 0/1.
 fn prepare_relay(mut relay: Relay) -> Result<Relay, ApiError> {
     if !SUBDOMAIN_RE.is_match(&relay.subdomain)
         || RESERVED_SUBDOMAINS.contains(&relay.subdomain.as_str()) {
@@ -302,6 +305,7 @@ fn prepare_relay(mut relay: Relay) -> Result<Relay, ApiError> {
     Ok(relay)
 }
 
+/// Translate a duplicate-subdomain write into a 422; anything else is a 500.
 fn map_relay_write_error(e: anyhow::Error) -> ApiError {
     if matches!(map_unique_error(&e), Some("subdomain-exists")) {
         unprocessable("subdomain-exists", "subdomain already exists")

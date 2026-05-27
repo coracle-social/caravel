@@ -12,6 +12,9 @@ use crate::robot::Robot;
 use crate::stripe::Stripe;
 use crate::wallet::Wallet;
 
+/// Owns subscription billing: it reconciles tenant activity into invoice items,
+/// renews subscriptions each period, and collects payment (Lightning, then a
+/// card on file, then a manual DM link).
 #[derive(Clone)]
 pub struct Billing {
     stripe: Stripe,
@@ -188,8 +191,8 @@ impl Billing {
     }
 
     /// A prorated charge (or credit, with `sign` = -1) for the relay's current
-    /// plan. `None` for a missing relay or a free plan. Mid-period items don't
-    /// stamp `period_start` — the renewal decides coverage from activity history.
+    /// plan, covering the fraction of the period remaining at the activity.
+    /// `None` for a missing relay or a free plan.
     async fn make_prorated_item(
         &self,
         tenant: &Tenant,
@@ -262,11 +265,12 @@ impl Billing {
         )))
     }
 
-    /// Reconcile pending activity, add this period's renewals for any relay due,
-    /// and claim everything outstanding onto an invoice. Shared by the poll and
-    /// the on-demand invoice endpoint — safe to call either way: renewals are
-    /// per-relay idempotent. No payment is attempted here; callers that want
-    /// auto-pay do it on the returned invoice. `None` when nothing is owed.
+    /// Reconcile pending activity, add this period's renewals if they're due, and
+    /// claim everything outstanding onto an invoice. Shared by the poll and the
+    /// on-demand invoice endpoint — safe to call either way: renewal is idempotent
+    /// per period (see [`command::renew_tenant`]). No payment is attempted here;
+    /// callers that want auto-pay do it on the returned invoice. `None` when
+    /// nothing is owed.
     pub async fn generate_invoice(&self, tenant: &Tenant) -> Result<Option<Invoice>> {
         self.reconcile_subscription(tenant).await?;
 
@@ -294,10 +298,11 @@ impl Billing {
 
     /// Charge a full-period renewal for every relay that was active on a paid plan
     /// as of `period_start`, reconstructing that state from the activity log
-    /// (status from create/activate/deactivate, plan from create/update). Per-relay
-    /// idempotent via `period_start`, so calling it on every generation can't
-    /// renew a relay twice; a relay created/activated *within* the period isn't
-    /// active before the boundary, so it's covered by its own prorated charge.
+    /// (status from create/activate/deactivate, plan from create/update).
+    /// Idempotent per period via the tenant's `renewed_at` marker, so calling it
+    /// on every generation can't renew twice; a relay created/activated *within*
+    /// the period isn't active before the boundary, so it's covered by its own
+    /// prorated charge instead.
     async fn renew_period(&self, tenant: &Tenant, period_start: i64) -> Result<()> {
         let activities = query::list_relay_activity_before(&tenant.pubkey, period_start).await?;
 
@@ -541,8 +546,7 @@ fn add_one_month(ts: i64) -> i64 {
 }
 
 /// Fraction of the current billing period still unused at `at`, in `[0.0, 1.0]`,
-/// for prorating a mid-period charge or credit. With no billing anchor yet the
-/// period is only just beginning, so the whole period remains (full price).
+/// for prorating a mid-period charge or credit.
 fn period_fraction_remaining(billing_anchor: i64, at: i64) -> f64 {
     let period_start = period_start_at(billing_anchor, at);
     let period_end = add_one_month(period_start);
@@ -560,8 +564,7 @@ fn prorate(amount: i64, fraction: f64) -> i64 {
 }
 
 /// Build an outstanding (unassigned, `invoice_id = None`) line item from a
-/// reconciled activity. `period_start` is `Some` only for coverage charges
-/// (creation/activation), which mark the relay-period as paid.
+/// reconciled activity.
 fn line_item(
     activity: &Activity,
     relay_id: &str,

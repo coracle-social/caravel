@@ -123,7 +123,7 @@ pub struct Bolt11 {
   pub settled_at: Option<i64>,
 }
 
-#[allow(dead_code)] // backs the `intent` table for the (not yet implemented) Stripe intent flow
+#[allow(dead_code)] // mirrors the `intent` table; rows record paid Stripe PaymentIntents but aren't read back into this struct yet
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Intent {
   pub id: String,

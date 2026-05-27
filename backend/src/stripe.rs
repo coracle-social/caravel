@@ -12,11 +12,15 @@ use crate::env;
 
 const STRIPE_API: &str = "https://api.stripe.com/v1";
 
-// Stripe struct and impl
-
 #[derive(Clone)]
 pub struct Stripe {
     http: reqwest::Client,
+}
+
+impl Default for Stripe {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Stripe {
@@ -54,6 +58,8 @@ impl Stripe {
 
     // --- Customers ---
 
+    /// Create a Stripe customer for a tenant and return its id. Idempotent on
+    /// `tenant_pubkey` so retrying a tenant's creation reuses the same customer.
     pub async fn create_customer(&self, tenant_pubkey: &str, name: &str) -> Result<String> {
         let body = self
             .post("/customers")
@@ -142,6 +148,8 @@ impl Stripe {
 
     // --- Portal ---
 
+    /// Open a Stripe billing-portal session for the customer, returning the URL
+    /// where they can manage their saved payment methods.
     pub async fn create_portal_session(
         &self,
         customer_id: &str,

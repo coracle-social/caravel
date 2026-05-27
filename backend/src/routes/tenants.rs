@@ -48,6 +48,9 @@ pub async fn list_tenants(
         .collect::<Vec<_>>())
 }
 
+/// Create the tenant row for the calling pubkey and provision its Stripe
+/// customer. Idempotent: an existing tenant (including one created by a
+/// concurrent unique-constraint race) is returned as-is.
 pub async fn create_tenant(
     State(api): State<Arc<Api>>,
     AuthedPubkey(pubkey): AuthedPubkey,
@@ -138,7 +141,7 @@ pub async fn list_tenant_relays(
     ok(relays)
 }
 
-
+/// List a tenant's invoices, most recent first.
 pub async fn list_tenant_invoices(
     State(api): State<Arc<Api>>,
     AuthedPubkey(auth): AuthedPubkey,
@@ -158,6 +161,8 @@ pub struct StripeSessionParams {
     return_url: Option<String>,
 }
 
+/// Create a Stripe billing-portal session for the tenant to manage their saved
+/// payment methods, returning the portal URL.
 pub async fn create_stripe_session(
     State(api): State<Arc<Api>>,
     AuthedPubkey(auth): AuthedPubkey,

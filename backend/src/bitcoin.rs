@@ -1,5 +1,7 @@
 use anyhow::{Result, anyhow};
 
+/// Convert a fiat amount in minor units (e.g. USD cents) to millisatoshis at the
+/// current spot price, for pricing a Lightning invoice from an invoice total.
 pub async fn fiat_to_msats(amount_fiat_minor: i64, currency: &str) -> Result<u64> {
     let price = get_bitcoin_price(&currency.to_uppercase()).await?;
     let divisor = 10_f64.powi(currency_minor_exponent(currency)? as i32);
@@ -18,6 +20,7 @@ struct CoinbaseSpotPriceData {
     amount: String,
 }
 
+/// The current Bitcoin spot price in `currency`, from Coinbase.
 pub async fn get_bitcoin_price(currency: &str) -> Result<f64> {
     let http = reqwest::Client::new();
     let url = format!("https://api.coinbase.com/v2/prices/BTC-{currency}/spot");

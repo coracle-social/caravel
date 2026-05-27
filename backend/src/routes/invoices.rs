@@ -46,6 +46,8 @@ pub async fn get_invoice(
     ok(invoice)
 }
 
+/// Return a payable Lightning invoice (bolt11) for an invoice, minting one if
+/// needed and first settling it if it was already paid out of band.
 pub async fn get_invoice_bolt11(
     State(api): State<Arc<Api>>,
     AuthedPubkey(auth): AuthedPubkey,

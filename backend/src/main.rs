@@ -20,7 +20,6 @@ use tower_http::cors::{AllowOrigin, CorsLayer, Any};
 
 use crate::api::Api;
 use crate::billing::Billing;
-use crate::infra::Infra;
 use crate::robot::Robot;
 use crate::stripe::Stripe;
 
@@ -39,9 +38,8 @@ async fn main() -> Result<()> {
 
     let robot = Robot::new().await?;
     let stripe = Stripe::new();
-    let infra = Infra::new();
     let billing = Billing::new(robot.clone());
-    let api = Api::new(billing.clone(), stripe, robot, infra.clone());
+    let api = Api::new(billing.clone(), stripe, robot);
 
     let parsed = env::get()
         .server_allow_origins
@@ -55,8 +53,8 @@ async fn main() -> Result<()> {
 
     let app = api.router().layer(cors);
 
-    tokio::spawn(async move {
-        infra.start().await;
+    tokio::spawn(async {
+        infra::start().await;
     });
 
     tokio::spawn(async move {

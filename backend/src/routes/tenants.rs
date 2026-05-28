@@ -149,7 +149,7 @@ pub async fn list_tenant_invoices(
 ) -> ApiResult {
     api.require_admin_or_tenant(&auth, &pubkey)?;
 
-    let invoices = query::list_invoices(&pubkey)
+    let invoices = query::list_invoices_for_tenant(&pubkey)
         .await
         .map_err(internal)?;
 

@@ -26,7 +26,7 @@ pub async fn get_tenant_latest_invoice(
         .await
         .map_err(internal)?;
 
-    let invoice = query::get_latest_invoice(&pubkey).await.map_err(internal)?;
+    let invoice = query::get_latest_invoice_for_tenant(&pubkey).await.map_err(internal)?;
 
     ok(invoice)
 }

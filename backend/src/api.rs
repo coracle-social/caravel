@@ -29,7 +29,6 @@ use nostr_sdk::{Event, JsonUtil, Kind};
 
 use crate::billing::Billing;
 use crate::env;
-use crate::infra::Infra;
 use crate::models::{Relay, Tenant};
 use crate::query;
 use crate::robot::Robot;
@@ -52,16 +51,14 @@ pub struct Api {
     pub billing: Billing,
     pub stripe: Stripe,
     pub robot: Robot,
-    pub infra: Infra,
 }
 
 impl Api {
-    pub fn new(billing: Billing, stripe: Stripe, robot: Robot, infra: Infra) -> Self {
+    pub fn new(billing: Billing, stripe: Stripe, robot: Robot) -> Self {
         Self {
             billing,
             stripe,
             robot,
-            infra,
         }
     }
 

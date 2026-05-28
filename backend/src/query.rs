@@ -15,7 +15,7 @@ fn select_activity(tail: &str) -> String {
     format!("SELECT * FROM activity {tail}")
 }
 
-// Plans
+// --- Plans ---
 
 pub fn list_plans() -> Vec<Plan> {
     vec![
@@ -50,7 +50,7 @@ pub fn get_plan(plan_id: &str) -> Option<Plan> {
     list_plans().into_iter().find(|p| p.id == plan_id)
 }
 
-// Tenants
+// --- Tenants ---
 
 pub async fn list_tenants() -> Result<Vec<Tenant>> {
     Ok(sqlx::query_as::<_, Tenant>(&select_tenant(""))
@@ -65,7 +65,7 @@ pub async fn get_tenant(pubkey: &str) -> Result<Option<Tenant>> {
         .await?)
 }
 
-// Relays
+// --- Relays ---
 
 pub async fn list_relays() -> Result<Vec<Relay>> {
     Ok(sqlx::query_as::<_, Relay>(&select_relay(""))
@@ -95,7 +95,26 @@ pub async fn get_relay(id: &str) -> Result<Option<Relay>> {
         .await?)
 }
 
-// Invoices
+/// The relay's plan immediately before `before`, read from the activity log
+/// (the most recent `create_relay`/`update_relay` with `created_at < before`).
+/// Billing uses this as the `old` side of a plan-change delta.
+pub async fn get_relay_plan_before(relay_id: &str, before: i64) -> Result<Option<String>> {
+    Ok(sqlx::query_scalar::<_, String>(
+        "SELECT plan_id FROM activity
+         WHERE resource_id = ?
+           AND resource_type = 'relay'
+           AND plan_id IS NOT NULL
+           AND created_at < ?
+         ORDER BY created_at DESC
+         LIMIT 1",
+    )
+    .bind(relay_id)
+    .bind(before)
+    .fetch_optional(pool())
+    .await?)
+}
+
+// --- Invoices ---
 
 pub async fn get_invoice(invoice_id: &str) -> Result<Option<Invoice>> {
     Ok(sqlx::query_as::<_, Invoice>("SELECT * FROM invoice WHERE id = ?")
@@ -104,7 +123,7 @@ pub async fn get_invoice(invoice_id: &str) -> Result<Option<Invoice>> {
         .await?)
 }
 
-pub async fn list_invoices(tenant_pubkey: &str) -> Result<Vec<Invoice>> {
+pub async fn list_invoices_for_tenant(tenant_pubkey: &str) -> Result<Vec<Invoice>> {
     Ok(sqlx::query_as::<_, Invoice>(
         "SELECT * FROM invoice WHERE tenant_pubkey = ? ORDER BY created_at DESC",
     )
@@ -113,7 +132,7 @@ pub async fn list_invoices(tenant_pubkey: &str) -> Result<Vec<Invoice>> {
     .await?)
 }
 
-pub async fn get_latest_invoice(tenant_pubkey: &str) -> Result<Option<Invoice>> {
+pub async fn get_latest_invoice_for_tenant(tenant_pubkey: &str) -> Result<Option<Invoice>> {
     Ok(sqlx::query_as::<_, Invoice>(
         "SELECT * FROM invoice WHERE tenant_pubkey = ? ORDER BY created_at DESC LIMIT 1",
     )
@@ -131,24 +150,7 @@ pub async fn get_invoice_items_for_invoice(invoice_id: &str) -> Result<Vec<Invoi
     )
 }
 
-/// The relay's plan immediately before `before`, read from the activity log
-/// (the most recent `create_relay`/`update_relay` with `created_at < before`).
-/// Billing uses this as the `old` side of a plan-change delta.
-pub async fn get_relay_plan_before(relay_id: &str, before: i64) -> Result<Option<String>> {
-    Ok(sqlx::query_scalar::<_, String>(
-        "SELECT plan_id FROM activity
-         WHERE resource_id = ?
-           AND created_at < ?
-           AND activity_type IN ('create_relay', 'update_relay')
-           AND plan_id IS NOT NULL
-         ORDER BY created_at DESC
-         LIMIT 1",
-    )
-    .bind(relay_id)
-    .bind(before)
-    .fetch_optional(pool())
-    .await?)
-}
+// --- Bolt11 ---
 
 pub async fn get_bolt11(bolt11_id: &str) -> Result<Option<Bolt11>> {
     Ok(sqlx::query_as::<_, Bolt11>("SELECT * FROM bolt11 WHERE id = ?")
@@ -166,7 +168,7 @@ pub async fn get_bolt11_for_invoice(invoice_id: &str) -> Result<Option<Bolt11>> 
     .await?)
 }
 
-// Activity
+// --- Activity ---
 
 /// Billable activity for a tenant not yet folded into an invoice. The
 /// activity-type filter and the `billed_at IS NULL` guard live here so the

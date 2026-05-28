@@ -9,7 +9,7 @@ use regex::Regex;
 use serde::Deserialize;
 
 use crate::api::{Api, AuthedPubkey};
-use crate::{command, query};
+use crate::{command, infra, query};
 use crate::models::{
     RELAY_STATUS_ACTIVE, RELAY_STATUS_DELINQUENT, RELAY_STATUS_INACTIVE, Relay,
 };
@@ -60,7 +60,7 @@ pub async fn list_relay_members(
     let relay = api.get_relay_or_404(&id).await?;
     api.require_admin_or_tenant(&auth, &relay.tenant)?;
 
-    let members = fetch_relay_members(&api, &relay).await.map_err(internal)?;
+    let members = fetch_relay_members(&relay).await.map_err(internal)?;
     ok(serde_json::json!({ "members": members }))
 }
 
@@ -197,7 +197,7 @@ pub async fn update_relay(
         let selected_plan =
             query::get_plan(&relay.plan).expect("validated plan must exist");
         if let Some(limit) = selected_plan.members {
-            let current_members = fetch_relay_members(&api, &relay)
+            let current_members = fetch_relay_members(&relay)
                 .await
                 .map_err(internal)?
                 .len() as i64;
@@ -265,12 +265,12 @@ pub async fn reactivate_relay(
 
 // --- helpers ----------------------------------------------------------------
 
-async fn fetch_relay_members(api: &Api, relay: &Relay) -> Result<Vec<String>> {
+async fn fetch_relay_members(relay: &Relay) -> Result<Vec<String>> {
     if relay.synced == 0 {
         return Ok(Vec::new());
     }
 
-    api.infra.list_relay_members(&relay.id).await
+    infra::list_relay_members(&relay.id).await
 }
 
 const RESERVED_SUBDOMAINS: [&str; 3] = ["api", "admin", "internal"];

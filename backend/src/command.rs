@@ -1,6 +1,7 @@
 use anyhow::Result;
 use sqlx::{Sqlite, Transaction};
 
+use crate::billing::BillingPeriod;
 use crate::db::{pool, publish, with_tx};
 use crate::models::{
     Activity, Bolt11, Invoice, InvoiceItem, RELAY_STATUS_ACTIVE, RELAY_STATUS_DELINQUENT,
@@ -57,42 +58,6 @@ pub async fn clear_tenant_nwc_error(pubkey: &str) -> Result<()> {
         .execute(pool())
         .await?;
     Ok(())
-}
-
-/// Insert this period's renewal items and advance the tenant's `renewed_at`
-/// marker to `period_start`, atomically and idempotently.
-pub async fn renew_tenant(
-    tenant_pubkey: &str,
-    period_start: i64,
-    items: &[InvoiceItem],
-) -> Result<()> {
-    with_tx(async |tx| {
-        // Re-read the marker inside the transaction so the guard and the writes
-        // commit together — this ensures idempotency so we don't double-invoice.
-        let renewed_at = sqlx::query_scalar::<_, Option<i64>>(
-            "SELECT renewed_at FROM tenant WHERE pubkey = ?",
-        )
-        .bind(tenant_pubkey)
-        .fetch_one(&mut **tx)
-        .await?;
-
-        if renewed_at.is_some_and(|at| at >= period_start) {
-            return Ok(());
-        }
-
-        for item in items {
-            insert_invoice_item_tx(tx, item).await?;
-        }
-
-        sqlx::query("UPDATE tenant SET renewed_at = ? WHERE pubkey = ?")
-            .bind(period_start)
-            .bind(tenant_pubkey)
-            .execute(&mut **tx)
-            .await?;
-
-        Ok(())
-    })
-    .await
 }
 
 // --- Relays ---
@@ -235,6 +200,47 @@ pub async fn insert_invoice_item_for_activity(invoice_item: &InvoiceItem, activi
         if mark_activity_billed_tx(tx, activity_id, now).await? {
             insert_invoice_item_tx(tx, invoice_item).await?;
         }
+
+        Ok(())
+    })
+    .await
+}
+
+/// Insert this period's renewal items and advance the tenant's `renewed_at`
+/// marker to `period.start`, atomically and idempotently. Empty `items` is a
+/// no-op — a tenant with no active paid relays has nothing to renew.
+pub async fn insert_invoice_items_for_renewal(
+    items: &[InvoiceItem],
+    period: &BillingPeriod,
+) -> Result<()> {
+    let Some(first) = items.first() else {
+        return Ok(());
+    };
+    let tenant_pubkey = &first.tenant_pubkey;
+
+    with_tx(async |tx| {
+        // Re-read the marker inside the transaction so the guard and the writes
+        // commit together — this ensures idempotency so we don't double-invoice.
+        let renewed_at = sqlx::query_scalar::<_, Option<i64>>(
+            "SELECT renewed_at FROM tenant WHERE pubkey = ?",
+        )
+        .bind(tenant_pubkey)
+        .fetch_one(&mut **tx)
+        .await?;
+
+        if renewed_at.is_some_and(|at| at >= period.start) {
+            return Ok(());
+        }
+
+        for item in items {
+            insert_invoice_item_tx(tx, item).await?;
+        }
+
+        sqlx::query("UPDATE tenant SET renewed_at = ? WHERE pubkey = ?")
+            .bind(period.start)
+            .bind(tenant_pubkey)
+            .execute(&mut **tx)
+            .await?;
 
         Ok(())
     })

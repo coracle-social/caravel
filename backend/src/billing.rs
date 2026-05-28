@@ -147,6 +147,8 @@ impl Billing {
 
     // --- Reconciliation, renewal, and on-demand billing ---
 
+    /// Lists billable activity, setting the tenant's billing anchor to the first
+    /// activity in the process.
     async fn reconcile_subscription(&self, tenant: &Tenant) -> Result<()> {
         let mut tenant = tenant.clone();
 
@@ -210,13 +212,21 @@ impl Billing {
             return Ok(None);
         }
 
-        let anchor = tenant
-            .billing_anchor
+        let period = BillingPeriod::new(tenant, activity.created_at)
             .ok_or_else(|| anyhow!("billing anchor must be set before building prorated items"))?;
-        let fraction = period_fraction_remaining(anchor, activity.created_at);
-        let amount = sign * prorate(plan.amount, fraction);
+        let amount = sign * period.prorate(plan.amount, activity.created_at);
 
-        Ok(Some(line_item(activity, &relay.id, plan.id, amount, description)))
+        Ok(Some(InvoiceItem {
+            id: uuid::Uuid::new_v4().to_string(),
+            invoice_id: None,
+            activity_id: Some(activity.id.clone()),
+            tenant_pubkey: activity.tenant.clone(),
+            relay_id: activity.resource_id.clone(),
+            plan: plan.id,
+            amount,
+            description: description.to_string(),
+            created_at: activity.created_at,
+        }))
     }
 
     /// The prorated delta for a plan change, read straight from the activity log:
@@ -246,23 +256,26 @@ impl Billing {
             return Ok(None);
         };
 
-        let anchor = tenant
-            .billing_anchor
+        let period = BillingPeriod::new(tenant, activity.created_at)
             .ok_or_else(|| anyhow!("billing anchor must be set before building prorated items"))?;
-        let fraction = period_fraction_remaining(anchor, activity.created_at);
-        let amount = prorate(new_plan.amount, fraction) - prorate(old_plan.amount, fraction);
+        let amount = period.prorate(new_plan.amount, activity.created_at)
+            - period.prorate(old_plan.amount, activity.created_at);
         if amount == 0 {
             return Ok(None);
         }
 
         let description = format!("Plan changed from {} to {}", old_plan.name, new_plan.name);
-        Ok(Some(line_item(
-            activity,
-            &activity.resource_id,
-            new_plan.id,
+        Ok(Some(InvoiceItem {
+            id: uuid::Uuid::new_v4().to_string(),
+            invoice_id: None,
+            activity_id: Some(activity.id.clone()),
+            tenant_pubkey: activity.tenant.clone(),
+            relay_id: activity.resource_id.clone(),
+            plan: new_plan.id,
             amount,
-            &description,
-        )))
+            description,
+            created_at: activity.created_at,
+        }))
     }
 
     /// Reconcile pending activity, add this period's renewals if they're due, and
@@ -274,37 +287,30 @@ impl Billing {
         let Some(tenant) = query::get_tenant(&tenant.pubkey).await? else {
             return Ok(None);
         };
-        let Some(anchor) = tenant.billing_anchor else {
+        let Some(period) = BillingPeriod::current(&tenant) else {
             return Ok(None);
         };
 
-        let now = chrono::Utc::now().timestamp();
-        let period_start = period_start_at(anchor, now);
-        let period_end = add_one_month(period_start);
-
         // Short-circuit the renewal scan if this period is already renewed, for
         // performance. Renew_tenant re-checks this in-tx as the real guard.
-        if tenant.renewed_at.is_none_or(|at| at < period_start) {
-            self.renew_period(&tenant, period_start).await?;
+        if tenant.renewed_at.is_none_or(|at| at < period.start) {
+            self.renew_period(&tenant, &period).await?;
         }
 
-        /// Claim the tenant's outstanding items onto a fresh invoice if they net
-        /// positive; `None` when nothing is owed (a net credit stays outstanding and
-        /// carries to the next positive invoice).
-        command::create_invoice(&tenant.pubkey, period_start, period_end).await
+        command::create_invoice(&tenant.pubkey, period.start, period.end).await
     }
 
     /// Charge a full-period renewal for every relay that was active on a paid plan
-    /// as of `period_start`, reconstructing that state from the activity log
+    /// as of `period.start`, reconstructing that state from the activity log
     /// (status from create/activate/deactivate, plan from create/update).
     /// Idempotent per period via the tenant's `renewed_at` marker, so calling it
     /// on every generation can't renew twice; a relay created/activated *within*
     /// the period isn't active before the boundary, so it's covered by its own
     /// prorated charge instead.
-    async fn renew_period(&self, tenant: &Tenant, period_start: i64) -> Result<()> {
-        let activities = query::list_relay_activity_before(&tenant.pubkey, period_start).await?;
+    async fn renew_period(&self, tenant: &Tenant, period: &BillingPeriod) -> Result<()> {
+        let activities = query::list_relay_activity_before(&tenant.pubkey, period.start).await?;
 
-        let mut renewal_items = Vec::new();
+        let mut line_items = Vec::new();
         for (relay_id, state) in relay_states(&activities) {
             if !state.active {
                 continue;
@@ -315,7 +321,7 @@ impl Billing {
             if plan.amount <= 0 {
                 continue;
             }
-            renewal_items.push(InvoiceItem {
+            line_items.push(InvoiceItem {
                 id: uuid::Uuid::new_v4().to_string(),
                 invoice_id: None,
                 activity_id: None,
@@ -324,13 +330,13 @@ impl Billing {
                 plan: plan.id,
                 amount: plan.amount,
                 description: "Subscription renewal".to_string(),
-                created_at: period_start,
+                created_at: period.start,
             });
         }
 
-        // Inserts the items and advances `renewed_at` to `period_start` in one
+        // Inserts the items and advances `renewed_at` to `period.start` in one
         // transaction (idempotent via an in-tx guard), so a re-tick is a no-op.
-        command::renew_tenant(&tenant.pubkey, period_start, &renewal_items).await
+        command::insert_invoice_items_for_renewal(&line_items, period).await
     }
 
     pub async fn attempt_payment(&self, tenant: &Tenant, invoice: &Invoice) -> Result<()> {
@@ -492,75 +498,64 @@ const MANUAL_PAYMENT_DM: &str = "Payment is due for your relay subscription. Ope
 const USER_ERROR_PREFIX: &str = "NWC auto-payment failed:";
 const USER_ERROR_MAX_CHARS: usize = 240;
 
-/// The start of the billing period containing `now`, for monthly periods
-/// anchored at `anchor`. Steps forward in whole calendar months so boundaries
-/// track months (28–31 days) rather than a fixed span of seconds.
-fn period_start_at(anchor: i64, now: i64) -> i64 {
-    use chrono::{DateTime, Months, Utc};
+/// One tenant's monthly billing period containing some timestamp, anchored at
+/// the tenant's `billing_anchor`. Half-open `[start, end)` so a moment at
+/// exactly `end` belongs to the next period.
+pub struct BillingPeriod {
+    pub start: i64,
+    pub end: i64,
+}
 
-    let anchor_dt = DateTime::<Utc>::from_timestamp(anchor, 0).unwrap_or_default();
+impl BillingPeriod {
+    /// The period containing `chrono::Utc::now()` for `tenant`. `None` when the
+    /// tenant has no `billing_anchor` yet — i.e. no billable activity has been seen.
+    fn current(tenant: &Tenant) -> Option<Self> {
+        Self::new(tenant, chrono::Utc::now().timestamp())
+    }
 
-    let mut start = anchor_dt;
-    let mut months = 1u32;
-    while let Some(next) = anchor_dt.checked_add_months(Months::new(months)) {
-        if next.timestamp() > now {
-            break;
+    /// The period containing `at` for `tenant`. `None` when the tenant has no
+    /// `billing_anchor` yet — i.e. no billable activity has been seen.
+    fn new(tenant: &Tenant, at: i64) -> Option<Self> {
+        use chrono::{DateTime, Months, Utc};
+
+        let anchor = tenant.billing_anchor?;
+        let anchor_dt = DateTime::<Utc>::from_timestamp(anchor, 0).unwrap_or_default();
+
+        // Walk forward in whole calendar months from the anchor until the next
+        // step would pass `at`, so boundaries track months (28–31 days) rather
+        // than a fixed span of seconds.
+        let mut start = anchor_dt;
+        let mut months = 1u32;
+        while let Some(next) = anchor_dt.checked_add_months(Months::new(months)) {
+            if next.timestamp() > at {
+                break;
+            }
+            start = next;
+            months += 1;
         }
-        start = next;
-        months += 1;
+
+        let end = start.checked_add_months(Months::new(1)).unwrap_or(start);
+
+        Some(Self {
+            start: start.timestamp(),
+            end: end.timestamp(),
+        })
     }
 
-    start.timestamp()
-}
-
-/// One calendar month after `ts` (a unix timestamp), falling back to `ts` if the
-/// shifted date can't be represented.
-fn add_one_month(ts: i64) -> i64 {
-    use chrono::{DateTime, Months, Utc};
-
-    DateTime::<Utc>::from_timestamp(ts, 0)
-        .and_then(|dt| dt.checked_add_months(Months::new(1)))
-        .map(|dt| dt.timestamp())
-        .unwrap_or(ts)
-}
-
-/// Fraction of the current billing period still unused at `at`, in `[0.0, 1.0]`,
-/// for prorating a mid-period charge or credit.
-fn period_fraction_remaining(billing_anchor: i64, at: i64) -> f64 {
-    let period_start = period_start_at(billing_anchor, at);
-    let period_end = add_one_month(period_start);
-    let period_len = (period_end - period_start) as f64;
-    if period_len <= 0.0 {
-        return 1.0;
+    /// Fraction of this period still unused at `at`, in `[0.0, 1.0]`, for
+    /// prorating a mid-period charge or credit.
+    fn fraction_remaining(&self, at: i64) -> f64 {
+        let len = (self.end - self.start) as f64;
+        if len <= 0.0 {
+            return 1.0;
+        }
+        (((self.end - at) as f64) / len).clamp(0.0, 1.0)
     }
 
-    (((period_end - at) as f64) / period_len).clamp(0.0, 1.0)
-}
-
-/// Prorate a minor-unit `amount` by `fraction`, rounded to the nearest unit.
-fn prorate(amount: i64, fraction: f64) -> i64 {
-    (amount as f64 * fraction).round() as i64
-}
-
-/// Build an outstanding (unassigned, `invoice_id = None`) line item from a
-/// reconciled activity.
-fn line_item(
-    activity: &Activity,
-    relay_id: &str,
-    plan: String,
-    amount: i64,
-    description: &str,
-) -> InvoiceItem {
-    InvoiceItem {
-        id: uuid::Uuid::new_v4().to_string(),
-        invoice_id: None,
-        activity_id: Some(activity.id.clone()),
-        tenant_pubkey: activity.tenant.clone(),
-        relay_id: relay_id.to_string(),
-        plan,
-        amount,
-        description: description.to_string(),
-        created_at: activity.created_at,
+    /// Prorate a minor-unit `amount` by the fraction of this period remaining
+    /// at `at`, rounded to the nearest unit.
+    fn prorate(&self, amount: i64, at: i64) -> i64 {
+        (amount as f64 * self.fraction_remaining(at)).round() as i64
     }
 }
 

@@ -45,7 +45,7 @@ export default function RelayDetail() {
   const isPaidRelay = createMemo(() => {
     const r = relay()
     if (!r) return false
-    const plan = plans().find(p => p.id === r.plan)
+    const plan = plans().find(p => p.id === r.plan_id)
     return !!(plan && plan.amount > 0)
   })
 

@@ -79,7 +79,7 @@ impl Billing {
                 command::set_tenant_billing_anchor(&tenant).await?;
             }
 
-            let invoice_item = self.reconcile_activity(&tenant, &activity).await?;
+            self.reconcile_activity(&tenant, &activity).await?;
         }
 
         // If the tenant has no billing anchor, they have nothing to bill
@@ -104,7 +104,7 @@ impl Billing {
     /// persist it with the activity's billed marker. Activities that produce no
     /// item (e.g. free-plan changes) are still marked billed so they aren't
     /// re-scanned.
-    async fn reconcile_activity(&self, tenant: &Tenant, activity: &Activity) -> Result<Option<InvoiceItem>> {
+    async fn reconcile_activity(&self, tenant: &Tenant, activity: &Activity) -> Result<()> {
         let invoice_item = match activity.activity_type.as_str() {
             "create_relay" => {
                 self.make_prorated_item(tenant, activity, 1, "New relay created")
@@ -123,11 +123,9 @@ impl Billing {
         };
 
         match invoice_item {
-            Some(ref item) => command::insert_invoice_item_for_activity(&item, &activity.id).await?,
-            None => command::mark_activity_billed(&activity.id).await?,
+            Some(ref item) => command::insert_invoice_item_for_activity(&item, &activity.id).await,
+            None => command::mark_activity_billed(&activity.id).await,
         }
-
-        Ok(invoice_item)
     }
 
     /// A prorated charge (or credit, with `sign` = -1) for the relay's current
@@ -141,10 +139,10 @@ impl Billing {
         description: &str,
     ) -> Result<Option<InvoiceItem>> {
         let Some(relay) = query::get_relay(&activity.resource_id).await? else {
-            return anyhow!("activity resource was not a valid relay");
+            return Err(anyhow!("activity resource was not a valid relay"));
         };
-        let Some(plan) = query::get_plan(&relay.plan) else {
-            return anyhow!("activity plan was not a valid plan");
+        let Some(plan) = query::get_plan(&relay.plan_id) else {
+            return Err(anyhow!("activity plan was not a valid plan"));
         };
         if plan.amount <= 0 {
             return Ok(None);
@@ -158,9 +156,9 @@ impl Billing {
             id: uuid::Uuid::new_v4().to_string(),
             invoice_id: None,
             activity_id: Some(activity.id.clone()),
-            tenant_pubkey: activity.tenant.clone(),
+            tenant_pubkey: activity.tenant_pubkey.clone(),
             relay_id: activity.resource_id.clone(),
-            plan: plan.id,
+            plan_id: plan.id,
             amount,
             description: description.to_string(),
             created_at: activity.created_at,
@@ -178,21 +176,21 @@ impl Billing {
         activity: &Activity,
     ) -> Result<Option<InvoiceItem>> {
         let Some(new_plan_id) = activity.plan_id.as_deref() else {
-            return anyhow!("activity plan was not a valid plan");
+            return Err(anyhow!("activity plan was not a valid plan"));
         };
         let Some(old_plan_id) =
             query::get_relay_plan_before(&activity.resource_id, activity.created_at).await?
         else {
-            return anyhow!("no previous plan found for relay update activity");
+            return Err(anyhow!("no previous plan found for relay update activity"));
         };
         if old_plan_id == new_plan_id {
             return Ok(None);
         }
         let Some(new_plan) = query::get_plan(new_plan_id) else {
-            return anyhow!("new plan is an invalid plan");
+            return Err(anyhow!("new plan is an invalid plan"));
         };
-        let Some(old_plan) = query::get_plan(old_plan_id) else {
-            return anyhow!("old plan is an invalid plan");
+        let Some(old_plan) = query::get_plan(&old_plan_id) else {
+            return Err(anyhow!("old plan is an invalid plan"));
         };
 
         let period = BillingPeriod::at(tenant, activity.created_at)
@@ -208,9 +206,9 @@ impl Billing {
             id: uuid::Uuid::new_v4().to_string(),
             invoice_id: None,
             activity_id: Some(activity.id.clone()),
-            tenant_pubkey: activity.tenant.clone(),
+            tenant_pubkey: activity.tenant_pubkey.clone(),
             relay_id: activity.resource_id.clone(),
-            plan: new_plan.id,
+            plan_id: new_plan.id,
             amount,
             description,
             created_at: activity.created_at,
@@ -232,7 +230,7 @@ impl Billing {
             if !state.active {
                 continue;
             }
-            let Some(plan) = state.plan.and_then(|id| query::get_plan(&id)) else {
+            let Some(plan) = state.plan_id.and_then(|id| query::get_plan(&id)) else {
                 continue;
             };
             if plan.amount <= 0 {
@@ -244,7 +242,7 @@ impl Billing {
                 activity_id: None,
                 tenant_pubkey: tenant.pubkey.clone(),
                 relay_id,
-                plan: plan.id,
+                plan_id: plan.id,
                 amount: plan.amount,
                 description: "Subscription renewal".to_string(),
                 created_at: period.start,
@@ -483,7 +481,7 @@ impl BillingPeriod {
 #[derive(Default)]
 struct RelayState {
     active: bool,
-    plan: Option<String>,
+    plan_id: Option<String>,
 }
 
 /// Fold relay activities (which must be oldest-first) into each relay's
@@ -498,11 +496,11 @@ fn relay_states(activities: &[Activity]) -> HashMap<String, RelayState> {
         match activity.activity_type.as_str() {
             "create_relay" => {
                 state.active = true;
-                state.plan = activity.plan_id.clone();
+                state.plan_id = activity.plan_id.clone();
             }
             "update_relay" => {
                 if activity.plan_id.is_some() {
-                    state.plan = activity.plan_id.clone();
+                    state.plan_id = activity.plan_id.clone();
                 }
             }
             "activate_relay" => state.active = true,

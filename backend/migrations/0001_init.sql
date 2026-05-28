@@ -1,14 +1,3 @@
-CREATE TABLE IF NOT EXISTS activity (
-  id TEXT PRIMARY KEY,
-  tenant TEXT NOT NULL,
-  created_at INTEGER NOT NULL,
-  activity_type TEXT NOT NULL,
-  resource_type TEXT NOT NULL,
-  resource_id TEXT NOT NULL,
-  billed_at INTEGER,
-  plan_id TEXT
-);
-
 CREATE TABLE IF NOT EXISTS tenant (
   pubkey TEXT PRIMARY KEY,
   nwc_url TEXT NOT NULL DEFAULT '',
@@ -19,11 +8,24 @@ CREATE TABLE IF NOT EXISTS tenant (
   renewed_at INTEGER
 );
 
+CREATE TABLE IF NOT EXISTS activity (
+  id TEXT PRIMARY KEY,
+  tenant_pubkey TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  activity_type TEXT NOT NULL,
+  resource_type TEXT NOT NULL,
+  resource_id TEXT NOT NULL,
+  billed_at INTEGER,
+  plan_id TEXT,
+  FOREIGN KEY (tenant_pubkey) REFERENCES tenant(pubkey)
+);
+
+
 CREATE TABLE IF NOT EXISTS relay (
   id TEXT PRIMARY KEY,
-  tenant TEXT NOT NULL,
+  tenant_pubkey TEXT NOT NULL,
   subdomain TEXT NOT NULL UNIQUE,
-  plan TEXT NOT NULL,
+  plan_id TEXT NOT NULL,
   status TEXT NOT NULL,
   synced INTEGER NOT NULL DEFAULT 0,
   sync_error TEXT NOT NULL DEFAULT '',
@@ -37,7 +39,7 @@ CREATE TABLE IF NOT EXISTS relay (
   blossom_enabled INTEGER NOT NULL DEFAULT 0,
   livekit_enabled INTEGER NOT NULL DEFAULT 0,
   push_enabled INTEGER NOT NULL DEFAULT 1,
-  FOREIGN KEY (tenant) REFERENCES tenant(pubkey)
+  FOREIGN KEY (tenant_pubkey) REFERENCES tenant(pubkey)
 );
 
 CREATE TABLE IF NOT EXISTS invoice (
@@ -58,7 +60,7 @@ CREATE TABLE IF NOT EXISTS invoice_item (
   activity_id TEXT,
   tenant_pubkey TEXT NOT NULL,
   relay_id TEXT NOT NULL,
-  plan TEXT NOT NULL,
+  plan_id TEXT NOT NULL,
   amount INTEGER NOT NULL,
   description TEXT NOT NULL DEFAULT '',
   created_at INTEGER NOT NULL,
@@ -84,13 +86,13 @@ CREATE TABLE IF NOT EXISTS intent (
   FOREIGN KEY (invoice_id) REFERENCES invoice(id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_relay_tenant ON relay (tenant);
-
-CREATE INDEX IF NOT EXISTS idx_activity_tenant_created ON activity (tenant, created_at);
+CREATE INDEX IF NOT EXISTS idx_activity_tenant_created ON activity (tenant_pubkey, created_at);
 
 CREATE INDEX IF NOT EXISTS idx_activity_resource_created ON activity (resource_id, created_at);
 
-CREATE INDEX IF NOT EXISTS idx_activity_unbilled ON activity (tenant, created_at) WHERE billed_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_activity_unbilled ON activity (tenant_pubkey, created_at) WHERE billed_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_relay_tenant_pubkey ON relay (tenant_pubkey);
 
 CREATE INDEX IF NOT EXISTS idx_invoice_tenant_created ON invoice (tenant_pubkey, created_at);
 

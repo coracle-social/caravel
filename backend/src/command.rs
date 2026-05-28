@@ -66,7 +66,7 @@ pub async fn create_relay(relay: &Relay) -> Result<()> {
     let activity = with_tx(async |tx| {
         sqlx::query(
             "INSERT INTO relay (
-                id, tenant, subdomain, plan, status, synced, sync_error,
+                id, tenant_pubkey, subdomain, plan_id, status, synced, sync_error,
                 info_name, info_icon, info_description,
                 policy_public_join, policy_strip_signatures,
                 groups_enabled, management_enabled, blossom_enabled,
@@ -74,9 +74,9 @@ pub async fn create_relay(relay: &Relay) -> Result<()> {
             ) VALUES (?, ?, ?, ?, 'active', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&relay.id)
-        .bind(&relay.tenant)
+        .bind(&relay.tenant_pubkey)
         .bind(&relay.subdomain)
-        .bind(&relay.plan)
+        .bind(&relay.plan_id)
         .bind(&relay.sync_error)
         .bind(&relay.info_name)
         .bind(&relay.info_icon)
@@ -90,7 +90,7 @@ pub async fn create_relay(relay: &Relay) -> Result<()> {
         .bind(relay.push_enabled)
         .execute(&mut **tx)
         .await?;
-        insert_activity_tx(tx, "create_relay", "relay", &relay.id, Some(&relay.plan)).await
+        insert_activity_tx(tx, "create_relay", "relay", &relay.id, Some(&relay.plan_id)).await
     })
     .await?;
     publish(activity);
@@ -101,16 +101,16 @@ pub async fn update_relay(relay: &Relay) -> Result<()> {
     let activity = with_tx(async |tx| {
         sqlx::query(
             "UPDATE relay
-             SET tenant = ?, subdomain = ?, plan = ?, status = ?, sync_error = ?, synced = 0,
+             SET tenant_pubkey = ?, subdomain = ?, plan_id = ?, status = ?, sync_error = ?, synced = 0,
                  info_name = ?, info_icon = ?, info_description = ?,
                  policy_public_join = ?, policy_strip_signatures = ?,
                  groups_enabled = ?, management_enabled = ?, blossom_enabled = ?,
                  livekit_enabled = ?, push_enabled = ?
              WHERE id = ?",
         )
-        .bind(&relay.tenant)
+        .bind(&relay.tenant_pubkey)
         .bind(&relay.subdomain)
-        .bind(&relay.plan)
+        .bind(&relay.plan_id)
         .bind(&relay.status)
         .bind(&relay.sync_error)
         .bind(&relay.info_name)
@@ -126,7 +126,7 @@ pub async fn update_relay(relay: &Relay) -> Result<()> {
         .bind(&relay.id)
         .execute(&mut **tx)
         .await?;
-        insert_activity_tx(tx, "update_relay", "relay", &relay.id, Some(&relay.plan)).await
+        insert_activity_tx(tx, "update_relay", "relay", &relay.id, Some(&relay.plan_id)).await
     })
     .await?;
     publish(activity);
@@ -376,10 +376,10 @@ async fn insert_activity_tx(
     resource_id: &str,
     plan_id: Option<&str>,
 ) -> Result<Activity> {
-    let tenant = match resource_type {
+    let tenant_pubkey = match resource_type {
         "tenant" => resource_id.to_string(),
         "relay" => {
-            sqlx::query_scalar::<_, String>("SELECT tenant FROM relay WHERE id = ?")
+            sqlx::query_scalar::<_, String>("SELECT tenant_pubkey FROM relay WHERE id = ?")
                 .bind(resource_id)
                 .fetch_one(&mut **tx)
                 .await?
@@ -391,11 +391,11 @@ async fn insert_activity_tx(
     let created_at = chrono::Utc::now().timestamp();
 
     sqlx::query(
-        "INSERT INTO activity (id, tenant, created_at, activity_type, resource_type, resource_id, plan_id)
+        "INSERT INTO activity (id, tenant_pubkey, created_at, activity_type, resource_type, resource_id, plan_id)
          VALUES (?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&id)
-    .bind(&tenant)
+    .bind(&tenant_pubkey)
     .bind(created_at)
     .bind(activity_type)
     .bind(resource_type)
@@ -406,7 +406,7 @@ async fn insert_activity_tx(
 
     Ok(Activity {
         id,
-        tenant,
+        tenant_pubkey,
         created_at,
         activity_type: activity_type.to_string(),
         resource_type: resource_type.to_string(),
@@ -441,7 +441,7 @@ async fn insert_invoice_tx(
 async fn insert_invoice_item_tx(tx: &mut Transaction<'_, Sqlite>, item: &InvoiceItem) -> Result<()> {
     sqlx::query(
         "INSERT INTO invoice_item
-            (id, invoice_id, activity_id, tenant_pubkey, relay_id, plan, amount, description, created_at)
+            (id, invoice_id, activity_id, tenant_pubkey, relay_id, plan_id, amount, description, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&item.id)
@@ -449,7 +449,7 @@ async fn insert_invoice_item_tx(tx: &mut Transaction<'_, Sqlite>, item: &Invoice
     .bind(&item.activity_id)
     .bind(&item.tenant_pubkey)
     .bind(&item.relay_id)
-    .bind(&item.plan)
+    .bind(&item.plan_id)
     .bind(item.amount)
     .bind(&item.description)
     .bind(item.created_at)

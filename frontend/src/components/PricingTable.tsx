@@ -32,9 +32,9 @@ function memberLabel(members: number | null) {
 
 type PricingTableProps = {
   selectable?: boolean
-  selectedPlan?: PlanId
-  onSelect?: (plan: PlanId) => void
-  onCta?: (plan: PlanId) => void
+  selectedPlanId?: PlanId
+  onSelect?: (planId: PlanId) => void
+  onCta?: (planId: PlanId) => void
 }
 
 export default function PricingTable(props: PricingTableProps) {
@@ -43,7 +43,7 @@ export default function PricingTable(props: PricingTableProps) {
       <For each={plans()}>
         {(plan) => {
           const isPopular = plan.id === "basic"
-          const isSelected = () => props.selectable && props.selectedPlan === plan.id
+          const isSelected = () => props.selectable && props.selectedPlanId === plan.id
 
           const card = (
             <>

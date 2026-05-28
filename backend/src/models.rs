@@ -4,20 +4,6 @@ pub const RELAY_STATUS_ACTIVE: &str = "active";
 pub const RELAY_STATUS_INACTIVE: &str = "inactive";
 pub const RELAY_STATUS_DELINQUENT: &str = "delinquent";
 
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
-pub struct Activity {
-    pub id: String,
-    pub tenant: String,
-    pub created_at: i64,
-    pub activity_type: String,
-    pub resource_type: String,
-    pub resource_id: String,
-    pub billed_at: Option<i64>,
-    /// The relay's plan at the time of a `create_relay`/`update_relay` activity;
-    /// `None` for all other activity types.
-    pub plan_id: Option<String>,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Plan {
     pub id: String,
@@ -42,11 +28,25 @@ pub struct Tenant {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct Activity {
+    pub id: String,
+    pub tenant_pubkey: String,
+    pub created_at: i64,
+    pub activity_type: String,
+    pub resource_type: String,
+    pub resource_id: String,
+    pub billed_at: Option<i64>,
+    /// The relay's plan at the time of a `create_relay`/`update_relay` activity;
+    /// `None` for all other activity types.
+    pub plan_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Relay {
     pub id: String,
-    pub tenant: String,
+    pub tenant_pubkey: String,
     pub subdomain: String,
-    pub plan: String,
+    pub plan_id: String,
     pub status: String,
     pub sync_error: String,
     pub info_name: String,
@@ -66,9 +66,9 @@ impl Default for Relay {
     fn default() -> Self {
         Self {
             id: String::new(),
-            tenant: String::new(),
+            tenant_pubkey: String::new(),
             subdomain: String::new(),
-            plan: String::new(),
+            plan_id: String::new(),
             status: RELAY_STATUS_ACTIVE.to_string(),
             sync_error: String::new(),
             info_name: String::new(),
@@ -106,7 +106,7 @@ pub struct InvoiceItem {
   pub activity_id: Option<String>,
   pub tenant_pubkey: String,
   pub relay_id: String,
-  pub plan: String,
+  pub plan_id: String,
   pub amount: i64,
   pub description: String,
   pub created_at: i64,

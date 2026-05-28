@@ -44,9 +44,9 @@ export type PlanId = string
 
 export type Relay = {
   id: string
-  tenant: string
+  tenant_pubkey: string
   subdomain: string
-  plan: PlanId
+  plan_id: PlanId
   status: string
   sync_error: string
   synced: number
@@ -63,9 +63,9 @@ export type Relay = {
 }
 
 export type CreateRelayInput = {
-  tenant?: string
+  tenant_pubkey?: string
   subdomain: string
-  plan: string
+  plan_id: string
   info_name?: string
   info_icon?: string
   info_description?: string
@@ -80,7 +80,7 @@ export type CreateRelayInput = {
 
 export type UpdateRelayInput = {
   subdomain?: string
-  plan?: string
+  plan_id?: string
   info_name?: string
   info_icon?: string
   info_description?: string
@@ -115,7 +115,7 @@ export type Invoice = {
 
 export type Activity = {
   id: string
-  tenant: string
+  tenant_pubkey: string
   created_at: number
   activity_type: string
   resource_type: string

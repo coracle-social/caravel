@@ -18,7 +18,7 @@ export default function RelayNew() {
     const relay = await createRelayForActiveTenant(values)
     createdRelayId = relay.id
 
-    if (values.plan !== "free") {
+    if (values.plan_id !== "free") {
       const needsSetup = await tenantNeedsPaymentSetup()
       if (needsSetup) {
         const invoice = await getLatestOpenInvoice()

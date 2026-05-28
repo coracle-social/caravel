@@ -17,7 +17,7 @@ export default function RelayListItem(props: RelayListItemProps) {
             <p class="font-medium text-gray-900">{props.relay.info_name || props.relay.subdomain}</p>
             <p class="text-xs text-gray-500">{props.relay.subdomain}.spaces.coracle.social</p>
             {props.showTenant && (
-              <p class="text-xs text-gray-500 break-all mt-1">Tenant: {props.relay.tenant}</p>
+              <p class="text-xs text-gray-500 break-all mt-1">Tenant: {props.relay.tenant_pubkey}</p>
             )}
           </div>
           <Show

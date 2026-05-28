@@ -180,7 +180,7 @@ async fn try_sync_relay(relay: &Relay) -> Result<()> {
             "name": relay.info_name,
             "icon": relay.info_icon,
             "description": relay.info_description,
-            "pubkey": relay.tenant,
+            "pubkey": relay.tenant_pubkey,
         },
         "policy": {
             "public_join": relay.policy_public_join == 1,

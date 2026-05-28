@@ -63,7 +63,7 @@ type RelayDetailCardProps = {
   onToggleMediaStorage?: () => void
   onToggleLivekitSupport?: () => void
   onTogglePushNotifications?: () => void
-  onUpdatePlan?: (plan: PlanId) => Promise<void>
+  onUpdatePlan?: (planId: PlanId) => Promise<void>
   enforcePlanLimits?: boolean
   showPlanActions?: boolean
 }
@@ -76,17 +76,17 @@ export default function RelayDetailCard(props: RelayDetailCardProps) {
     return fallback
   }
   const [menuOpen, setMenuOpen] = createSignal(false)
-  const [plan, setPlan] = createSignal<PlanId>(props.relay.plan)
+  const [planId, setPlanId] = createSignal<PlanId>(props.relay.plan_id)
   const [pendingAction, setPendingAction] = createSignal<"deactivate" | "reactivate" | null>(null)
 
   let menuContainerRef: HTMLDivElement | undefined
 
   const memberLimitLabel = () => {
-    const p = plans().find(p => p.id === r().plan)
+    const p = plans().find(p => p.id === r().plan_id)
     if (!p) return "?"
     return p.members === null ? "∞" : String(p.members)
   }
-  const planLimited = () => (props.enforcePlanLimits ?? true) && r().plan === "free"
+  const planLimited = () => (props.enforcePlanLimits ?? true) && r().plan_id === "free"
   const showPlanActions = () => props.showPlanActions ?? true
   const actionBusy = () => pendingAction() === "deactivate" ? !!props.deactivating : pendingAction() === "reactivate" ? !!props.reactivating : false
   const relayLabel = () => r().info_name || r().subdomain
@@ -107,11 +107,11 @@ export default function RelayDetailCard(props: RelayDetailCardProps) {
   const confirmBusyLabel = () => pendingAction() === "deactivate" ? "Deactivating..." : "Reactivating..."
   const confirmTone = () => pendingAction() === "deactivate" ? "danger" : "primary"
 
-  async function changePlan(plan: PlanId) {
-    setPlan(plan)
+  async function changePlanId(planId: PlanId) {
+    setPlanId(planId)
     try {
-      await props.onUpdatePlan?.(plan)
-      setToastMessage(`Plan updated to ${plan}`, "success")
+      await props.onUpdatePlan?.(planId)
+      setToastMessage(`Plan updated to ${planId}`, "success")
     } catch {
       // error is handled by the caller
     }
@@ -360,7 +360,7 @@ export default function RelayDetailCard(props: RelayDetailCardProps) {
         </Field>
         <Show when={props.showTenant}>
           <Field label="Tenant">
-            <span class="font-mono text-xs break-all">{r().tenant}</span>
+            <span class="font-mono text-xs break-all">{r().tenant_pubkey}</span>
           </Field>
         </Show>
       </MembershipSection>
@@ -373,15 +373,15 @@ export default function RelayDetailCard(props: RelayDetailCardProps) {
             when={props.onUpdatePlan}
             fallback={
               <Field label="Current plan">
-                <span class="capitalize text-gray-900">{r().plan}</span>
+                <span class="capitalize text-gray-900">{r().plan_id}</span>
               </Field>
             }
           >
             <div class="lg:col-span-2 space-y-4">
               <PricingTable
                 selectable
-                selectedPlan={plan()}
-                onSelect={changePlan}
+                selectedPlanId={planId()}
+                onSelect={changePlanId}
               />
             </div>
           </Show>

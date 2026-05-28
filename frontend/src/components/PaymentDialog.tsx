@@ -32,7 +32,7 @@ export default function PaymentDialog(props: PaymentDialogProps) {
   const billedRelays = createMemo(() => {
     const planById = new Map(plans().map((p) => [p.id, p]))
     return (relays() ?? [])
-      .map((relay) => ({ relay, plan: planById.get(relay.plan) }))
+      .map((relay) => ({ relay, plan: planById.get(relay.plan_id) }))
       .filter((entry) => Boolean(entry.plan?.amount))
   })
 
@@ -147,7 +147,7 @@ export default function PaymentDialog(props: PaymentDialogProps) {
                         <li class="flex items-center justify-between gap-3 text-sm">
                           <span class="truncate text-gray-900">{relay.info_name || relay.subdomain}</span>
                           <span class="flex-shrink-0 text-xs text-gray-500">
-                            {plan?.name ?? relay.plan}
+                            {plan?.name ?? relay.plan_id}
                             <Show when={plan}> · ${(plan!.amount / 100).toFixed(2)}/mo</Show>
                           </span>
                         </li>

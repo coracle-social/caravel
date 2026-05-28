@@ -81,9 +81,9 @@ pub async fn list_relays_pending_sync() -> Result<Vec<Relay>> {
     )
 }
 
-pub async fn list_relays_for_tenant(tenant_id: &str) -> Result<Vec<Relay>> {
-    Ok(sqlx::query_as::<_, Relay>(&select_relay("WHERE tenant = ?"))
-        .bind(tenant_id)
+pub async fn list_relays_for_tenant(tenant_pubkey: &str) -> Result<Vec<Relay>> {
+    Ok(sqlx::query_as::<_, Relay>(&select_relay("WHERE tenant_pubkey = ?"))
+        .bind(tenant_pubkey)
         .fetch_all(pool())
         .await?)
 }
@@ -176,7 +176,7 @@ pub async fn get_bolt11_for_invoice(invoice_id: &str) -> Result<Option<Bolt11>> 
 /// Ordered oldest-first so line items and proration apply in event order.
 pub async fn list_billable_activity_for_tenant(tenant_pubkey: &str) -> Result<Vec<Activity>> {
     Ok(sqlx::query_as::<_, Activity>(&select_activity(
-        "WHERE tenant = ?
+        "WHERE tenant_pubkey = ?
            AND billed_at IS NULL
            AND activity_type IN (
                'create_relay', 'update_relay', 'activate_relay', 'deactivate_relay'
@@ -197,7 +197,7 @@ pub async fn list_relay_activity_before(
     before: i64,
 ) -> Result<Vec<Activity>> {
     Ok(sqlx::query_as::<_, Activity>(&select_activity(
-        "WHERE tenant = ?
+        "WHERE tenant_pubkey = ?
            AND resource_type = 'relay'
            AND activity_type IN (
                'create_relay', 'update_relay', 'activate_relay', 'deactivate_relay'

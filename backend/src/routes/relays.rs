@@ -34,7 +34,7 @@ pub async fn get_relay(
     Path(id): Path<String>,
 ) -> ApiResult {
     let relay = api.get_relay_or_404(&id).await?;
-    api.require_admin_or_tenant(&auth, &relay.tenant)?;
+    api.require_admin_or_tenant(&auth, &relay.tenant_pubkey)?;
     ok(relay)
 }
 
@@ -44,7 +44,7 @@ pub async fn list_relay_activity(
     Path(id): Path<String>,
 ) -> ApiResult {
     let relay = api.get_relay_or_404(&id).await?;
-    api.require_admin_or_tenant(&auth, &relay.tenant)?;
+    api.require_admin_or_tenant(&auth, &relay.tenant_pubkey)?;
 
     let activity = query::list_activity_for_resource(&id)
         .await
@@ -58,7 +58,7 @@ pub async fn list_relay_members(
     Path(id): Path<String>,
 ) -> ApiResult {
     let relay = api.get_relay_or_404(&id).await?;
-    api.require_admin_or_tenant(&auth, &relay.tenant)?;
+    api.require_admin_or_tenant(&auth, &relay.tenant_pubkey)?;
 
     let members = fetch_relay_members(&relay).await.map_err(internal)?;
     ok(serde_json::json!({ "members": members }))
@@ -66,9 +66,9 @@ pub async fn list_relay_members(
 
 #[derive(Deserialize)]
 pub struct CreateRelayRequest {
-    pub tenant: String,
+    pub tenant_pubkey: String,
     pub subdomain: String,
-    pub plan: String,
+    pub plan_id: String,
     pub info_name: String,
     pub info_icon: String,
     pub info_description: String,
@@ -86,7 +86,7 @@ pub async fn create_relay(
     AuthedPubkey(auth): AuthedPubkey,
     Json(payload): Json<CreateRelayRequest>,
 ) -> ApiResult {
-    api.require_admin_or_tenant(&auth, &payload.tenant)?;
+    api.require_admin_or_tenant(&auth, &payload.tenant_pubkey)?;
 
     let relay_id = format!(
         "{}_{}",
@@ -96,9 +96,9 @@ pub async fn create_relay(
 
     let relay = Relay {
         id: relay_id.clone(),
-        tenant: payload.tenant,
+        tenant_pubkey: payload.tenant_pubkey,
         subdomain: payload.subdomain,
-        plan: payload.plan,
+        plan_id: payload.plan_id,
         info_name: payload.info_name,
         info_icon: payload.info_icon,
         info_description: payload.info_description,
@@ -124,7 +124,7 @@ pub async fn create_relay(
 #[derive(Deserialize)]
 pub struct UpdateRelayRequest {
     pub subdomain: Option<String>,
-    pub plan: Option<String>,
+    pub plan_id: Option<String>,
     pub info_name: Option<String>,
     pub info_icon: Option<String>,
     pub info_description: Option<String>,
@@ -145,16 +145,16 @@ pub async fn update_relay(
 ) -> ApiResult {
     let mut relay = api.get_relay_or_404(&id).await?;
 
-    api.require_admin_or_tenant(&auth, &relay.tenant)?;
+    api.require_admin_or_tenant(&auth, &relay.tenant_pubkey)?;
 
-    let current_plan = relay.plan.clone();
-    let requested_plan = payload.plan.clone();
+    let current_plan = relay.plan_id.clone();
+    let requested_plan = payload.plan_id.clone();
 
     if let Some(v) = payload.subdomain {
         relay.subdomain = v;
     }
     if let Some(v) = requested_plan.clone() {
-        relay.plan = v;
+        relay.plan_id = v;
     }
     if let Some(v) = payload.info_name {
         relay.info_name = v;
@@ -195,7 +195,7 @@ pub async fn update_relay(
 
     if plan_changed {
         let selected_plan =
-            query::get_plan(&relay.plan).expect("validated plan must exist");
+            query::get_plan(&relay.plan_id).expect("validated plan must exist");
         if let Some(limit) = selected_plan.members {
             let current_members = fetch_relay_members(&relay)
                 .await
@@ -225,7 +225,7 @@ pub async fn deactivate_relay(
     Path(id): Path<String>,
 ) -> ApiResult {
     let relay = api.get_relay_or_404(&id).await?;
-    api.require_admin_or_tenant(&auth, &relay.tenant)?;
+    api.require_admin_or_tenant(&auth, &relay.tenant_pubkey)?;
 
     if relay.status == RELAY_STATUS_DELINQUENT {
         return Err(bad_request("relay-is-delinquent", "relay is delinquent"));
@@ -248,7 +248,7 @@ pub async fn reactivate_relay(
     Path(id): Path<String>,
 ) -> ApiResult {
     let relay = api.get_relay_or_404(&id).await?;
-    api.require_admin_or_tenant(&auth, &relay.tenant)?;
+    api.require_admin_or_tenant(&auth, &relay.tenant_pubkey)?;
 
     if relay.status == RELAY_STATUS_DELINQUENT {
         return Err(bad_request("relay-is-delinquent", "relay is delinquent"));
@@ -287,7 +287,7 @@ fn prepare_relay(mut relay: Relay) -> Result<Relay, ApiError> {
         return Err(unprocessable("invalid-subdomain", "subdomain is invalid"));
     }
 
-    let plan = query::get_plan(&relay.plan)
+    let plan = query::get_plan(&relay.plan_id)
         .ok_or_else(|| unprocessable("invalid-plan", "plan not found"))?;
 
     if (!plan.blossom && relay.blossom_enabled == 1) || (!plan.livekit && relay.livekit_enabled == 1) {

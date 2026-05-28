@@ -116,8 +116,8 @@ export const createRelayForActiveTenant = (input: CreateRelayInput) => {
 
   const overrides = {
     tenant: account()!.pubkey,
-    blossom_enabled: input.plan === "free" ? 0 : 1,
-    livekit_enabled: input.plan === "free" ? 0 : 1,
+    blossom_enabled: input.plan_id === "free" ? 0 : 1,
+    livekit_enabled: input.plan_id === "free" ? 0 : 1,
   }
 
   return createRelay({...defaults, ...input, ...overrides})
@@ -127,7 +127,7 @@ export const updateActiveTenant = (input: { nwc_url?: string }) => updateTenant(
 
 export const updateRelayById = (id: string, input: UpdateRelayInput) => updateRelay(id, input)
 
-export const updateRelayPlanById = (id: string, plan: string) => updateRelay(id, { plan })
+export const updateRelayPlanById = (id: string, plan_id: string) => updateRelay(id, { plan_id })
 
 export const deactivateRelayById = (id: string) => deactivateRelay(id)
 

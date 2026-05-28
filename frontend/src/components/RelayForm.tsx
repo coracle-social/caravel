@@ -5,7 +5,7 @@ import { validateSubdomainLabel } from "@/lib/subdomain"
 import { setToastMessage } from "@/components/Toast"
 import { plans } from "@/lib/state"
 
-export type RelayFormValues = Pick<Relay, "info_name" | "subdomain" | "info_icon" | "info_description" | "plan">
+export type RelayFormValues = Pick<Relay, "info_name" | "subdomain" | "info_icon" | "info_description" | "plan_id">
 
 type RelayFormProps = {
   initialValues?: Partial<RelayFormValues>
@@ -16,8 +16,8 @@ type RelayFormProps = {
 }
 
 export default function RelayForm(props: RelayFormProps) {
-  const defaultPlanId = createMemo(() => props.initialValues?.plan ?? plans()[0]?.id ?? "free")
-  const [plan, setPlan] = createSignal(defaultPlanId())
+  const defaultPlanId = createMemo(() => props.initialValues?.plan_id ?? plans()[0]?.id ?? "free")
+  const [planId, setPlanId] = createSignal(defaultPlanId())
   const [name, setName] = createSignal(props.initialValues?.info_name ?? "")
   const [subdomain, setSubdomain] = createSignal(props.initialValues?.subdomain ?? "")
   const [icon, setIcon] = createSignal(props.initialValues?.info_icon ?? "")
@@ -27,7 +27,7 @@ export default function RelayForm(props: RelayFormProps) {
   async function handleSubmit(e: Event) {
     e.preventDefault()
 
-    if (!plan()) {
+    if (!planId()) {
       setToastMessage("Please select a plan")
       return
     }
@@ -43,7 +43,7 @@ export default function RelayForm(props: RelayFormProps) {
 
     try {
       await props.onSubmit({
-        plan: plan(),
+        plan_id: planId(),
         info_name: name(),
         subdomain: subdomain(),
         info_icon: icon(),
@@ -56,7 +56,7 @@ export default function RelayForm(props: RelayFormProps) {
     }
   }
 
-  createEffect(() => setPlan(defaultPlanId()))
+  createEffect(() => setPlanId(defaultPlanId()))
 
   createEffect(() => {
     if (props.syncSubdomainWithName) {
@@ -112,8 +112,8 @@ export default function RelayForm(props: RelayFormProps) {
             {(p) => (
               <button
                 type="button"
-                onClick={() => setPlan(p.id)}
-                class={`border-2 rounded-xl p-4 text-left transition-colors ${plan() === p.id ? "border-blue-600 bg-blue-50" : "border-gray-200 hover:border-gray-300"}`}
+                onClick={() => setPlanId(p.id)}
+                class={`border-2 rounded-xl p-4 text-left transition-colors ${planId() === p.id ? "border-blue-600 bg-blue-50" : "border-gray-200 hover:border-gray-300"}`}
               >
                 <div class="font-bold text-gray-900">{p.name}</div>
                 <div class="text-sm text-gray-500 mt-1">

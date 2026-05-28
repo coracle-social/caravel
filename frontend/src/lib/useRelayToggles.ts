@@ -77,14 +77,14 @@ export default function useRelayToggles(
     }
   }
 
-  async function handleUpdatePlan(plan: PlanId) {
+  async function handleUpdatePlan(plan_id: PlanId) {
     const current = relay()
     if (!current) return
 
     const previous = current
-    const next = { ...current, plan }
-    const update: Record<string, unknown> = { plan }
-    if (plan === "free") {
+    const next = { ...current, plan_id }
+    const update: Record<string, unknown> = { plan_id }
+    if (plan_id === "free") {
       next.blossom_enabled = 0
       next.livekit_enabled = 0
       update.blossom_enabled = 0
@@ -101,7 +101,7 @@ export default function useRelayToggles(
       throw e
     }
 
-    if (plan !== "free") {
+    if (plan_id !== "free") {
       const needsSetup = await tenantNeedsPaymentSetup()
       if (needsSetup) {
         const invoice = await getLatestOpenInvoice()
@@ -116,9 +116,9 @@ export default function useRelayToggles(
     onToggleStripSignatures: () => toggle("policy_strip_signatures", false),
     onToggleGroups: () => toggle("groups_enabled", true),
     onToggleManagement: () => toggle("management_enabled", true),
-    onToggleMediaStorage: () => toggle("blossom_enabled", relay()?.plan !== "free"),
+    onToggleMediaStorage: () => toggle("blossom_enabled", relay()?.plan_id !== "free"),
     onTogglePushNotifications: () => toggle("push_enabled", true),
-    onToggleLivekitSupport: () => toggle("livekit_enabled", relay()?.plan !== "free"),
+    onToggleLivekitSupport: () => toggle("livekit_enabled", relay()?.plan_id !== "free"),
   }
 
   return { busy, handleDeactivate, handleReactivate, handleUpdatePlan, pendingInvoice, clearPendingInvoice: () => setPendingInvoice(undefined), pendingPaymentSetup, clearPendingPaymentSetup: () => setPendingPaymentSetup(false), toggles }

@@ -17,10 +17,10 @@ export default function Home() {
   const [showRelayModal, setShowRelayModal] = createSignal(false)
   const [showLoginModal, setShowLoginModal] = createSignal(false)
   const [draftRelay, setDraftRelay] = createSignal<RelayFormValues>()
-  const [initialPlan, setInitialPlan] = createSignal<RelayFormValues["plan"]>("free")
+  const [initialPlanId, setInitialPlanId] = createSignal<RelayFormValues["plan_id"]>("free")
 
-  function openRelayModal(plan: RelayFormValues["plan"] = "free") {
-    setInitialPlan(plan)
+  function openRelayModal(planId: RelayFormValues["plan_id"] = "free") {
+    setInitialPlanId(planId)
     setShowRelayModal(true)
   }
 
@@ -404,7 +404,7 @@ export default function Home() {
 
         <RelayForm
           syncSubdomainWithName
-          initialValues={{ plan: initialPlan() }}
+          initialValues={{ plan_id: initialPlanId() }}
           onSubmit={onRelayFormSubmit}
           submitLabel="Continue"
           submittingLabel="Creating..."

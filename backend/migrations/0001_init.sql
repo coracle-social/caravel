@@ -98,6 +98,9 @@ CREATE INDEX IF NOT EXISTS idx_invoice_item_invoice ON invoice_item (invoice_id)
 
 CREATE INDEX IF NOT EXISTS idx_invoice_item_outstanding ON invoice_item (tenant_pubkey) WHERE invoice_id IS NULL;
 
+-- At most one line item per billable activity to ensure no double-billing.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_invoice_item_activity ON invoice_item (activity_id);
+
 CREATE INDEX IF NOT EXISTS idx_bolt11_invoice_created ON bolt11 (invoice_id, created_at);
 
 CREATE INDEX IF NOT EXISTS idx_intent_invoice ON intent (invoice_id);

@@ -59,6 +59,42 @@ pub async fn clear_tenant_nwc_error(pubkey: &str) -> Result<()> {
     Ok(())
 }
 
+/// Insert this period's renewal items and advance the tenant's `renewed_at`
+/// marker to `period_start`, atomically and idempotently.
+pub async fn renew_tenant(
+    tenant_pubkey: &str,
+    period_start: i64,
+    items: &[InvoiceItem],
+) -> Result<()> {
+    with_tx(async |tx| {
+        // Re-read the marker inside the transaction so the guard and the writes
+        // commit together — this ensures idempotency so we don't double-invoice.
+        let renewed_at = sqlx::query_scalar::<_, Option<i64>>(
+            "SELECT renewed_at FROM tenant WHERE pubkey = ?",
+        )
+        .bind(tenant_pubkey)
+        .fetch_one(&mut **tx)
+        .await?;
+
+        if renewed_at.is_some_and(|at| at >= period_start) {
+            return Ok(());
+        }
+
+        for item in items {
+            insert_invoice_item_tx(tx, item).await?;
+        }
+
+        sqlx::query("UPDATE tenant SET renewed_at = ? WHERE pubkey = ?")
+            .bind(period_start)
+            .bind(tenant_pubkey)
+            .execute(&mut **tx)
+            .await?;
+
+        Ok(())
+    })
+    .await
+}
+
 // --- Relays ---
 
 pub async fn create_relay(relay: &Relay) -> Result<()> {
@@ -132,6 +168,10 @@ pub async fn update_relay(relay: &Relay) -> Result<()> {
     Ok(())
 }
 
+pub async fn activate_relay(relay: &Relay) -> Result<()> {
+    set_relay_status(&relay.id, RELAY_STATUS_ACTIVE, "activate_relay").await
+}
+
 pub async fn deactivate_relay(relay: &Relay) -> Result<()> {
     set_relay_status(&relay.id, RELAY_STATUS_INACTIVE, "deactivate_relay").await
 }
@@ -139,10 +179,6 @@ pub async fn deactivate_relay(relay: &Relay) -> Result<()> {
 #[allow(dead_code)] // wired up by the delinquency flow (not yet implemented)
 pub async fn mark_relay_delinquent(relay: &Relay) -> Result<()> {
     set_relay_status(&relay.id, RELAY_STATUS_DELINQUENT, "mark_relay_delinquent").await
-}
-
-pub async fn activate_relay(relay: &Relay) -> Result<()> {
-    set_relay_status(&relay.id, RELAY_STATUS_ACTIVE, "activate_relay").await
 }
 
 async fn set_relay_status(relay_id: &str, status: &str, activity_type: &str) -> Result<()> {
@@ -186,7 +222,7 @@ pub async fn complete_relay_sync(relay_id: &str) -> Result<()> {
     Ok(())
 }
 
-// --- Invoice items (the outstanding-charge ledger) ---
+// --- Invoice items ---
 
 /// Persist a reconciled activity's line item and mark the activity billed in one
 /// transaction, so a recovery pass never re-bills it.
@@ -194,8 +230,11 @@ pub async fn insert_invoice_item_for_activity(invoice_item: &InvoiceItem, activi
     let now = chrono::Utc::now().timestamp();
 
     with_tx(async |tx| {
-        insert_invoice_item_tx(tx, invoice_item).await?;
-        mark_activity_billed_tx(tx, activity_id, now).await?;
+        // Claim the activity first. If a concurrent reconcile pass already billed
+        // it, the claim no-ops and we skip the item rather than duplicating it.
+        if mark_activity_billed_tx(tx, activity_id, now).await? {
+            insert_invoice_item_tx(tx, invoice_item).await?;
+        }
 
         Ok(())
     })
@@ -207,42 +246,8 @@ pub async fn insert_invoice_item_for_activity(invoice_item: &InvoiceItem, activi
 pub async fn mark_activity_billed(activity_id: &str) -> Result<()> {
     let now = chrono::Utc::now().timestamp();
 
-    with_tx(async |tx| mark_activity_billed_tx(tx, activity_id, now).await).await
-}
-
-/// Insert this period's renewal items and advance the tenant's `renewed_at`
-/// marker to `period_start`, atomically. Idempotent: a repeat call for an
-/// already-renewed period is a no-op, so a crash mid-renewal or a poll racing
-/// the on-demand endpoint can't bill the same period twice.
-pub async fn renew_tenant(
-    tenant_pubkey: &str,
-    period_start: i64,
-    items: &[InvoiceItem],
-) -> Result<()> {
     with_tx(async |tx| {
-        // Re-read the marker inside the transaction so the guard and the writes
-        // commit together — this is the real idempotency backstop.
-        let renewed_at = sqlx::query_scalar::<_, Option<i64>>(
-            "SELECT renewed_at FROM tenant WHERE pubkey = ?",
-        )
-        .bind(tenant_pubkey)
-        .fetch_one(&mut **tx)
-        .await?;
-
-        if renewed_at.is_some_and(|at| at >= period_start) {
-            return Ok(());
-        }
-
-        for item in items {
-            insert_invoice_item_tx(tx, item).await?;
-        }
-
-        sqlx::query("UPDATE tenant SET renewed_at = ? WHERE pubkey = ?")
-            .bind(period_start)
-            .bind(tenant_pubkey)
-            .execute(&mut **tx)
-            .await?;
-
+        mark_activity_billed_tx(tx, activity_id, now).await?;
         Ok(())
     })
     .await
@@ -250,12 +255,10 @@ pub async fn renew_tenant(
 
 // --- Invoices ---
 
-/// Claim all of a tenant's outstanding items onto a new invoice — but only if
-/// they sum to a positive amount. A non-positive balance (net credit or nothing
-/// owed) leaves the items outstanding so the credit carries to the next positive
+/// Claim all of a tenant's outstanding items onto a new invoice. A non-positive
+/// balance leaves the items outstanding so the credit carries to the next positive
 /// invoice. Returns the invoice, or `None` when there's nothing to bill.
-pub async fn claim_outstanding_into_invoice(
-    invoice_id: &str,
+pub async fn create_invoice(
     tenant_pubkey: &str,
     period_start: i64,
     period_end: i64,
@@ -274,13 +277,13 @@ pub async fn claim_outstanding_into_invoice(
         }
 
         let invoice =
-            insert_invoice_tx(tx, invoice_id, tenant_pubkey, period_start, period_end).await?;
+            insert_invoice_tx(tx, tenant_pubkey, period_start, period_end).await?;
 
         sqlx::query(
             "UPDATE invoice_item SET invoice_id = ?
              WHERE tenant_pubkey = ? AND invoice_id IS NULL",
         )
-        .bind(invoice_id)
+        .bind(&invoice.id)
         .bind(tenant_pubkey)
         .execute(&mut **tx)
         .await?;
@@ -414,12 +417,12 @@ async fn insert_activity_tx(
 
 async fn insert_invoice_tx(
     tx: &mut Transaction<'_, Sqlite>,
-    invoice_id: &str,
     tenant_pubkey: &str,
     period_start: i64,
     period_end: i64,
 ) -> Result<Invoice> {
     let now = chrono::Utc::now().timestamp();
+    let invoice_id = uuid::Uuid::new_v4().to_string();
 
     Ok(sqlx::query_as::<_, Invoice>(
         "INSERT INTO invoice (id, tenant_pubkey, status, period_start, period_end, created_at, updated_at)
@@ -455,15 +458,18 @@ async fn insert_invoice_item_tx(tx: &mut Transaction<'_, Sqlite>, item: &Invoice
     Ok(())
 }
 
+/// Claim an activity as billed. Returns `true` if this call set the marker, and
+/// `false` if it was already set — e.g. a concurrent reconcile pass won the race —
+/// so callers can skip work that would otherwise double-bill.
 async fn mark_activity_billed_tx(
     tx: &mut Transaction<'_, Sqlite>,
     activity_id: &str,
     billed_at: i64,
-) -> Result<()> {
-    sqlx::query("UPDATE activity SET billed_at = ? WHERE id = ?")
+) -> Result<bool> {
+    let result = sqlx::query("UPDATE activity SET billed_at = ? WHERE id = ? AND billed_at IS NULL")
         .bind(billed_at)
         .bind(activity_id)
         .execute(&mut **tx)
         .await?;
-    Ok(())
+    Ok(result.rows_affected() > 0)
 }

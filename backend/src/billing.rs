@@ -97,8 +97,8 @@ impl Billing {
         Ok(())
     }
 
-    /// Poll entry point: generate the tenant's invoice for the current period
-    /// (adding any due renewals) and, if one results, collect payment.
+    /// Periodically generate the tenant's invoice for the current period
+    /// (adding any due renewals) and, if one results, attempt payment.
     async fn autogenerate_invoice(&self, tenant: &Tenant) -> Result<()> {
         if let Some(invoice) = self.generate_invoice(tenant).await? {
             self.attempt_payment(tenant, &invoice).await?;
@@ -266,11 +266,7 @@ impl Billing {
     }
 
     /// Reconcile pending activity, add this period's renewals if they're due, and
-    /// claim everything outstanding onto an invoice. Shared by the poll and the
-    /// on-demand invoice endpoint — safe to call either way: renewal is idempotent
-    /// per period (see [`command::renew_tenant`]). No payment is attempted here;
-    /// callers that want auto-pay do it on the returned invoice. `None` when
-    /// nothing is owed.
+    /// claim everything outstanding onto an invoice. Idempotent per period.
     pub async fn generate_invoice(&self, tenant: &Tenant) -> Result<Option<Invoice>> {
         self.reconcile_subscription(tenant).await?;
 
@@ -286,14 +282,16 @@ impl Billing {
         let period_start = period_start_at(anchor, now);
         let period_end = add_one_month(period_start);
 
-        // Short-circuit the renewal scan once this period is already renewed — the
-        // common case on all but the first poll of a period (saving ~720 scans a
-        // month per tenant). renew_tenant re-checks this in-tx as the real guard.
+        // Short-circuit the renewal scan if this period is already renewed, for
+        // performance. Renew_tenant re-checks this in-tx as the real guard.
         if tenant.renewed_at.is_none_or(|at| at < period_start) {
             self.renew_period(&tenant, period_start).await?;
         }
 
-        self.claim_outstanding(&tenant, period_start, period_end).await
+        /// Claim the tenant's outstanding items onto a fresh invoice if they net
+        /// positive; `None` when nothing is owed (a net credit stays outstanding and
+        /// carries to the next positive invoice).
+        command::create_invoice(&tenant.pubkey, period_start, period_end).await
     }
 
     /// Charge a full-period renewal for every relay that was active on a paid plan
@@ -333,25 +331,6 @@ impl Billing {
         // Inserts the items and advances `renewed_at` to `period_start` in one
         // transaction (idempotent via an in-tx guard), so a re-tick is a no-op.
         command::renew_tenant(&tenant.pubkey, period_start, &renewal_items).await
-    }
-
-    /// Claim the tenant's outstanding items onto a fresh invoice if they net
-    /// positive; `None` when nothing is owed (a net credit stays outstanding and
-    /// carries to the next positive invoice).
-    async fn claim_outstanding(
-        &self,
-        tenant: &Tenant,
-        period_start: i64,
-        period_end: i64,
-    ) -> Result<Option<Invoice>> {
-        let invoice_id = uuid::Uuid::new_v4().to_string();
-        command::claim_outstanding_into_invoice(
-            &invoice_id,
-            &tenant.pubkey,
-            period_start,
-            period_end,
-        )
-        .await
     }
 
     pub async fn attempt_payment(&self, tenant: &Tenant, invoice: &Invoice) -> Result<()> {

@@ -264,17 +264,13 @@ pub async fn mark_activity_billed(activity_id: &str) -> Result<()> {
 /// Claim all of a tenant's outstanding items onto a new invoice. A non-positive
 /// balance leaves the items outstanding so the credit carries to the next positive
 /// invoice. Returns the invoice, or `None` when there's nothing to bill.
-pub async fn create_invoice(
-    tenant_pubkey: &str,
-    period_start: i64,
-    period_end: i64,
-) -> Result<Option<Invoice>> {
+pub async fn create_invoice(tenant: &Tenant, period: &BillingPeriod) -> Result<Option<Invoice>> {
     with_tx(async |tx| {
         let total = sqlx::query_scalar::<_, i64>(
             "SELECT COALESCE(SUM(amount), 0) FROM invoice_item
              WHERE tenant_pubkey = ? AND invoice_id IS NULL",
         )
-        .bind(tenant_pubkey)
+        .bind(&tenant.pubkey)
         .fetch_one(&mut **tx)
         .await?;
 
@@ -282,15 +278,14 @@ pub async fn create_invoice(
             return Ok(None);
         }
 
-        let invoice =
-            insert_invoice_tx(tx, tenant_pubkey, period_start, period_end).await?;
+        let invoice = insert_invoice_tx(tx, &tenant, &period).await?;
 
         sqlx::query(
             "UPDATE invoice_item SET invoice_id = ?
              WHERE tenant_pubkey = ? AND invoice_id IS NULL",
         )
         .bind(&invoice.id)
-        .bind(tenant_pubkey)
+        .bind(&tenant.pubkey)
         .execute(&mut **tx)
         .await?;
 
@@ -423,9 +418,8 @@ async fn insert_activity_tx(
 
 async fn insert_invoice_tx(
     tx: &mut Transaction<'_, Sqlite>,
-    tenant_pubkey: &str,
-    period_start: i64,
-    period_end: i64,
+    tenant: &Tenant,
+    period: &BillingPeriod,
 ) -> Result<Invoice> {
     let now = chrono::Utc::now().timestamp();
     let invoice_id = uuid::Uuid::new_v4().to_string();
@@ -435,9 +429,9 @@ async fn insert_invoice_tx(
          VALUES (?, ?, 'open', ?, ?, ?, ?) RETURNING *",
     )
     .bind(invoice_id)
-    .bind(tenant_pubkey)
-    .bind(period_start)
-    .bind(period_end)
+    .bind(&tenant.pubkey)
+    .bind(&period.start)
+    .bind(period.end)
     .bind(now)
     .bind(now)
     .fetch_one(&mut **tx)

@@ -19,12 +19,7 @@ pub async fn get_tenant_latest_invoice(
     api.require_admin_or_tenant(&auth, &pubkey)?;
     let tenant = api.get_tenant_or_404(&pubkey).await?;
 
-    // Roll any outstanding charges (and due renewals) into an invoice, then
-    // return the latest.
-    api.billing
-        .generate_invoice(&tenant)
-        .await
-        .map_err(internal)?;
+    api.billing.reconcile_subscription(&tenant).await.map_err(internal)?;
 
     let invoice = query::get_latest_invoice_for_tenant(&pubkey).await.map_err(internal)?;
 

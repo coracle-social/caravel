@@ -1,8 +1,27 @@
 use serde::{Deserialize, Serialize};
+use sqlx::types::Json;
 
 pub const RELAY_STATUS_ACTIVE: &str = "active";
 pub const RELAY_STATUS_INACTIVE: &str = "inactive";
 pub const RELAY_STATUS_DELINQUENT: &str = "delinquent";
+
+/// Per-resource_type snapshot of a resource's state captured on each activity,
+/// stored as JSON in `activity.snapshot`. Tagged on `resource_type` so the JSON
+/// is self-describing and the variant matches the activity row's column. Add a
+/// variant per resource type that needs state preserved on the activity log.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "resource_type", rename_all = "snake_case")]
+pub enum Snapshot {
+    Relay { plan: String, status: String },
+}
+
+impl Snapshot {
+    pub fn resource_type(&self) -> &'static str {
+        match self {
+            Self::Relay { .. } => "relay",
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Plan {
@@ -36,9 +55,7 @@ pub struct Activity {
     pub resource_type: String,
     pub resource_id: String,
     pub billed_at: Option<i64>,
-    /// The relay's plan at the time of a `create_relay`/`update_relay` activity;
-    /// `None` for all other activity types.
-    pub plan_id: Option<String>,
+    pub snapshot: Json<Snapshot>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]

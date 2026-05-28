@@ -148,7 +148,7 @@ async fn sync_relay(relay: &Relay) {
     match try_sync_relay(relay).await {
         Ok(()) => {
             tracing::info!(relay = %relay.id, "relay sync succeeded");
-            if let Err(e) = command::complete_relay_sync(&relay.id).await {
+            if let Err(e) = command::complete_relay_sync(relay).await {
                 tracing::error!(relay = %relay.id, error = %e, "failed to mark sync complete");
             }
         }

@@ -1,11 +1,10 @@
 use anyhow::{Result, anyhow};
-use std::collections::HashMap;
 use std::time::Duration;
 
 use crate::bitcoin;
 use crate::command;
 use crate::env;
-use crate::models::{Activity, Bolt11, Invoice, InvoiceItem, Tenant};
+use crate::models::{Activity, Bolt11, Invoice, InvoiceItem, RELAY_STATUS_ACTIVE, Snapshot, Tenant};
 use crate::query;
 use crate::robot::Robot;
 use crate::stripe::Stripe;
@@ -141,9 +140,7 @@ impl Billing {
         let Some(relay) = query::get_relay(&activity.resource_id).await? else {
             return Err(anyhow!("activity resource was not a valid relay"));
         };
-        let Some(plan) = query::get_plan(&relay.plan_id) else {
-            return Err(anyhow!("activity plan was not a valid plan"));
-        };
+        let plan = query::get_plan(&relay.plan_id)?;
         if plan.amount <= 0 {
             return Ok(None);
         }
@@ -175,23 +172,19 @@ impl Billing {
         tenant: &Tenant,
         activity: &Activity,
     ) -> Result<Option<InvoiceItem>> {
-        let Some(new_plan_id) = activity.plan_id.as_deref() else {
-            return Err(anyhow!("activity plan was not a valid plan"));
+        let new_plan_id = match &*activity.snapshot {
+            Snapshot::Relay { plan, .. } => plan,
         };
         let Some(old_plan_id) =
             query::get_relay_plan_before(&activity.resource_id, activity.created_at).await?
         else {
             return Err(anyhow!("no previous plan found for relay update activity"));
         };
-        if old_plan_id == new_plan_id {
+        if &old_plan_id == new_plan_id {
             return Ok(None);
         }
-        let Some(new_plan) = query::get_plan(new_plan_id) else {
-            return Err(anyhow!("new plan is an invalid plan"));
-        };
-        let Some(old_plan) = query::get_plan(&old_plan_id) else {
-            return Err(anyhow!("old plan is an invalid plan"));
-        };
+        let new_plan = query::get_plan(new_plan_id)?;
+        let old_plan = query::get_plan(&old_plan_id)?;
 
         let period = BillingPeriod::at(tenant, activity.created_at)
             .ok_or_else(|| anyhow!("billing anchor must be set before building prorated items"))?;
@@ -216,23 +209,27 @@ impl Billing {
     }
 
     /// Charge a full-period renewal for every relay that was active on a paid plan
-    /// as of `period.start`, reconstructing that state from the activity log
-    /// (status from create/activate/deactivate, plan from create/update).
-    /// Idempotent per period via the tenant's `renewed_at` marker, so calling it
-    /// on every generation can't renew twice; a relay created/activated *within*
-    /// the period isn't active before the boundary, so it's covered by its own
-    /// prorated charge instead.
+    /// as of `period.start`, reading that state from each relay's most recent
+    /// activity snapshot before the boundary (relays with no prior activity didn't
+    /// exist yet and are skipped). Idempotent per period via the tenant's
+    /// `renewed_at` marker, so calling it on every generation can't renew twice;
+    /// a relay created/activated *within* the period isn't active before the
+    /// boundary, so it's covered by its own prorated charge instead.
     async fn reconcile_renewal(&self, tenant: &Tenant, period: &BillingPeriod) -> Result<()> {
-        let activities = query::list_relay_activity_before(&tenant.pubkey, period.start).await?;
+        let relays = query::list_relays_for_tenant(&tenant.pubkey).await?;
 
         let mut line_items = Vec::new();
-        for (relay_id, state) in relay_states(&activities) {
-            if !state.active {
-                continue;
-            }
-            let Some(plan) = state.plan_id.and_then(|id| query::get_plan(&id)) else {
+        for relay in relays {
+            let Some(activity) =
+                query::get_latest_relay_activity_before(&relay.id, period.start).await?
+            else {
                 continue;
             };
+            let Snapshot::Relay { plan: plan_id, status, .. } = &*activity.snapshot;
+            if status != RELAY_STATUS_ACTIVE {
+                continue;
+            }
+            let plan = query::get_plan(plan_id)?;
             if plan.amount <= 0 {
                 continue;
             }
@@ -241,7 +238,7 @@ impl Billing {
                 invoice_id: None,
                 activity_id: None,
                 tenant_pubkey: tenant.pubkey.clone(),
-                relay_id,
+                relay_id: relay.id,
                 plan_id: plan.id,
                 amount: plan.amount,
                 description: "Subscription renewal".to_string(),
@@ -474,42 +471,6 @@ impl BillingPeriod {
     fn prorate(&self, amount: i64, at: i64) -> i64 {
         (amount as f64 * self.fraction_remaining(at)).round() as i64
     }
-}
-
-/// A relay's billing-relevant state at a point in time, reconstructed by folding
-/// its activity log.
-#[derive(Default)]
-struct RelayState {
-    active: bool,
-    plan_id: Option<String>,
-}
-
-/// Fold relay activities (which must be oldest-first) into each relay's
-/// `(active, plan)` state. `create`/`activate`/`deactivate` drive status;
-/// `create`/`update` carry the plan via `plan_id`. Feed it activities up to a
-/// cutoff to get each relay's state as of that moment (e.g. the period boundary).
-fn relay_states(activities: &[Activity]) -> HashMap<String, RelayState> {
-    let mut states: HashMap<String, RelayState> = HashMap::new();
-
-    for activity in activities {
-        let state = states.entry(activity.resource_id.clone()).or_default();
-        match activity.activity_type.as_str() {
-            "create_relay" => {
-                state.active = true;
-                state.plan_id = activity.plan_id.clone();
-            }
-            "update_relay" => {
-                if activity.plan_id.is_some() {
-                    state.plan_id = activity.plan_id.clone();
-                }
-            }
-            "activate_relay" => state.active = true,
-            "deactivate_relay" => state.active = false,
-            _ => {}
-        }
-    }
-
-    states
 }
 
 fn summarize_error_message(error: &str) -> Option<String> {

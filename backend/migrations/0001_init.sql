@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS activity (
   resource_type TEXT NOT NULL,
   resource_id TEXT NOT NULL,
   billed_at INTEGER,
-  plan_id TEXT,
+  snapshot TEXT NOT NULL,
   FOREIGN KEY (tenant_pubkey) REFERENCES tenant(pubkey)
 );
 

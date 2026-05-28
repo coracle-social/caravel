@@ -11,8 +11,6 @@ pub async fn list_plans(State(_api): State<Arc<Api>>) -> ApiResult {
 }
 
 pub async fn get_plan(State(_api): State<Arc<Api>>, Path(id): Path<String>) -> ApiResult {
-    match query::get_plan(&id) {
-        Some(plan) => ok(plan),
-        None => Err(not_found("plan not found")),
-    }
+    let plan = query::get_plan(&id).map_err(|_| not_found("plan not found"))?;
+    ok(plan)
 }

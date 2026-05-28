@@ -1,45 +1,36 @@
 use anyhow::Result;
+use sqlx::types::Json;
 use sqlx::{Sqlite, Transaction};
 
 use crate::billing::BillingPeriod;
 use crate::db::{pool, publish, with_tx};
 use crate::models::{
     Activity, Bolt11, Invoice, InvoiceItem, RELAY_STATUS_ACTIVE, RELAY_STATUS_DELINQUENT,
-    RELAY_STATUS_INACTIVE, Relay, Tenant,
+    RELAY_STATUS_INACTIVE, Relay, Snapshot, Tenant,
 };
 
 // --- Tenants ---
 
 pub async fn create_tenant(tenant: &Tenant) -> Result<()> {
-    let activity = with_tx(async |tx| {
-        sqlx::query(
-            "INSERT INTO tenant (pubkey, nwc_url, created_at, stripe_customer_id)
-             VALUES (?, ?, ?, ?)",
-        )
-        .bind(&tenant.pubkey)
-        .bind(&tenant.nwc_url)
-        .bind(tenant.created_at)
-        .bind(&tenant.stripe_customer_id)
-        .execute(&mut **tx)
-        .await?;
-        insert_activity_tx(tx, "create_tenant", "tenant", &tenant.pubkey, None).await
-    })
+    sqlx::query(
+        "INSERT INTO tenant (pubkey, nwc_url, created_at, stripe_customer_id)
+         VALUES (?, ?, ?, ?)",
+    )
+    .bind(&tenant.pubkey)
+    .bind(&tenant.nwc_url)
+    .bind(tenant.created_at)
+    .bind(&tenant.stripe_customer_id)
+    .execute(pool())
     .await?;
-    publish(activity);
     Ok(())
 }
 
 pub async fn update_tenant(tenant: &Tenant) -> Result<()> {
-    let activity = with_tx(async |tx| {
-        sqlx::query("UPDATE tenant SET nwc_url = ? WHERE pubkey = ?")
-            .bind(&tenant.nwc_url)
-            .bind(&tenant.pubkey)
-            .execute(&mut **tx)
-            .await?;
-        insert_activity_tx(tx, "update_tenant", "tenant", &tenant.pubkey, None).await
-    })
-    .await?;
-    publish(activity);
+    sqlx::query("UPDATE tenant SET nwc_url = ? WHERE pubkey = ?")
+        .bind(&tenant.nwc_url)
+        .bind(&tenant.pubkey)
+        .execute(pool())
+        .await?;
     Ok(())
 }
 
@@ -90,7 +81,11 @@ pub async fn create_relay(relay: &Relay) -> Result<()> {
         .bind(relay.push_enabled)
         .execute(&mut **tx)
         .await?;
-        insert_activity_tx(tx, "create_relay", "relay", &relay.id, Some(&relay.plan_id)).await
+        let snapshot = Snapshot::Relay {
+            plan: relay.plan_id.clone(),
+            status: RELAY_STATUS_ACTIVE.to_string(),
+        };
+        insert_activity_tx(tx, "create_relay", &relay.id, snapshot).await
     })
     .await?;
     publish(activity);
@@ -126,7 +121,11 @@ pub async fn update_relay(relay: &Relay) -> Result<()> {
         .bind(&relay.id)
         .execute(&mut **tx)
         .await?;
-        insert_activity_tx(tx, "update_relay", "relay", &relay.id, Some(&relay.plan_id)).await
+        let snapshot = Snapshot::Relay {
+            plan: relay.plan_id.clone(),
+            status: relay.status.clone(),
+        };
+        insert_activity_tx(tx, "update_relay", &relay.id, snapshot).await
     })
     .await?;
     publish(activity);
@@ -134,26 +133,30 @@ pub async fn update_relay(relay: &Relay) -> Result<()> {
 }
 
 pub async fn activate_relay(relay: &Relay) -> Result<()> {
-    set_relay_status(&relay.id, RELAY_STATUS_ACTIVE, "activate_relay").await
+    set_relay_status(relay, RELAY_STATUS_ACTIVE, "activate_relay").await
 }
 
 pub async fn deactivate_relay(relay: &Relay) -> Result<()> {
-    set_relay_status(&relay.id, RELAY_STATUS_INACTIVE, "deactivate_relay").await
+    set_relay_status(relay, RELAY_STATUS_INACTIVE, "deactivate_relay").await
 }
 
 #[allow(dead_code)] // wired up by the delinquency flow (not yet implemented)
 pub async fn mark_relay_delinquent(relay: &Relay) -> Result<()> {
-    set_relay_status(&relay.id, RELAY_STATUS_DELINQUENT, "mark_relay_delinquent").await
+    set_relay_status(relay, RELAY_STATUS_DELINQUENT, "mark_relay_delinquent").await
 }
 
-async fn set_relay_status(relay_id: &str, status: &str, activity_type: &str) -> Result<()> {
+async fn set_relay_status(relay: &Relay, status: &str, activity_type: &str) -> Result<()> {
     let activity = with_tx(async |tx| {
         sqlx::query("UPDATE relay SET status = ?, synced = 0 WHERE id = ?")
             .bind(status)
-            .bind(relay_id)
+            .bind(&relay.id)
             .execute(&mut **tx)
             .await?;
-        insert_activity_tx(tx, activity_type, "relay", relay_id, None).await
+        let snapshot = Snapshot::Relay {
+            plan: relay.plan_id.clone(),
+            status: status.to_string(),
+        };
+        insert_activity_tx(tx, activity_type, &relay.id, snapshot).await
     })
     .await?;
     publish(activity);
@@ -167,20 +170,28 @@ pub async fn fail_relay_sync(relay: &Relay, sync_error: String) -> Result<()> {
             .bind(&relay.id)
             .execute(&mut **tx)
             .await?;
-        insert_activity_tx(tx, "fail_relay_sync", "relay", &relay.id, None).await
+        let snapshot = Snapshot::Relay {
+            plan: relay.plan_id.clone(),
+            status: relay.status.clone(),
+        };
+        insert_activity_tx(tx, "fail_relay_sync", &relay.id, snapshot).await
     })
     .await?;
     publish(activity);
     Ok(())
 }
 
-pub async fn complete_relay_sync(relay_id: &str) -> Result<()> {
+pub async fn complete_relay_sync(relay: &Relay) -> Result<()> {
     let activity = with_tx(async |tx| {
         sqlx::query("UPDATE relay SET synced = 1, sync_error = '' WHERE id = ?")
-            .bind(relay_id)
+            .bind(&relay.id)
             .execute(&mut **tx)
             .await?;
-        insert_activity_tx(tx, "complete_relay_sync", "relay", relay_id, None).await
+        let snapshot = Snapshot::Relay {
+            plan: relay.plan_id.clone(),
+            status: relay.status.clone(),
+        };
+        insert_activity_tx(tx, "complete_relay_sync", &relay.id, snapshot).await
     })
     .await?;
     publish(activity);
@@ -297,17 +308,12 @@ pub async fn create_invoice(tenant: &Tenant, period: &BillingPeriod) -> Result<O
 pub async fn mark_invoice_paid(invoice_id: &str, method: &str) -> Result<()> {
     let updated_at = chrono::Utc::now().timestamp();
 
-    let activity = with_tx(async |tx| {
-        sqlx::query("UPDATE invoice SET status = 'paid', method = ?, updated_at = ? WHERE id = ?")
-            .bind(method)
-            .bind(updated_at)
-            .bind(invoice_id)
-            .execute(&mut **tx)
-            .await?;
-        insert_activity_tx(tx, "invoice_paid", "invoice", invoice_id, None).await
-    })
-    .await?;
-    publish(activity);
+    sqlx::query("UPDATE invoice SET status = 'paid', method = ?, updated_at = ? WHERE id = ?")
+        .bind(method)
+        .bind(updated_at)
+        .bind(invoice_id)
+        .execute(pool())
+        .await?;
     Ok(())
 }
 
@@ -372,26 +378,25 @@ pub async fn insert_intent(intent_id: &str, invoice_id: &str) -> Result<()> {
 async fn insert_activity_tx(
     tx: &mut Transaction<'_, Sqlite>,
     activity_type: &str,
-    resource_type: &str,
     resource_id: &str,
-    plan_id: Option<&str>,
+    snapshot: Snapshot,
 ) -> Result<Activity> {
-    let tenant_pubkey = match resource_type {
-        "tenant" => resource_id.to_string(),
-        "relay" => {
+    let resource_type = snapshot.resource_type();
+    let tenant_pubkey = match &snapshot {
+        Snapshot::Relay { .. } => {
             sqlx::query_scalar::<_, String>("SELECT tenant_pubkey FROM relay WHERE id = ?")
                 .bind(resource_id)
                 .fetch_one(&mut **tx)
                 .await?
         }
-        _ => anyhow::bail!("unknown resource_type: {resource_type}"),
     };
 
     let id = uuid::Uuid::new_v4().to_string();
     let created_at = chrono::Utc::now().timestamp();
+    let snapshot = Json(snapshot);
 
     sqlx::query(
-        "INSERT INTO activity (id, tenant_pubkey, created_at, activity_type, resource_type, resource_id, plan_id)
+        "INSERT INTO activity (id, tenant_pubkey, created_at, activity_type, resource_type, resource_id, snapshot)
          VALUES (?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&id)
@@ -400,7 +405,7 @@ async fn insert_activity_tx(
     .bind(activity_type)
     .bind(resource_type)
     .bind(resource_id)
-    .bind(plan_id)
+    .bind(&snapshot)
     .execute(&mut **tx)
     .await?;
 
@@ -412,7 +417,7 @@ async fn insert_activity_tx(
         resource_type: resource_type.to_string(),
         resource_id: resource_id.to_string(),
         billed_at: None,
-        plan_id: plan_id.map(str::to_string),
+        snapshot,
     })
 }
 

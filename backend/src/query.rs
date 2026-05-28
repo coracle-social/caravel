@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 
 use crate::models::{Activity, Bolt11, Invoice, InvoiceItem, Plan, Relay, Tenant};
 use crate::db::pool;
@@ -46,8 +46,11 @@ pub fn list_plans() -> Vec<Plan> {
     ]
 }
 
-pub fn get_plan(plan_id: &str) -> Option<Plan> {
-    list_plans().into_iter().find(|p| p.id == plan_id)
+pub fn get_plan(plan_id: &str) -> Result<Plan> {
+    list_plans()
+        .into_iter()
+        .find(|p| p.id == plan_id)
+        .ok_or_else(|| anyhow!("plan not found: {plan_id}"))
 }
 
 // --- Tenants ---
@@ -95,15 +98,14 @@ pub async fn get_relay(id: &str) -> Result<Option<Relay>> {
         .await?)
 }
 
-/// The relay's plan immediately before `before`, read from the activity log
-/// (the most recent `create_relay`/`update_relay` with `created_at < before`).
-/// Billing uses this as the `old` side of a plan-change delta.
+/// The relay's plan immediately before `before`, read from the most recent
+/// relay-activity snapshot with `created_at < before`. Billing uses this as
+/// the `old` side of a plan-change delta.
 pub async fn get_relay_plan_before(relay_id: &str, before: i64) -> Result<Option<String>> {
     Ok(sqlx::query_scalar::<_, String>(
-        "SELECT plan_id FROM activity
+        "SELECT json_extract(snapshot, '$.plan') FROM activity
          WHERE resource_id = ?
            AND resource_type = 'relay'
-           AND plan_id IS NOT NULL
            AND created_at < ?
          ORDER BY created_at DESC
          LIMIT 1",
@@ -188,26 +190,25 @@ pub async fn list_billable_activity_for_tenant(tenant_pubkey: &str) -> Result<Ve
     .await?)
 }
 
-/// A tenant's relay status/plan activity strictly before `before`, oldest-first
-/// — folded by billing to reconstruct each relay's state as of a period boundary.
+/// The relay's most recent activity strictly before `before`, or `None` if it
+/// had no activity yet — i.e. the relay didn't exist at that point. Billing
+/// reads its snapshot to recover the relay's state as of a period boundary.
 /// Strict `<` so a relay created exactly at the boundary isn't counted active
 /// there (its own creation charge covers that period).
-pub async fn list_relay_activity_before(
-    tenant_pubkey: &str,
+pub async fn get_latest_relay_activity_before(
+    relay_id: &str,
     before: i64,
-) -> Result<Vec<Activity>> {
+) -> Result<Option<Activity>> {
     Ok(sqlx::query_as::<_, Activity>(&select_activity(
-        "WHERE tenant_pubkey = ?
+        "WHERE resource_id = ?
            AND resource_type = 'relay'
-           AND activity_type IN (
-               'create_relay', 'update_relay', 'activate_relay', 'deactivate_relay'
-           )
            AND created_at < ?
-         ORDER BY created_at ASC",
+         ORDER BY created_at DESC
+         LIMIT 1",
     ))
-    .bind(tenant_pubkey)
+    .bind(relay_id)
     .bind(before)
-    .fetch_all(pool())
+    .fetch_optional(pool())
     .await?)
 }
 

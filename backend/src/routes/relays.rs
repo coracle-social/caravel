@@ -194,8 +194,7 @@ pub async fn update_relay(
         .is_some_and(|requested| requested != current_plan);
 
     if plan_changed {
-        let selected_plan =
-            query::get_plan(&relay.plan_id).expect("validated plan must exist");
+        let selected_plan = query::get_plan(&relay.plan_id).map_err(internal)?;
         if let Some(limit) = selected_plan.members {
             let current_members = fetch_relay_members(&relay)
                 .await
@@ -288,7 +287,7 @@ fn prepare_relay(mut relay: Relay) -> Result<Relay, ApiError> {
     }
 
     let plan = query::get_plan(&relay.plan_id)
-        .ok_or_else(|| unprocessable("invalid-plan", "plan not found"))?;
+        .map_err(|_| unprocessable("invalid-plan", "plan not found"))?;
 
     if (!plan.blossom && relay.blossom_enabled == 1) || (!plan.livekit && relay.livekit_enabled == 1) {
         return Err(unprocessable("premium-feature", "feature requires a paid plan"));

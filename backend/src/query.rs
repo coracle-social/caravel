@@ -84,7 +84,7 @@ pub async fn list_relays_pending_sync() -> Result<Vec<Relay>> {
     )
 }
 
-pub async fn list_relays(tenant_pubkey: &str) -> Result<Vec<Relay>> {
+pub async fn list_relays_for_tenant(tenant_pubkey: &str) -> Result<Vec<Relay>> {
     Ok(sqlx::query_as::<_, Relay>(&select_relay("WHERE tenant_pubkey = ?"))
         .bind(tenant_pubkey)
         .fetch_all(pool())

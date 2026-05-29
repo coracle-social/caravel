@@ -135,7 +135,7 @@ export const reactivateRelayById = (id: string) => reactivateRelay(id)
 
 export async function tenantNeedsPaymentSetup(): Promise<boolean> {
   const tenant = await getTenant(account()!.pubkey)
-  return !tenant.nwc_is_set
+  return !tenant.nwc_is_set && !tenant.stripe_payment_method_id
 }
 
 export async function getLatestOpenInvoice(): Promise<Invoice | null> {

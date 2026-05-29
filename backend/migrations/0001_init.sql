@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS tenant (
   created_at INTEGER NOT NULL,
   billing_anchor INTEGER,
   stripe_customer_id TEXT NOT NULL,
+  stripe_payment_method_id TEXT,
   renewed_at INTEGER,
   churned_at INTEGER
 );

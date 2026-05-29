@@ -22,6 +22,7 @@ pub struct TenantResponse {
     pub created_at: i64,
     pub billing_anchor: Option<i64>,
     pub stripe_customer_id: String,
+    pub stripe_payment_method_id: Option<String>,
     /// Set when billing has churned the tenant; the UI uses it to warn that the
     /// account is delinquent until billing is re-activated.
     pub churned_at: Option<i64>,
@@ -37,6 +38,7 @@ impl From<Tenant> for TenantResponse {
             created_at: t.created_at,
             billing_anchor: t.billing_anchor,
             stripe_customer_id: t.stripe_customer_id,
+            stripe_payment_method_id: t.stripe_payment_method_id,
             churned_at: t.churned_at,
         }
     }
@@ -142,7 +144,7 @@ pub async fn list_tenant_relays(
 ) -> ApiResult {
     api.require_admin_or_tenant(&auth, &pubkey)?;
 
-    let relays = query::list_relays(&pubkey)
+    let relays = query::list_relays_for_tenant(&pubkey)
         .await
         .map_err(internal)?;
     ok(relays)

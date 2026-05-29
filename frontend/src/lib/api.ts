@@ -98,6 +98,7 @@ export type Tenant = {
   nwc_is_set: boolean
   created_at: number
   stripe_customer_id: string
+  stripe_payment_method_id: string | null
   nwc_error: string | null
   stripe_error: string | null
   churned_at: number | null

@@ -233,7 +233,7 @@ impl Billing {
     /// a relay created/activated *within* the period isn't active before the
     /// boundary, so it's covered by its own prorated charge instead.
     async fn reconcile_renewal(&self, tenant: &Tenant, period: &BillingPeriod) -> Result<()> {
-        let relays = query::list_relays(&tenant.pubkey).await?;
+        let relays = query::list_relays_for_tenant(&tenant.pubkey).await?;
 
         let mut line_items = Vec::new();
         for relay in relays {
@@ -419,7 +419,7 @@ impl Billing {
     async fn churn_tenant(&self, tenant: &Tenant, now: i64) -> Result<()> {
         command::set_tenant_churned_at(&tenant.pubkey, Some(now)).await?;
 
-        for relay in query::list_relays(&tenant.pubkey).await? {
+        for relay in query::list_relays_for_tenant(&tenant.pubkey).await? {
             if relay.status == RELAY_STATUS_ACTIVE {
                 command::mark_relay_delinquent(&relay).await?;
             }
@@ -434,7 +434,7 @@ impl Billing {
     async fn reactivate_tenant(&self, tenant: &Tenant) -> Result<()> {
         command::set_tenant_churned_at(&tenant.pubkey, None).await?;
 
-        for relay in query::list_relays(&tenant.pubkey).await? {
+        for relay in query::list_relays_for_tenant(&tenant.pubkey).await? {
             if relay.status == RELAY_STATUS_DELINQUENT {
                 command::unmark_relay_delinquent(&relay).await?;
             }

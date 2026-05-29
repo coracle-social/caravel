@@ -46,6 +46,9 @@ pub struct Tenant {
     pub created_at: i64,
     pub billing_anchor: Option<i64>,
     pub stripe_customer_id: String,
+    /// The tenant's saved Stripe payment method, or `None` if they have not set
+    /// up a card yet. Set when the tenant adds a card via the Stripe portal.
+    pub stripe_payment_method_id: Option<String>,
     /// `period_start` of the most recent period this tenant was renewed for, or
     /// `None` if never renewed. The per-period renewal idempotency marker.
     pub renewed_at: Option<i64>,

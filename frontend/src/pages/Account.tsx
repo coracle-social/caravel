@@ -5,7 +5,7 @@ import LoadingState from "@/components/LoadingState"
 import PaymentDialog from "@/components/PaymentDialog"
 import useMinLoading from "@/components/useMinLoading"
 import { updateActiveTenant, useTenant } from "@/lib/hooks"
-import { createPortalSession, getInvoice, listTenantInvoices, type Invoice } from "@/lib/api"
+import { createPortalSession, getInvoice, invoiceStatus, listTenantInvoices, type Invoice } from "@/lib/api"
 import { account } from "@/lib/state"
 
 export default function Account() {
@@ -75,11 +75,9 @@ export default function Account() {
   }
 
   const invoiceStatusStyles: Record<string, string> = {
-    draft: "bg-gray-100 text-gray-500 border-gray-200",
     open: "bg-yellow-50 text-yellow-700 border-yellow-200",
     paid: "bg-green-50 text-green-700 border-green-200",
     void: "bg-gray-100 text-gray-500 border-gray-200",
-    uncollectible: "bg-red-50 text-red-700 border-red-200",
   }
 
   return (
@@ -168,8 +166,9 @@ export default function Account() {
               <ul class="space-y-3">
                 <For each={invoices()}>
                   {(invoice) => {
-                    const isOpen = () => invoice.status === "open"
-                    const statusStyle = () => invoiceStatusStyles[invoice.status] ?? "bg-gray-100 text-gray-500 border-gray-200"
+                    const status = () => invoiceStatus(invoice)
+                    const isOpen = () => status() === "open"
+                    const statusStyle = () => invoiceStatusStyles[status()] ?? "bg-gray-100 text-gray-500 border-gray-200"
                     const periodLabel = () => {
                       const start = new Date(invoice.period_start * 1000)
                       const end = new Date(invoice.period_end * 1000)
@@ -185,7 +184,7 @@ export default function Account() {
                         <div class="flex items-center justify-between gap-3">
                           <div>
                             <span class="font-medium text-gray-900">
-                              ${(invoice.amount_due / 100).toFixed(2)}
+                              ${(invoice.amount / 100).toFixed(2)}
                             </span>
                             <Show when={invoice.period_start && invoice.period_end}>
                               <p class="text-xs text-gray-500 mt-0.5">{periodLabel()}</p>
@@ -196,7 +195,7 @@ export default function Account() {
                               <span class="text-xs text-blue-600 font-medium">Pay now</span>
                             </Show>
                             <span class={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium capitalize ${statusStyle()}`}>
-                              {invoice.status}
+                              {status()}
                             </span>
                           </div>
                         </div>

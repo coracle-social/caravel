@@ -9,7 +9,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::api::{Api, AuthedPubkey};
 use crate::models::Tenant;
-use crate::routes::invoices::InvoiceResponse;
 use crate::web::{ApiResult, internal, map_unique_error, ok};
 use crate::{command, env, query};
 
@@ -162,10 +161,7 @@ pub async fn list_tenant_invoices(
         .await
         .map_err(internal)?;
 
-    ok(invoices
-        .into_iter()
-        .map(InvoiceResponse::from)
-        .collect::<Vec<_>>())
+    ok(invoices)
 }
 
 #[derive(Deserialize)]

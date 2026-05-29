@@ -9,6 +9,7 @@ import {
   reactivateRelay,
   getRelay,
   getTenant,
+  invoiceStatus,
   listRelayActivity,
   listRelays,
   listTenantInvoices,
@@ -141,7 +142,7 @@ export async function tenantNeedsPaymentSetup(): Promise<boolean> {
 export async function getLatestOpenInvoice(): Promise<Invoice | null> {
   const invoices = await listTenantInvoices(account()!.pubkey)
   const open = invoices
-    .filter(inv => inv.status === "open" && inv.amount_due > 0)
+    .filter(inv => invoiceStatus(inv) === "open" && inv.amount > 0)
     .sort((a, b) => b.period_start - a.period_start)
   return open[0] ?? null
 }

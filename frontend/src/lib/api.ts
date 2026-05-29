@@ -106,12 +106,22 @@ export type Tenant = {
 
 export type Invoice = {
   id: string
-  customer: string
-  status: string
-  amount_due: number
-  currency: string
+  tenant_pubkey: string
+  amount: number
   period_start: number
   period_end: number
+  created_at: number
+  paid_at: number | null
+  voided_at: number | null
+}
+
+// The backend models an invoice's lifecycle as timestamps rather than a status
+// field, so derive the display status from them: paid once paid_at is set, void
+// once voided_at is set, otherwise still open.
+export function invoiceStatus(invoice: Pick<Invoice, "paid_at" | "voided_at">): "open" | "paid" | "void" {
+  if (invoice.paid_at != null) return "paid"
+  if (invoice.voided_at != null) return "void"
+  return "open"
 }
 
 export type Activity = {

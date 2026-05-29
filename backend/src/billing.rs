@@ -5,8 +5,7 @@ use crate::bitcoin;
 use crate::command;
 use crate::env;
 use crate::models::{
-    Activity, Bolt11, Invoice, InvoiceItem, RELAY_STATUS_ACTIVE, RELAY_STATUS_DELINQUENT, Snapshot,
-    Tenant,
+    Activity, Bolt11, Invoice, InvoiceItem, RELAY_STATUS_ACTIVE, Snapshot, Tenant,
 };
 use crate::query;
 use crate::robot::Robot;
@@ -85,7 +84,8 @@ impl Billing {
         // A churned tenant with fresh billable activity is using the service
         // again: re-activate billing (and restore their relays) before billing it.
         if tenant.churned_at.is_some() && !activities.is_empty() {
-            self.reactivate_tenant(&tenant).await?;
+            let relays = query::list_relays_for_tenant(&tenant.pubkey).await?;
+            command::reactivate_tenant(&tenant.pubkey, &relays).await?;
             tenant.churned_at = None;
         }
 
@@ -281,15 +281,20 @@ impl Billing {
         if !tenant.nwc_url.is_empty() {
             match self.attempt_payment_using_nwc(tenant, invoice).await {
                 Ok(()) => return Ok(()),
-                Err(e) => {
-                    let message = format!("{e}");
-                    command::set_tenant_nwc_error(&tenant.pubkey, &message).await?;
-                    error_message = Some(message);
-                }
+                Err(e) => error_message = Some(format!("{e}")),
             }
         }
 
-        // 2. Payment method on file: if the tenant has one saved, charge it via Stripe.
+        // 2. Out-of-band lightning: catches partially failed NWC or manual payment
+        if let Some(bolt11) = query::get_bolt11_for_invoice(&invoice.id).await?
+            && bolt11.settled_at.is_none()
+            && self.wallet.is_settled(&bolt11.lnbc).await.unwrap_or(false)
+        {
+            command::settle_invoice_out_of_band(&bolt11.id, &invoice.id).await?;
+            return Ok(());
+        }
+
+        // 3. Payment method on file: if the tenant has one saved, charge it via Stripe.
         if let Some(payment_method) =
             self.stripe.get_saved_payment_method(&tenant.stripe_customer_id).await?
         {
@@ -298,15 +303,11 @@ impl Billing {
                 .await
             {
                 Ok(()) => return Ok(()),
-                Err(e) => {
-                    let message = format!("{e}");
-                    command::set_tenant_stripe_error(&tenant.pubkey, &message).await?;
-                    error_message = error_message.or_else(|| Some(message));
-                }
+                Err(e) => error_message = error_message.or_else(|| Some(format!("{e}"))),
             }
         }
 
-        // 3. Manual payment: DM a link to the in-app payment page for this invoice.
+        // 4. Manual payment: DM a link to the in-app payment page for this invoice.
         let summary = error_message.as_deref().and_then(summarize_error_message);
         if let Err(e) = self.attempt_payment_using_dm(tenant, invoice, summary).await {
             tracing::error!(
@@ -320,26 +321,24 @@ impl Billing {
     }
 
     async fn attempt_payment_using_nwc(&self, tenant: &Tenant, invoice: &Invoice) -> Result<()> {
-        let nwc_url = env::get().decrypt(&tenant.nwc_url)?;
-        let tenant_wallet = Wallet::from_url(&nwc_url)?;
-        let bolt11 = self.ensure_bolt11(&invoice.id).await?;
+        let result: Result<()> = async {
+            let nwc_url = env::get().decrypt(&tenant.nwc_url)?;
+            let tenant_wallet = Wallet::from_url(&nwc_url)?;
+            let bolt11 = self.ensure_bolt11(invoice).await?;
 
-        match tenant_wallet.pay_invoice(bolt11.lnbc.clone()).await {
-            Ok(()) => {
-                command::clear_tenant_nwc_error(&tenant.pubkey).await?;
-                command::mark_bolt11_settled(&bolt11.id).await?;
-                command::mark_invoice_paid(&invoice.id, "nwc").await
-            }
-            Err(pay_error) => {
-                // The pay request errored, but the invoice may have been paid out of band.
-                if self.wallet.is_settled(&bolt11.lnbc).await.unwrap_or(false) {
-                    command::mark_bolt11_settled(&bolt11.id).await?;
-                    command::mark_invoice_paid(&invoice.id, "oob").await
-                } else {
-                    Err(pay_error)
-                }
-            }
+            tenant_wallet.pay_invoice(bolt11.lnbc.clone()).await?;
+
+            command::settle_invoice_via_nwc(&tenant.pubkey, &bolt11.id, &invoice.id).await
         }
+        .await;
+
+        // Record the failure on the tenant (to warn them in the UI) but still
+        // surface it, so the cascade can fall through and summarize it in the DM.
+        if let Err(error) = &result {
+            command::set_tenant_nwc_error(&tenant.pubkey, &format!("{error}")).await?;
+        }
+
+        result
     }
 
     async fn attempt_payment_using_stripe(
@@ -348,24 +347,28 @@ impl Billing {
         invoice: &Invoice,
         payment_method_id: &str,
     ) -> Result<()> {
-        let amount = self.get_invoice_amount(&invoice.id).await?;
+        let result: Result<()> = async {
+            let intent_id = self
+                .stripe
+                .create_payment_intent(
+                    &tenant.stripe_customer_id,
+                    payment_method_id,
+                    &invoice.id,
+                    invoice.amount,
+                    "usd",
+                )
+                .await?;
 
-        // A decline or an off-session authentication demand comes back as Err, so
-        // the cascade falls back to the manual DM.
-        let intent_id = self
-            .stripe
-            .create_payment_intent(
-                &tenant.stripe_customer_id,
-                payment_method_id,
-                &invoice.id,
-                amount,
-                "usd",
-            )
-            .await?;
+            command::settle_invoice_via_stripe(&tenant.pubkey, &intent_id, &invoice.id).await
+        }
+        .await;
 
-        command::insert_intent(&intent_id, &invoice.id).await?;
-        command::clear_tenant_stripe_error(&tenant.pubkey).await?;
-        command::mark_invoice_paid(&invoice.id, "stripe").await
+        // Record the failure on the tenant (to warn them in the UI) but still
+        // surface it, so the cascade can fall through and summarize it in the DM.
+        if let Err(error) = &result {
+            command::set_tenant_stripe_error(&tenant.pubkey, &format!("{error}")).await?;
+        }
+        result
     }
 
     async fn attempt_payment_using_dm(
@@ -401,7 +404,8 @@ impl Billing {
         let now = chrono::Utc::now().timestamp();
         if now - oldest.created_at >= GRACE_PERIOD_SECS {
             if tenant.churned_at.is_none() {
-                self.churn_tenant(tenant, now).await?;
+                let relays = query::list_relays_for_tenant(&tenant.pubkey).await?;
+                command::churn_tenant(&tenant.pubkey, now, &relays).await?;
             }
             return Ok(());
         }
@@ -413,50 +417,12 @@ impl Billing {
         Ok(())
     }
 
-    /// Churn a tenant whose grace period has elapsed: record the churn, mark every
-    /// active relay delinquent, and void the unpaid invoices (we've given up
-    /// collecting them — re-activation never requires they be paid).
-    async fn churn_tenant(&self, tenant: &Tenant, now: i64) -> Result<()> {
-        command::set_tenant_churned_at(&tenant.pubkey, Some(now)).await?;
-
-        for relay in query::list_relays_for_tenant(&tenant.pubkey).await? {
-            if relay.status == RELAY_STATUS_ACTIVE {
-                command::mark_relay_delinquent(&relay).await?;
-            }
-        }
-
-        command::void_open_invoices(&tenant.pubkey).await
-    }
-
-    /// Re-activate a churned tenant: clear the churn marker and restore every
-    /// delinquent relay to active. Any still-open invoices are voided so old debt
-    /// is never a precondition for coming back.
-    async fn reactivate_tenant(&self, tenant: &Tenant) -> Result<()> {
-        command::set_tenant_churned_at(&tenant.pubkey, None).await?;
-
-        for relay in query::list_relays_for_tenant(&tenant.pubkey).await? {
-            if relay.status == RELAY_STATUS_DELINQUENT {
-                command::unmark_relay_delinquent(&relay).await?;
-            }
-        }
-
-        command::void_open_invoices(&tenant.pubkey).await
-    }
-
-    // --- Invoice utils ---
-
-    pub async fn get_invoice_amount(&self, invoice_id: &str) -> Result<i64> {
-        let invoice_items = query::get_invoice_items_for_invoice(invoice_id).await?;
-
-        Ok(invoice_items.iter().map(|item| item.amount).sum())
-    }
-
     // --- Bolt11 utils ---
 
-    pub async fn ensure_bolt11(&self, invoice_id: &str) -> Result<Bolt11> {
+    pub async fn ensure_bolt11(&self, invoice: &Invoice) -> Result<Bolt11> {
         let now = chrono::Utc::now().timestamp();
 
-        if let Some(existing) = query::get_bolt11_for_invoice(invoice_id).await?
+        if let Some(existing) = query::get_bolt11_for_invoice(&invoice.id).await?
             && (existing.settled_at.is_none() || now < existing.expires_at)
         {
             return Ok(existing);
@@ -464,11 +430,10 @@ impl Billing {
 
         let expiry: i64 = 3600;
         let info = "Relay subscription payment";
-        let amount = self.get_invoice_amount(invoice_id).await?;
-        let msats = bitcoin::fiat_to_msats(amount, "usd").await?;
+        let msats = bitcoin::fiat_to_msats(invoice.amount, "usd").await?;
         let lnbc = self.wallet.make_invoice(msats, info, expiry as u64).await?;
 
-        command::insert_bolt11(invoice_id, &lnbc, msats as i64, now + expiry)
+        command::insert_bolt11(&invoice.id, &lnbc, msats as i64, now + expiry)
             .await?
             .ok_or_else(|| anyhow!("failed to insert bolt11"))
     }
@@ -478,11 +443,11 @@ impl Billing {
     /// settled on the robot wallet, mark it paid and return the refreshed record;
     /// otherwise return it unchanged. Meant to run before presenting a payable
     /// invoice so we never hand back one that's already been paid.
-    pub async fn ensure_and_reconcile_bolt11(&self, invoice_id: &str) -> Result<Bolt11> {
-        let bolt11 = self.ensure_bolt11(invoice_id).await?;
+    pub async fn ensure_and_reconcile_bolt11(&self, invoice: &Invoice) -> Result<Bolt11> {
+        let bolt11 = self.ensure_bolt11(invoice).await?;
 
         if bolt11.settled_at.is_none() && self.wallet.is_settled(&bolt11.lnbc).await? {
-            command::mark_bolt11_settled(&bolt11.id).await?;
+            command::settle_invoice_out_of_band(&bolt11.id, &invoice.id).await?;
 
             // Re-fetch so the caller sees that it's been settled.
             Ok(query::get_bolt11(&bolt11.id).await?.unwrap_or(bolt11))

@@ -124,18 +124,14 @@ impl Default for Relay {
 pub struct Invoice {
   pub id: String,
   pub tenant_pubkey: String,
+  /// The total owed, fixed when the invoice is cut from its outstanding line
+  /// items, so collection never has to re-sum them.
+  pub amount: i64,
   pub period_start: i64,
   pub period_end: i64,
   pub created_at: i64,
   pub paid_at: Option<i64>,
   pub voided_at: Option<i64>,
-}
-
-impl Invoice {
-  /// An invoice is open — still collectible — until it's either paid or voided.
-  pub fn is_open(&self) -> bool {
-    self.paid_at.is_none() && self.voided_at.is_none()
-  }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -162,13 +158,4 @@ pub struct Bolt11 {
   pub created_at: i64,
   pub expires_at: i64,
   pub settled_at: Option<i64>,
-}
-
-/// A Stripe PaymentIntent that paid an invoice, mirrored for the audit trail and
-/// read back to show the user how an invoice was settled.
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
-pub struct Intent {
-  pub id: String,
-  pub invoice_id: String,
-  pub created_at: i64,
 }

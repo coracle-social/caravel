@@ -9,7 +9,7 @@ import { plans } from "@/lib/state"
 type PayStatus = "idle" | "loading" | "success" | "error"
 type Bolt11Status = "idle" | "loading" | "ready" | "error"
 
-type PaymentInvoice = Pick<Invoice, "id" | "amount_due"> &
+type PaymentInvoice = Pick<Invoice, "id" | "amount"> &
   Partial<Pick<Invoice, "period_start" | "period_end">>
 
 type PaymentDialogProps = {
@@ -68,7 +68,7 @@ export default function PaymentDialog(props: PaymentDialogProps) {
     setPayError("")
     try {
       const invoice = await getInvoice(props.invoice.id)
-      if (invoice.status === "paid") {
+      if (invoice.paid_at != null) {
         setPayStatus("success")
       } else {
         setPayStatus("error")
@@ -90,7 +90,7 @@ export default function PaymentDialog(props: PaymentDialogProps) {
     props.onClose()
   }
 
-  const amountLabel = () => `$${(props.invoice.amount_due / 100).toFixed(2)}`
+  const amountLabel = () => `$${(props.invoice.amount / 100).toFixed(2)}`
 
   const periodLabel = () => {
     const { period_start, period_end } = props.invoice

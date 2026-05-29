@@ -1,6 +1,6 @@
 use anyhow::{Result, anyhow};
 
-use crate::models::{Activity, Bolt11, Intent, Invoice, InvoiceItem, Plan, Relay, Tenant};
+use crate::models::{Activity, Bolt11, Invoice, Plan, Relay, Tenant};
 use crate::db::pool;
 
 fn select_tenant(tail: &str) -> String {
@@ -154,29 +154,6 @@ pub async fn list_open_invoices(tenant_pubkey: &str) -> Result<Vec<Invoice>> {
     .bind(tenant_pubkey)
     .fetch_all(pool())
     .await?)
-}
-
-pub async fn get_invoice_items_for_invoice(invoice_id: &str) -> Result<Vec<InvoiceItem>> {
-    Ok(
-        sqlx::query_as::<_, InvoiceItem>("SELECT * FROM invoice_item WHERE invoice_id = ?")
-            .bind(invoice_id)
-            .fetch_all(pool())
-            .await?,
-    )
-}
-
-// --- Intents ---
-
-/// The Stripe PaymentIntents recorded against an invoice, newest first.
-pub async fn list_intents_for_invoice(invoice_id: &str) -> Result<Vec<Intent>> {
-    Ok(
-        sqlx::query_as::<_, Intent>(
-            "SELECT * FROM intent WHERE invoice_id = ? ORDER BY created_at DESC",
-        )
-        .bind(invoice_id)
-        .fetch_all(pool())
-        .await?,
-    )
 }
 
 // --- Bolt11 ---

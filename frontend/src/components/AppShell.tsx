@@ -2,7 +2,7 @@ import { A, useLocation } from "@solidjs/router"
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js"
 import Fuse from "fuse.js"
 import { primeProfiles, useProfilePicture, useTenant, useTenantRelays, type Relay } from "@/lib/hooks"
-import { listTenantInvoices, type Invoice } from "@/lib/api"
+import { invoiceStatus, listTenantInvoices, type Invoice } from "@/lib/api"
 import { account, eventStore, identity } from "@/lib/state"
 import serverIcon from "@/assets/server.svg"
 import Modal from "@/components/Modal"
@@ -51,7 +51,7 @@ export default function AppShell(props: { children?: any }) {
     }
     try {
       const invoices = await listTenantInvoices(t.pubkey)
-      const openInvoice = invoices.find(inv => inv.status === "open")
+      const openInvoice = invoices.find(inv => invoiceStatus(inv) === "open")
       setPastDueInvoice(openInvoice)
     } catch {
       // ignore

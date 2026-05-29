@@ -52,14 +52,6 @@ pub async fn set_tenant_nwc_error(pubkey: &str, error: &str) -> Result<()> {
     Ok(())
 }
 
-pub async fn clear_tenant_nwc_error(pubkey: &str) -> Result<()> {
-    sqlx::query("UPDATE tenant SET nwc_error = NULL WHERE pubkey = ?")
-        .bind(pubkey)
-        .execute(pool())
-        .await?;
-    Ok(())
-}
-
 pub async fn set_tenant_stripe_error(pubkey: &str, error: &str) -> Result<()> {
     sqlx::query("UPDATE tenant SET stripe_error = ? WHERE pubkey = ?")
         .bind(error)
@@ -69,22 +61,59 @@ pub async fn set_tenant_stripe_error(pubkey: &str, error: &str) -> Result<()> {
     Ok(())
 }
 
-pub async fn clear_tenant_stripe_error(pubkey: &str) -> Result<()> {
-    sqlx::query("UPDATE tenant SET stripe_error = NULL WHERE pubkey = ?")
-        .bind(pubkey)
-        .execute(pool())
-        .await?;
+/// Atomically churn a tenant whose grace period has elapsed: set the churn
+/// marker, mark every active relay delinquent, and void the unpaid invoices.
+pub async fn churn_tenant(tenant_pubkey: &str, now: i64, relays: &[Relay]) -> Result<()> {
+    let activities = with_tx(async |tx| {
+        set_tenant_churned_at_tx(tx, tenant_pubkey, Some(now)).await?;
+
+        let mut activities = Vec::new();
+        for relay in relays {
+            if relay.status == RELAY_STATUS_ACTIVE {
+                let activity =
+                    set_relay_status_tx(tx, relay, RELAY_STATUS_DELINQUENT, "mark_relay_delinquent")
+                        .await?;
+                activities.push(activity);
+            }
+        }
+
+        void_open_invoices_tx(tx, tenant_pubkey).await?;
+
+        Ok(activities)
+    })
+    .await?;
+
+    for activity in activities {
+        publish(activity);
+    }
     Ok(())
 }
 
-/// Set or clear the tenant's churn marker. Set when an invoice ages past the
-/// grace period, cleared when billing is re-activated.
-pub async fn set_tenant_churned_at(pubkey: &str, churned_at: Option<i64>) -> Result<()> {
-    sqlx::query("UPDATE tenant SET churned_at = ? WHERE pubkey = ?")
-        .bind(churned_at)
-        .bind(pubkey)
-        .execute(pool())
-        .await?;
+/// Atomically re-activate a churned tenant: clear the churn marker, restore every
+/// delinquent relay to active, and void any still-open invoices.
+pub async fn reactivate_tenant(tenant_pubkey: &str, relays: &[Relay]) -> Result<()> {
+    let activities = with_tx(async |tx| {
+        set_tenant_churned_at_tx(tx, tenant_pubkey, None).await?;
+
+        let mut activities = Vec::new();
+        for relay in relays {
+            if relay.status == RELAY_STATUS_DELINQUENT {
+                let activity =
+                    set_relay_status_tx(tx, relay, RELAY_STATUS_ACTIVE, "unmark_relay_delinquent")
+                        .await?;
+                activities.push(activity);
+            }
+        }
+
+        void_open_invoices_tx(tx, tenant_pubkey).await?;
+
+        Ok(activities)
+    })
+    .await?;
+
+    for activity in activities {
+        publish(activity);
+    }
     Ok(())
 }
 
@@ -177,31 +206,9 @@ pub async fn deactivate_relay(relay: &Relay) -> Result<()> {
     set_relay_status(relay, RELAY_STATUS_INACTIVE, "deactivate_relay").await
 }
 
-pub async fn mark_relay_delinquent(relay: &Relay) -> Result<()> {
-    set_relay_status(relay, RELAY_STATUS_DELINQUENT, "mark_relay_delinquent").await
-}
-
-/// Restore a delinquent relay to active when billing is re-activated. Unlike
-/// `activate_relay` this records a non-billable activity, so resuming service
-/// after churn doesn't levy a fresh prorated charge.
-pub async fn unmark_relay_delinquent(relay: &Relay) -> Result<()> {
-    set_relay_status(relay, RELAY_STATUS_ACTIVE, "unmark_relay_delinquent").await
-}
-
 async fn set_relay_status(relay: &Relay, status: &str, activity_type: &str) -> Result<()> {
-    let activity = with_tx(async |tx| {
-        sqlx::query("UPDATE relay SET status = ?, synced = 0 WHERE id = ?")
-            .bind(status)
-            .bind(&relay.id)
-            .execute(&mut **tx)
-            .await?;
-        let snapshot = Snapshot::Relay {
-            plan: relay.plan_id.clone(),
-            status: status.to_string(),
-        };
-        insert_activity_tx(tx, activity_type, &relay.id, snapshot).await
-    })
-    .await?;
+    let activity =
+        with_tx(async |tx| set_relay_status_tx(tx, relay, status, activity_type).await).await?;
     publish(activity);
     Ok(())
 }
@@ -332,7 +339,7 @@ pub async fn create_invoice(tenant: &Tenant, period: &BillingPeriod) -> Result<O
             return Ok(None);
         }
 
-        let invoice = insert_invoice_tx(tx, &tenant, &period).await?;
+        let invoice = insert_invoice_tx(tx, &tenant, &period, total).await?;
 
         sqlx::query(
             "UPDATE invoice_item SET invoice_id = ?
@@ -348,32 +355,45 @@ pub async fn create_invoice(tenant: &Tenant, period: &BillingPeriod) -> Result<O
     .await
 }
 
-pub async fn mark_invoice_paid(invoice_id: &str, method: &str) -> Result<()> {
-    let paid_at = chrono::Utc::now().timestamp();
+// --- Payment settlement ---
 
-    sqlx::query("UPDATE invoice SET method = ?, paid_at = ? WHERE id = ?")
-        .bind(method)
-        .bind(paid_at)
-        .bind(invoice_id)
-        .execute(pool())
-        .await?;
-    Ok(())
+/// Atomically record an NWC-settled invoice: clear the tenant's stored NWC error,
+/// mark the bolt11 settled, and mark the invoice paid.
+pub async fn settle_invoice_via_nwc(
+    tenant_pubkey: &str,
+    bolt11_id: &str,
+    invoice_id: &str,
+) -> Result<()> {
+    with_tx(async |tx| {
+        clear_tenant_nwc_error_tx(tx, tenant_pubkey).await?;
+        mark_bolt11_settled_tx(tx, bolt11_id).await?;
+        mark_invoice_paid_tx(tx, invoice_id, "nwc").await
+    })
+    .await
 }
 
-/// Void all of a tenant's open invoices, forgiving the balance — used when a
-/// tenant churns or re-activates, so old debt never has to be collected.
-pub async fn void_open_invoices(tenant_pubkey: &str) -> Result<()> {
-    let voided_at = chrono::Utc::now().timestamp();
+/// Atomically record a Lightning settlement that happened out of band.
+pub async fn settle_invoice_out_of_band(bolt11_id: &str, invoice_id: &str) -> Result<()> {
+    with_tx(async |tx| {
+        mark_bolt11_settled_tx(tx, bolt11_id).await?;
+        mark_invoice_paid_tx(tx, invoice_id, "oob").await
+    })
+    .await
+}
 
-    sqlx::query(
-        "UPDATE invoice SET voided_at = ?
-         WHERE tenant_pubkey = ? AND paid_at IS NULL AND voided_at IS NULL",
-    )
-    .bind(voided_at)
-    .bind(tenant_pubkey)
-    .execute(pool())
-    .await?;
-    Ok(())
+/// Atomically record a Stripe-settled invoice: persist the PaymentIntent, clear
+/// the tenant's stored Stripe error, and mark the invoice paid.
+pub async fn settle_invoice_via_stripe(
+    tenant_pubkey: &str,
+    intent_id: &str,
+    invoice_id: &str,
+) -> Result<()> {
+    with_tx(async |tx| {
+        insert_intent_tx(tx, intent_id, invoice_id).await?;
+        clear_tenant_stripe_error_tx(tx, tenant_pubkey).await?;
+        mark_invoice_paid_tx(tx, invoice_id, "stripe").await
+    })
+    .await
 }
 
 // --- Bolt11 records ---
@@ -399,37 +419,6 @@ pub async fn insert_bolt11(
     .bind(expires_at)
     .fetch_optional(pool())
     .await?)
-}
-
-pub async fn mark_bolt11_settled(bolt11_id: &str) -> Result<()> {
-    let settled_at = chrono::Utc::now().timestamp();
-
-    sqlx::query("UPDATE bolt11 SET settled_at = ? WHERE id = ?")
-        .bind(settled_at)
-        .bind(bolt11_id)
-        .execute(pool())
-        .await?;
-    Ok(())
-}
-
-// --- Intents ---
-
-/// Record the Stripe PaymentIntent that paid an invoice. Keyed by the Stripe
-/// PaymentIntent id, so it's idempotent: a retried (idempotent) charge returns
-/// the same id and the re-insert is a no-op rather than a primary-key conflict.
-pub async fn insert_intent(intent_id: &str, invoice_id: &str) -> Result<()> {
-    let created_at = chrono::Utc::now().timestamp();
-
-    sqlx::query(
-        "INSERT INTO intent (id, invoice_id, created_at)
-         VALUES (?, ?, ?) ON CONFLICT(id) DO NOTHING",
-    )
-    .bind(intent_id)
-    .bind(invoice_id)
-    .bind(created_at)
-    .execute(pool())
-    .await?;
-    Ok(())
 }
 
 // --- Internal utils that take an explicit transaction ---
@@ -484,16 +473,18 @@ async fn insert_invoice_tx(
     tx: &mut Transaction<'_, Sqlite>,
     tenant: &Tenant,
     period: &BillingPeriod,
+    amount: i64,
 ) -> Result<Invoice> {
     let now = chrono::Utc::now().timestamp();
     let invoice_id = uuid::Uuid::new_v4().to_string();
 
     Ok(sqlx::query_as::<_, Invoice>(
-        "INSERT INTO invoice (id, tenant_pubkey, period_start, period_end, created_at)
-         VALUES (?, ?, ?, ?, ?) RETURNING *",
+        "INSERT INTO invoice (id, tenant_pubkey, amount, period_start, period_end, created_at)
+         VALUES (?, ?, ?, ?, ?, ?) RETURNING *",
     )
     .bind(invoice_id)
     .bind(&tenant.pubkey)
+    .bind(amount)
     .bind(&period.start)
     .bind(period.end)
     .bind(now)
@@ -535,4 +526,120 @@ async fn mark_activity_billed_tx(
         .execute(&mut **tx)
         .await?;
     Ok(result.rows_affected() > 0)
+}
+
+/// Set a relay's status (and flag it for re-sync), recording the matching
+/// activity. Returns the activity so the caller can `publish` it after the
+/// enclosing transaction commits.
+async fn set_relay_status_tx(
+    tx: &mut Transaction<'_, Sqlite>,
+    relay: &Relay,
+    status: &str,
+    activity_type: &str,
+) -> Result<Activity> {
+    sqlx::query("UPDATE relay SET status = ?, synced = 0 WHERE id = ?")
+        .bind(status)
+        .bind(&relay.id)
+        .execute(&mut **tx)
+        .await?;
+    let snapshot = Snapshot::Relay {
+        plan: relay.plan_id.clone(),
+        status: status.to_string(),
+    };
+    insert_activity_tx(tx, activity_type, &relay.id, snapshot).await
+}
+
+async fn mark_bolt11_settled_tx(tx: &mut Transaction<'_, Sqlite>, bolt11_id: &str) -> Result<()> {
+    let settled_at = chrono::Utc::now().timestamp();
+
+    sqlx::query("UPDATE bolt11 SET settled_at = ? WHERE id = ?")
+        .bind(settled_at)
+        .bind(bolt11_id)
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
+}
+
+async fn mark_invoice_paid_tx(
+    tx: &mut Transaction<'_, Sqlite>,
+    invoice_id: &str,
+    method: &str,
+) -> Result<()> {
+    let paid_at = chrono::Utc::now().timestamp();
+
+    sqlx::query("UPDATE invoice SET method = ?, paid_at = ? WHERE id = ?")
+        .bind(method)
+        .bind(paid_at)
+        .bind(invoice_id)
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
+}
+
+/// Void all of a tenant's open invoices, forgiving the balance — used when a
+/// tenant churns or re-activates, so old debt never has to be collected.
+async fn void_open_invoices_tx(tx: &mut Transaction<'_, Sqlite>, tenant_pubkey: &str) -> Result<()> {
+    let voided_at = chrono::Utc::now().timestamp();
+
+    sqlx::query(
+        "UPDATE invoice SET voided_at = ?
+         WHERE tenant_pubkey = ? AND paid_at IS NULL AND voided_at IS NULL",
+    )
+    .bind(voided_at)
+    .bind(tenant_pubkey)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+/// Set or clear the tenant's churn marker. Set when an invoice ages past the
+/// grace period, cleared when billing is re-activated.
+async fn set_tenant_churned_at_tx(
+    tx: &mut Transaction<'_, Sqlite>,
+    pubkey: &str,
+    churned_at: Option<i64>,
+) -> Result<()> {
+    sqlx::query("UPDATE tenant SET churned_at = ? WHERE pubkey = ?")
+        .bind(churned_at)
+        .bind(pubkey)
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
+}
+
+async fn clear_tenant_nwc_error_tx(tx: &mut Transaction<'_, Sqlite>, pubkey: &str) -> Result<()> {
+    sqlx::query("UPDATE tenant SET nwc_error = NULL WHERE pubkey = ?")
+        .bind(pubkey)
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
+}
+
+async fn clear_tenant_stripe_error_tx(tx: &mut Transaction<'_, Sqlite>, pubkey: &str) -> Result<()> {
+    sqlx::query("UPDATE tenant SET stripe_error = NULL WHERE pubkey = ?")
+        .bind(pubkey)
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
+}
+
+/// Record the Stripe PaymentIntent that paid an invoice. Keyed by the Stripe
+/// PaymentIntent id, so it's idempotent.
+async fn insert_intent_tx(
+    tx: &mut Transaction<'_, Sqlite>,
+    intent_id: &str,
+    invoice_id: &str,
+) -> Result<()> {
+    let created_at = chrono::Utc::now().timestamp();
+
+    sqlx::query(
+        "INSERT INTO intent (id, invoice_id, created_at)
+         VALUES (?, ?, ?) ON CONFLICT(id) DO NOTHING",
+    )
+    .bind(intent_id)
+    .bind(invoice_id)
+    .bind(created_at)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
 }

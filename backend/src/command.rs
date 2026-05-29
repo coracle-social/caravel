@@ -43,8 +43,45 @@ pub async fn set_tenant_billing_anchor(tenant: &Tenant) -> Result<()> {
     Ok(())
 }
 
+pub async fn set_tenant_nwc_error(pubkey: &str, error: &str) -> Result<()> {
+    sqlx::query("UPDATE tenant SET nwc_error = ? WHERE pubkey = ?")
+        .bind(error)
+        .bind(pubkey)
+        .execute(pool())
+        .await?;
+    Ok(())
+}
+
 pub async fn clear_tenant_nwc_error(pubkey: &str) -> Result<()> {
     sqlx::query("UPDATE tenant SET nwc_error = NULL WHERE pubkey = ?")
+        .bind(pubkey)
+        .execute(pool())
+        .await?;
+    Ok(())
+}
+
+pub async fn set_tenant_stripe_error(pubkey: &str, error: &str) -> Result<()> {
+    sqlx::query("UPDATE tenant SET stripe_error = ? WHERE pubkey = ?")
+        .bind(error)
+        .bind(pubkey)
+        .execute(pool())
+        .await?;
+    Ok(())
+}
+
+pub async fn clear_tenant_stripe_error(pubkey: &str) -> Result<()> {
+    sqlx::query("UPDATE tenant SET stripe_error = NULL WHERE pubkey = ?")
+        .bind(pubkey)
+        .execute(pool())
+        .await?;
+    Ok(())
+}
+
+/// Set or clear the tenant's churn marker. Set when an invoice ages past the
+/// grace period, cleared when billing is re-activated.
+pub async fn set_tenant_churned_at(pubkey: &str, churned_at: Option<i64>) -> Result<()> {
+    sqlx::query("UPDATE tenant SET churned_at = ? WHERE pubkey = ?")
+        .bind(churned_at)
         .bind(pubkey)
         .execute(pool())
         .await?;
@@ -140,9 +177,15 @@ pub async fn deactivate_relay(relay: &Relay) -> Result<()> {
     set_relay_status(relay, RELAY_STATUS_INACTIVE, "deactivate_relay").await
 }
 
-#[allow(dead_code)] // wired up by the delinquency flow (not yet implemented)
 pub async fn mark_relay_delinquent(relay: &Relay) -> Result<()> {
     set_relay_status(relay, RELAY_STATUS_DELINQUENT, "mark_relay_delinquent").await
+}
+
+/// Restore a delinquent relay to active when billing is re-activated. Unlike
+/// `activate_relay` this records a non-billable activity, so resuming service
+/// after churn doesn't levy a fresh prorated charge.
+pub async fn unmark_relay_delinquent(relay: &Relay) -> Result<()> {
+    set_relay_status(relay, RELAY_STATUS_ACTIVE, "unmark_relay_delinquent").await
 }
 
 async fn set_relay_status(relay: &Relay, status: &str, activity_type: &str) -> Result<()> {
@@ -306,14 +349,30 @@ pub async fn create_invoice(tenant: &Tenant, period: &BillingPeriod) -> Result<O
 }
 
 pub async fn mark_invoice_paid(invoice_id: &str, method: &str) -> Result<()> {
-    let updated_at = chrono::Utc::now().timestamp();
+    let paid_at = chrono::Utc::now().timestamp();
 
-    sqlx::query("UPDATE invoice SET status = 'paid', method = ?, updated_at = ? WHERE id = ?")
+    sqlx::query("UPDATE invoice SET method = ?, paid_at = ? WHERE id = ?")
         .bind(method)
-        .bind(updated_at)
+        .bind(paid_at)
         .bind(invoice_id)
         .execute(pool())
         .await?;
+    Ok(())
+}
+
+/// Void all of a tenant's open invoices, forgiving the balance — used when a
+/// tenant churns or re-activates, so old debt never has to be collected.
+pub async fn void_open_invoices(tenant_pubkey: &str) -> Result<()> {
+    let voided_at = chrono::Utc::now().timestamp();
+
+    sqlx::query(
+        "UPDATE invoice SET voided_at = ?
+         WHERE tenant_pubkey = ? AND paid_at IS NULL AND voided_at IS NULL",
+    )
+    .bind(voided_at)
+    .bind(tenant_pubkey)
+    .execute(pool())
+    .await?;
     Ok(())
 }
 
@@ -430,14 +489,13 @@ async fn insert_invoice_tx(
     let invoice_id = uuid::Uuid::new_v4().to_string();
 
     Ok(sqlx::query_as::<_, Invoice>(
-        "INSERT INTO invoice (id, tenant_pubkey, status, period_start, period_end, created_at, updated_at)
-         VALUES (?, ?, 'open', ?, ?, ?, ?) RETURNING *",
+        "INSERT INTO invoice (id, tenant_pubkey, period_start, period_end, created_at)
+         VALUES (?, ?, ?, ?, ?) RETURNING *",
     )
     .bind(invoice_id)
     .bind(&tenant.pubkey)
     .bind(&period.start)
     .bind(period.end)
-    .bind(now)
     .bind(now)
     .fetch_one(&mut **tx)
     .await?)

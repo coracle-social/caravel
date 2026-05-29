@@ -142,8 +142,16 @@ export default function Account() {
               {saving() ? "Saving..." : "Save"}
             </button>
           </div>
+          <Show when={tenant()?.churned_at}>
+            <p class="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+              Your account is past due and some relays have been paused. Update your payment method below to restore service.
+            </p>
+          </Show>
           <Show when={tenant()?.nwc_error}>
-            <p class="mt-3 text-sm text-red-600">{tenant()!.nwc_error}</p>
+            <p class="mt-3 text-sm text-red-600">Lightning auto-payment failed: {tenant()!.nwc_error}</p>
+          </Show>
+          <Show when={tenant()?.stripe_error}>
+            <p class="mt-3 text-sm text-red-600">Card auto-payment failed: {tenant()!.stripe_error}</p>
           </Show>
           <Show when={error()}>
             <p class="mt-3 text-sm text-red-600">{error()}</p>

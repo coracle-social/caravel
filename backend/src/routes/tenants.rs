@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::api::{Api, AuthedPubkey};
 use crate::models::Tenant;
+use crate::routes::invoices::InvoiceResponse;
 use crate::web::{ApiResult, internal, map_unique_error, ok};
 use crate::{command, env, query};
 
@@ -17,9 +18,13 @@ pub struct TenantResponse {
     pub pubkey: String,
     pub nwc_is_set: bool,
     pub nwc_error: Option<String>,
+    pub stripe_error: Option<String>,
     pub created_at: i64,
     pub billing_anchor: Option<i64>,
     pub stripe_customer_id: String,
+    /// Set when billing has churned the tenant; the UI uses it to warn that the
+    /// account is delinquent until billing is re-activated.
+    pub churned_at: Option<i64>,
 }
 
 impl From<Tenant> for TenantResponse {
@@ -28,9 +33,11 @@ impl From<Tenant> for TenantResponse {
             nwc_is_set: !t.nwc_url.is_empty(),
             pubkey: t.pubkey,
             nwc_error: t.nwc_error,
+            stripe_error: t.stripe_error,
             created_at: t.created_at,
             billing_anchor: t.billing_anchor,
             stripe_customer_id: t.stripe_customer_id,
+            churned_at: t.churned_at,
         }
     }
 }
@@ -135,7 +142,7 @@ pub async fn list_tenant_relays(
 ) -> ApiResult {
     api.require_admin_or_tenant(&auth, &pubkey)?;
 
-    let relays = query::list_relays_for_tenant(&pubkey)
+    let relays = query::list_relays(&pubkey)
         .await
         .map_err(internal)?;
     ok(relays)
@@ -149,11 +156,14 @@ pub async fn list_tenant_invoices(
 ) -> ApiResult {
     api.require_admin_or_tenant(&auth, &pubkey)?;
 
-    let invoices = query::list_invoices_for_tenant(&pubkey)
+    let invoices = query::list_invoices(&pubkey)
         .await
         .map_err(internal)?;
 
-    ok(invoices)
+    ok(invoices
+        .into_iter()
+        .map(InvoiceResponse::from)
+        .collect::<Vec<_>>())
 }
 
 #[derive(Deserialize)]

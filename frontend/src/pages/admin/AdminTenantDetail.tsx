@@ -14,8 +14,8 @@ export default function AdminTenantDetail() {
   const [relays] = useAdminTenantRelays(tenantId)
   const loading = useMinLoading(() => tenant.loading || relays.loading)
 
-  const pastDueLabel = () => {
-    const ts = tenant()?.past_due_at
+  const churnedLabel = () => {
+    const ts = tenant()?.churned_at
     if (!ts) return null
     return new Date(ts * 1000).toLocaleString()
   }
@@ -34,7 +34,7 @@ export default function AdminTenantDetail() {
                 <dl class="grid gap-y-3 text-sm">
                   <div class="flex gap-2">
                     <dt class="text-gray-500">Status:</dt>
-                    <dd class="font-medium uppercase tracking-wide">{t().past_due_at ? "past due" : "active"}</dd>
+                    <dd class="font-medium uppercase tracking-wide">{t().churned_at ? "delinquent" : "active"}</dd>
                   </div>
                   <Show when={t().stripe_customer_id}>
                     <div class="flex gap-2">
@@ -42,16 +42,22 @@ export default function AdminTenantDetail() {
                       <dd class="font-mono text-xs">{t().stripe_customer_id}</dd>
                     </div>
                   </Show>
-                  <Show when={pastDueLabel()}>
+                  <Show when={churnedLabel()}>
                     <div class="flex gap-2">
-                      <dt class="text-gray-500">Past Due Since:</dt>
-                      <dd class="text-red-600 font-medium">{pastDueLabel()}</dd>
+                      <dt class="text-gray-500">Delinquent Since:</dt>
+                      <dd class="text-red-600 font-medium">{churnedLabel()}</dd>
                     </div>
                   </Show>
                   <Show when={t().nwc_error}>
                     <div class="flex gap-2">
                       <dt class="text-gray-500">NWC Error:</dt>
                       <dd class="text-red-600">{t().nwc_error}</dd>
+                    </div>
+                  </Show>
+                  <Show when={t().stripe_error}>
+                    <div class="flex gap-2">
+                      <dt class="text-gray-500">Stripe Error:</dt>
+                      <dd class="text-red-600">{t().stripe_error}</dd>
                     </div>
                   </Show>
                 </dl>

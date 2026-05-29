@@ -98,9 +98,9 @@ export type Tenant = {
   nwc_is_set: boolean
   created_at: number
   stripe_customer_id: string
-  stripe_subscription_id: string | null
-  past_due_at: number | null
   nwc_error: string | null
+  stripe_error: string | null
+  churned_at: number | null
 }
 
 export type Invoice = {
@@ -142,8 +142,6 @@ export async function makeAuth(): Promise<string | undefined> {
     kind: 27235,
     content: "",
     created_at: Math.floor(now / 1000),
-    // Intentional session-style auth: sign the API base URL once, then reuse
-    // the header briefly to avoid prompting the signer on every request.
     tags: [["u", API_URL]],
   })
 

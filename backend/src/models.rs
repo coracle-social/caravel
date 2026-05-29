@@ -37,13 +37,23 @@ pub struct Plan {
 pub struct Tenant {
     pub pubkey: String,
     pub nwc_url: String,
+    /// Last NWC auto-payment error, or `None` when the wallet last paid (or has
+    /// never been tried). Surfaced in the UI to warn the user; it never blocks a
+    /// retry — the next reconcile attempts payment again regardless.
     pub nwc_error: Option<String>,
+    /// Last Stripe auto-payment error, with the same semantics as `nwc_error`.
+    pub stripe_error: Option<String>,
     pub created_at: i64,
     pub billing_anchor: Option<i64>,
     pub stripe_customer_id: String,
     /// `period_start` of the most recent period this tenant was renewed for, or
     /// `None` if never renewed. The per-period renewal idempotency marker.
     pub renewed_at: Option<i64>,
+    /// When the tenant was churned because an invoice went unpaid past the grace
+    /// period; its relays are delinquent while this is set. Cleared when billing
+    /// is re-activated (the tenant has new billable activity), at which point the
+    /// then-open invoices are voided rather than collected. `None` in good standing.
+    pub churned_at: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -103,15 +113,26 @@ impl Default for Relay {
     }
 }
 
+/// A tenant's bill for one period. Its lifecycle is recorded as timestamps
+/// rather than a status column: open while both `paid_at` and `voided_at` are
+/// null, paid once `paid_at` is set, and void once `voided_at` is set (e.g. a
+/// balance forgiven when the tenant churns).
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Invoice {
   pub id: String,
   pub tenant_pubkey: String,
-  pub status: String,
   pub period_start: i64,
   pub period_end: i64,
   pub created_at: i64,
-  pub updated_at: i64,
+  pub paid_at: Option<i64>,
+  pub voided_at: Option<i64>,
+}
+
+impl Invoice {
+  /// An invoice is open — still collectible — until it's either paid or voided.
+  pub fn is_open(&self) -> bool {
+    self.paid_at.is_none() && self.voided_at.is_none()
+  }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -140,7 +161,8 @@ pub struct Bolt11 {
   pub settled_at: Option<i64>,
 }
 
-#[allow(dead_code)] // mirrors the `intent` table; rows record paid Stripe PaymentIntents but aren't read back into this struct yet
+/// A Stripe PaymentIntent that paid an invoice, mirrored for the audit trail and
+/// read back to show the user how an invoice was settled.
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Intent {
   pub id: String,

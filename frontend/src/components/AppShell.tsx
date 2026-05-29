@@ -45,7 +45,7 @@ export default function AppShell(props: { children?: any }) {
 
   createEffect(async () => {
     const t = tenant()
-    if (!t?.past_due_at) {
+    if (!t?.churned_at) {
       setPastDueInvoice(undefined)
       return
     }
@@ -158,9 +158,9 @@ export default function AppShell(props: { children?: any }) {
       </aside>
 
       <div class="md:pl-[260px] min-h-screen pb-20 md:pb-0">
-        <Show when={tenant()?.past_due_at}>
+        <Show when={tenant()?.churned_at}>
           <div class="bg-red-600 text-white px-4 py-3 text-sm flex items-center justify-between">
-            <span>Your account has an overdue balance.</span>
+            <span>Your account is past due and some relays are paused. Update your payment method to restore service.</span>
             <Show when={pastDueInvoice()}>
               <button
                 type="button"

@@ -2,10 +2,12 @@ CREATE TABLE IF NOT EXISTS tenant (
   pubkey TEXT PRIMARY KEY,
   nwc_url TEXT NOT NULL DEFAULT '',
   nwc_error TEXT,
+  stripe_error TEXT,
   created_at INTEGER NOT NULL,
   billing_anchor INTEGER,
   stripe_customer_id TEXT NOT NULL,
-  renewed_at INTEGER
+  renewed_at INTEGER,
+  churned_at INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS activity (
@@ -45,12 +47,12 @@ CREATE TABLE IF NOT EXISTS relay (
 CREATE TABLE IF NOT EXISTS invoice (
   id TEXT PRIMARY KEY,
   tenant_pubkey TEXT NOT NULL,
-  status TEXT NOT NULL CHECK (status IN ('open','paid','void','churn')),
   method TEXT CHECK (method IS NULL OR method IN ('nwc','stripe','oob')),
   period_start INTEGER NOT NULL,
   period_end INTEGER NOT NULL,
   created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL,
+  paid_at INTEGER,
+  voided_at INTEGER,
   FOREIGN KEY (tenant_pubkey) REFERENCES tenant(pubkey)
 );
 
@@ -95,6 +97,9 @@ CREATE INDEX IF NOT EXISTS idx_activity_unbilled ON activity (tenant_pubkey, cre
 CREATE INDEX IF NOT EXISTS idx_relay_tenant_pubkey ON relay (tenant_pubkey);
 
 CREATE INDEX IF NOT EXISTS idx_invoice_tenant_created ON invoice (tenant_pubkey, created_at);
+
+-- Dunning scans a tenant's still-open invoices oldest-first to retry payment.
+CREATE INDEX IF NOT EXISTS idx_invoice_open ON invoice (tenant_pubkey, created_at) WHERE paid_at IS NULL AND voided_at IS NULL;
 
 CREATE INDEX IF NOT EXISTS idx_invoice_item_invoice ON invoice_item (invoice_id);
 

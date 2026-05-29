@@ -1,6 +1,6 @@
 use anyhow::{Result, anyhow};
 
-use crate::models::{Activity, Bolt11, Invoice, InvoiceItem, Plan, Relay, Tenant};
+use crate::models::{Activity, Bolt11, Intent, Invoice, InvoiceItem, Plan, Relay, Tenant};
 use crate::db::pool;
 
 fn select_tenant(tail: &str) -> String {
@@ -84,7 +84,7 @@ pub async fn list_relays_pending_sync() -> Result<Vec<Relay>> {
     )
 }
 
-pub async fn list_relays_for_tenant(tenant_pubkey: &str) -> Result<Vec<Relay>> {
+pub async fn list_relays(tenant_pubkey: &str) -> Result<Vec<Relay>> {
     Ok(sqlx::query_as::<_, Relay>(&select_relay("WHERE tenant_pubkey = ?"))
         .bind(tenant_pubkey)
         .fetch_all(pool())
@@ -125,7 +125,7 @@ pub async fn get_invoice(invoice_id: &str) -> Result<Option<Invoice>> {
         .await?)
 }
 
-pub async fn list_invoices_for_tenant(tenant_pubkey: &str) -> Result<Vec<Invoice>> {
+pub async fn list_invoices(tenant_pubkey: &str) -> Result<Vec<Invoice>> {
     Ok(sqlx::query_as::<_, Invoice>(
         "SELECT * FROM invoice WHERE tenant_pubkey = ? ORDER BY created_at DESC",
     )
@@ -134,12 +134,25 @@ pub async fn list_invoices_for_tenant(tenant_pubkey: &str) -> Result<Vec<Invoice
     .await?)
 }
 
-pub async fn get_latest_invoice_for_tenant(tenant_pubkey: &str) -> Result<Option<Invoice>> {
+pub async fn get_latest_invoice(tenant_pubkey: &str) -> Result<Option<Invoice>> {
     Ok(sqlx::query_as::<_, Invoice>(
         "SELECT * FROM invoice WHERE tenant_pubkey = ? ORDER BY created_at DESC LIMIT 1",
     )
     .bind(tenant_pubkey)
     .fetch_optional(pool())
+    .await?)
+}
+
+/// A tenant's open invoices — neither paid nor voided — oldest first. Dunning
+/// retries each and treats the oldest one's `created_at` as the grace-period start.
+pub async fn list_open_invoices(tenant_pubkey: &str) -> Result<Vec<Invoice>> {
+    Ok(sqlx::query_as::<_, Invoice>(
+        "SELECT * FROM invoice
+         WHERE tenant_pubkey = ? AND paid_at IS NULL AND voided_at IS NULL
+         ORDER BY created_at ASC",
+    )
+    .bind(tenant_pubkey)
+    .fetch_all(pool())
     .await?)
 }
 
@@ -149,6 +162,20 @@ pub async fn get_invoice_items_for_invoice(invoice_id: &str) -> Result<Vec<Invoi
             .bind(invoice_id)
             .fetch_all(pool())
             .await?,
+    )
+}
+
+// --- Intents ---
+
+/// The Stripe PaymentIntents recorded against an invoice, newest first.
+pub async fn list_intents_for_invoice(invoice_id: &str) -> Result<Vec<Intent>> {
+    Ok(
+        sqlx::query_as::<_, Intent>(
+            "SELECT * FROM intent WHERE invoice_id = ? ORDER BY created_at DESC",
+        )
+        .bind(invoice_id)
+        .fetch_all(pool())
+        .await?,
     )
 }
 
@@ -176,7 +203,7 @@ pub async fn get_bolt11_for_invoice(invoice_id: &str) -> Result<Option<Bolt11>> 
 /// activity-type filter and the `billed_at IS NULL` guard live here so the
 /// caller reconciles off a precise marker rather than a timestamp watermark.
 /// Ordered oldest-first so line items and proration apply in event order.
-pub async fn list_billable_activity_for_tenant(tenant_pubkey: &str) -> Result<Vec<Activity>> {
+pub async fn list_billable_activity(tenant_pubkey: &str) -> Result<Vec<Activity>> {
     Ok(sqlx::query_as::<_, Activity>(&select_activity(
         "WHERE tenant_pubkey = ?
            AND billed_at IS NULL

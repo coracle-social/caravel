@@ -4,11 +4,20 @@ use std::time::Duration;
 use crate::bitcoin;
 use crate::command;
 use crate::env;
-use crate::models::{Activity, Bolt11, Invoice, InvoiceItem, RELAY_STATUS_ACTIVE, Snapshot, Tenant};
+use crate::models::{
+    Activity, Bolt11, Invoice, InvoiceItem, RELAY_STATUS_ACTIVE, RELAY_STATUS_DELINQUENT, Snapshot,
+    Tenant,
+};
 use crate::query;
 use crate::robot::Robot;
 use crate::stripe::Stripe;
 use crate::wallet::Wallet;
+
+const POLL_INTERVAL: Duration = Duration::from_secs(60 * 60);
+const GRACE_PERIOD_SECS: i64 = 7 * 24 * 60 * 60;
+const MANUAL_PAYMENT_DM: &str = "Payment is due for your relay subscription. Open the link below to review the invoice and pay by Lightning or card:";
+const USER_ERROR_PREFIX: &str = "Auto-payment failed:";
+const USER_ERROR_MAX_CHARS: usize = 240;
 
 /// Owns subscription billing: it reconciles tenant activity into invoice items,
 /// renews subscriptions each period, and collects payment (Lightning, then a
@@ -63,16 +72,26 @@ impl Billing {
 
     // --- Reconciliation of activity/renewals ---
 
-    /// Lists billable activity, setting the tenant's billing anchor to the first
-    /// activity in the process. Generates an invoice for the current period if due
-    /// for renewal or any billable activities have occurred. Attempts payment if
-    /// an invoice is generated.
+    /// Reconciles a tenant's billing: re-activates them if a churned tenant has
+    /// re-engaged, folds billable activity into line items (setting the billing
+    /// anchor on the first), renews the current period if due, claims outstanding
+    /// items onto an invoice, and then collects every open invoice — churning the
+    /// tenant if one has gone unpaid past the grace period.
     pub async fn reconcile_subscription(&self, tenant: &Tenant) -> Result<()> {
         let mut tenant = tenant.clone();
 
+        let activities = query::list_billable_activity(&tenant.pubkey).await?;
+
+        // A churned tenant with fresh billable activity is using the service
+        // again: re-activate billing (and restore their relays) before billing it.
+        if tenant.churned_at.is_some() && !activities.is_empty() {
+            self.reactivate_tenant(&tenant).await?;
+            tenant.churned_at = None;
+        }
+
         // Reconcile all activity, setting the tenant's billing anchor on the first
-        // positive-balance line item if not already set.
-        for activity in query::list_billable_activity_for_tenant(&tenant.pubkey).await? {
+        // activity if not already set.
+        for activity in activities {
             if tenant.billing_anchor.is_none() {
                 tenant.billing_anchor = Some(activity.created_at);
                 command::set_tenant_billing_anchor(&tenant).await?;
@@ -81,20 +100,19 @@ impl Billing {
             self.reconcile_activity(&tenant, &activity).await?;
         }
 
-        // If the tenant has no billing anchor, they have nothing to bill
-        let Some(period) = BillingPeriod::current(&tenant) else {
-            return Ok(());
-        };
+        // If the tenant has a billing anchor, renew the current period if due and
+        // claim any outstanding items onto an invoice.
+        if let Some(period) = BillingPeriod::current(&tenant) {
+            if tenant.renewed_at.is_none_or(|at| at < period.start) {
+                self.reconcile_renewal(&tenant, &period).await?;
+            }
 
-        // If tenant is due for renewal, bill any active relays.
-        if tenant.renewed_at.is_none_or(|at| at < period.start) {
-            self.reconcile_renewal(&tenant, &period).await?;
+            command::create_invoice(&tenant, &period).await?;
         }
 
-        // Create the invoice, but only if non-zero and attempt payment
-        if let Some(invoice) = command::create_invoice(&tenant, &period).await? {
-            self.attempt_payment(&tenant, &invoice).await?;
-        };
+        // Retry payment on every open invoice (this also pays one just created),
+        // churning the tenant if the oldest has aged past the grace period.
+        self.collect_open_invoices(&tenant).await?;
 
         Ok(())
     }
@@ -127,9 +145,10 @@ impl Billing {
         }
     }
 
-    /// A prorated charge (or credit, with `sign` = -1) for the relay's current
-    /// plan, covering the fraction of the period remaining at the activity.
-    /// `None` for a missing relay or a free plan.
+    /// A prorated charge (or credit, with `sign` = -1) for the plan recorded on
+    /// the activity's snapshot — the plan as of the activity, not the relay's
+    /// current plan — covering the fraction of the period remaining at the
+    /// activity. `None` for a free plan.
     async fn make_prorated_item(
         &self,
         tenant: &Tenant,
@@ -137,10 +156,8 @@ impl Billing {
         sign: i64,
         description: &str,
     ) -> Result<Option<InvoiceItem>> {
-        let Some(relay) = query::get_relay(&activity.resource_id).await? else {
-            return Err(anyhow!("activity resource was not a valid relay"));
-        };
-        let plan = query::get_plan(&relay.plan_id)?;
+        let Snapshot::Relay { plan: plan_id, .. } = &*activity.snapshot;
+        let plan = query::get_plan(plan_id)?;
         if plan.amount <= 0 {
             return Ok(None);
         }
@@ -216,7 +233,7 @@ impl Billing {
     /// a relay created/activated *within* the period isn't active before the
     /// boundary, so it's covered by its own prorated charge instead.
     async fn reconcile_renewal(&self, tenant: &Tenant, period: &BillingPeriod) -> Result<()> {
-        let relays = query::list_relays_for_tenant(&tenant.pubkey).await?;
+        let relays = query::list_relays(&tenant.pubkey).await?;
 
         let mut line_items = Vec::new();
         for relay in relays {
@@ -253,6 +270,10 @@ impl Billing {
 
     // --- Payments ---
 
+    /// Collect an invoice via NWC, then a saved card, then a manual DM. A failing
+    /// method's error is stored on the tenant (to warn them in the UI) but never
+    /// aborts the cascade or future retries; a method's error is cleared when it
+    /// next succeeds.
     pub async fn attempt_payment(&self, tenant: &Tenant, invoice: &Invoice) -> Result<()> {
         let mut error_message: Option<String> = None;
 
@@ -260,7 +281,11 @@ impl Billing {
         if !tenant.nwc_url.is_empty() {
             match self.attempt_payment_using_nwc(tenant, invoice).await {
                 Ok(()) => return Ok(()),
-                Err(e) => error_message = Some(format!("{e}")),
+                Err(e) => {
+                    let message = format!("{e}");
+                    command::set_tenant_nwc_error(&tenant.pubkey, &message).await?;
+                    error_message = Some(message);
+                }
             }
         }
 
@@ -273,7 +298,11 @@ impl Billing {
                 .await
             {
                 Ok(()) => return Ok(()),
-                Err(e) => error_message = Some(format!("{e}")),
+                Err(e) => {
+                    let message = format!("{e}");
+                    command::set_tenant_stripe_error(&tenant.pubkey, &message).await?;
+                    error_message = error_message.or_else(|| Some(message));
+                }
             }
         }
 
@@ -335,6 +364,7 @@ impl Billing {
             .await?;
 
         command::insert_intent(&intent_id, &invoice.id).await?;
+        command::clear_tenant_stripe_error(&tenant.pubkey).await?;
         command::mark_invoice_paid(&invoice.id, "stripe").await
     }
 
@@ -356,6 +386,61 @@ impl Billing {
         };
 
         self.robot.send_dm(&tenant.pubkey, &dm_message).await
+    }
+
+    // --- Dunning ---
+
+    /// Dunning pass over a tenant's open invoices: if the oldest has been unpaid
+    /// past the grace period, churn the tenant; otherwise retry payment on each.
+    async fn collect_open_invoices(&self, tenant: &Tenant) -> Result<()> {
+        let open = query::list_open_invoices(&tenant.pubkey).await?;
+        let Some(oldest) = open.first() else {
+            return Ok(());
+        };
+
+        let now = chrono::Utc::now().timestamp();
+        if now - oldest.created_at >= GRACE_PERIOD_SECS {
+            if tenant.churned_at.is_none() {
+                self.churn_tenant(tenant, now).await?;
+            }
+            return Ok(());
+        }
+
+        for invoice in &open {
+            self.attempt_payment(tenant, invoice).await?;
+        }
+
+        Ok(())
+    }
+
+    /// Churn a tenant whose grace period has elapsed: record the churn, mark every
+    /// active relay delinquent, and void the unpaid invoices (we've given up
+    /// collecting them — re-activation never requires they be paid).
+    async fn churn_tenant(&self, tenant: &Tenant, now: i64) -> Result<()> {
+        command::set_tenant_churned_at(&tenant.pubkey, Some(now)).await?;
+
+        for relay in query::list_relays(&tenant.pubkey).await? {
+            if relay.status == RELAY_STATUS_ACTIVE {
+                command::mark_relay_delinquent(&relay).await?;
+            }
+        }
+
+        command::void_open_invoices(&tenant.pubkey).await
+    }
+
+    /// Re-activate a churned tenant: clear the churn marker and restore every
+    /// delinquent relay to active. Any still-open invoices are voided so old debt
+    /// is never a precondition for coming back.
+    async fn reactivate_tenant(&self, tenant: &Tenant) -> Result<()> {
+        command::set_tenant_churned_at(&tenant.pubkey, None).await?;
+
+        for relay in query::list_relays(&tenant.pubkey).await? {
+            if relay.status == RELAY_STATUS_DELINQUENT {
+                command::unmark_relay_delinquent(&relay).await?;
+            }
+        }
+
+        command::void_open_invoices(&tenant.pubkey).await
     }
 
     // --- Invoice utils ---
@@ -406,11 +491,6 @@ impl Billing {
         }
     }
 }
-
-const POLL_INTERVAL: Duration = Duration::from_secs(60 * 60);
-const MANUAL_PAYMENT_DM: &str = "Payment is due for your relay subscription. Open the link below to review the invoice and pay by Lightning or card:";
-const USER_ERROR_PREFIX: &str = "NWC auto-payment failed:";
-const USER_ERROR_MAX_CHARS: usize = 240;
 
 /// One tenant's monthly billing period containing some timestamp, anchored at
 /// the tenant's `billing_anchor`. Half-open `[start, end)` so a moment at

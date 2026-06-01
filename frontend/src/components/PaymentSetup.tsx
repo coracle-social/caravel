@@ -1,8 +1,6 @@
 import { createEffect, createSignal, Show } from "solid-js"
-import Modal from "@/components/Modal"
-import { updateActiveTenant } from "@/lib/hooks"
-import { createPortalSession } from "@/lib/api"
-import { account } from "@/lib/state"
+import { PaymentSetupShell, PaymentSetupBody, SetupFooter, NwcSetupBody, CardSetupBody } from "@/components/PaymentSetupShell"
+import { useCardPortal, useNwcSetup } from "@/lib/usePaymentSetup"
 
 type Tab = "nwc" | "card"
 
@@ -22,73 +20,29 @@ export default function PaymentSetup(props: PaymentSetupProps) {
   createEffect(() => {
     if (props.open) setTab(props.initialTab ?? "nwc")
   })
-  const [nwcUrl, setNwcUrl] = createSignal("")
-  const [saving, setSaving] = createSignal(false)
-  const [saved, setSaved] = createSignal(false)
-  const [error, setError] = createSignal("")
-  const [redirecting, setRedirecting] = createSignal(false)
 
-  async function saveNwc() {
-    const url = nwcUrl().trim()
-    if (!url) return
-    setSaving(true)
-    setError("")
-    try {
-      await updateActiveTenant({ nwc_url: url })
-      setSaved(true)
-      props.onSaved?.()
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to save wallet connection")
-    } finally {
-      setSaving(false)
-    }
-  }
+  const nwc = useNwcSetup(() => props.onSaved?.())
+  const card = useCardPortal()
 
-  async function openPortal() {
-    setRedirecting(true)
-    setError("")
-    try {
-      const { url } = await createPortalSession(account()!.pubkey, window.location.href)
-      window.location.href = url
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to open billing portal")
-      setRedirecting(false)
-    }
-  }
+  // Surface only the active tab's error so a stale failure on one method doesn't
+  // bleed into the other.
+  const error = () => (tab() === "nwc" ? nwc.error() : card.error())
 
   function handleClose() {
-    setNwcUrl("")
-    setSaved(false)
-    setError("")
+    nwc.reset()
+    card.reset()
     props.onClose()
   }
 
   return (
-    <Modal
+    <PaymentSetupShell
       open={props.open}
       onClose={handleClose}
-      wrapperClass="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-      panelClass="w-full max-w-md rounded-2xl bg-white shadow-xl overflow-hidden"
+      title="Set Up Payments"
+      description="Choose how you'd like to pay once invoices are issued for your relay."
+      error={error()}
+      footer={<SetupFooter saved={nwc.saved()} cancelLabel="Set up later" onClose={handleClose} />}
     >
-      <div class="px-6 pt-6 pb-4 border-b border-gray-100">
-        <div class="flex items-start justify-between gap-3">
-          <div>
-            <h2 class="text-lg font-semibold text-gray-900">Set Up Payments</h2>
-            <p class="text-sm text-gray-500 mt-1">Choose how you'd like to pay once invoices are issued for your relay.</p>
-          </div>
-          <button
-            type="button"
-            onClick={handleClose}
-            class="text-gray-400 hover:text-gray-700 rounded p-1 hover:bg-gray-100 flex-shrink-0"
-            aria-label="Close"
-          >
-            <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M18 6L6 18M6 6l12 12" />
-            </svg>
-          </button>
-        </div>
-      </div>
-
       <div class="px-6 pt-4">
         <p class="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Pay with</p>
         <div class="flex gap-2 border border-gray-200 rounded-lg p-1">
@@ -109,92 +63,14 @@ export default function PaymentSetup(props: PaymentSetupProps) {
         </div>
       </div>
 
-      <div class="px-6 py-4 min-h-[180px] flex flex-col justify-center">
+      <PaymentSetupBody>
         <Show when={tab() === "nwc"}>
-          <Show
-            when={!saved()}
-            fallback={
-              <div class="text-center">
-                <div class="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-green-100">
-                  <svg class="w-6 h-6 text-green-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <polyline points="20 6 9 17 4 12" />
-                  </svg>
-                </div>
-                <p class="text-sm font-medium text-gray-900">Wallet connected!</p>
-                <p class="text-xs text-gray-500 mt-1">Automatic payments are now enabled.</p>
-              </div>
-            }
-          >
-            <div class="space-y-3">
-              <label class="block text-sm font-medium text-gray-700">Nostr Wallet Connect URL</label>
-              <input
-                type="text"
-                value={nwcUrl()}
-                onInput={(e) => setNwcUrl(e.currentTarget.value)}
-                placeholder="nostr+walletconnect://..."
-                class="w-full border border-gray-300 rounded-lg px-3 py-2"
-              />
-              <button
-                type="button"
-                onClick={saveNwc}
-                disabled={saving() || !nwcUrl().trim()}
-                class="w-full py-2 px-4 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
-              >
-                {saving() ? "Saving..." : "Save"}
-              </button>
-            </div>
-          </Show>
+          <NwcSetupBody nwc={nwc} />
         </Show>
-
         <Show when={tab() === "card"}>
-          <div class="text-center space-y-4">
-            <div class="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-gray-100">
-              <svg class="w-6 h-6 text-gray-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <rect x="1" y="4" width="22" height="16" rx="2" ry="2" />
-                <line x1="1" y1="10" x2="23" y2="10" />
-              </svg>
-            </div>
-            <p class="text-sm text-gray-600">Add a payment card via Stripe to enable automatic billing. If an invoice is currently due, we will retry collection after card setup.</p>
-            <button
-              type="button"
-              onClick={openPortal}
-              disabled={redirecting()}
-              class="w-full py-2 px-4 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
-            >
-              {redirecting() ? "Redirecting..." : "Add a payment card"}
-            </button>
-          </div>
+          <CardSetupBody card={card} />
         </Show>
-      </div>
-
-      <Show when={error()}>
-        <div class="px-6 pb-2">
-          <p class="text-xs text-red-600">{error()}</p>
-        </div>
-      </Show>
-
-      <div class="px-6 py-4 border-t border-gray-100">
-        <Show when={saved()}>
-          <div class="flex justify-end">
-            <button
-              type="button"
-              onClick={handleClose}
-              class="py-2 px-4 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700"
-            >
-              Done
-            </button>
-          </div>
-        </Show>
-        <Show when={!saved()}>
-          <button
-            type="button"
-            onClick={handleClose}
-            class="py-2 px-4 border border-gray-300 text-gray-700 text-sm rounded-lg hover:bg-gray-50 transition-colors"
-          >
-            Set up later
-          </button>
-        </Show>
-      </div>
-    </Modal>
+      </PaymentSetupBody>
+    </PaymentSetupShell>
   )
 }

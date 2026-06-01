@@ -28,7 +28,7 @@ export default function RelayListItem(props: RelayListItemProps) {
               class="inline-flex items-center rounded-full border border-red-200 bg-red-50 px-2.5 py-0.5 text-xs font-medium text-red-700 max-w-56 truncate"
               title={props.relay.sync_error}
             >
-              {props.relay.sync_error}
+              Failed to sync
             </span>
           </Show>
         </div>

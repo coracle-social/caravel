@@ -422,6 +422,19 @@ pub async fn settle_invoice_via_stripe(
     .await
 }
 
+/// Stamp an invoice with the time its manual-payment reminder DM was sent, so
+/// dunning sends that DM once instead of on every hourly poll.
+pub async fn mark_invoice_notified(invoice_id: &str) -> Result<()> {
+    let notified_at = chrono::Utc::now().timestamp();
+
+    sqlx::query("UPDATE invoice SET notified_at = ? WHERE id = ?")
+        .bind(notified_at)
+        .bind(invoice_id)
+        .execute(pool())
+        .await?;
+    Ok(())
+}
+
 // --- Bolt11 records ---
 
 pub async fn insert_bolt11(

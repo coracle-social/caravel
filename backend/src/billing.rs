@@ -18,6 +18,7 @@ const GRACE_PERIOD_SECS: i64 = 7 * 24 * 60 * 60;
 /// issued invoice is surfaced to the tenant in-app first (e.g. right after they
 /// create a relay), so we don't also nag by DM on the first dunning cycles.
 const FRESH_INVOICE_DM_GRACE_SECS: i64 = 24 * 60 * 60;
+const MANUAL_PAYMENT_DM_INTERVAL_SECS: i64 = 12 * 24 * 60 * 60;
 const MANUAL_PAYMENT_DM: &str = "Payment is due for your relay subscription. Open the link below to review the invoice and pay by Lightning or card:";
 const CHURN_DM: &str = "Your relay subscription is past due, so your relays have been paused. You can restore service any time by adding a payment method or paying an invoice from your dashboard:";
 
@@ -424,12 +425,19 @@ impl Billing {
         invoice: &Invoice,
         error: Option<String>,
     ) -> Result<()> {
-        // If the invoice was just generated, give the user a chance to check the dashboard before nagging them.
         let now = chrono::Utc::now().timestamp();
+
+        // If the invoice was just generated, give the user a chance to check the dashboard before nagging them.
         if now - invoice.created_at < FRESH_INVOICE_DM_GRACE_SECS {
             return Ok(());
         }
 
+        // The dunning poll runs hourly; avoid excessive reminder DMs.
+        if invoice.notified_at.is_some_and(|t| now - t < MANUAL_PAYMENT_DM_INTERVAL_SECS) {
+            return Ok(());
+        }
+
+        // Build the message
         let invoice_id = &invoice.id;
         let url_base = &env::get().app_url;
         let payment_url = format!("{url_base}/account?invoice={invoice_id}");
@@ -443,7 +451,11 @@ impl Billing {
             _ => base,
         };
 
-        self.robot.send_dm(&tenant.pubkey, &dm_message).await
+        // Send via NIP 17
+        self.robot.send_dm(&tenant.pubkey, &dm_message).await?;
+
+        // Record the send to avoid spammy notifications.
+        command::mark_invoice_notified(invoice_id).await
     }
 
     // --- Bolt11 utils ---

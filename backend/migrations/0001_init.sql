@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS invoice (
   created_at INTEGER NOT NULL,
   paid_at INTEGER,
   voided_at INTEGER,
+  notified_at INTEGER,
   FOREIGN KEY (tenant_pubkey) REFERENCES tenant(pubkey)
 );
 

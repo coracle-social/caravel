@@ -43,10 +43,7 @@ impl Robot {
         Ok(client)
     }
 
-
-    async fn publish_identity(
-        &self,
-    ) -> Result<()> {
+    async fn publish_identity(&self) -> Result<()> {
         let mut metadata = Metadata::new();
         if !env::get().robot_name.is_empty() {
             metadata = metadata.name(&env::get().robot_name);
@@ -65,7 +62,8 @@ impl Robot {
             .send_event_builder(EventBuilder::metadata(&metadata))
             .await?;
 
-        let outbox_tags = env::get().robot_outbox_relays
+        let outbox_tags = env::get()
+            .robot_outbox_relays
             .iter()
             .map(|r| Tag::parse(["r", r.as_str()]))
             .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -73,7 +71,8 @@ impl Robot {
             .send_event_builder(EventBuilder::new(Kind::Custom(10002), "").tags(outbox_tags))
             .await?;
 
-        let messaging_tags = env::get().robot_messaging_relays
+        let messaging_tags = env::get()
+            .robot_messaging_relays
             .iter()
             .map(|r| Tag::parse(["relay", r.as_str()]))
             .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -100,7 +99,9 @@ impl Robot {
 
         let recipient_pubkey = PublicKey::parse(recipient)?;
         let client = self.make_client(&dm_relays).await?;
-        client.send_private_msg(recipient_pubkey, message, []).await?;
+        client
+            .send_private_msg(recipient_pubkey, message, [])
+            .await?;
         Ok(())
     }
 
@@ -132,8 +133,14 @@ impl Robot {
     pub async fn fetch_nostr_name(&self, pubkey: &str) -> Option<String> {
         let pubkey = PublicKey::parse(pubkey).ok()?;
         let filter = Filter::new().author(pubkey).kind(Kind::Metadata).limit(1);
-        let client = self.make_client(&env::get().robot_indexer_relays).await.ok()?;
-        let events = client.fetch_events(filter, Duration::from_secs(5)).await.ok()?;
+        let client = self
+            .make_client(&env::get().robot_indexer_relays)
+            .await
+            .ok()?;
+        let events = client
+            .fetch_events(filter, Duration::from_secs(5))
+            .await
+            .ok()?;
         let event = events.into_iter().max_by_key(|e| e.created_at)?;
         let content: serde_json::Value = serde_json::from_str(&event.content).ok()?;
         let name = content

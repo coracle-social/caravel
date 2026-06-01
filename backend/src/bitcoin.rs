@@ -27,8 +27,7 @@ pub async fn get_bitcoin_price(currency: &str) -> Result<f64> {
     let resp = http.get(url).send().await?;
     let body: CoinbaseSpotPriceResponse = resp.error_for_status()?.json().await?;
 
-    body
-        .data
+    body.data
         .amount
         .parse::<f64>()
         .map_err(|e| anyhow!("invalid BTC spot quote for {currency}: {e}"))

@@ -56,6 +56,21 @@ pub async fn list_tenants(
         .collect::<Vec<_>>())
 }
 
+/// Fetch a tenant by pubkey. Automatically refreshes the tenant's stripe payment data.
+pub async fn get_tenant(
+    State(api): State<Arc<Api>>,
+    AuthedPubkey(auth): AuthedPubkey,
+    Path(pubkey): Path<String>,
+) -> ApiResult {
+    api.require_admin_or_tenant(&auth, &pubkey)?;
+
+    let mut tenant = api.get_tenant_or_404(&pubkey).await?;
+
+    api.billing.sync_stripe_customer(&mut tenant).await.map_err(internal)?;
+
+    ok(TenantResponse::from(tenant))
+}
+
 /// Create the tenant row for the calling pubkey and provision its Stripe
 /// customer. Idempotent: an existing tenant (including one created by a
 /// concurrent unique-constraint race) is returned as-is.
@@ -99,16 +114,6 @@ pub async fn create_tenant(
     }
 }
 
-pub async fn get_tenant(
-    State(api): State<Arc<Api>>,
-    AuthedPubkey(auth): AuthedPubkey,
-    Path(pubkey): Path<String>,
-) -> ApiResult {
-    api.require_admin_or_tenant(&auth, &pubkey)?;
-    let tenant = api.get_tenant_or_404(&pubkey).await?;
-    ok(TenantResponse::from(tenant))
-}
-
 #[derive(Deserialize)]
 pub struct UpdateTenantRequest {
     pub nwc_url: Option<String>,
@@ -136,6 +141,7 @@ pub async fn update_tenant(
     ok(TenantResponse::from(tenant))
 }
 
+/// List a tenant's relays.
 pub async fn list_tenant_relays(
     State(api): State<Arc<Api>>,
     AuthedPubkey(auth): AuthedPubkey,
@@ -149,7 +155,7 @@ pub async fn list_tenant_relays(
     ok(relays)
 }
 
-/// List a tenant's invoices, most recent first.
+/// List a tenant's invoices after reconciling the tenant's billing state.
 pub async fn list_tenant_invoices(
     State(api): State<Arc<Api>>,
     AuthedPubkey(auth): AuthedPubkey,
@@ -157,9 +163,14 @@ pub async fn list_tenant_invoices(
 ) -> ApiResult {
     api.require_admin_or_tenant(&auth, &pubkey)?;
 
-    let invoices = query::list_invoices(&pubkey)
+    let tenant = api.get_tenant_or_404(&pubkey).await?;
+
+    api.billing
+        .reconcile_subscription(&tenant, false)
         .await
         .map_err(internal)?;
+
+    let invoices = query::list_invoices(&pubkey).await.map_err(internal)?;
 
     ok(invoices)
 }

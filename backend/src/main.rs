@@ -2,10 +2,10 @@ mod api;
 mod billing;
 mod bitcoin;
 mod command;
+mod db;
 mod env;
 mod infra;
 mod models;
-mod db;
 mod query;
 mod robot;
 mod routes;
@@ -16,7 +16,7 @@ mod web;
 use anyhow::Result;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-use tower_http::cors::{AllowOrigin, CorsLayer, Any};
+use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 
 use crate::api::Api;
 use crate::billing::Billing;
@@ -61,8 +61,7 @@ async fn main() -> Result<()> {
         billing.start().await;
     });
 
-    let listener =
-        tokio::net::TcpListener::bind(format!(
+    let listener = tokio::net::TcpListener::bind(format!(
         "{}:{}",
         env::get().server_host,
         env::get().server_port

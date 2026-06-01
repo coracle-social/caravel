@@ -1,4 +1,4 @@
-import { createSignal, Show } from "solid-js"
+import { createEffect, createSignal, Show } from "solid-js"
 import Modal from "@/components/Modal"
 import { updateActiveTenant } from "@/lib/hooks"
 import { createPortalSession } from "@/lib/api"
@@ -10,10 +10,18 @@ type PaymentSetupProps = {
   open: boolean
   onClose: () => void
   onSaved?: () => void
+  // Which method to show first. Lightning/NWC is the default; pass "card" to land
+  // a tenant on the card tab (e.g. when their card is the method that failed).
+  initialTab?: Tab
 }
 
 export default function PaymentSetup(props: PaymentSetupProps) {
-  const [tab, setTab] = createSignal<Tab>("nwc")
+  const [tab, setTab] = createSignal<Tab>(props.initialTab ?? "nwc")
+
+  // Reset to the requested tab each time the dialog opens.
+  createEffect(() => {
+    if (props.open) setTab(props.initialTab ?? "nwc")
+  })
   const [nwcUrl, setNwcUrl] = createSignal("")
   const [saving, setSaving] = createSignal(false)
   const [saved, setSaved] = createSignal(false)

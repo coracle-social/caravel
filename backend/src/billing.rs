@@ -14,9 +14,12 @@ use crate::wallet::Wallet;
 
 const POLL_INTERVAL: Duration = Duration::from_secs(60 * 60);
 const GRACE_PERIOD_SECS: i64 = 7 * 24 * 60 * 60;
+/// Hold the manual-payment DM until an open invoice is at least this old. A freshly
+/// issued invoice is surfaced to the tenant in-app first (e.g. right after they
+/// create a relay), so we don't also nag by DM on the first dunning cycles.
+const FRESH_INVOICE_DM_GRACE_SECS: i64 = 24 * 60 * 60;
 const MANUAL_PAYMENT_DM: &str = "Payment is due for your relay subscription. Open the link below to review the invoice and pay by Lightning or card:";
-const USER_ERROR_PREFIX: &str = "Auto-payment failed:";
-const USER_ERROR_MAX_CHARS: usize = 240;
+const CHURN_DM: &str = "Your relay subscription is past due, so your relays have been paused. You can restore service any time by adding a payment method or paying an invoice from your dashboard:";
 
 /// Owns subscription billing: it reconciles tenant activity into invoice items,
 /// renews subscriptions each period, and collects payment (Lightning, then a
@@ -54,10 +57,13 @@ impl Billing {
     async fn reconcile_subscriptions(&self) -> Result<()> {
         let tenants = query::list_tenants().await?;
 
-        tracing::info!(tenant_count = tenants.len(), "reconciling all subscriptions");
+        tracing::info!(
+            tenant_count = tenants.len(),
+            "reconciling all subscriptions"
+        );
 
         for tenant in tenants {
-            if let Err(error) = self.reconcile_subscription(&tenant).await {
+            if let Err(error) = self.reconcile_subscription(&tenant, true).await {
                 tracing::error!(
                     tenant = %tenant.pubkey,
                     error = ?error,
@@ -73,10 +79,13 @@ impl Billing {
 
     /// Reconciles a tenant's billing: re-activates them if a churned tenant has
     /// re-engaged, folds billable activity into line items (setting the billing
-    /// anchor on the first), renews the current period if due, claims outstanding
-    /// items onto an invoice, and then collects every open invoice — churning the
-    /// tenant if one has gone unpaid past the grace period.
-    pub async fn reconcile_subscription(&self, tenant: &Tenant) -> Result<()> {
+    /// anchor based on the first one), renews the current period if due, and claims
+    /// outstanding items onto an invoice.
+    pub async fn reconcile_subscription(
+        &self,
+        tenant: &Tenant,
+        attempt_payment: bool,
+    ) -> Result<()> {
         let mut tenant = tenant.clone();
 
         let activities = query::list_billable_activity(&tenant.pubkey).await?;
@@ -110,9 +119,11 @@ impl Billing {
             command::create_invoice(&tenant, &period).await?;
         }
 
-        // Retry payment on every open invoice (this also pays one just created),
-        // churning the tenant if the oldest has aged past the grace period.
-        self.collect_open_invoices(&tenant).await?;
+        // Attempt payment on every open invoice after syncing with stripe.
+        if attempt_payment {
+            self.sync_stripe_customer(&mut tenant).await?;
+            self.collect_open_invoices(&tenant).await?;
+        }
 
         Ok(())
     }
@@ -140,7 +151,7 @@ impl Billing {
         };
 
         match invoice_item {
-            Some(ref item) => command::insert_invoice_item_for_activity(&item, &activity.id).await,
+            Some(ref item) => command::insert_invoice_item_for_activity(item, &activity.id).await,
             None => command::mark_activity_billed(&activity.id).await,
         }
     }
@@ -242,7 +253,11 @@ impl Billing {
             else {
                 continue;
             };
-            let Snapshot::Relay { plan: plan_id, status, .. } = &*activity.snapshot;
+            let Snapshot::Relay {
+                plan: plan_id,
+                status,
+                ..
+            } = &*activity.snapshot;
             if status != RELAY_STATUS_ACTIVE {
                 continue;
             }
@@ -270,6 +285,37 @@ impl Billing {
 
     // --- Payments ---
 
+    /// Dunning pass over a tenant's open invoices: if the oldest has been unpaid
+    /// past the grace period, churn the tenant; otherwise retry payment on each.
+    async fn collect_open_invoices(&self, tenant: &Tenant) -> Result<()> {
+        let open = query::list_open_invoices(&tenant.pubkey).await?;
+        let Some(oldest) = open.first() else {
+            return Ok(());
+        };
+
+        let now = chrono::Utc::now().timestamp();
+        if now - oldest.created_at >= GRACE_PERIOD_SECS {
+            if tenant.churned_at.is_none() {
+                let relays = query::list_relays_for_tenant(&tenant.pubkey).await?;
+                command::churn_tenant(&tenant.pubkey, now, &relays).await?;
+
+                // Notify the tenant once, on the transition into churn (the guard
+                // above fires this a single time). Log-and-continue on failure.
+                let message = format!("{CHURN_DM}\n\n{}/account", env::get().app_url);
+                if let Err(e) = self.robot.send_dm(&tenant.pubkey, &message).await {
+                    tracing::error!(tenant = %tenant.pubkey, error = %e, "failed to send churn DM");
+                }
+            }
+            return Ok(());
+        }
+
+        for invoice in &open {
+            self.attempt_payment(tenant, invoice).await?;
+        }
+
+        Ok(())
+    }
+
     /// Collect an invoice via NWC, then a saved card, then a manual DM. A failing
     /// method's error is stored on the tenant (to warn them in the UI) but never
     /// aborts the cascade or future retries; a method's error is cleared when it
@@ -294,12 +340,11 @@ impl Billing {
             return Ok(());
         }
 
-        // 3. Payment method on file: if the tenant has one saved, charge it via Stripe.
-        if let Some(payment_method) =
-            self.stripe.get_saved_payment_method(&tenant.stripe_customer_id).await?
-        {
+        // 3. Payment method on file: charge the tenant's cached Stripe payment
+        // method, kept fresh by sync_stripe_payment_method before collection.
+        if let Some(payment_method) = &tenant.stripe_payment_method_id {
             match self
-                .attempt_payment_using_stripe(tenant, invoice, &payment_method)
+                .attempt_payment_using_stripe(tenant, invoice, payment_method)
                 .await
             {
                 Ok(()) => return Ok(()),
@@ -308,8 +353,10 @@ impl Billing {
         }
 
         // 4. Manual payment: DM a link to the in-app payment page for this invoice.
-        let summary = error_message.as_deref().and_then(summarize_error_message);
-        if let Err(e) = self.attempt_payment_using_dm(tenant, invoice, summary).await {
+        if let Err(e) = self
+            .attempt_payment_using_dm(tenant, invoice, error_message)
+            .await
+        {
             tracing::error!(
                 tenant = %tenant.pubkey,
                 error = %e,
@@ -375,46 +422,28 @@ impl Billing {
         &self,
         tenant: &Tenant,
         invoice: &Invoice,
-        error_message: Option<String>,
+        error: Option<String>,
     ) -> Result<()> {
+        // If the invoice was just generated, give the user a chance to check the dashboard before nagging them.
+        let now = chrono::Utc::now().timestamp();
+        if now - invoice.created_at < FRESH_INVOICE_DM_GRACE_SECS {
+            return Ok(());
+        }
+
         let invoice_id = &invoice.id;
         let url_base = &env::get().app_url;
         let payment_url = format!("{url_base}/account?invoice={invoice_id}");
         let base = format!("{MANUAL_PAYMENT_DM}\n\n{payment_url}");
-        let dm_message = match error_message {
-            Some(error_message) if !error_message.is_empty() => {
-                format!("{base}\n\n{USER_ERROR_PREFIX} {error_message}")
+        let dm_message = match error {
+            Some(error) if !error.is_empty() => {
+                let limit: usize = 240;
+                let summary = error.chars().take(limit.saturating_sub(3)).collect::<String>();
+                format!("{base}\n\nAuto-payment failed: {summary}")
             }
             _ => base,
         };
 
         self.robot.send_dm(&tenant.pubkey, &dm_message).await
-    }
-
-    // --- Dunning ---
-
-    /// Dunning pass over a tenant's open invoices: if the oldest has been unpaid
-    /// past the grace period, churn the tenant; otherwise retry payment on each.
-    async fn collect_open_invoices(&self, tenant: &Tenant) -> Result<()> {
-        let open = query::list_open_invoices(&tenant.pubkey).await?;
-        let Some(oldest) = open.first() else {
-            return Ok(());
-        };
-
-        let now = chrono::Utc::now().timestamp();
-        if now - oldest.created_at >= GRACE_PERIOD_SECS {
-            if tenant.churned_at.is_none() {
-                let relays = query::list_relays_for_tenant(&tenant.pubkey).await?;
-                command::churn_tenant(&tenant.pubkey, now, &relays).await?;
-            }
-            return Ok(());
-        }
-
-        for invoice in &open {
-            self.attempt_payment(tenant, invoice).await?;
-        }
-
-        Ok(())
     }
 
     // --- Bolt11 utils ---
@@ -454,6 +483,37 @@ impl Billing {
         } else {
             Ok(bolt11)
         }
+    }
+
+    // --- Stripe utils ---
+
+    /// Copy down any stripe-related stuff to our local tenant model. Fail gracefully.
+    pub async fn sync_stripe_customer(&self, tenant: &mut Tenant) -> Result<()> {
+        match self.sync_stripe_payment_method(tenant).await {
+            Ok(payment_method_id) => {
+                tenant.stripe_payment_method_id = payment_method_id;
+            }
+            Err(error) => {
+                tracing::error!(tenant = %tenant.pubkey, error = ?error, "failed to sync payment method");
+            }
+        };
+
+        Ok(())
+    }
+
+    /// Refresh the cached Stripe payment method from Stripe so collection can charge
+    /// it directly and the UI reflects cards added via the portal.
+    async fn sync_stripe_payment_method(&self, tenant: &Tenant) -> Result<Option<String>> {
+        let payment_method_id = self
+            .stripe
+            .get_saved_payment_method(&tenant.stripe_customer_id)
+            .await?;
+
+        if payment_method_id != tenant.stripe_payment_method_id {
+            command::set_tenant_stripe_payment_method(&tenant.pubkey, &payment_method_id).await?;
+        }
+
+        Ok(payment_method_id)
     }
 }
 
@@ -516,20 +576,4 @@ impl BillingPeriod {
     fn prorate(&self, amount: i64, at: i64) -> i64 {
         (amount as f64 * self.fraction_remaining(at)).round() as i64
     }
-}
-
-fn summarize_error_message(error: &str) -> Option<String> {
-    let normalized = error.split_whitespace().collect::<Vec<_>>().join(" ");
-    if normalized.is_empty() {
-        return None;
-    }
-
-    if normalized.chars().count() <= USER_ERROR_MAX_CHARS {
-        return Some(normalized);
-    }
-
-    let prefix_len = USER_ERROR_MAX_CHARS.saturating_sub(3);
-    let mut truncated = normalized.chars().take(prefix_len).collect::<String>();
-    truncated.push_str("...");
-    Some(truncated)
 }

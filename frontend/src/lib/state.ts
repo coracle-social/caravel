@@ -6,7 +6,7 @@ import { EventStore } from "applesauce-core"
 import { createEventLoaderForStore } from "applesauce-loaders/loaders"
 import { RelayPool } from "applesauce-relay"
 import { NostrConnectSigner } from "applesauce-signers"
-import { getIdentity, listPlans, registerAccountGetter, type Plan } from "@/lib/api"
+import { getIdentity, getTenant, listPlans, listTenantInvoices, listTenantRelays, registerAccountGetter, type Plan } from "@/lib/api"
 
 export type UnsignedEvent = {
   kind: number
@@ -54,6 +54,22 @@ export const [identity, { refetch: refetchIdentity, mutate: setIdentity }] = cre
     if (pubkey) return getIdentity()
   }
 )
+
+// Shared billing reads, fetched once per session and consumed by the dashboard
+// shell, the billing page, and the billing-prompt surface. Keyed on the active
+// pubkey so they refetch on account switch; refetchBilling() refreshes them all
+// after a mutation (payment, method update, plan change).
+const billingKey = () => account()?.pubkey
+
+export const [billingTenant, { refetch: refetchBillingTenant }] = createResource(billingKey, getTenant)
+export const [billingInvoices, { refetch: refetchBillingInvoices }] = createResource(billingKey, listTenantInvoices)
+export const [billingRelays, { refetch: refetchBillingRelays }] = createResource(billingKey, listTenantRelays)
+
+export function refetchBilling() {
+  void refetchBillingTenant()
+  void refetchBillingInvoices()
+  void refetchBillingRelays()
+}
 
 // Deferred to avoid circular-import TDZ errors (api.ts <-> state.ts)
 queueMicrotask(() => {

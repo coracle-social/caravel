@@ -74,7 +74,11 @@ async fn reconcile_relay_state(source: &str) -> Result<()> {
         return Ok(());
     }
 
-    tracing::info!(source, relay_count = relays.len(), "reconciling pending relay state");
+    tracing::info!(
+        source,
+        relay_count = relays.len(),
+        "reconciling pending relay state"
+    );
 
     for relay in relays {
         if relay.sync_error.trim().is_empty() {
@@ -229,7 +233,11 @@ async fn try_sync_relay(relay: &Relay) -> Result<()> {
         );
     }
 
-    let method = if is_new { HttpMethod::POST } else { HttpMethod::PATCH };
+    let method = if is_new {
+        HttpMethod::POST
+    } else {
+        HttpMethod::PATCH
+    };
     request(method, &format!("relay/{}", relay.id), Some(&body)).await?;
     Ok(())
 }

@@ -18,8 +18,7 @@ use std::sync::Arc;
 
 use anyhow::{Result, anyhow, ensure};
 use axum::{
-    Router,
-    async_trait,
+    Router, async_trait,
     extract::FromRequestParts,
     http::{HeaderMap, request::Parts},
     routing::{get, post},
@@ -32,9 +31,8 @@ use crate::env;
 use crate::models::{Relay, Tenant};
 use crate::query;
 use crate::robot::Robot;
-use crate::stripe::Stripe;
 use crate::routes::identity::get_identity;
-use crate::routes::invoices::{get_invoice, get_invoice_bolt11, get_tenant_latest_invoice};
+use crate::routes::invoices::{get_invoice, get_invoice_bolt11, list_invoice_items};
 use crate::routes::plans::{get_plan, list_plans};
 use crate::routes::relays::{
     create_relay, deactivate_relay, get_relay, list_relay_activity, list_relay_members,
@@ -44,6 +42,7 @@ use crate::routes::tenants::{
     create_stripe_session, create_tenant, get_tenant, list_tenant_invoices, list_tenant_relays,
     list_tenants, update_tenant,
 };
+use crate::stripe::Stripe;
 use crate::web::{ApiError, forbidden, internal, not_found, unauthorized};
 
 #[derive(Clone)]
@@ -74,10 +73,9 @@ impl Api {
             .route("/tenants/:pubkey/relays", get(list_tenant_relays))
             .route("/tenants/:pubkey/invoices", get(list_tenant_invoices))
             .route(
-                "/tenants/:pubkey/invoices/latest",
-                get(get_tenant_latest_invoice),
+                "/tenants/:pubkey/stripe/session",
+                get(create_stripe_session),
             )
-            .route("/tenants/:pubkey/stripe/session", get(create_stripe_session))
             .route("/relays", get(list_relays).post(create_relay))
             .route("/relays/:id", get(get_relay).put(update_relay))
             .route("/relays/:id/members", get(list_relay_members))
@@ -86,6 +84,7 @@ impl Api {
             .route("/relays/:id/reactivate", post(reactivate_relay))
             .route("/invoices/:id", get(get_invoice))
             .route("/invoices/:id/bolt11", get(get_invoice_bolt11))
+            .route("/invoices/:id/items", get(list_invoice_items))
             .with_state(api)
     }
 
@@ -185,7 +184,10 @@ impl Api {
             .last()
             .ok_or_else(|| anyhow!("missing u tag"))?;
 
-        ensure!(got_u == env::get().server_host, "authorization host mismatch");
+        ensure!(
+            got_u == env::get().server_host,
+            "authorization host mismatch"
+        );
 
         Ok(event.pubkey.to_hex())
     }

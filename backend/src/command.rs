@@ -25,12 +25,32 @@ pub async fn create_tenant(tenant: &Tenant) -> Result<()> {
     Ok(())
 }
 
+/// Update a tenant's NWC credentials, clearing any stored NWC error so a fresh
+/// wallet starts from a clean slate (it re-errors on the next charge if invalid).
 pub async fn update_tenant(tenant: &Tenant) -> Result<()> {
-    sqlx::query("UPDATE tenant SET nwc_url = ? WHERE pubkey = ?")
+    sqlx::query("UPDATE tenant SET nwc_url = ?, nwc_error = NULL WHERE pubkey = ?")
         .bind(&tenant.nwc_url)
         .bind(&tenant.pubkey)
         .execute(pool())
         .await?;
+    Ok(())
+}
+
+/// Cache the tenant's Stripe payment method id (or clear it with `None`) and clear
+/// any stored Stripe error. Called when a card is (re)attached via the portal or
+/// detected during reconciliation, so collection can charge it directly and the UI
+/// reflects the change.
+pub async fn set_tenant_stripe_payment_method(
+    pubkey: &str,
+    payment_method_id: &Option<String>,
+) -> Result<()> {
+    sqlx::query(
+        "UPDATE tenant SET stripe_payment_method_id = ?, stripe_error = NULL WHERE pubkey = ?",
+    )
+    .bind(payment_method_id)
+    .bind(pubkey)
+    .execute(pool())
+    .await?;
     Ok(())
 }
 
@@ -70,9 +90,13 @@ pub async fn churn_tenant(tenant_pubkey: &str, now: i64, relays: &[Relay]) -> Re
         let mut activities = Vec::new();
         for relay in relays {
             if relay.status == RELAY_STATUS_ACTIVE {
-                let activity =
-                    set_relay_status_tx(tx, relay, RELAY_STATUS_DELINQUENT, "mark_relay_delinquent")
-                        .await?;
+                let activity = set_relay_status_tx(
+                    tx,
+                    relay,
+                    RELAY_STATUS_DELINQUENT,
+                    "mark_relay_delinquent",
+                )
+                .await?;
                 activities.push(activity);
             }
         }
@@ -252,7 +276,10 @@ pub async fn complete_relay_sync(relay: &Relay) -> Result<()> {
 
 /// Persist a reconciled activity's line item and mark the activity billed in one
 /// transaction, so a recovery pass never re-bills it.
-pub async fn insert_invoice_item_for_activity(invoice_item: &InvoiceItem, activity_id: &str) -> Result<()> {
+pub async fn insert_invoice_item_for_activity(
+    invoice_item: &InvoiceItem,
+    activity_id: &str,
+) -> Result<()> {
     let now = chrono::Utc::now().timestamp();
 
     with_tx(async |tx| {
@@ -282,12 +309,11 @@ pub async fn insert_invoice_items_for_renewal(
     with_tx(async |tx| {
         // Re-read the marker inside the transaction so the guard and the writes
         // commit together — this ensures idempotency so we don't double-invoice.
-        let renewed_at = sqlx::query_scalar::<_, Option<i64>>(
-            "SELECT renewed_at FROM tenant WHERE pubkey = ?",
-        )
-        .bind(tenant_pubkey)
-        .fetch_one(&mut **tx)
-        .await?;
+        let renewed_at =
+            sqlx::query_scalar::<_, Option<i64>>("SELECT renewed_at FROM tenant WHERE pubkey = ?")
+                .bind(tenant_pubkey)
+                .fetch_one(&mut **tx)
+                .await?;
 
         if renewed_at.is_some_and(|at| at >= period.start) {
             return Ok(());
@@ -339,7 +365,7 @@ pub async fn create_invoice(tenant: &Tenant, period: &BillingPeriod) -> Result<O
             return Ok(None);
         }
 
-        let invoice = insert_invoice_tx(tx, &tenant, &period, total).await?;
+        let invoice = insert_invoice_tx(tx, tenant, period, total).await?;
 
         sqlx::query(
             "UPDATE invoice_item SET invoice_id = ?
@@ -485,14 +511,17 @@ async fn insert_invoice_tx(
     .bind(invoice_id)
     .bind(&tenant.pubkey)
     .bind(amount)
-    .bind(&period.start)
+    .bind(period.start)
     .bind(period.end)
     .bind(now)
     .fetch_one(&mut **tx)
     .await?)
 }
 
-async fn insert_invoice_item_tx(tx: &mut Transaction<'_, Sqlite>, item: &InvoiceItem) -> Result<()> {
+async fn insert_invoice_item_tx(
+    tx: &mut Transaction<'_, Sqlite>,
+    item: &InvoiceItem,
+) -> Result<()> {
     sqlx::query(
         "INSERT INTO invoice_item
             (id, invoice_id, activity_id, tenant_pubkey, relay_id, plan_id, amount, description, created_at)
@@ -520,11 +549,12 @@ async fn mark_activity_billed_tx(
     activity_id: &str,
     billed_at: i64,
 ) -> Result<bool> {
-    let result = sqlx::query("UPDATE activity SET billed_at = ? WHERE id = ? AND billed_at IS NULL")
-        .bind(billed_at)
-        .bind(activity_id)
-        .execute(&mut **tx)
-        .await?;
+    let result =
+        sqlx::query("UPDATE activity SET billed_at = ? WHERE id = ? AND billed_at IS NULL")
+            .bind(billed_at)
+            .bind(activity_id)
+            .execute(&mut **tx)
+            .await?;
     Ok(result.rows_affected() > 0)
 }
 
@@ -578,7 +608,10 @@ async fn mark_invoice_paid_tx(
 
 /// Void all of a tenant's open invoices, forgiving the balance — used when a
 /// tenant churns or re-activates, so old debt never has to be collected.
-async fn void_open_invoices_tx(tx: &mut Transaction<'_, Sqlite>, tenant_pubkey: &str) -> Result<()> {
+async fn void_open_invoices_tx(
+    tx: &mut Transaction<'_, Sqlite>,
+    tenant_pubkey: &str,
+) -> Result<()> {
     let voided_at = chrono::Utc::now().timestamp();
 
     sqlx::query(
@@ -615,7 +648,10 @@ async fn clear_tenant_nwc_error_tx(tx: &mut Transaction<'_, Sqlite>, pubkey: &st
     Ok(())
 }
 
-async fn clear_tenant_stripe_error_tx(tx: &mut Transaction<'_, Sqlite>, pubkey: &str) -> Result<()> {
+async fn clear_tenant_stripe_error_tx(
+    tx: &mut Transaction<'_, Sqlite>,
+    pubkey: &str,
+) -> Result<()> {
     sqlx::query("UPDATE tenant SET stripe_error = NULL WHERE pubkey = ?")
         .bind(pubkey)
         .execute(&mut **tx)

@@ -1,7 +1,7 @@
 use anyhow::{Result, anyhow};
 
-use crate::models::{Activity, Bolt11, Invoice, Plan, Relay, Tenant};
 use crate::db::pool;
+use crate::models::{Activity, Bolt11, Invoice, InvoiceItem, Plan, Relay, Tenant};
 
 fn select_tenant(tail: &str) -> String {
     format!("SELECT * FROM tenant {tail}")
@@ -62,10 +62,12 @@ pub async fn list_tenants() -> Result<Vec<Tenant>> {
 }
 
 pub async fn get_tenant(pubkey: &str) -> Result<Option<Tenant>> {
-    Ok(sqlx::query_as::<_, Tenant>(&select_tenant("WHERE pubkey = ?"))
-        .bind(pubkey)
-        .fetch_optional(pool())
-        .await?)
+    Ok(
+        sqlx::query_as::<_, Tenant>(&select_tenant("WHERE pubkey = ?"))
+            .bind(pubkey)
+            .fetch_optional(pool())
+            .await?,
+    )
 }
 
 // --- Relays ---
@@ -85,10 +87,12 @@ pub async fn list_relays_pending_sync() -> Result<Vec<Relay>> {
 }
 
 pub async fn list_relays_for_tenant(tenant_pubkey: &str) -> Result<Vec<Relay>> {
-    Ok(sqlx::query_as::<_, Relay>(&select_relay("WHERE tenant_pubkey = ?"))
-        .bind(tenant_pubkey)
-        .fetch_all(pool())
-        .await?)
+    Ok(
+        sqlx::query_as::<_, Relay>(&select_relay("WHERE tenant_pubkey = ?"))
+            .bind(tenant_pubkey)
+            .fetch_all(pool())
+            .await?,
+    )
 }
 
 pub async fn get_relay(id: &str) -> Result<Option<Relay>> {
@@ -119,10 +123,12 @@ pub async fn get_relay_plan_before(relay_id: &str, before: i64) -> Result<Option
 // --- Invoices ---
 
 pub async fn get_invoice(invoice_id: &str) -> Result<Option<Invoice>> {
-    Ok(sqlx::query_as::<_, Invoice>("SELECT * FROM invoice WHERE id = ?")
-        .bind(invoice_id)
-        .fetch_optional(pool())
-        .await?)
+    Ok(
+        sqlx::query_as::<_, Invoice>("SELECT * FROM invoice WHERE id = ?")
+            .bind(invoice_id)
+            .fetch_optional(pool())
+            .await?,
+    )
 }
 
 pub async fn list_invoices(tenant_pubkey: &str) -> Result<Vec<Invoice>> {
@@ -134,12 +140,14 @@ pub async fn list_invoices(tenant_pubkey: &str) -> Result<Vec<Invoice>> {
     .await?)
 }
 
-pub async fn get_latest_invoice(tenant_pubkey: &str) -> Result<Option<Invoice>> {
-    Ok(sqlx::query_as::<_, Invoice>(
-        "SELECT * FROM invoice WHERE tenant_pubkey = ? ORDER BY created_at DESC LIMIT 1",
+/// The line items claimed onto an invoice, oldest first. Used to render an
+/// invoice's contents (and its downloadable copy) from what was actually billed.
+pub async fn list_invoice_items_for_invoice(invoice_id: &str) -> Result<Vec<InvoiceItem>> {
+    Ok(sqlx::query_as::<_, InvoiceItem>(
+        "SELECT * FROM invoice_item WHERE invoice_id = ? ORDER BY created_at ASC",
     )
-    .bind(tenant_pubkey)
-    .fetch_optional(pool())
+    .bind(invoice_id)
+    .fetch_all(pool())
     .await?)
 }
 
@@ -159,10 +167,12 @@ pub async fn list_open_invoices(tenant_pubkey: &str) -> Result<Vec<Invoice>> {
 // --- Bolt11 ---
 
 pub async fn get_bolt11(bolt11_id: &str) -> Result<Option<Bolt11>> {
-    Ok(sqlx::query_as::<_, Bolt11>("SELECT * FROM bolt11 WHERE id = ?")
-        .bind(bolt11_id)
-        .fetch_optional(pool())
-        .await?)
+    Ok(
+        sqlx::query_as::<_, Bolt11>("SELECT * FROM bolt11 WHERE id = ?")
+            .bind(bolt11_id)
+            .fetch_optional(pool())
+            .await?,
+    )
 }
 
 pub async fn get_bolt11_for_invoice(invoice_id: &str) -> Result<Option<Bolt11>> {

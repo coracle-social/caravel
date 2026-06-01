@@ -104,8 +104,13 @@ export default function useRelayToggles(
     if (plan_id !== "free") {
       const needsSetup = await tenantNeedsPaymentSetup()
       if (needsSetup) {
+        // Materialize the invoice for this upgrade (no collection, no DM) so we
+        // can prompt the tenant to pay it directly. listTenantInvoices reconciles
+        // first, so a just-created invoice is visible here.
         const invoice = await getLatestOpenInvoice()
-        if (invoice) setPendingInvoice(invoice)
+        if (invoice) {
+          setPendingInvoice(invoice)
+        }
         setPendingPaymentSetup(true)
       }
     }

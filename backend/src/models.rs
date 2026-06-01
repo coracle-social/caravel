@@ -39,7 +39,8 @@ pub struct Tenant {
     pub nwc_url: String,
     /// Last NWC auto-payment error, or `None` when the wallet last paid (or has
     /// never been tried). Surfaced in the UI to warn the user; it never blocks a
-    /// retry — the next reconcile attempts payment again regardless.
+    /// retry — the next reconcile attempts payment again regardless. Also cleared
+    /// when the tenant updates their NWC credentials.
     pub nwc_error: Option<String>,
     /// Last Stripe auto-payment error, with the same semantics as `nwc_error`.
     pub stripe_error: Option<String>,
@@ -122,40 +123,43 @@ impl Default for Relay {
 /// balance forgiven when the tenant churns).
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Invoice {
-  pub id: String,
-  pub tenant_pubkey: String,
-  /// The total owed, fixed when the invoice is cut from its outstanding line
-  /// items, so collection never has to re-sum them.
-  pub amount: i64,
-  pub period_start: i64,
-  pub period_end: i64,
-  pub created_at: i64,
-  pub paid_at: Option<i64>,
-  pub voided_at: Option<i64>,
+    pub id: String,
+    pub tenant_pubkey: String,
+    /// The total owed, fixed when the invoice is cut from its outstanding line
+    /// items, so collection never has to re-sum them.
+    pub amount: i64,
+    pub period_start: i64,
+    pub period_end: i64,
+    pub created_at: i64,
+    pub paid_at: Option<i64>,
+    pub voided_at: Option<i64>,
+    /// How the invoice was paid — `nwc`, `stripe`, or `oob` (out-of-band
+    /// Lightning) — set when it is marked paid; `None` while open or void.
+    pub method: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct InvoiceItem {
-  pub id: String,
-  /// `None` while outstanding; set once the item is claimed onto an invoice.
-  pub invoice_id: Option<String>,
-  /// `None` for renewal items, which have no source activity.
-  pub activity_id: Option<String>,
-  pub tenant_pubkey: String,
-  pub relay_id: String,
-  pub plan_id: String,
-  pub amount: i64,
-  pub description: String,
-  pub created_at: i64,
+    pub id: String,
+    /// `None` while outstanding; set once the item is claimed onto an invoice.
+    pub invoice_id: Option<String>,
+    /// `None` for renewal items, which have no source activity.
+    pub activity_id: Option<String>,
+    pub tenant_pubkey: String,
+    pub relay_id: String,
+    pub plan_id: String,
+    pub amount: i64,
+    pub description: String,
+    pub created_at: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Bolt11 {
-  pub id: String,
-  pub invoice_id: String,
-  pub lnbc: String,
-  pub msats: i64,
-  pub created_at: i64,
-  pub expires_at: i64,
-  pub settled_at: Option<i64>,
+    pub id: String,
+    pub invoice_id: String,
+    pub lnbc: String,
+    pub msats: i64,
+    pub created_at: i64,
+    pub expires_at: i64,
+    pub settled_at: Option<i64>,
 }

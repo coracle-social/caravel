@@ -97,6 +97,7 @@ export type Tenant = {
   pubkey: string
   nwc_is_set: boolean
   created_at: number
+  billing_anchor: number | null
   stripe_customer_id: string
   stripe_payment_method_id: string | null
   nwc_error: string | null
@@ -113,6 +114,29 @@ export type Invoice = {
   created_at: number
   paid_at: number | null
   voided_at: number | null
+  method: "nwc" | "stripe" | "oob" | null
+}
+
+export type InvoiceItem = {
+  id: string
+  invoice_id: string | null
+  activity_id: string | null
+  tenant_pubkey: string
+  relay_id: string
+  plan_id: string
+  amount: number
+  description: string
+  created_at: number
+}
+
+export type Bolt11 = {
+  id: string
+  invoice_id: string
+  lnbc: string
+  msats: number
+  created_at: number
+  expires_at: number
+  settled_at: number | null
 }
 
 // The backend models an invoice's lifecycle as timestamps rather than a status
@@ -265,7 +289,11 @@ export function createPortalSession(pubkey: string, returnUrl?: string) {
 }
 
 export function getInvoiceBolt11(invoiceId: string) {
-  return callApi<undefined, { bolt11: string }>("GET", `/invoices/${invoiceId}/bolt11`)
+  return callApi<undefined, Bolt11>("GET", `/invoices/${invoiceId}/bolt11`)
+}
+
+export function listInvoiceItems(invoiceId: string) {
+  return callApi<undefined, InvoiceItem[]>("GET", `/invoices/${invoiceId}/items`)
 }
 
 export function createRelay(input: CreateRelayInput) {

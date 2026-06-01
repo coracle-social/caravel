@@ -1,60 +1,66 @@
-import { createEffect, createMemo, createResource, createSignal, For, Show } from "solid-js"
-import { useSearchParams } from "@solidjs/router"
+import { createEffect, createMemo, createSignal, For, Show } from "solid-js"
 import PageContainer from "@/components/PageContainer"
 import LoadingState from "@/components/LoadingState"
 import PaymentDialog from "@/components/PaymentDialog"
+import BillingPrompts from "@/components/BillingPrompts"
 import useMinLoading from "@/components/useMinLoading"
-import { updateActiveTenant, useTenant } from "@/lib/hooks"
-import { createPortalSession, getInvoice, invoiceStatus, listTenantInvoices, type Invoice } from "@/lib/api"
+import { useInvoicePdf } from "@/lib/useInvoicePdf"
+import { updateActiveTenant } from "@/lib/hooks"
+import { useBillingStatus } from "@/lib/billing"
+import { createPortalSession, invoiceStatus, type Invoice } from "@/lib/api"
 import { account } from "@/lib/state"
 
+const methodLabels: Record<string, string> = {
+  nwc: "Lightning",
+  stripe: "Card",
+  oob: "Lightning",
+}
+
+const invoiceStatusStyles: Record<string, string> = {
+  open: "bg-yellow-50 text-yellow-700 border-yellow-200",
+  paid: "bg-green-50 text-green-700 border-green-200",
+  void: "bg-gray-100 text-gray-500 border-gray-200",
+}
+
 export default function Account() {
-  const [tenant, { refetch: refetchTenant }] = useTenant()
-  const [invoices, { refetch: refetchInvoices }] = createResource(() => listTenantInvoices(account()!.pubkey))
+  const billing = useBillingStatus()
   const [nwcUrl, setNwcUrl] = createSignal("")
   const [saving, setSaving] = createSignal(false)
   const [error, setError] = createSignal("")
   const [selectedInvoice, setSelectedInvoice] = createSignal<Invoice | undefined>()
   const [portalLoading, setPortalLoading] = createSignal(false)
-  const invoicesLoading = useMinLoading(() => invoices.loading)
+  const invoicesLoading = useMinLoading(() => billing.loading())
+  const { printInvoice, printing } = useInvoicePdf()
 
-  // Deep link: /account?invoice=<id> (e.g. from the billing DM) fetches that
-  // invoice and opens the payment dialog. The fetched invoice takes precedence
-  // over a row the user clicked in the list.
-  const [searchParams, setSearchParams] = useSearchParams()
-  const [deepLinkedInvoice] = createResource(
-    () => searchParams.invoice as string | undefined,
-    (id) => getInvoice(id),
-  )
+  // On landing here (the billing portal returns to this page), refresh billing so
+  // a card just added in the portal — which get_tenant syncs onto the tenant — and
+  // any cleared error show immediately rather than only on the next reconcile.
   createEffect(() => {
-    if (deepLinkedInvoice.error) setError("Couldn't load that invoice. It may no longer be available.")
+    if (account()?.pubkey) billing.refetch()
   })
-  const activeInvoice = () => selectedInvoice() ?? deepLinkedInvoice()
 
   // The backend never returns the stored nwc_url (it's private), so the input is
   // write-only: we can only act on a newly entered URL, not prefill the saved one.
   const hasBillingChanges = createMemo(() => nwcUrl().trim().length > 0)
 
+  // The amount to surface: the total of any open invoices, else nothing owed.
+  const balance = createMemo(() => {
+    const due = billing.balance()
+    return due > 0 ? { kind: "due" as const, amount: due } : { kind: "clear" as const, amount: 0 }
+  })
+
   async function saveBilling() {
     setError("")
     setSaving(true)
     try {
-      const next = nwcUrl().trim()
-      await updateActiveTenant({ nwc_url: next })
+      await updateActiveTenant({ nwc_url: nwcUrl().trim() })
       setNwcUrl("")
-      await refetchTenant()
+      billing.refetch()
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to update billing")
     } finally {
       setSaving(false)
     }
-  }
-
-  function handleInvoiceDialogClose() {
-    setSelectedInvoice(undefined)
-    // Clearing the query param drops the deep-linked invoice and closes the dialog.
-    if (searchParams.invoice) setSearchParams({ invoice: undefined })
-    void refetchInvoices()
   }
 
   async function openPortal() {
@@ -74,12 +80,6 @@ export default function Account() {
     window.location.href = "/"
   }
 
-  const invoiceStatusStyles: Record<string, string> = {
-    open: "bg-yellow-50 text-yellow-700 border-yellow-200",
-    paid: "bg-green-50 text-green-700 border-green-200",
-    void: "bg-gray-100 text-gray-500 border-gray-200",
-  }
-
   return (
     <PageContainer>
       <div class="mb-6 py-2 flex items-center justify-between gap-3">
@@ -94,10 +94,13 @@ export default function Account() {
       </div>
 
       <div class="space-y-6">
+        {/* Billing prompts, emphasized contextually on the billing page. */}
+        <BillingPrompts variant="inline" />
+
         <section class="bg-white border border-gray-200 rounded-xl p-6">
           <div class="flex items-center justify-between gap-3">
             <h2 class="text-lg font-semibold text-gray-900">Account Status</h2>
-            <Show when={tenant()}>
+            <Show when={billing.tenant()}>
               <span class="rounded-full border border-gray-300 bg-gray-100 px-2.5 py-1 text-xs font-medium uppercase tracking-wide text-gray-700">
                 tenant
               </span>
@@ -117,10 +120,22 @@ export default function Account() {
               {portalLoading() ? "Loading..." : "Manage Billing"}
             </button>
           </div>
+
+          {/* Current balance */}
+          <div class="mb-4 rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
+            <p class="text-xs font-medium text-gray-500 uppercase tracking-wide">Current balance</p>
+            <Show
+              when={balance().kind === "due"}
+              fallback={<p class="text-sm text-gray-600 mt-1">You're all paid up.</p>}
+            >
+              <p class="text-2xl font-bold text-gray-900 mt-0.5">${(balance().amount / 100).toFixed(2)} <span class="text-sm font-normal text-gray-500">due</span></p>
+            </Show>
+          </div>
+
           <p class="text-sm text-gray-600 mb-4">
-            Enable automatic payments by providing your Nostr Wallet Connect URL.
+            Enable automatic payments by providing your Nostr Wallet Connect URL, or add a card via Manage Billing.
           </p>
-          <Show when={tenant()?.nwc_is_set}>
+          <Show when={billing.tenant()?.nwc_is_set}>
             <p class="text-sm text-green-700 mb-4">A wallet is connected. Enter a new URL to replace it.</p>
           </Show>
           <div class="flex gap-2">
@@ -140,17 +155,6 @@ export default function Account() {
               {saving() ? "Saving..." : "Save"}
             </button>
           </div>
-          <Show when={tenant()?.churned_at}>
-            <p class="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-              Your account is past due and some relays have been paused. Update your payment method below to restore service.
-            </p>
-          </Show>
-          <Show when={tenant()?.nwc_error}>
-            <p class="mt-3 text-sm text-red-600">Lightning auto-payment failed: {tenant()!.nwc_error}</p>
-          </Show>
-          <Show when={tenant()?.stripe_error}>
-            <p class="mt-3 text-sm text-red-600">Card auto-payment failed: {tenant()!.stripe_error}</p>
-          </Show>
           <Show when={error()}>
             <p class="mt-3 text-sm text-red-600">{error()}</p>
           </Show>
@@ -162,9 +166,9 @@ export default function Account() {
             <LoadingState message="Loading invoices..." paddingClass="py-8" />
           </Show>
           <Show when={!invoicesLoading()}>
-            <Show when={(invoices()?.length ?? 0) > 0} fallback={<p class="text-gray-500 text-sm">No invoices yet.</p>}>
+            <Show when={billing.invoices().length > 0} fallback={<p class="text-gray-500 text-sm">No invoices yet.</p>}>
               <ul class="space-y-3">
-                <For each={invoices()}>
+                <For each={billing.invoices()}>
                   {(invoice) => {
                     const status = () => invoiceStatus(invoice)
                     const isOpen = () => status() === "open"
@@ -186,6 +190,9 @@ export default function Account() {
                             <span class="font-medium text-gray-900">
                               ${(invoice.amount / 100).toFixed(2)}
                             </span>
+                            <Show when={invoice.method}>
+                              <span class="text-xs text-gray-500"> · paid via {methodLabels[invoice.method!] ?? invoice.method}</span>
+                            </Show>
                             <Show when={invoice.period_start && invoice.period_end}>
                               <p class="text-xs text-gray-500 mt-0.5">{periodLabel()}</p>
                             </Show>
@@ -197,6 +204,17 @@ export default function Account() {
                             <span class={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium capitalize ${statusStyle()}`}>
                               {status()}
                             </span>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                void printInvoice(invoice)
+                              }}
+                              disabled={printing()}
+                              class="text-xs font-medium text-gray-500 hover:text-gray-800 underline disabled:opacity-50"
+                            >
+                              PDF
+                            </button>
                           </div>
                         </div>
                       </li>
@@ -209,12 +227,15 @@ export default function Account() {
         </section>
       </div>
 
-      <Show when={activeInvoice()}>
+      <Show when={selectedInvoice()}>
         {(invoice) => (
           <PaymentDialog
             invoice={invoice()}
             open={true}
-            onClose={handleInvoiceDialogClose}
+            onClose={() => {
+              setSelectedInvoice(undefined)
+              billing.refetch()
+            }}
           />
         )}
       </Show>

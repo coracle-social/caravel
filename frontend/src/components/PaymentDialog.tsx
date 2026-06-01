@@ -1,10 +1,9 @@
-import { createEffect, createMemo, createSignal, For, Show } from "solid-js"
+import { createEffect, createResource, createSignal, For, Show } from "solid-js"
 import QRCode from "qrcode"
 import Modal from "@/components/Modal"
 import PaymentSetup from "@/components/PaymentSetup"
-import { getInvoice, getInvoiceBolt11, type Invoice } from "@/lib/api"
-import { useTenantRelays } from "@/lib/hooks"
-import { plans } from "@/lib/state"
+import { getInvoice, getInvoiceBolt11, listInvoiceItems, type Invoice } from "@/lib/api"
+import { billingTenant } from "@/lib/state"
 
 type PayStatus = "idle" | "loading" | "success" | "error"
 type Bolt11Status = "idle" | "loading" | "ready" | "error"
@@ -27,14 +26,15 @@ export default function PaymentDialog(props: PaymentDialogProps) {
   const [payError, setPayError] = createSignal("")
   const [showPaymentSetup, setShowPaymentSetup] = createSignal(false)
   const [setupSaved, setSetupSaved] = createSignal(false)
-  const [relays] = useTenantRelays()
+  const [items] = createResource(
+    () => (props.open ? props.invoice.id : undefined),
+    listInvoiceItems,
+  )
 
-  const billedRelays = createMemo(() => {
-    const planById = new Map(plans().map((p) => [p.id, p]))
-    return (relays() ?? [])
-      .map((relay) => ({ relay, plan: planById.get(relay.plan_id) }))
-      .filter((entry) => Boolean(entry.plan?.amount))
-  })
+  const autopayConfigured = () => {
+    const t = billingTenant()
+    return Boolean(t?.nwc_is_set || t?.stripe_payment_method_id)
+  }
 
   async function loadBolt11() {
     if (!props.invoice.id) return
@@ -44,9 +44,9 @@ export default function PaymentDialog(props: PaymentDialogProps) {
     setQrDataUrl("")
 
     try {
-      const { bolt11: invoice } = await getInvoiceBolt11(props.invoice.id)
-      setBolt11(invoice)
-      setQrDataUrl(await QRCode.toDataURL(invoice, { width: 256, margin: 2 }))
+      const { lnbc } = await getInvoiceBolt11(props.invoice.id)
+      setBolt11(lnbc)
+      setQrDataUrl(await QRCode.toDataURL(lnbc, { width: 256, margin: 2 }))
       setBolt11Status("ready")
     } catch (e) {
       setBolt11Status("error")
@@ -137,19 +137,16 @@ export default function PaymentDialog(props: PaymentDialogProps) {
           when={payStatus() === "success"}
           fallback={
             <div class="w-full space-y-4">
-              {/* What's being paid for */}
-              <Show when={billedRelays().length > 0}>
+              {/* What's being paid for — the invoice's actual line items */}
+              <Show when={(items() ?? []).length > 0}>
                 <div class="rounded-lg border border-gray-200 bg-gray-50 p-3">
-                  <p class="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Relays on this invoice</p>
+                  <p class="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">On this invoice</p>
                   <ul class="space-y-1.5">
-                    <For each={billedRelays()}>
-                      {({ relay, plan }) => (
+                    <For each={items()}>
+                      {(item) => (
                         <li class="flex items-center justify-between gap-3 text-sm">
-                          <span class="truncate text-gray-900">{relay.info_name || relay.subdomain}</span>
-                          <span class="flex-shrink-0 text-xs text-gray-500">
-                            {plan?.name ?? relay.plan_id}
-                            <Show when={plan}> · ${(plan!.amount / 100).toFixed(2)}/mo</Show>
-                          </span>
+                          <span class="truncate text-gray-900">{item.description}</span>
+                          <span class="flex-shrink-0 text-xs text-gray-500">${(item.amount / 100).toFixed(2)}</span>
                         </li>
                       )}
                     </For>
@@ -221,13 +218,15 @@ export default function PaymentDialog(props: PaymentDialogProps) {
             </div>
             <p class="text-sm font-medium text-gray-900">Payment confirmed!</p>
             <p class="text-xs text-gray-500">Thank you. Your account is up to date.</p>
-            <button
-              type="button"
-              onClick={() => setShowPaymentSetup(true)}
-              class="mt-2 text-sm font-medium text-blue-600 hover:text-blue-700"
-            >
-              Set up automatic payments
-            </button>
+            <Show when={!autopayConfigured()}>
+              <button
+                type="button"
+                onClick={() => setShowPaymentSetup(true)}
+                class="mt-2 text-sm font-medium text-blue-600 hover:text-blue-700"
+              >
+                Set up automatic payments
+              </button>
+            </Show>
           </div>
         </Show>
       </div>

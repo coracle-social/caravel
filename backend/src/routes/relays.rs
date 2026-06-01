@@ -9,14 +9,12 @@ use regex::Regex;
 use serde::Deserialize;
 
 use crate::api::{Api, AuthedPubkey};
-use crate::{command, infra, query};
-use crate::models::{
-    RELAY_STATUS_ACTIVE, RELAY_STATUS_DELINQUENT, RELAY_STATUS_INACTIVE, Relay,
-};
+use crate::models::{RELAY_STATUS_ACTIVE, RELAY_STATUS_DELINQUENT, RELAY_STATUS_INACTIVE, Relay};
 use crate::web::{
-    ApiError, ApiResult, bad_request, created, internal, map_unique_error, ok,
-    parse_bool_default, unprocessable,
+    ApiError, ApiResult, bad_request, created, internal, map_unique_error, ok, parse_bool_default,
+    unprocessable,
 };
+use crate::{command, infra, query};
 
 pub async fn list_relays(
     State(api): State<Arc<Api>>,
@@ -196,10 +194,7 @@ pub async fn update_relay(
     if plan_changed {
         let selected_plan = query::get_plan(&relay.plan_id).map_err(internal)?;
         if let Some(limit) = selected_plan.members {
-            let current_members = fetch_relay_members(&relay)
-                .await
-                .map_err(internal)?
-                .len() as i64;
+            let current_members = fetch_relay_members(&relay).await.map_err(internal)?.len() as i64;
 
             if current_members > limit {
                 let message = format!(
@@ -231,12 +226,13 @@ pub async fn deactivate_relay(
     }
 
     if relay.status == RELAY_STATUS_INACTIVE {
-        return Err(bad_request("relay-is-inactive", "relay is already inactive"));
+        return Err(bad_request(
+            "relay-is-inactive",
+            "relay is already inactive",
+        ));
     }
 
-    command::deactivate_relay(&relay)
-        .await
-        .map_err(internal)?;
+    command::deactivate_relay(&relay).await.map_err(internal)?;
 
     ok(())
 }
@@ -282,15 +278,21 @@ static SUBDOMAIN_RE: LazyLock<Regex> =
 /// premium features, and coerce the boolean columns to 0/1.
 fn prepare_relay(mut relay: Relay) -> Result<Relay, ApiError> {
     if !SUBDOMAIN_RE.is_match(&relay.subdomain)
-        || RESERVED_SUBDOMAINS.contains(&relay.subdomain.as_str()) {
+        || RESERVED_SUBDOMAINS.contains(&relay.subdomain.as_str())
+    {
         return Err(unprocessable("invalid-subdomain", "subdomain is invalid"));
     }
 
     let plan = query::get_plan(&relay.plan_id)
         .map_err(|_| unprocessable("invalid-plan", "plan not found"))?;
 
-    if (!plan.blossom && relay.blossom_enabled == 1) || (!plan.livekit && relay.livekit_enabled == 1) {
-        return Err(unprocessable("premium-feature", "feature requires a paid plan"));
+    if (!plan.blossom && relay.blossom_enabled == 1)
+        || (!plan.livekit && relay.livekit_enabled == 1)
+    {
+        return Err(unprocessable(
+            "premium-feature",
+            "feature requires a paid plan",
+        ));
     }
 
     relay.policy_public_join = parse_bool_default(relay.policy_public_join, 0);

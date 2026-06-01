@@ -71,7 +71,11 @@ pub fn err(status: StatusCode, code: &str, message: &str) -> ApiError {
 }
 
 pub fn unauthorized(reason: impl Display) -> ApiError {
-    err(StatusCode::UNAUTHORIZED, "unauthorized", &reason.to_string())
+    err(
+        StatusCode::UNAUTHORIZED,
+        "unauthorized",
+        &reason.to_string(),
+    )
 }
 
 pub fn forbidden(message: &str) -> ApiError {

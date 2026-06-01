@@ -14,7 +14,9 @@ pub struct Wallet {
 
 impl Wallet {
     pub fn from_url(url: &str) -> Result<Self> {
-        Ok(Self { url: url.parse::<NostrWalletConnectURI>()? })
+        Ok(Self {
+            url: url.parse::<NostrWalletConnectURI>()?,
+        })
     }
 
     pub async fn make_invoice(

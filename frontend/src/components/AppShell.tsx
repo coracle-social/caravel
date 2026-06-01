@@ -1,12 +1,11 @@
 import { A, useLocation } from "@solidjs/router"
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js"
 import Fuse from "fuse.js"
-import { primeProfiles, useProfilePicture, useTenant, useTenantRelays, type Relay } from "@/lib/hooks"
-import { invoiceStatus, listTenantInvoices, type Invoice } from "@/lib/api"
+import { primeProfiles, useProfilePicture, useTenantRelays, type Relay } from "@/lib/hooks"
 import { account, eventStore, identity } from "@/lib/state"
 import serverIcon from "@/assets/server.svg"
 import Modal from "@/components/Modal"
-import PaymentDialog from "@/components/PaymentDialog"
+import BillingPrompts from "@/components/BillingPrompts"
 
 type Profile = {
   name?: string
@@ -35,28 +34,10 @@ function RelayIcon() {
 export default function AppShell(props: { children?: any }) {
   const location = useLocation()
   const picture = useProfilePicture(() => account()?.pubkey)
-  const [tenant] = useTenant()
   const [tenantRelays] = useTenantRelays()
   const [profile, setProfile] = createSignal<Profile>({})
   const [searchOpen, setSearchOpen] = createSignal(false)
   const [searchQuery, setSearchQuery] = createSignal("")
-  const [pastDueInvoice, setPastDueInvoice] = createSignal<Invoice | undefined>()
-  const [showPaymentDialog, setShowPaymentDialog] = createSignal(false)
-
-  createEffect(async () => {
-    const t = tenant()
-    if (!t?.churned_at) {
-      setPastDueInvoice(undefined)
-      return
-    }
-    try {
-      const invoices = await listTenantInvoices(t.pubkey)
-      const openInvoice = invoices.find(inv => invoiceStatus(inv) === "open")
-      setPastDueInvoice(openInvoice)
-    } catch {
-      // ignore
-    }
-  })
 
   const username = createMemo(() => profile().name || profile().display_name || shortenPubkey(account()?.pubkey))
   const nip05 = createMemo(() => profile().nip05 || "No NIP-05")
@@ -158,35 +139,13 @@ export default function AppShell(props: { children?: any }) {
       </aside>
 
       <div class="md:pl-[260px] min-h-screen pb-20 md:pb-0">
-        <Show when={tenant()?.churned_at}>
-          <div class="bg-red-600 text-white px-4 py-3 text-sm flex items-center justify-between">
-            <span>Your account is past due and some relays are paused. Update your payment method to restore service.</span>
-            <Show when={pastDueInvoice()}>
-              <button
-                type="button"
-                onClick={() => setShowPaymentDialog(true)}
-                class="font-medium underline hover:no-underline"
-              >
-                Pay now
-              </button>
-            </Show>
-          </div>
+        {/* Shared billing prompts on every dashboard page; the billing page
+            renders its own contextual (inline) variant instead. */}
+        <Show when={location.pathname !== "/account"}>
+          <BillingPrompts variant="banner" />
         </Show>
         <main>{props.children}</main>
       </div>
-
-      <Show when={pastDueInvoice() && showPaymentDialog()}>
-        {(_) => {
-          const invoice = pastDueInvoice()!
-          return (
-            <PaymentDialog
-              invoice={invoice}
-              open={true}
-              onClose={() => setShowPaymentDialog(false)}
-            />
-          )
-        }}
-      </Show>
 
       <nav
         class="fixed inset-x-0 bottom-0 z-20 border-t border-gray-200 bg-white md:hidden"

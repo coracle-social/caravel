@@ -574,13 +574,17 @@ impl BillingPeriod {
     }
 
     /// Fraction of this period still unused at `at`, in `[0.0, 1.0]`, for
-    /// prorating a mid-period charge or credit.
+    /// prorating a mid-period charge or credit. The remaining time is rounded to
+    /// the nearest hour so proration tracks whole hours rather than exact seconds.
     fn fraction_remaining(&self, at: i64) -> f64 {
+        const HOUR: i64 = 60 * 60;
+
         let len = (self.end - self.start) as f64;
         if len <= 0.0 {
             return 1.0;
         }
-        (((self.end - at) as f64) / len).clamp(0.0, 1.0)
+        let remaining = ((self.end - at) + HOUR / 2) / HOUR * HOUR;
+        (remaining as f64 / len).clamp(0.0, 1.0)
     }
 
     /// Prorate a minor-unit `amount` by the fraction of this period remaining

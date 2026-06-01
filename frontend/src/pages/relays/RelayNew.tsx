@@ -14,35 +14,49 @@ export default function RelayNew() {
   const navigate = useNavigate()
   const [pendingInvoice, setPendingInvoice] = createSignal<Invoice | undefined>()
   const [paymentSetupOpen, setPaymentSetupOpen] = createSignal(false)
+  const [creatingPaid, setCreatingPaid] = createSignal(false)
   let createdRelayId = ""
 
-  // While this flow's inline modals are open, suppress the shared banner's
-  // overlapping pay/setup prompts (it still surfaces churn / method errors).
-  createEffect(() => setBillingFlowActive(Boolean(pendingInvoice()) || paymentSetupOpen()))
+  // Suppress the shared banner's overlapping pay/setup prompts (it still surfaces
+  // churn / method errors) for the whole paid-creation flow: `creatingPaid` covers
+  // the async gap between create and a modal opening — without it the invoice that
+  // refetchBilling surfaces flashes the banner before the modal appears — and
+  // pendingInvoice/paymentSetupOpen cover the time the modals are open.
+  createEffect(() => setBillingFlowActive(creatingPaid() || Boolean(pendingInvoice()) || paymentSetupOpen()))
   onCleanup(() => setBillingFlowActive(false))
 
   async function handleSubmit(values: RelayFormValues) {
-    const relay = await createRelayForActiveTenant(values)
-    createdRelayId = relay.id
-    void refetchBilling()
+    // Paid plans materialize an open invoice on create; mark the flow active
+    // before refetchBilling surfaces it so the banner stays suppressed across the
+    // whole async gap, not just once a modal opens. The finally releases it on
+    // every exit (error, free plan, or after a modal has taken over suppression).
+    const paid = values.plan_id !== "free"
+    if (paid) setCreatingPaid(true)
+    try {
+      const relay = await createRelayForActiveTenant(values)
+      createdRelayId = relay.id
+      void refetchBilling()
 
-    if (values.plan_id !== "free") {
-      const needsSetup = await tenantNeedsPaymentSetup()
-      if (needsSetup) {
-        // Materialize the invoice for this change (no collection, no DM) so we
-        // can prompt the tenant to pay it directly. listTenantInvoices reconciles
-        // first, so a just-created invoice is visible here.
-        const invoice = await getLatestOpenInvoice()
-        if (invoice) {
-          setPendingInvoice(invoice)
+      if (paid) {
+        const needsSetup = await tenantNeedsPaymentSetup()
+        if (needsSetup) {
+          // Materialize the invoice for this change (no collection, no DM) so we
+          // can prompt the tenant to pay it directly. listTenantInvoices reconciles
+          // first, so a just-created invoice is visible here.
+          const invoice = await getLatestOpenInvoice()
+          if (invoice) {
+            setPendingInvoice(invoice)
+            return
+          }
+          setPaymentSetupOpen(true)
           return
         }
-        setPaymentSetupOpen(true)
-        return
       }
-    }
 
-    navigate(`/relays/${relay.id}`)
+      navigate(`/relays/${relay.id}`)
+    } finally {
+      setCreatingPaid(false)
+    }
   }
 
   function handleInvoiceClose() {

@@ -1,16 +1,25 @@
 import Fuse from "fuse.js"
-import { createMemo, createSignal, For, Show } from "solid-js"
+import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js"
 import PageContainer from "@/components/PageContainer"
 import RelayListItem from "@/components/RelayListItem"
 import ResourceState from "@/components/ResourceState"
 import SearchInput from "@/components/SearchInput"
 import useMinLoading from "@/components/useMinLoading"
-import { useAdminRelays } from "@/lib/hooks"
+import { primeProfiles, useAdminRelays } from "@/lib/hooks"
 
 export default function AdminRelayList() {
   const [query, setQuery] = createSignal("")
   const [relays] = useAdminRelays()
   const loading = useMinLoading(() => relays.loading)
+
+  // Each list item shows its tenant's profile; prime them all in one batch so
+  // we don't open a separate outbox subscription per relay.
+  createEffect(() => {
+    const list = relays() ?? []
+    if (!list.length) return
+    const sub = primeProfiles(list.map(r => r.tenant_pubkey))
+    onCleanup(() => sub.unsubscribe())
+  })
 
   const filtered = createMemo(() => {
     const list = relays() ?? []

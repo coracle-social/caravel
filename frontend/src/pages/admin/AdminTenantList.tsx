@@ -85,7 +85,9 @@ export default function AdminTenantList() {
                             <p class="mt-1 text-xs text-gray-500 break-all">{tenant.pubkey}</p>
                           </div>
                         </div>
-                        <p class="text-xs uppercase tracking-wide text-gray-500">tenant</p>
+                        <span class={`inline-flex flex-shrink-0 items-center rounded-full border px-2.5 py-0.5 text-xs font-medium capitalize ${tenant.churned_at ? "bg-red-50 text-red-700 border-red-200" : "bg-green-50 text-green-700 border-green-200"}`}>
+                          {tenant.churned_at ? "delinquent" : "active"}
+                        </span>
                       </div>
                     </A>
                   </li>

@@ -1,5 +1,6 @@
 import { A } from "@solidjs/router"
 import { Show, createEffect, createSignal, onCleanup } from "solid-js"
+import { getProfilePicture } from "applesauce-core/helpers/profile"
 import type { Relay, PlanId } from "@/lib/api"
 import menuDotsIcon from "@/assets/menu-dots-2.svg"
 import ConfirmDialog from "@/components/ConfirmDialog"
@@ -8,7 +9,12 @@ import PricingTable from "@/components/PricingTable"
 import ToggleButton from "@/components/ToggleButton"
 import ToggleField from "@/components/ToggleField"
 import { setToastMessage } from "@/components/Toast"
-import { plans } from "@/lib/state"
+import { primeProfiles } from "@/lib/hooks"
+import { eventStore, plans } from "@/lib/state"
+
+function shortenPubkey(pubkey: string) {
+  return pubkey.length <= 16 ? pubkey : `${pubkey.slice(0, 8)}...${pubkey.slice(-8)}`
+}
 
 const STATUS_STYLES: Record<string, string> = {
   active:   "bg-green-50 text-green-700 border-green-200",
@@ -78,6 +84,28 @@ export default function RelayDetailCard(props: RelayDetailCardProps) {
   const [menuOpen, setMenuOpen] = createSignal(false)
   const [planId, setPlanId] = createSignal<PlanId>(props.relay.plan_id)
   const [pendingAction, setPendingAction] = createSignal<"deactivate" | "reactivate" | null>(null)
+  const [tenantProfile, setTenantProfile] = createSignal<{ name?: string; picture?: string }>({})
+
+  // Resolve the owning tenant's profile so the Tenant field can show a name and
+  // avatar instead of a raw pubkey. Only relevant in admin (showTenant) views.
+  createEffect(() => {
+    if (!props.showTenant) return
+    const pubkey = props.relay.tenant_pubkey
+    if (!pubkey) return
+
+    const sub = eventStore.profile(pubkey).subscribe((metadata) => {
+      setTenantProfile({
+        name: metadata?.name || metadata?.display_name,
+        picture: getProfilePicture(metadata),
+      })
+    })
+    const primeSub = primeProfiles([pubkey])
+
+    onCleanup(() => {
+      sub.unsubscribe()
+      primeSub.unsubscribe()
+    })
+  })
 
   let menuContainerRef: HTMLDivElement | undefined
 
@@ -184,6 +212,21 @@ export default function RelayDetailCard(props: RelayDetailCardProps) {
             >
               wss://{r().subdomain}.spaces.coracle.social
             </a>
+            <Show when={props.showTenant}>
+              <A href={`/admin/tenants/${r().tenant_pubkey}`} class="group mt-1.5 flex w-fit items-center gap-2 min-w-0">
+                <Show
+                  when={tenantProfile().picture}
+                  fallback={
+                    <div class="h-6 w-6 flex-shrink-0 rounded-full bg-gray-200 flex items-center justify-center text-[10px] text-gray-500">
+                      {(tenantProfile().name || r().tenant_pubkey).slice(0, 1).toUpperCase()}
+                    </div>
+                  }
+                >
+                  <img src={tenantProfile().picture} alt="" class="h-6 w-6 flex-shrink-0 rounded-full object-cover" />
+                </Show>
+                <span class="text-sm text-blue-600 group-hover:underline truncate">{tenantProfile().name || shortenPubkey(r().tenant_pubkey)}</span>
+              </A>
+            </Show>
             <Show when={r().info_description.trim()}>
               <p class="mt-2 text-sm text-gray-600">{r().info_description}</p>
             </Show>
@@ -358,11 +401,6 @@ export default function RelayDetailCard(props: RelayDetailCardProps) {
         <Field label="Member limit">
           <span class="text-gray-900">{memberLimitLabel()}</span>
         </Field>
-        <Show when={props.showTenant}>
-          <Field label="Tenant">
-            <span class="font-mono text-xs break-all">{r().tenant_pubkey}</span>
-          </Field>
-        </Show>
       </MembershipSection>
 
       <Show when={showPlanActions()}>

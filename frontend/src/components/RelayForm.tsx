@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, For } from "solid-js"
+import { createEffect, createMemo, createSignal, For, Show } from "solid-js"
 import type { Relay } from "@/lib/hooks"
 import { slugify } from "@/lib/slugify"
 import { validateSubdomainLabel } from "@/lib/subdomain"
@@ -10,12 +10,16 @@ export type RelayFormValues = Pick<Relay, "info_name" | "subdomain" | "info_icon
 type RelayFormProps = {
   initialValues?: Partial<RelayFormValues>
   syncSubdomainWithName?: boolean
+  // The plan can't be changed by editing a relay (only at creation or via the
+  // detail card), so the edit form hides the selector by passing false here.
+  showPlanSelector?: boolean
   onSubmit: (values: RelayFormValues) => Promise<void> | void
   submitLabel: string
   submittingLabel: string
 }
 
 export default function RelayForm(props: RelayFormProps) {
+  const showPlanSelector = () => props.showPlanSelector ?? true
   const defaultPlanId = createMemo(() => props.initialValues?.plan_id ?? plans()[0]?.id ?? "free")
   const [planId, setPlanId] = createSignal(defaultPlanId())
   const [name, setName] = createSignal(props.initialValues?.info_name ?? "")
@@ -27,7 +31,7 @@ export default function RelayForm(props: RelayFormProps) {
   async function handleSubmit(e: Event) {
     e.preventDefault()
 
-    if (!planId()) {
+    if (showPlanSelector() && !planId()) {
       setToastMessage("Please select a plan")
       return
     }
@@ -105,28 +109,30 @@ export default function RelayForm(props: RelayFormProps) {
           class="w-full border border-gray-300 rounded-lg px-3 py-2"
         />
       </div>
-      <div>
-        <label class="block text-sm font-medium text-gray-700 mb-3">Plan</label>
-        <div class="grid grid-cols-3 gap-3">
-          <For each={plans()}>
-            {(p) => (
-              <button
-                type="button"
-                onClick={() => setPlanId(p.id)}
-                class={`border-2 rounded-xl p-4 text-left transition-colors ${planId() === p.id ? "border-blue-600 bg-blue-50" : "border-gray-200 hover:border-gray-300"}`}
-              >
-                <div class="font-bold text-gray-900">{p.name}</div>
-                <div class="text-sm text-gray-500 mt-1">
-                  {p.amount === 0 ? "Free" : `$${p.amount / 100}/mo`}
-                </div>
-                <div class="text-xs text-gray-500 mt-2">
-                  {p.members === null ? "Unlimited members" : `Up to ${p.members} members`}
-                </div>
-              </button>
-            )}
-          </For>
+      <Show when={showPlanSelector()}>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-3">Plan</label>
+          <div class="grid grid-cols-3 gap-3">
+            <For each={plans()}>
+              {(p) => (
+                <button
+                  type="button"
+                  onClick={() => setPlanId(p.id)}
+                  class={`border-2 rounded-xl p-4 text-left transition-colors ${planId() === p.id ? "border-blue-600 bg-blue-50" : "border-gray-200 hover:border-gray-300"}`}
+                >
+                  <div class="font-bold text-gray-900">{p.name}</div>
+                  <div class="text-sm text-gray-500 mt-1">
+                    {p.amount === 0 ? "Free" : `$${p.amount / 100}/mo`}
+                  </div>
+                  <div class="text-xs text-gray-500 mt-2">
+                    {p.members === null ? "Unlimited members" : `Up to ${p.members} members`}
+                  </div>
+                </button>
+              )}
+            </For>
+          </div>
         </div>
-      </div>
+      </Show>
       <button
         type="submit"
         disabled={submitting()}

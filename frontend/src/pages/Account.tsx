@@ -5,9 +5,10 @@ import PaymentDialog from "@/components/PaymentDialog"
 import BillingPrompts from "@/components/BillingPrompts"
 import useMinLoading from "@/components/useMinLoading"
 import { useInvoicePdf } from "@/lib/useInvoicePdf"
-import { updateActiveTenant } from "@/lib/hooks"
-import { useBillingStatus } from "@/lib/billing"
-import { createPortalSession, invoiceStatus, type Invoice } from "@/lib/api"
+import PaymentSetupNWC from "@/components/PaymentSetupNWC"
+import PaymentSetupCard from "@/components/PaymentSetupCard"
+import { useBillingStatus, accountStatus, type AccountStatus } from "@/lib/billing"
+import { invoiceStatus, type Invoice } from "@/lib/api"
 import { account } from "@/lib/state"
 
 const methodLabels: Record<string, string> = {
@@ -22,13 +23,25 @@ const invoiceStatusStyles: Record<string, string> = {
   void: "bg-gray-100 text-gray-500 border-gray-200",
 }
 
+const accountStatusStyles: Record<AccountStatus, string> = {
+  active: "bg-green-50 text-green-700 border-green-200",
+  inactive: "bg-gray-100 text-gray-500 border-gray-200",
+  delinquent: "bg-red-50 text-red-700 border-red-200",
+}
+
+type MethodState = { status: "not set up" | "ok" | "error"; error?: string }
+
+const methodStatusStyles: Record<MethodState["status"], string> = {
+  "not set up": "bg-gray-100 text-gray-500 border-gray-200",
+  ok: "bg-green-50 text-green-700 border-green-200",
+  error: "bg-red-50 text-red-700 border-red-200",
+}
+
 export default function Account() {
   const billing = useBillingStatus()
-  const [nwcUrl, setNwcUrl] = createSignal("")
-  const [saving, setSaving] = createSignal(false)
-  const [error, setError] = createSignal("")
   const [selectedInvoice, setSelectedInvoice] = createSignal<Invoice | undefined>()
-  const [portalLoading, setPortalLoading] = createSignal(false)
+  const [nwcModalOpen, setNwcModalOpen] = createSignal(false)
+  const [cardModalOpen, setCardModalOpen] = createSignal(false)
   const invoicesLoading = useMinLoading(() => billing.loading())
   const { printInvoice, printing } = useInvoicePdf()
 
@@ -39,41 +52,37 @@ export default function Account() {
     if (account()?.pubkey) billing.refetch()
   })
 
-  // The backend never returns the stored nwc_url (it's private), so the input is
-  // write-only: we can only act on a newly entered URL, not prefill the saved one.
-  const hasBillingChanges = createMemo(() => nwcUrl().trim().length > 0)
+  // Coarse account-health summary for the badge. Same snapshot the inline prompt
+  // consumes, so the two can never disagree.
+  const status = createMemo(() =>
+    accountStatus({
+      tenant: billing.tenant(),
+      openInvoice: billing.openInvoice(),
+      hasPaidSubscription: billing.hasPaidSubscription(),
+    }),
+  )
+
+  // Per-method state, reported independently so a concurrent error on one method
+  // isn't masked by the other.
+  const nwcState = createMemo<MethodState>(() => {
+    const t = billing.tenant()
+    if (!t?.nwc_is_set) return { status: "not set up" }
+    if (t.nwc_error) return { status: "error", error: t.nwc_error }
+    return { status: "ok" }
+  })
+
+  const cardState = createMemo<MethodState>(() => {
+    const t = billing.tenant()
+    if (!t?.stripe_payment_method_id) return { status: "not set up" }
+    if (t.stripe_error) return { status: "error", error: t.stripe_error }
+    return { status: "ok" }
+  })
 
   // The amount to surface: the total of any open invoices, else nothing owed.
   const balance = createMemo(() => {
     const due = billing.balance()
     return due > 0 ? { kind: "due" as const, amount: due } : { kind: "clear" as const, amount: 0 }
   })
-
-  async function saveBilling() {
-    setError("")
-    setSaving(true)
-    try {
-      await updateActiveTenant({ nwc_url: nwcUrl().trim() })
-      setNwcUrl("")
-      billing.refetch()
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to update billing")
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  async function openPortal() {
-    setPortalLoading(true)
-    try {
-      const { url } = await createPortalSession(account()!.pubkey, window.location.href)
-      window.location.href = url
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to open billing portal")
-    } finally {
-      setPortalLoading(false)
-    }
-  }
 
   function logout() {
     localStorage.clear()
@@ -98,31 +107,17 @@ export default function Account() {
         <BillingPrompts variant="inline" />
 
         <section class="bg-white border border-gray-200 rounded-xl p-6">
-          <div class="flex items-center justify-between gap-3">
-            <h2 class="text-lg font-semibold text-gray-900">Account Status</h2>
+          <div class="flex items-center justify-between gap-3 mb-4">
+            <h2 class="text-lg font-semibold text-gray-900">Account &amp; Billing</h2>
             <Show when={billing.tenant()}>
-              <span class="rounded-full border border-gray-300 bg-gray-100 px-2.5 py-1 text-xs font-medium uppercase tracking-wide text-gray-700">
-                tenant
+              <span class={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium capitalize ${accountStatusStyles[status()]}`}>
+                {status()}
               </span>
             </Show>
           </div>
-        </section>
 
-        <section class="bg-white border border-gray-200 rounded-xl p-6">
-          <div class="flex items-center justify-between gap-3 mb-4">
-            <h2 class="text-lg font-semibold text-gray-900">Recurring Billing</h2>
-            <button
-              type="button"
-              onClick={openPortal}
-              disabled={portalLoading()}
-              class="text-sm font-medium text-blue-600 hover:text-blue-700 disabled:opacity-50"
-            >
-              {portalLoading() ? "Loading..." : "Manage Billing"}
-            </button>
-          </div>
-
-          {/* Current balance */}
-          <div class="mb-4 rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
+          {/* Current balance (relocated from the old Recurring Billing section, logic unchanged) */}
+          <div class="mb-6 rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
             <p class="text-xs font-medium text-gray-500 uppercase tracking-wide">Current balance</p>
             <Show
               when={balance().kind === "due"}
@@ -132,32 +127,57 @@ export default function Account() {
             </Show>
           </div>
 
-          <p class="text-sm text-gray-600 mb-4">
-            Enable automatic payments by providing your Nostr Wallet Connect URL, or add a card via Manage Billing.
-          </p>
-          <Show when={billing.tenant()?.nwc_is_set}>
-            <p class="text-sm text-green-700 mb-4">A wallet is connected. Enter a new URL to replace it.</p>
-          </Show>
-          <div class="flex gap-2">
-            <input
-              type="text"
-              value={nwcUrl()}
-              onInput={(e) => setNwcUrl(e.currentTarget.value)}
-              placeholder="nostr+walletconnect://..."
-              class="flex-1 border border-gray-300 rounded-lg px-3 py-2"
-            />
-            <button
-              type="button"
-              onClick={saveBilling}
-              disabled={saving() || !hasBillingChanges()}
-              class="py-2 px-4 bg-blue-600 text-white rounded-lg disabled:opacity-50"
-            >
-              {saving() ? "Saving..." : "Save"}
-            </button>
-          </div>
-          <Show when={error()}>
-            <p class="mt-3 text-sm text-red-600">{error()}</p>
-          </Show>
+          {/* Billing methods */}
+          <p class="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Billing methods</p>
+          <ul class="space-y-3">
+            {/* Lightning / NWC row — CTA opens the NWC modal */}
+            <li class="rounded-lg border border-gray-200 p-4">
+              <div class="flex items-center justify-between gap-3">
+                <div class="min-w-0">
+                  <p class="text-sm font-medium text-gray-900">Lightning (NWC)</p>
+                  <Show when={nwcState().status === "error" && nwcState().error}>
+                    <p class="text-xs text-red-600 mt-0.5 break-words">{nwcState().error}</p>
+                  </Show>
+                </div>
+                <div class="flex items-center gap-3 flex-shrink-0">
+                  <span class={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium capitalize ${methodStatusStyles[nwcState().status]}`}>
+                    {nwcState().status}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setNwcModalOpen(true)}
+                    class="text-sm font-medium text-blue-600 hover:text-blue-700 disabled:opacity-50"
+                  >
+                    {nwcState().status === "not set up" ? "Set up" : "Update"}
+                  </button>
+                </div>
+              </div>
+            </li>
+
+            {/* Card / Stripe row — CTA opens the card modal (which redirects to the Stripe portal) */}
+            <li class="rounded-lg border border-gray-200 p-4">
+              <div class="flex items-center justify-between gap-3">
+                <div class="min-w-0">
+                  <p class="text-sm font-medium text-gray-900">Card</p>
+                  <Show when={cardState().status === "error" && cardState().error}>
+                    <p class="text-xs text-red-600 mt-0.5 break-words">{cardState().error}</p>
+                  </Show>
+                </div>
+                <div class="flex items-center gap-3 flex-shrink-0">
+                  <span class={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium capitalize ${methodStatusStyles[cardState().status]}`}>
+                    {cardState().status}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setCardModalOpen(true)}
+                    class="text-sm font-medium text-blue-600 hover:text-blue-700 disabled:opacity-50"
+                  >
+                    {cardState().status === "not set up" ? "Set up" : "Update"}
+                  </button>
+                </div>
+              </div>
+            </li>
+          </ul>
         </section>
 
         <section class="bg-white border border-gray-200 rounded-xl p-6">
@@ -239,6 +259,24 @@ export default function Account() {
           />
         )}
       </Show>
+
+      <PaymentSetupNWC
+        open={nwcModalOpen()}
+        isUpdate={nwcState().status !== "not set up"}
+        onClose={() => {
+          setNwcModalOpen(false)
+          billing.refetch()
+        }}
+      />
+
+      <PaymentSetupCard
+        open={cardModalOpen()}
+        isUpdate={cardState().status !== "not set up"}
+        onClose={() => {
+          setCardModalOpen(false)
+          billing.refetch()
+        }}
+      />
     </PageContainer>
   )
 }

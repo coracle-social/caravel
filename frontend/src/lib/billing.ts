@@ -104,3 +104,31 @@ export function activeBillingPrompt(
 
   return null
 }
+
+export type AccountStatus = "active" | "inactive" | "delinquent"
+
+// Coarse account-health summary for the status badge. Pure function of the same
+// snapshot `activeBillingPrompt` consumes, so the badge can never disagree with
+// the prompt. Mutually exclusive and total:
+//   - delinquent: churned_at is set — the ONLY frontend-visible signal of a real
+//     suspension (churn_tenant is the single place relays are paused). An open
+//     invoice alone is NOT delinquency: the tenant has a 7-day grace window and
+//     autopay may simply not have fired yet. Matches the sole severity:"error"
+//     branch in activeBillingPrompt.
+//   - active: not churned AND there is paid business to keep running — an active
+//     paid relay, an open balance, or a configured payment method. A failed method
+//     (nwc_error/stripe_error) or an unpaid invoice within grace stays "active";
+//     the per-method rows and the inline prompt carry that detail.
+//   - inactive: not churned and nothing billable — no paid relay, no balance, no
+//     method. The brand-new or free-only tenant (typically billing_anchor == null).
+export function accountStatus(s: BillingStatusSnapshot): AccountStatus {
+  const tenant = s.tenant
+  if (!tenant) return "inactive"
+  if (tenant.churned_at) return "delinquent"
+
+  const autopayConfigured = tenant.nwc_is_set || Boolean(tenant.stripe_payment_method_id)
+  const hasOpenInvoice = Boolean(s.openInvoice)
+
+  if (s.hasPaidSubscription || hasOpenInvoice || autopayConfigured) return "active"
+  return "inactive"
+}

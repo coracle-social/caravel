@@ -32,7 +32,7 @@ export default function RelayList() {
       <div class="mb-6 grid gap-3 sm:grid-cols-[1fr_auto]">
         <SearchInput value={query()} onInput={setQuery} placeholder="Search by name or subdomain" />
         <select value={status()} onChange={e => setStatus(e.currentTarget.value)} class="border border-gray-300 rounded-lg px-3 py-2 bg-white">
-          <option value="all">All statuses</option>
+          <option value="all">All</option>
           <option value="active">Active</option>
           <option value="inactive">Inactive</option>
         </select>

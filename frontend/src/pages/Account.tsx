@@ -200,36 +200,37 @@ export default function Account() {
                     }
 
                     return (
-                      <li
-                        class={`rounded-lg border border-gray-200 p-4 text-sm ${isOpen() ? "cursor-pointer hover:border-blue-300 hover:bg-blue-50 transition-colors" : ""}`}
-                        onClick={() => isOpen() && setSelectedInvoice(invoice)}
-                        title={isOpen() ? "Click to pay this invoice" : undefined}
-                      >
+                      <li class="rounded-lg border border-gray-200 p-4 text-sm">
                         <div class="flex items-center justify-between gap-3">
-                          <div>
-                            <span class="font-medium text-gray-900">
-                              ${(invoice.amount / 100).toFixed(2)}
-                            </span>
-                            <Show when={invoice.method}>
-                              <span class="text-xs text-gray-500"> · paid via {methodLabels[invoice.method!] ?? invoice.method}</span>
-                            </Show>
+                          <div class="min-w-0">
+                            <div class="flex items-center gap-2">
+                              <span class="font-medium text-gray-900">
+                                ${(invoice.amount / 100).toFixed(2)}
+                              </span>
+                              <span class={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium capitalize ${statusStyle()}`}>
+                                {status()}
+                              </span>
+                              <Show when={invoice.method}>
+                                <span class="text-xs text-gray-500">· paid via {methodLabels[invoice.method!] ?? invoice.method}</span>
+                              </Show>
+                            </div>
                             <Show when={invoice.period_start && invoice.period_end}>
                               <p class="text-xs text-gray-500 mt-0.5">{periodLabel()}</p>
                             </Show>
                           </div>
                           <div class="flex items-center gap-2 flex-shrink-0">
                             <Show when={isOpen()}>
-                              <span class="text-xs text-blue-600 font-medium">Pay now</span>
+                              <button
+                                type="button"
+                                onClick={() => setSelectedInvoice(invoice)}
+                                class="py-1 px-3 bg-blue-600 text-white text-xs font-medium rounded-lg hover:bg-blue-700 transition-colors"
+                              >
+                                Pay now
+                              </button>
                             </Show>
-                            <span class={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium capitalize ${statusStyle()}`}>
-                              {status()}
-                            </span>
                             <button
                               type="button"
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                void printInvoice(invoice)
-                              }}
+                              onClick={() => void printInvoice(invoice)}
                               disabled={printing()}
                               class="text-xs font-medium text-gray-500 hover:text-gray-800 underline disabled:opacity-50"
                             >

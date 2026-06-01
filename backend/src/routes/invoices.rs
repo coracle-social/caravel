@@ -18,6 +18,12 @@ pub async fn get_invoice(
 
     api.require_admin_or_tenant(&auth, &invoice.tenant_pubkey)?;
 
+    // Implicitly reconcile an outstanding lightning invoice if we have one
+    api.billing
+        .reconcile_bolt11_for_invoice(&invoice)
+        .await
+        .map_err(internal)?;
+
     ok(invoice)
 }
 
@@ -35,9 +41,16 @@ pub async fn get_invoice_bolt11(
 
     api.require_admin_or_tenant(&auth, &invoice.tenant_pubkey)?;
 
+    // Make sure we have a bolt11 for this invoice
+    api.billing
+        .ensure_bolt11_for_invoice(&invoice)
+        .await
+        .map_err(internal)?;
+
+    // Check to see whether it was reconciled out of band
     let bolt11 = api
         .billing
-        .ensure_and_reconcile_bolt11(&invoice)
+        .reconcile_bolt11_for_invoice(&invoice)
         .await
         .map_err(internal)?;
 

@@ -372,7 +372,7 @@ impl Billing {
         let result: Result<()> = async {
             let nwc_url = env::get().decrypt(&tenant.nwc_url)?;
             let tenant_wallet = Wallet::from_url(&nwc_url)?;
-            let bolt11 = self.ensure_bolt11(invoice).await?;
+            let bolt11 = self.ensure_bolt11_for_invoice(invoice).await?;
 
             tenant_wallet.pay_invoice(bolt11.lnbc.clone()).await?;
 
@@ -433,7 +433,10 @@ impl Billing {
         }
 
         // The dunning poll runs hourly; avoid excessive reminder DMs.
-        if invoice.notified_at.is_some_and(|t| now - t < MANUAL_PAYMENT_DM_INTERVAL_SECS) {
+        if invoice
+            .notified_at
+            .is_some_and(|t| now - t < MANUAL_PAYMENT_DM_INTERVAL_SECS)
+        {
             return Ok(());
         }
 
@@ -445,7 +448,10 @@ impl Billing {
         let dm_message = match error {
             Some(error) if !error.is_empty() => {
                 let limit: usize = 240;
-                let summary = error.chars().take(limit.saturating_sub(3)).collect::<String>();
+                let summary = error
+                    .chars()
+                    .take(limit.saturating_sub(3))
+                    .collect::<String>();
                 format!("{base}\n\nAuto-payment failed: {summary}")
             }
             _ => base,
@@ -460,7 +466,7 @@ impl Billing {
 
     // --- Bolt11 utils ---
 
-    pub async fn ensure_bolt11(&self, invoice: &Invoice) -> Result<Bolt11> {
+    pub async fn ensure_bolt11_for_invoice(&self, invoice: &Invoice) -> Result<Bolt11> {
         let now = chrono::Utc::now().timestamp();
 
         if let Some(existing) = query::get_bolt11_for_invoice(&invoice.id).await?
@@ -479,22 +485,23 @@ impl Billing {
             .ok_or_else(|| anyhow!("failed to insert bolt11"))
     }
 
-    /// Catch an out-of-band payment we never recorded — e.g. the user paid the
-    /// invoice but the frontend failed to notify us. If the invoice's bolt11 has
-    /// settled on the robot wallet, mark it paid and return the refreshed record;
-    /// otherwise return it unchanged. Meant to run before presenting a payable
-    /// invoice so we never hand back one that's already been paid.
-    pub async fn ensure_and_reconcile_bolt11(&self, invoice: &Invoice) -> Result<Bolt11> {
-        let bolt11 = self.ensure_bolt11(invoice).await?;
+    pub async fn reconcile_bolt11_for_invoice(&self, invoice: &Invoice) -> Result<Option<Bolt11>> {
+        if let Some(bolt11) = query::get_bolt11_for_invoice(&invoice.id).await? {
+            return self.reconcile_bolt11(&bolt11).await;
+        };
 
+        Ok(None)
+    }
+
+    async fn reconcile_bolt11(&self, bolt11: &Bolt11) -> Result<Option<Bolt11>> {
         if bolt11.settled_at.is_none() && self.wallet.is_settled(&bolt11.lnbc).await? {
-            command::settle_invoice_out_of_band(&bolt11.id, &invoice.id).await?;
+            command::settle_invoice_out_of_band(&bolt11.id, &bolt11.invoice_id).await?;
 
             // Re-fetch so the caller sees that it's been settled.
-            Ok(query::get_bolt11(&bolt11.id).await?.unwrap_or(bolt11))
-        } else {
-            Ok(bolt11)
+            return query::get_bolt11(&bolt11.id).await;
         }
+
+        Ok(Some(bolt11.clone()))
     }
 
     // --- Stripe utils ---

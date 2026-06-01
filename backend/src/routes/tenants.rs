@@ -66,7 +66,10 @@ pub async fn get_tenant(
 
     let mut tenant = api.get_tenant_or_404(&pubkey).await?;
 
-    api.billing.sync_stripe_customer(&mut tenant).await.map_err(internal)?;
+    api.billing
+        .sync_stripe_customer(&mut tenant)
+        .await
+        .map_err(internal)?;
 
     ok(TenantResponse::from(tenant))
 }

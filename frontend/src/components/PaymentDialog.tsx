@@ -3,6 +3,7 @@ import QRCode from "qrcode"
 import Modal from "@/components/Modal"
 import PaymentSetup from "@/components/PaymentSetup"
 import { CardSetupBody } from "@/components/PaymentSetupShell"
+import { setToastMessage } from "@/components/Toast"
 import { useCardPortal } from "@/lib/usePaymentSetup"
 import { getInvoice, getInvoiceBolt11, listInvoiceItems, type Invoice } from "@/lib/api"
 import { billingTenant } from "@/lib/state"
@@ -26,7 +27,6 @@ export default function PaymentDialog(props: PaymentDialogProps) {
   const [bolt11Status, setBolt11Status] = createSignal<Bolt11Status>("idle")
   const [bolt11Error, setBolt11Error] = createSignal("")
   const [payStatus, setPayStatus] = createSignal<PayStatus>("idle")
-  const [payError, setPayError] = createSignal("")
   const [payMethod, setPayMethod] = createSignal<PayMethod>("lightning")
   const [showPaymentSetup, setShowPaymentSetup] = createSignal(false)
   const [setupSaved, setSetupSaved] = createSignal(false)
@@ -67,30 +67,35 @@ export default function PaymentDialog(props: PaymentDialogProps) {
     void loadBolt11()
   })
 
+  // The card portal lives in a shared hook, so surface its failures here by
+  // mirroring its error signal into the toast.
+  createEffect(() => {
+    const err = card.error()
+    if (err) setToastMessage(err)
+  })
+
   function copyBolt11() {
     void navigator.clipboard.writeText(bolt11())
   }
 
   async function checkPayment() {
     setPayStatus("loading")
-    setPayError("")
     try {
       const invoice = await getInvoice(props.invoice.id)
       if (invoice.paid_at != null) {
         setPayStatus("success")
       } else {
         setPayStatus("error")
-        setPayError("Payment not yet confirmed. Please try again after sending.")
+        setToastMessage("Payment not yet confirmed. Please try again after sending.")
       }
     } catch (e) {
       setPayStatus("error")
-      setPayError(e instanceof Error ? e.message : "Failed to check payment status")
+      setToastMessage(e instanceof Error ? e.message : "Failed to check payment status")
     }
   }
 
   function handleClose() {
     setPayStatus("idle")
-    setPayError("")
     setBolt11Status("idle")
     setBolt11Error("")
     setBolt11("")
@@ -248,7 +253,7 @@ export default function PaymentDialog(props: PaymentDialogProps) {
               <button
                 type="button"
                 onClick={() => setShowPaymentSetup(true)}
-                class="mt-2 text-sm font-medium text-blue-600 hover:text-blue-700"
+                class="mt-2 inline-flex items-center justify-center rounded-lg border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-medium text-blue-700 hover:bg-blue-100 transition-colors"
               >
                 Set up automatic payments
               </button>
@@ -256,13 +261,6 @@ export default function PaymentDialog(props: PaymentDialogProps) {
           </div>
         </Show>
       </div>
-
-      {/* Error */}
-      <Show when={payError() || card.error()}>
-        <div class="px-6 pb-2">
-          <p class="text-xs text-red-600 text-center">{payError() || card.error()}</p>
-        </div>
-      </Show>
 
       {/* Footer */}
       <div class="px-6 py-4 flex justify-between gap-3 border-t border-gray-100">

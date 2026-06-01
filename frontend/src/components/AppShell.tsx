@@ -139,11 +139,7 @@ export default function AppShell(props: { children?: any }) {
       </aside>
 
       <div class="md:pl-[260px] min-h-screen pb-20 md:pb-0">
-        {/* Shared billing prompts on every dashboard page; the billing page
-            renders its own contextual (inline) variant instead. */}
-        <Show when={location.pathname !== "/account"}>
-          <BillingPrompts variant="banner" />
-        </Show>
+        <BillingPrompts variant="banner" />
         <main>{props.children}</main>
       </div>
 

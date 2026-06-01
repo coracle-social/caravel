@@ -2,7 +2,6 @@ import { createEffect, createMemo, createSignal, For, Show } from "solid-js"
 import PageContainer from "@/components/PageContainer"
 import LoadingState from "@/components/LoadingState"
 import PaymentDialog from "@/components/PaymentDialog"
-import BillingPrompts from "@/components/BillingPrompts"
 import useMinLoading from "@/components/useMinLoading"
 import { useInvoicePdf } from "@/lib/useInvoicePdf"
 import PaymentSetupNWC from "@/components/PaymentSetupNWC"
@@ -78,12 +77,6 @@ export default function Account() {
     return { status: "ok" }
   })
 
-  // The amount to surface: the total of any open invoices, else nothing owed.
-  const balance = createMemo(() => {
-    const due = billing.balance()
-    return due > 0 ? { kind: "due" as const, amount: due } : { kind: "clear" as const, amount: 0 }
-  })
-
   function logout() {
     localStorage.clear()
     window.location.href = "/"
@@ -103,32 +96,16 @@ export default function Account() {
       </div>
 
       <div class="space-y-6">
-        {/* Billing prompts, emphasized contextually on the billing page. */}
-        <BillingPrompts variant="inline" />
-
         <section class="bg-white border border-gray-200 rounded-xl p-6">
           <div class="flex items-center justify-between gap-3 mb-4">
-            <h2 class="text-lg font-semibold text-gray-900">Account &amp; Billing</h2>
+            <h2 class="text-lg font-semibold text-gray-900">Payment Methods</h2>
             <Show when={billing.tenant()}>
               <span class={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium capitalize ${accountStatusStyles[status()]}`}>
-                {status()}
+                Your account is {status()}
               </span>
             </Show>
           </div>
 
-          {/* Current balance (relocated from the old Recurring Billing section, logic unchanged) */}
-          <div class="mb-6 rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
-            <p class="text-xs font-medium text-gray-500 uppercase tracking-wide">Current balance</p>
-            <Show
-              when={balance().kind === "due"}
-              fallback={<p class="text-sm text-gray-600 mt-1">You're all paid up.</p>}
-            >
-              <p class="text-2xl font-bold text-gray-900 mt-0.5">${(balance().amount / 100).toFixed(2)} <span class="text-sm font-normal text-gray-500">due</span></p>
-            </Show>
-          </div>
-
-          {/* Billing methods */}
-          <p class="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Billing methods</p>
           <ul class="space-y-3">
             {/* Lightning / NWC row — CTA opens the NWC modal */}
             <li class="rounded-lg border border-gray-200 p-4">
@@ -181,7 +158,7 @@ export default function Account() {
         </section>
 
         <section class="bg-white border border-gray-200 rounded-xl p-6">
-          <h2 class="text-lg font-semibold text-gray-900 mb-4">Invoice History</h2>
+          <h2 class="text-lg font-semibold text-gray-900 mb-4">Payment History</h2>
           <Show when={invoicesLoading()}>
             <LoadingState message="Loading invoices..." paddingClass="py-8" />
           </Show>

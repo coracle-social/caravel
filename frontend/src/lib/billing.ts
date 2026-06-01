@@ -76,7 +76,11 @@ export function activeBillingPrompt(
   const methodError = tenant.nwc_error ?? tenant.stripe_error
   const suppressInline = opts?.suppressInline ?? false
 
-  if (s.openInvoice && !suppressInline && (!autopayConfigured || methodError)) {
+  // Any open invoice gets a "Pay now" surface, even with autopay configured:
+  // autopay may not have fired yet or may have failed without setting an error,
+  // and the user still needs a way to pay manually. Only the inline create/upgrade
+  // flow (suppressInline) handles its own invoice, so defer to it there.
+  if (s.openInvoice && !suppressInline) {
     return {
       kind: "pay_invoice",
       severity: "warn",

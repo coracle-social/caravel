@@ -174,7 +174,7 @@ impl Api {
         ensure!(event.kind == Kind::HttpAuth, "invalid nip98 kind");
         event.verify()?;
 
-        let got_u = event
+        let actual_u = event
             .tags
             .iter()
             .filter_map(|tag| {
@@ -185,7 +185,7 @@ impl Api {
             .ok_or_else(|| anyhow!("missing u tag"))?;
 
         ensure!(
-            got_u == env::get().server_host,
+            actual_u == env::get().server_url,
             "authorization host mismatch"
         );
 

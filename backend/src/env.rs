@@ -21,7 +21,7 @@ pub fn get() -> &'static Env {
 
 #[derive(Clone)]
 pub struct Env {
-    pub server_host: String,
+    pub server_url: String,
     pub server_port: u16,
     pub server_admin_pubkeys: Vec<String>,
     pub server_allow_origins: Vec<String>,
@@ -55,7 +55,7 @@ impl Env {
             .expect("ROBOT_SECRET is not a valid nostr secret key");
 
         Self {
-            server_host: require_str("SERVER_HOST"),
+            server_url: require_str("SERVER_URL"),
             server_port: require_u16("SERVER_PORT"),
             server_admin_pubkeys: require_csv("SERVER_ADMIN_PUBKEYS"),
             server_allow_origins: require_csv("SERVER_ALLOW_ORIGINS"),

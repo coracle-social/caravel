@@ -16,7 +16,7 @@ export default function AdminRelayList() {
     const list = relays() ?? []
     const q = query().trim()
     if (!q) return list
-    return new Fuse(list, { keys: ["info_name", "subdomain", "tenant"], threshold: 0.35, ignoreLocation: true }).search(q).map(r => r.item)
+    return new Fuse(list, { keys: ["info_name", "subdomain", "tenant_pubkey"], threshold: 0.35, ignoreLocation: true }).search(q).map(r => r.item)
   })
 
   return (

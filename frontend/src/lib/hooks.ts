@@ -116,7 +116,7 @@ export const createRelayForActiveTenant = (input: CreateRelayInput) => {
   }
 
   const overrides = {
-    tenant: account()!.pubkey,
+    tenant_pubkey: account()!.pubkey,
     blossom_enabled: input.plan_id === "free" ? 0 : 1,
     livekit_enabled: input.plan_id === "free" ? 0 : 1,
   }

@@ -6,7 +6,7 @@ import { EventStore } from "applesauce-core"
 import { createEventLoaderForStore } from "applesauce-loaders/loaders"
 import { RelayPool } from "applesauce-relay"
 import { NostrConnectSigner } from "applesauce-signers"
-import { getIdentity, getTenant, listPlans, listTenantInvoices, listTenantRelays, registerAccountGetter, type Plan } from "@/lib/api"
+import { createTenant, getIdentity, getTenant, listPlans, listTenantInvoices, listTenantRelays, registerAccountGetter, type Plan } from "@/lib/api"
 
 export type UnsignedEvent = {
   kind: number
@@ -56,10 +56,15 @@ export const [identity, { refetch: refetchIdentity, mutate: setIdentity }] = cre
 )
 
 // Shared billing reads, fetched once per session and consumed by the dashboard
-// shell, the billing page, and the billing-prompt surface. Keyed on the active
-// pubkey so they refetch on account switch; refetchBilling() refreshes them all
-// after a mutation (payment, method update, plan change).
-const billingKey = () => account()?.pubkey
+// shell, the billing page, and the billing-prompt surface. They're gated on
+// billingPubkey rather than the active account directly: the tenant row is
+// provisioned lazily on first login, so getTenant/listTenantInvoices 404 until
+// ensureSessionTenant() has created it. billingPubkey is reset on activation and
+// re-set once the tenant is ensured, so the reads still refetch on account switch
+// without racing ahead of provisioning. refetchBilling() refreshes them all after
+// a mutation (payment, method update, plan change).
+const [billingPubkey, setBillingPubkey] = createSignal<string>()
+const billingKey = () => billingPubkey()
 
 export const [billingTenant, { refetch: refetchBillingTenant }] = createResource(billingKey, getTenant)
 export const [billingInvoices, { refetch: refetchBillingInvoices }] = createResource(billingKey, listTenantInvoices)
@@ -69,6 +74,31 @@ export function refetchBilling() {
   void refetchBillingTenant()
   void refetchBillingInvoices()
   void refetchBillingRelays()
+}
+
+// Ensure the active pubkey's tenant row exists, then unlock billing reads. The
+// tenant is created lazily on first login, so this must run before any
+// tenant-scoped read. The in-flight promise is shared so the login flow (which
+// awaits it to roll back on failure) and the activation subscriber below don't
+// double-provision; createTenant is itself idempotent.
+let tenantEnsure: { pubkey: string; promise: Promise<void> } | undefined
+
+export function ensureSessionTenant(): Promise<void> {
+  const pubkey = account()?.pubkey
+  if (!pubkey) return Promise.resolve()
+  if (tenantEnsure?.pubkey === pubkey) return tenantEnsure.promise
+
+  const promise = (async () => {
+    try {
+      await createTenant()
+      if (account()?.pubkey === pubkey) setBillingPubkey(pubkey)
+    } finally {
+      if (tenantEnsure?.pubkey === pubkey) tenantEnsure = undefined
+    }
+  })()
+
+  tenantEnsure = { pubkey, promise }
+  return promise
 }
 
 // Deferred to avoid circular-import TDZ errors (api.ts <-> state.ts)
@@ -97,5 +127,10 @@ queueMicrotask(() => {
     }
 
     refetchIdentity()
+
+    // Lock billing reads until the new account's tenant is ensured, so they never
+    // fire against a not-yet-provisioned tenant during signup.
+    setBillingPubkey(undefined)
+    if (account) void ensureSessionTenant().catch(() => {})
   })
 })

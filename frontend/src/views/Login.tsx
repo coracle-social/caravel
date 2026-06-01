@@ -4,8 +4,7 @@ import { ExtensionAccount, NostrConnectAccount, PasswordAccount, PrivateKeyAccou
 import { PasswordSigner } from "applesauce-signers"
 import QrScanner from "qr-scanner"
 import QRCode from "qrcode"
-import { accountManager, identity, PLATFORM_NAME } from "@/lib/state"
-import { createTenant } from "@/lib/api"
+import { accountManager, ensureSessionTenant, identity, PLATFORM_NAME } from "@/lib/state"
 import useMinLoading from "@/components/useMinLoading"
 
 const NIP46_RELAYS = ['wss://bucket.coracle.social', 'wss://ephemeral.snowflare.cc']
@@ -71,7 +70,7 @@ export default function Login(props: LoginPageProps = {}) {
     accountManager.addAccount(account)
     accountManager.setActive(account)
     try {
-      await createTenant()
+      await ensureSessionTenant()
     } catch (e) {
       accountManager.removeAccount(account)
       throw e

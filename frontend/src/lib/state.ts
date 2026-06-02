@@ -6,7 +6,7 @@ import { EventStore } from "applesauce-core"
 import { createEventLoaderForStore } from "applesauce-loaders/loaders"
 import { RelayPool } from "applesauce-relay"
 import { NostrConnectSigner } from "applesauce-signers"
-import { createTenant, getIdentity, getTenant, listPlans, listTenantInvoices, listTenantRelays, registerAccountGetter, type Plan } from "@/lib/api"
+import { createTenant, getDraftInvoice, getIdentity, getTenant, listPlans, listTenantInvoices, listTenantRelays, registerAccountGetter, type Plan } from "@/lib/api"
 
 export type UnsignedEvent = {
   kind: number
@@ -69,11 +69,13 @@ const billingKey = () => billingPubkey()
 export const [billingTenant, { refetch: refetchBillingTenant }] = createResource(billingKey, getTenant)
 export const [billingInvoices, { refetch: refetchBillingInvoices }] = createResource(billingKey, listTenantInvoices)
 export const [billingRelays, { refetch: refetchBillingRelays }] = createResource(billingKey, listTenantRelays)
+export const [billingDraftInvoice, { refetch: refetchBillingDraftInvoice }] = createResource(billingKey, getDraftInvoice)
 
 export function refetchBilling() {
   void refetchBillingTenant()
   void refetchBillingInvoices()
   void refetchBillingRelays()
+  void refetchBillingDraftInvoice()
 }
 
 // Ensure the active pubkey's tenant row exists, then unlock billing reads. The

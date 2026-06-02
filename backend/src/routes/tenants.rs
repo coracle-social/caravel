@@ -8,7 +8,8 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
 use crate::api::{Api, AuthedPubkey};
-use crate::models::Tenant;
+use crate::billing::BillingPeriod;
+use crate::models::{Invoice, Tenant};
 use crate::web::{ApiResult, internal, map_unique_error, ok};
 use crate::{command, env, query};
 
@@ -176,6 +177,77 @@ pub async fn list_tenant_invoices(
     let invoices = query::list_invoices(&pubkey).await.map_err(internal)?;
 
     ok(invoices)
+}
+
+/// Return the tenant's draft invoice: a synthetic, unsaved `Invoice` summing the
+/// outstanding line items for the current period (reconciled first so it reflects
+/// the latest activity). It mirrors what `create_invoice` would bill once the
+/// balance turns positive. `null` when the tenant has no billing anchor yet or
+/// nothing is outstanding. The id is a fixed `draft` sentinel and the lifecycle
+/// fields are empty — it isn't persisted or payable, so the UI renders it
+/// read-only with a `draft` status.
+pub async fn get_draft_invoice(
+    State(api): State<Arc<Api>>,
+    AuthedPubkey(auth): AuthedPubkey,
+    Path(pubkey): Path<String>,
+) -> ApiResult {
+    api.require_admin_or_tenant(&auth, &pubkey)?;
+
+    let tenant = api.get_tenant_or_404(&pubkey).await?;
+
+    api.billing
+        .reconcile_subscription(&tenant, false)
+        .await
+        .map_err(internal)?;
+
+    // Re-read so the draft sees a billing anchor that reconcile may have just set
+    // (it persists the anchor but mutates only its own clone).
+    let tenant = api.get_tenant_or_404(&pubkey).await?;
+
+    let draft = match BillingPeriod::current(&tenant) {
+        Some(period) => {
+            let items = query::list_unbilled_invoice_items(&pubkey)
+                .await
+                .map_err(internal)?;
+            if items.is_empty() {
+                None
+            } else {
+                Some(Invoice {
+                    id: "draft".to_string(),
+                    amount: items.iter().map(|item| item.amount).sum(),
+                    tenant_pubkey: tenant.pubkey,
+                    period_start: period.start,
+                    period_end: period.end,
+                    created_at: Utc::now().timestamp(),
+                    paid_at: None,
+                    voided_at: None,
+                    notified_at: None,
+                    method: None,
+                })
+            }
+        }
+        None => None,
+    };
+
+    ok(draft)
+}
+
+/// The outstanding line items behind a tenant's draft invoice — the current
+/// period's not-yet-billed charges. Mirrors `list_invoice_items` for a real
+/// invoice (the draft's sentinel id can't be looked up there) so the UI can
+/// itemize the draft in the same PDF.
+pub async fn list_draft_invoice_items(
+    State(api): State<Arc<Api>>,
+    AuthedPubkey(auth): AuthedPubkey,
+    Path(pubkey): Path<String>,
+) -> ApiResult {
+    api.require_admin_or_tenant(&auth, &pubkey)?;
+
+    let items = query::list_unbilled_invoice_items(&pubkey)
+        .await
+        .map_err(internal)?;
+
+    ok(items)
 }
 
 #[derive(Deserialize)]

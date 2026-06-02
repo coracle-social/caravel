@@ -547,7 +547,7 @@ pub struct BillingPeriod {
 impl BillingPeriod {
     /// The period containing `chrono::Utc::now()` for `tenant`. `None` when the
     /// tenant has no `billing_anchor` yet — i.e. no billable activity has been seen.
-    fn current(tenant: &Tenant) -> Option<Self> {
+    pub fn current(tenant: &Tenant) -> Option<Self> {
         Self::at(tenant, chrono::Utc::now().timestamp())
     }
 

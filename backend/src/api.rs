@@ -39,8 +39,8 @@ use crate::routes::relays::{
     list_relays, reactivate_relay, update_relay,
 };
 use crate::routes::tenants::{
-    create_stripe_session, create_tenant, get_tenant, list_tenant_invoices, list_tenant_relays,
-    list_tenants, update_tenant,
+    create_stripe_session, create_tenant, get_draft_invoice, get_tenant, list_draft_invoice_items,
+    list_tenant_invoices, list_tenant_relays, list_tenants, update_tenant,
 };
 use crate::stripe::Stripe;
 use crate::web::{ApiError, forbidden, internal, not_found, unauthorized};
@@ -72,6 +72,11 @@ impl Api {
             .route("/tenants/:pubkey", get(get_tenant).put(update_tenant))
             .route("/tenants/:pubkey/relays", get(list_tenant_relays))
             .route("/tenants/:pubkey/invoices", get(list_tenant_invoices))
+            .route("/tenants/:pubkey/invoices/draft", get(get_draft_invoice))
+            .route(
+                "/tenants/:pubkey/invoices/draft/items",
+                get(list_draft_invoice_items),
+            )
             .route(
                 "/tenants/:pubkey/stripe/session",
                 get(create_stripe_session),

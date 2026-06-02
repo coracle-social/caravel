@@ -259,6 +259,18 @@ export function listTenantInvoices(pubkey: string) {
   return callApi<undefined, Invoice[]>("GET", `/tenants/${pubkey}/invoices`)
 }
 
+// The draft is a synthetic Invoice (id "draft", empty lifecycle fields) summing
+// the current period's not-yet-billed items, or null when there's nothing due.
+export function getDraftInvoice(pubkey: string) {
+  return callApi<undefined, Invoice | null>("GET", `/tenants/${pubkey}/invoices/draft`)
+}
+
+// The draft's line items, fetched by tenant since its sentinel id has no row in
+// the per-invoice items endpoint. Lets the draft render an itemized PDF.
+export function listDraftInvoiceItems(pubkey: string) {
+  return callApi<undefined, InvoiceItem[]>("GET", `/tenants/${pubkey}/invoices/draft/items`)
+}
+
 export function updateTenant(pubkey: string, input: UpdateTenantInput) {
   return callApi<UpdateTenantInput, Tenant>("PUT", `/tenants/${pubkey}`, input)
 }

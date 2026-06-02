@@ -1,6 +1,6 @@
 import { createMemo, createSignal } from "solid-js"
 import { invoiceStatus, type Invoice, type Tenant } from "@/lib/api"
-import { billingInvoices, billingRelays, billingTenant, plans, refetchBilling } from "@/lib/state"
+import { billingDraftInvoice, billingInvoices, billingRelays, billingTenant, plans, refetchBilling } from "@/lib/state"
 
 // Set while the create/upgrade flow drives its own payment/setup modals, so the
 // shared prompt surface doesn't double-prompt for the same invoice. Cleared on
@@ -28,6 +28,10 @@ export function useBillingStatus() {
   const tenant = () => billingTenant()
   const invoices = () => billingInvoices() ?? []
 
+  // The current period's in-progress bill (outstanding items not yet cut into a
+  // real invoice), or undefined when nothing is due. Shown as a "draft" row.
+  const draftInvoice = () => billingDraftInvoice() ?? undefined
+
   const openInvoices = createMemo(() =>
     invoices()
       .filter((inv) => invoiceStatus(inv) === "open" && inv.amount > 0)
@@ -46,9 +50,9 @@ export function useBillingStatus() {
     })
   })
 
-  const loading = () => billingTenant.loading || billingInvoices.loading
+  const loading = () => billingTenant.loading || billingInvoices.loading || billingDraftInvoice.loading
 
-  return { tenant, invoices, balance, openInvoice, hasPaidSubscription, loading, refetch: refetchBilling }
+  return { tenant, invoices, draftInvoice, balance, openInvoice, hasPaidSubscription, loading, refetch: refetchBilling }
 }
 
 // Pure priority selector: returns the single highest-priority billing prompt to

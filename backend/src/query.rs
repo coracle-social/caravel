@@ -151,6 +151,20 @@ pub async fn list_invoice_items_for_invoice(invoice_id: &str) -> Result<Vec<Invo
     .await?)
 }
 
+/// A tenant's outstanding line items — created but not yet claimed onto an
+/// invoice — oldest first. These are exactly what `create_invoice` would bill,
+/// and what a draft invoice presents before the balance is cut.
+pub async fn list_unbilled_invoice_items(tenant_pubkey: &str) -> Result<Vec<InvoiceItem>> {
+    Ok(sqlx::query_as::<_, InvoiceItem>(
+        "SELECT * FROM invoice_item
+         WHERE tenant_pubkey = ? AND invoice_id IS NULL
+         ORDER BY created_at ASC",
+    )
+    .bind(tenant_pubkey)
+    .fetch_all(pool())
+    .await?)
+}
+
 /// A tenant's open invoices — neither paid nor voided — oldest first. Dunning
 /// retries each and treats the oldest one's `created_at` as the grace-period start.
 pub async fn list_open_invoices(tenant_pubkey: &str) -> Result<Vec<Invoice>> {

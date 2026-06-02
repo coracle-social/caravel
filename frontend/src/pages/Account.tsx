@@ -7,7 +7,7 @@ import { useInvoicePdf } from "@/lib/useInvoicePdf"
 import PaymentSetupNWC from "@/components/PaymentSetupNWC"
 import PaymentSetupCard from "@/components/PaymentSetupCard"
 import { useBillingStatus, accountStatus, type AccountStatus } from "@/lib/billing"
-import { invoiceStatus, type Invoice } from "@/lib/api"
+import { invoiceStatus, listDraftInvoiceItems, type Invoice } from "@/lib/api"
 import { account } from "@/lib/state"
 
 const methodLabels: Record<string, string> = {
@@ -17,6 +17,7 @@ const methodLabels: Record<string, string> = {
 }
 
 const invoiceStatusStyles: Record<string, string> = {
+  draft: "bg-blue-50 text-blue-700 border-blue-200",
   open: "bg-yellow-50 text-yellow-700 border-yellow-200",
   paid: "bg-green-50 text-green-700 border-green-200",
   void: "bg-gray-100 text-gray-500 border-gray-200",
@@ -163,8 +164,46 @@ export default function Account() {
             <LoadingState message="Loading invoices..." paddingClass="py-8" />
           </Show>
           <Show when={!invoicesLoading()}>
-            <Show when={billing.invoices().length > 0} fallback={<p class="text-gray-500 text-sm">No invoices yet.</p>}>
+            <Show when={billing.invoices().length > 0 || billing.draftInvoice()} fallback={<p class="text-gray-500 text-sm">No invoices yet.</p>}>
               <ul class="space-y-3">
+                {/* Draft: this period's in-progress charges, not yet a real invoice. */}
+                <Show when={billing.draftInvoice()}>
+                  {(draft) => {
+                    const periodLabel = () => {
+                      const start = new Date(draft().period_start * 1000)
+                      const end = new Date(draft().period_end * 1000)
+                      return `${start.toLocaleDateString()} – ${end.toLocaleDateString()}`
+                    }
+                    return (
+                      <li class="rounded-lg border border-dashed border-gray-300 p-4 text-sm">
+                        <div class="flex items-center justify-between gap-3">
+                          <div class="min-w-0">
+                            <div class="flex items-center gap-2">
+                              <span class="font-medium text-gray-900">${(draft().amount / 100).toFixed(2)}</span>
+                              <span class={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium capitalize ${invoiceStatusStyles.draft}`}>
+                                draft
+                              </span>
+                            </div>
+                            <Show when={draft().period_start && draft().period_end}>
+                              <p class="text-xs text-gray-500 mt-0.5">{periodLabel()}</p>
+                            </Show>
+                            <p class="text-xs text-gray-400 mt-1">Charges accruing this period. You'll be invoiced once a balance is due.</p>
+                          </div>
+                          <div class="flex items-center gap-2 flex-shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => void printInvoice(draft(), () => listDraftInvoiceItems(draft().tenant_pubkey))}
+                              disabled={printing()}
+                              class="text-xs font-medium text-gray-500 hover:text-gray-800 underline disabled:opacity-50"
+                            >
+                              PDF
+                            </button>
+                          </div>
+                        </div>
+                      </li>
+                    )
+                  }}
+                </Show>
                 <For each={billing.invoices()}>
                   {(invoice) => {
                     const status = () => invoiceStatus(invoice)

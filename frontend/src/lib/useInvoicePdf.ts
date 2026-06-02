@@ -25,11 +25,14 @@ function escapeHtml(value: string) {
 export function useInvoicePdf() {
   const [printing, setPrinting] = createSignal(false)
 
-  async function printInvoice(invoice: Invoice) {
+  // `loadItems` overrides how line items are fetched — used by the draft invoice,
+  // whose sentinel id has no row in the per-invoice items endpoint.
+  async function printInvoice(invoice: Invoice, loadItems?: () => Promise<InvoiceItem[]>) {
     if (printing()) return
     setPrinting(true)
     try {
-      const items = await listInvoiceItems(invoice.id).catch(() => [] as InvoiceItem[])
+      const fetchItems = loadItems ?? (() => listInvoiceItems(invoice.id))
+      const items = await fetchItems().catch(() => [] as InvoiceItem[])
 
       let sats: number | undefined
       let qrDataUrl: string | undefined
@@ -56,7 +59,9 @@ export function useInvoicePdf() {
 
 function buildHtml(opts: { invoice: Invoice; items: InvoiceItem[]; sats?: number; qrDataUrl?: string }): string {
   const { invoice, items, sats, qrDataUrl } = opts
-  const status = invoiceStatus(invoice)
+  // The draft invoice carries the sentinel id and no lifecycle timestamps, so
+  // invoiceStatus would read it as "open" — label it "draft" explicitly.
+  const status = invoice.id === "draft" ? "draft" : invoiceStatus(invoice)
 
   const rows = items.length
     ? items

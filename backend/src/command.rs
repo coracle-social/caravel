@@ -393,7 +393,8 @@ pub async fn settle_invoice_via_nwc(
     with_tx(async |tx| {
         clear_tenant_nwc_error_tx(tx, tenant_pubkey).await?;
         mark_bolt11_settled_tx(tx, bolt11_id).await?;
-        mark_invoice_paid_tx(tx, invoice_id, "nwc").await
+        mark_invoice_paid_tx(tx, invoice_id, "nwc").await?;
+        Ok(())
     })
     .await
 }
@@ -402,7 +403,8 @@ pub async fn settle_invoice_via_nwc(
 pub async fn settle_invoice_out_of_band(bolt11_id: &str, invoice_id: &str) -> Result<()> {
     with_tx(async |tx| {
         mark_bolt11_settled_tx(tx, bolt11_id).await?;
-        mark_invoice_paid_tx(tx, invoice_id, "oob").await
+        mark_invoice_paid_tx(tx, invoice_id, "oob").await?;
+        Ok(())
     })
     .await
 }
@@ -417,7 +419,8 @@ pub async fn settle_invoice_via_stripe(
     with_tx(async |tx| {
         insert_intent_tx(tx, intent_id, invoice_id).await?;
         clear_tenant_stripe_error_tx(tx, tenant_pubkey).await?;
-        mark_invoice_paid_tx(tx, invoice_id, "stripe").await
+        mark_invoice_paid_tx(tx, invoice_id, "stripe").await?;
+        Ok(())
     })
     .await
 }
@@ -592,10 +595,11 @@ async fn set_relay_status_tx(
     insert_activity_tx(tx, activity_type, &relay.id, snapshot).await
 }
 
+/// Stamp a bolt11 as settled but don't overwrite an existing settled_at.
 async fn mark_bolt11_settled_tx(tx: &mut Transaction<'_, Sqlite>, bolt11_id: &str) -> Result<()> {
     let settled_at = chrono::Utc::now().timestamp();
 
-    sqlx::query("UPDATE bolt11 SET settled_at = ? WHERE id = ?")
+    sqlx::query("UPDATE bolt11 SET settled_at = ? WHERE id = ? AND settled_at IS NULL")
         .bind(settled_at)
         .bind(bolt11_id)
         .execute(&mut **tx)
@@ -603,6 +607,9 @@ async fn mark_bolt11_settled_tx(tx: &mut Transaction<'_, Sqlite>, bolt11_id: &st
     Ok(())
 }
 
+/// Mark an invoice paid, but only while it is still open — a late Lightning
+/// payment never flips a voided/forgiven invoice to paid, and a Stripe-paid
+/// invoice never has its provenance overwritten by a later bolt11.
 async fn mark_invoice_paid_tx(
     tx: &mut Transaction<'_, Sqlite>,
     invoice_id: &str,
@@ -610,12 +617,15 @@ async fn mark_invoice_paid_tx(
 ) -> Result<()> {
     let paid_at = chrono::Utc::now().timestamp();
 
-    sqlx::query("UPDATE invoice SET method = ?, paid_at = ? WHERE id = ?")
-        .bind(method)
-        .bind(paid_at)
-        .bind(invoice_id)
-        .execute(&mut **tx)
-        .await?;
+    sqlx::query(
+        "UPDATE invoice SET method = ?, paid_at = ?
+         WHERE id = ? AND paid_at IS NULL AND voided_at IS NULL",
+    )
+    .bind(method)
+    .bind(paid_at)
+    .bind(invoice_id)
+    .execute(&mut **tx)
+    .await?;
     Ok(())
 }
 

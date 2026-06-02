@@ -469,6 +469,14 @@ impl Billing {
     pub async fn ensure_bolt11_for_invoice(&self, invoice: &Invoice) -> Result<Bolt11> {
         let now = chrono::Utc::now().timestamp();
 
+        // A resolved (paid or voided) invoice must never mint a new payable
+        // bolt11; return the existing one if present, otherwise refuse.
+        if invoice.paid_at.is_some() || invoice.voided_at.is_some() {
+            return query::get_bolt11_for_invoice(&invoice.id)
+                .await?
+                .ok_or_else(|| anyhow!("invoice is not open"));
+        }
+
         if let Some(existing) = query::get_bolt11_for_invoice(&invoice.id).await?
             && (existing.settled_at.is_none() || now < existing.expires_at)
         {
@@ -487,6 +495,11 @@ impl Billing {
 
     pub async fn reconcile_bolt11_for_invoice(&self, invoice: &Invoice) -> Result<Option<Bolt11>> {
         if let Some(bolt11) = query::get_bolt11_for_invoice(&invoice.id).await? {
+            // Don't settle an invoice that is already resolved
+            if invoice.paid_at.is_some() || invoice.voided_at.is_some() {
+                return Ok(Some(bolt11));
+            }
+
             return self.reconcile_bolt11(&bolt11).await;
         };
 

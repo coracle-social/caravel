@@ -9,7 +9,6 @@ import Login from "@/views/Login"
 import { createRelayForActiveTenant } from "@/lib/hooks"
 import { account } from "@/lib/state"
 import FlotillaLogo from "@/assets/flotilla-logo.svg"
-import ChachiLogo from "@/assets/chachi-logo.svg"
 import NostordLogo from "@/assets/nostord-logo.svg"
 
 export default function Home() {

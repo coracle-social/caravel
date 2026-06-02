@@ -1,17 +1,8 @@
 import { createSignal } from "solid-js"
 import { updateRelayById, deactivateRelayById, reactivateRelayById, getLatestOpenInvoice, tenantNeedsPaymentSetup, type Relay } from "@/lib/hooks"
-import { setToastMessage } from "@/components/Toast"
+import { setToastMessage } from "@/lib/state"
+import { applyPlanToRelay, decidePostPaidFlow, planUpdatePayload, toggleField } from "@/lib/relayPlanFlow"
 import type { Invoice, PlanId } from "@/lib/api"
-
-function toBool(value: number | undefined, fallback: boolean): boolean {
-  if (value === 0) return false
-  if (value === 1) return true
-  return fallback
-}
-
-function toInt(value: boolean): number {
-  return value ? 1 : 0
-}
 
 type RelayResource = {
   (): Relay | undefined
@@ -47,8 +38,7 @@ export default function useRelayToggles(
   function toggle(field: keyof Relay, fallback: boolean) {
     const current = relay()
     if (!current) return
-    const next = { ...current, [field]: toInt(!toBool(current[field] as number, fallback)) }
-    void updateRelay(next, current)
+    void updateRelay(toggleField(current, field, fallback), current)
   }
 
   async function handleDeactivate() {
@@ -82,18 +72,10 @@ export default function useRelayToggles(
     if (!current) return
 
     const previous = current
-    const next = { ...current, plan_id }
-    const update: Record<string, unknown> = { plan_id }
-    if (plan_id === "free") {
-      next.blossom_enabled = 0
-      next.livekit_enabled = 0
-      update.blossom_enabled = 0
-      update.livekit_enabled = 0
-    }
-    mutate(next)
+    mutate(applyPlanToRelay(current, plan_id))
 
     try {
-      await updateRelayById(relayId(), update)
+      await updateRelayById(relayId(), planUpdatePayload(plan_id))
       await refetch()
     } catch (e) {
       mutate(previous)
@@ -101,18 +83,24 @@ export default function useRelayToggles(
       throw e
     }
 
-    if (plan_id !== "free") {
-      const needsSetup = await tenantNeedsPaymentSetup()
-      if (needsSetup) {
-        // Materialize the invoice for this upgrade (no collection, no DM) so we
-        // can prompt the tenant to pay it directly. listTenantInvoices reconciles
-        // first, so a just-created invoice is visible here.
-        const invoice = await getLatestOpenInvoice()
-        if (invoice) {
-          setPendingInvoice(invoice)
-        }
+    if (plan_id === "free") return
+
+    // Materialize the invoice for this upgrade (no collection, no DM) so we can
+    // prompt the tenant to pay it directly. listTenantInvoices reconciles first,
+    // so a just-created invoice is visible here.
+    const needsSetup = await tenantNeedsPaymentSetup()
+    const invoice = needsSetup ? await getLatestOpenInvoice() : null
+    const decision = decidePostPaidFlow({ needsSetup, invoice })
+    switch (decision.kind) {
+      case "pay_invoice":
+        setPendingInvoice(decision.invoice)
         setPendingPaymentSetup(true)
-      }
+        break
+      case "setup":
+        setPendingPaymentSetup(true)
+        break
+      case "navigate":
+        break
     }
   }
 

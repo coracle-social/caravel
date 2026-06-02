@@ -1,17 +1,12 @@
 import { A, useLocation } from "@solidjs/router"
-import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js"
-import Fuse from "fuse.js"
-import { primeProfiles, useProfilePicture, useTenantRelays, type Relay } from "@/lib/hooks"
-import { account, eventStore, identity } from "@/lib/state"
+import { createMemo, createSignal, For, Show } from "solid-js"
+import { useProfileMetadata, useProfilePicture, useTenantRelays, type Relay } from "@/lib/hooks"
+import { account, identity } from "@/lib/state"
+import { fuzzySearch } from "@/lib/search"
+import { RELAY_DOMAIN } from "@/lib/subdomain"
 import serverIcon from "@/assets/server.svg"
 import Modal from "@/components/Modal"
 import BillingPrompts from "@/components/BillingPrompts"
-
-type Profile = {
-  name?: string
-  display_name?: string
-  nip05?: string
-}
 
 function shortenPubkey(pubkey?: string) {
   if (!pubkey) return ""
@@ -34,50 +29,18 @@ function RelayIcon() {
 export default function AppShell(props: { children?: any }) {
   const location = useLocation()
   const picture = useProfilePicture(() => account()?.pubkey)
+  const metadata = useProfileMetadata(() => account()?.pubkey)
   const [tenantRelays] = useTenantRelays()
-  const [profile, setProfile] = createSignal<Profile>({})
   const [searchOpen, setSearchOpen] = createSignal(false)
   const [searchQuery, setSearchQuery] = createSignal("")
 
-  const username = createMemo(() => profile().name || profile().display_name || shortenPubkey(account()?.pubkey))
-  const nip05 = createMemo(() => profile().nip05 || "No NIP-05")
+  const username = createMemo(() => metadata()?.name || metadata()?.display_name || shortenPubkey(account()?.pubkey))
+  const nip05 = createMemo(() => metadata()?.nip05)
   const searchedRelays = createMemo<Relay[]>(() => {
     const list = tenantRelays() ?? []
     const query = searchQuery().trim()
 
-    if (!query) return list
-
-    const fuse = new Fuse(list, {
-      keys: ["info_name", "subdomain"],
-      threshold: 0.35,
-      ignoreLocation: true,
-    })
-
-    return fuse.search(query).map((result) => result.item)
-  })
-
-  createEffect(() => {
-    const pubkey = account()?.pubkey
-
-    if (!pubkey) {
-      setProfile({})
-      return
-    }
-
-    const profileSub = eventStore.profile(pubkey).subscribe((metadata) => {
-      setProfile({
-        name: metadata?.name,
-        display_name: metadata?.display_name,
-        nip05: metadata?.nip05,
-      })
-    })
-
-    const primeSub = primeProfiles([pubkey])
-
-    onCleanup(() => {
-      profileSub.unsubscribe()
-      primeSub.unsubscribe()
-    })
+    return fuzzySearch(list, ["info_name", "subdomain"], query)
   })
 
   const myResources = [{ href: "/relays", label: "My Relays" }]
@@ -224,7 +187,7 @@ export default function AppShell(props: { children?: any }) {
                         onClick={closeSearchModal}
                       >
                         <p class="text-sm font-medium text-gray-900">{relay.info_name || relay.subdomain}</p>
-                        <p class="text-xs text-gray-500">{relay.subdomain}.spaces.coracle.social</p>
+                        <p class="text-xs text-gray-500">{relay.subdomain}.{RELAY_DOMAIN}</p>
                       </A>
                     </li>
                   )}

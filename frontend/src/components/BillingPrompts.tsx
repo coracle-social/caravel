@@ -4,7 +4,8 @@ import PromptBanner, { type PromptBannerAction } from "@/components/PromptBanner
 import PaymentDialog from "@/components/PaymentDialog"
 import PaymentSetup from "@/components/PaymentSetup"
 import { getInvoice, type Invoice } from "@/lib/api"
-import { activeBillingPrompt, billingFlowActive, useBillingStatus, type BillingPromptKind } from "@/lib/billing"
+import { activeBillingPrompt, useBillingStatus, type BillingPromptKind } from "@/lib/billing"
+import { billingFlowActive } from "@/lib/state"
 
 type BillingPromptsProps = {
   // "banner" sits in the dashboard shell (mounted on every page except the
@@ -76,7 +77,7 @@ export default function BillingPrompts(props: BillingPromptsProps) {
 
   function dismiss() {
     const p = visiblePrompt()
-    if (p) setDismissed((prev) => new Set(prev).add(p.kind))
+    if (p) setDismissed((prev) => new Set([...prev, p.kind]))
   }
 
   function clearDeepLink() {

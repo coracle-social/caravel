@@ -1,15 +1,10 @@
 import { createSignal } from "solid-js"
 import QRCode from "qrcode"
 import { getInvoiceBolt11, invoiceStatus, listInvoiceItems, type Invoice, type InvoiceItem } from "@/lib/api"
+import { methodLabel } from "@/lib/paymentMethod"
+import { formatUsd } from "@/lib/format"
 import { PLATFORM_NAME } from "@/lib/state"
 
-const methodLabels: Record<string, string> = {
-  nwc: "Lightning",
-  stripe: "Card",
-  oob: "Lightning (out of band)",
-}
-
-const fmtUsd = (cents: number) => `$${(cents / 100).toFixed(2)}`
 const fmtDate = (seconds: number) => new Date(seconds * 1000).toLocaleDateString()
 
 function escapeHtml(value: string) {
@@ -32,7 +27,10 @@ export function useInvoicePdf() {
     setPrinting(true)
     try {
       const fetchItems = loadItems ?? (() => listInvoiceItems(invoice.id))
-      const items = await fetchItems().catch(() => [] as InvoiceItem[])
+      const items = await fetchItems().catch(e => {
+        console.error("Failed to load invoice line items", e)
+        return [] as InvoiceItem[]
+      })
 
       let sats: number | undefined
       let qrDataUrl: string | undefined
@@ -65,12 +63,12 @@ function buildHtml(opts: { invoice: Invoice; items: InvoiceItem[]; sats?: number
 
   const rows = items.length
     ? items
-        .map((i) => `<tr><td>${escapeHtml(i.description || "Charge")}</td><td class="amt">${fmtUsd(i.amount)}</td></tr>`)
+        .map((i) => `<tr><td>${escapeHtml(i.description || "Charge")}</td><td class="amt">${formatUsd(i.amount)}</td></tr>`)
         .join("")
-    : `<tr><td>Relay subscription</td><td class="amt">${fmtUsd(invoice.amount)}</td></tr>`
+    : `<tr><td>Relay subscription</td><td class="amt">${formatUsd(invoice.amount)}</td></tr>`
 
   const satsRow = sats != null ? `<tr><td>Bitcoin equivalent</td><td class="amt">${sats.toLocaleString()} sats</td></tr>` : ""
-  const methodLine = invoice.method ? `<div>Paid via ${escapeHtml(methodLabels[invoice.method] ?? invoice.method)}</div>` : ""
+  const methodLine = invoice.method ? `<div>Paid via ${escapeHtml(methodLabel(invoice.method))}</div>` : ""
   const qr = qrDataUrl
     ? `<div class="qr"><img src="${qrDataUrl}" alt="Lightning invoice QR"/><div class="muted">Scan to pay by Lightning</div></div>`
     : ""
@@ -105,7 +103,7 @@ function buildHtml(opts: { invoice: Invoice; items: InvoiceItem[]; sats?: number
     <table>
       <thead><tr><th>Description</th><th class="amt">Amount</th></tr></thead>
       <tbody>${rows}${satsRow}</tbody>
-      <tfoot><tr><td>Total</td><td class="amt">${fmtUsd(invoice.amount)}</td></tr></tfoot>
+      <tfoot><tr><td>Total</td><td class="amt">${formatUsd(invoice.amount)}</td></tr></tfoot>
     </table>
     ${qr}
   </body></html>`

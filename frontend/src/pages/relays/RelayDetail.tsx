@@ -6,13 +6,12 @@ import PaymentDialog from "@/components/PaymentDialog"
 import PaymentSetup from "@/components/PaymentSetup"
 import RelayDetailCard from "@/components/RelayDetailCard"
 import ResourceState from "@/components/ResourceState"
-import useMinLoading from "@/components/useMinLoading"
+import useMinLoading from "@/lib/useMinLoading"
 import ActivityFeed from "@/components/ActivityFeed"
 import { listRelayMembers } from "@/lib/api"
 import { useRelay, useRelayActivity } from "@/lib/hooks"
 import useRelayToggles from "@/lib/useRelayToggles"
-import { setBillingFlowActive } from "@/lib/billing"
-import { refetchBilling } from "@/lib/state"
+import { refetchBilling, setBillingFlowActive } from "@/lib/state"
 
 export default function RelayDetail() {
   const params = useParams()

@@ -46,6 +46,21 @@ export const [account, setAccount] = createSignal<IAccount | undefined>()
 
 registerAccountGetter(account)
 
+export type ToastVariant = "error" | "success"
+
+export const [toastVariant, setToastVariant] = createSignal<ToastVariant>("error")
+export const [toastMessage, setRawToastMessage] = createSignal("")
+
+export function setToastMessage(message: string, variant: ToastVariant = "error") {
+  setToastVariant(variant)
+  setRawToastMessage(message)
+}
+
+// Set while the create/upgrade flow drives its own payment/setup modals, so the
+// shared prompt surface doesn't double-prompt for the same invoice. Cleared on
+// every close path of that flow.
+export const [billingFlowActive, setBillingFlowActive] = createSignal(false)
+
 export const [plans] = createResource<Plan[]>(listPlans, { initialValue: [] })
 
 export const [identity, { refetch: refetchIdentity, mutate: setIdentity }] = createResource(
@@ -72,10 +87,18 @@ export const [billingRelays, { refetch: refetchBillingRelays }] = createResource
 export const [billingDraftInvoice, { refetch: refetchBillingDraftInvoice }] = createResource(billingKey, getDraftInvoice)
 
 export function refetchBilling() {
-  void refetchBillingTenant()
-  void refetchBillingInvoices()
-  void refetchBillingRelays()
-  void refetchBillingDraftInvoice()
+  void Promise.allSettled([
+    refetchBillingTenant(),
+    refetchBillingInvoices(),
+    refetchBillingRelays(),
+    refetchBillingDraftInvoice(),
+  ]).then(results => {
+    if (results.some(r => r.status === "rejected")) {
+      const err = results.find(r => r.status === "rejected") as PromiseRejectedResult | undefined
+      console.error("Failed to refresh billing data", err?.reason)
+      setToastMessage("Failed to refresh billing data")
+    }
+  })
 }
 
 // Ensure the active pubkey's tenant row exists, then unlock billing reads. The
@@ -117,7 +140,13 @@ queueMicrotask(() => {
     accountManager.setActive(active)
   }
 
-  accountManager.active$.subscribe(account => {
+  // Held for the whole app session: this callback persists accounts to
+  // localStorage and ensures the session tenant on every switch, so it must
+  // never be torn down by a component lifecycle. The only teardown is the HMR
+  // dispose hook below, which prevents a Vite hot-update from stacking a
+  // duplicate persisting subscriber during dev (production uses /* @refresh
+  // reload */, so it never runs there).
+  const accountSubscription = accountManager.active$.subscribe(account => {
     setAccount(account)
 
     localStorage.setItem("caravel.accounts", JSON.stringify(accountManager.toJSON(true)))
@@ -133,6 +162,12 @@ queueMicrotask(() => {
     // Lock billing reads until the new account's tenant is ensured, so they never
     // fire against a not-yet-provisioned tenant during signup.
     setBillingPubkey(undefined)
-    if (account) void ensureSessionTenant().catch(() => {})
+    if (account)
+      void ensureSessionTenant().catch(e => {
+        console.error("Failed to ensure tenant", e)
+        setToastMessage(e instanceof Error ? e.message : "Failed to set up your billing account")
+      })
   })
+
+  if (import.meta.hot) import.meta.hot.dispose(() => accountSubscription.unsubscribe())
 })

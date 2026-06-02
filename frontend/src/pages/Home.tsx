@@ -96,8 +96,8 @@ export default function Home() {
           </h1>
 
           <p class="text-xl text-gray-500 mb-10 max-w-2xl mx-auto leading-relaxed">
-            Spin up a private, managed Nostr relay for your community in minutes.
-            Full control over membership, access, and policies — no DevOps required.
+            Spin up a private, managed Nostr relay for your community in minutes,
+            with full control over membership, access, and policies.
           </p>
 
           <div class="flex flex-col sm:flex-row items-center justify-center gap-4">
@@ -251,44 +251,6 @@ export default function Home() {
             <div class="mt-auto pt-2">
               <span class="inline-flex items-center gap-1.5 text-sm font-semibold text-blue-600">
                 Visit flotilla.social <ExternalLinkIcon />
-              </span>
-            </div>
-          </a>
-
-          {/* Chachi */}
-          <a
-            href="https://chachi.chat"
-            target="_blank"
-            rel="noopener noreferrer"
-            class="group flex flex-col gap-5 rounded-2xl border border-gray-200 bg-white p-8 hover:border-purple-300 hover:shadow-md transition-all"
-          >
-            <div class="flex items-start justify-between gap-4">
-              <div class="flex items-center gap-3">
-                <img src={ChachiLogo} alt="Chachi" class="w-12 h-12 rounded-2xl shadow-md shadow-purple-200" />
-                <div>
-                  <h3 class="text-lg font-bold text-gray-900 group-hover:text-purple-600 transition-colors">Chachi</h3>
-                  <p class="text-xs text-gray-400">chachi.chat</p>
-                </div>
-              </div>
-              <span class="text-gray-300 group-hover:text-purple-400 transition-colors mt-1">
-                <ExternalLinkIcon />
-              </span>
-            </div>
-            <p class="text-sm text-gray-600 leading-relaxed">
-              A group chat app built on top of Nostr. Chachi makes it easy for your community
-              to have real-time conversations, all flowing through your own relay.
-            </p>
-            <div class="space-y-2">
-              {["Real-time group messaging", "Bring your own relay", "No accounts — just your Nostr key"].map(f => (
-                <div class="flex items-start gap-2 text-sm text-gray-600">
-                  <CheckIcon />
-                  {f}
-                </div>
-              ))}
-            </div>
-            <div class="mt-auto pt-2">
-              <span class="inline-flex items-center gap-1.5 text-sm font-semibold text-purple-600">
-                Visit chachi.chat <ExternalLinkIcon />
               </span>
             </div>
           </a>

@@ -1,8 +1,8 @@
 import { createEffect, createMemo, createSignal, For, Show } from "solid-js"
 import type { Relay } from "@/lib/hooks"
 import { slugify } from "@/lib/slugify"
-import { validateSubdomainLabel } from "@/lib/subdomain"
-import { setToastMessage } from "@/components/Toast"
+import { RELAY_DOMAIN, validateSubdomainLabel } from "@/lib/subdomain"
+import { setToastMessage } from "@/lib/state"
 import { plans } from "@/lib/state"
 
 export type RelayFormValues = Pick<Relay, "info_name" | "subdomain" | "info_icon" | "info_description" | "plan_id">
@@ -88,7 +88,7 @@ export default function RelayForm(props: RelayFormProps) {
             required
             class="flex-1 px-3 py-2"
           />
-          <span class="px-3 py-2 bg-gray-50 text-gray-500 text-sm border-l border-gray-300">.spaces.coracle.social</span>
+          <span class="px-3 py-2 bg-gray-50 text-gray-500 text-sm border-l border-gray-300">.{RELAY_DOMAIN}</span>
         </div>
       </div>
       <div>

@@ -1,14 +1,5 @@
 import { Show, createEffect, createSignal, onCleanup } from "solid-js"
-
-type ToastVariant = "error" | "success"
-
-const [toastVariant, setToastVariant] = createSignal<ToastVariant>("error")
-export const [toastMessage, setRawToastMessage] = createSignal("")
-
-export function setToastMessage(message: string, variant: ToastVariant = "error") {
-  setToastVariant(variant)
-  setRawToastMessage(message)
-}
+import { toastMessage, toastVariant, setToastMessage } from "@/lib/state"
 
 export default function Toast() {
   const [visible, setVisible] = createSignal(false)

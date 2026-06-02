@@ -1,12 +1,12 @@
 import { A } from "@solidjs/router"
-import Fuse from "fuse.js"
 import { createMemo, createSignal, For, Show } from "solid-js"
 import PageContainer from "@/components/PageContainer"
 import RelayListItem from "@/components/RelayListItem"
 import ResourceState from "@/components/ResourceState"
 import SearchInput from "@/components/SearchInput"
-import useMinLoading from "@/components/useMinLoading"
+import useMinLoading from "@/lib/useMinLoading"
 import { useTenantRelays } from "@/lib/hooks"
+import { fuzzySearch } from "@/lib/search"
 
 export default function RelayList() {
   const [relays] = useTenantRelays()
@@ -17,9 +17,7 @@ export default function RelayList() {
   const filtered = createMemo(() => {
     const list = relays() ?? []
     const q = query().trim()
-    const searched = q
-      ? new Fuse(list, { keys: ["info_name", "subdomain"], threshold: 0.35, ignoreLocation: true }).search(q).map(r => r.item)
-      : list
+    const searched = fuzzySearch(list, ["info_name", "subdomain"], q)
     return status() === "all" ? searched : searched.filter(r => r.status === status())
   })
 

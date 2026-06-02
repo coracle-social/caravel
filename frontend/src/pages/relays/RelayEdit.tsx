@@ -4,7 +4,7 @@ import RelayForm, { type RelayFormValues } from "@/components/RelayForm"
 import BackLink from "@/components/BackLink"
 import PageContainer from "@/components/PageContainer"
 import ResourceState from "@/components/ResourceState"
-import useMinLoading from "@/components/useMinLoading"
+import useMinLoading from "@/lib/useMinLoading"
 import { updateRelayById, useRelay } from "@/lib/hooks"
 
 export default function RelayEdit(props: { basePath?: string; title?: string }) {

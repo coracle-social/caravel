@@ -1,5 +1,8 @@
 import { createEffect, createResource, createSignal, onCleanup } from "solid-js"
-import { getProfilePicture } from "applesauce-core/helpers/profile"
+import { uniq } from "@welshman/lib"
+import type { EventStore } from "applesauce-core"
+import type { RelayPool } from "applesauce-relay"
+import { getProfilePicture, type ProfileContent } from "applesauce-core/helpers/profile"
 import { createOutboxMap, selectOptimalRelays, setFallbackRelays } from "applesauce-core/helpers/relay-selection"
 import { includeMailboxes } from "applesauce-core/observable"
 import { map, of } from "rxjs"
@@ -24,56 +27,99 @@ import {
   type Tenant,
   type UpdateRelayInput,
 } from "@/lib/api"
+import { autopayConfigured } from "@/lib/paymentMethod"
 import { account, eventStore, pool } from "@/lib/state"
+import { useNostr } from "@/lib/nostr"
 
-export function useProfilePicture(pubkey: () => string | undefined) {
-  const [picture, setPicture] = createSignal<string | undefined>()
+// Subscribes to the raw ProfileContent for a single pubkey from the event store,
+// optionally priming it over the network. Call sites project the fields they need
+// (name/display_name/nip05/picture) from the returned ProfileContent. Pass
+// { prime: false } when a parent list already batch-primes these profiles.
+export function useProfileMetadata(pubkey: () => string | undefined, opts?: { prime?: boolean }) {
+  // Safe: hooks run inside a component/root reactive scope, so useNostr resolves.
+  const nostr = useNostr()
+  const prime = opts?.prime ?? true
+  const [metadata, setMetadata] = createSignal<ProfileContent | undefined>()
 
   createEffect(() => {
     const pk = pubkey()
 
     if (!pk) {
-      setPicture(undefined)
+      setMetadata(undefined)
       return
     }
 
-    const profileSub = eventStore.profile(pk).subscribe((profile) => {
-      setPicture(getProfilePicture(profile))
-    })
-
-    const reqSub = primeProfiles([pk])
+    const profileSub = nostr.eventStore.profile(pk).subscribe(setMetadata)
+    const reqSub = prime ? primeProfiles([pk], nostr) : undefined
 
     onCleanup(() => {
       profileSub.unsubscribe()
-      reqSub.unsubscribe()
+      reqSub?.unsubscribe()
     })
   })
 
-  return picture
+  return metadata
 }
 
-export function primeProfiles(pubkeys: string[]) {
-  const uniquePubkeys = Array.from(new Set(pubkeys.filter(Boolean)))
+// Batch variant of useProfileMetadata: subscribes to a list of pubkeys, priming
+// them all in one request, and returns a Record keyed by pubkey. Call sites
+// project the fields they need from each ProfileContent.
+export function useProfileMetadataMap(pubkeys: () => string[]) {
+  const nostr = useNostr()
+  const [metadata, setMetadata] = createSignal<Record<string, ProfileContent | undefined>>({})
+
+  createEffect(() => {
+    const list = pubkeys()
+    if (!list.length) return
+
+    const reqSub = primeProfiles(list, nostr)
+    const profileSubs = list.map((pubkey) =>
+      nostr.eventStore.profile(pubkey).subscribe((profile) => {
+        setMetadata((prev) => ({ ...prev, [pubkey]: profile }))
+      }),
+    )
+
+    onCleanup(() => {
+      reqSub.unsubscribe()
+      for (const sub of profileSubs) sub.unsubscribe()
+    })
+  })
+
+  return metadata
+}
+
+export function useProfilePicture(pubkey: () => string | undefined) {
+  const md = useProfileMetadata(pubkey)
+  return () => getProfilePicture(md())
+}
+
+// Accepts an optional context so callers inside a reactive scope can thread the
+// injected eventStore/pool through; defaults to the module singletons because
+// most callers run outside reactive scope (event handlers, plain effects) where
+// useNostr() would be invalid.
+export function primeProfiles(pubkeys: string[], ctx: { eventStore: EventStore; pool: RelayPool } = { eventStore, pool }) {
+  const { eventStore: store, pool: relayPool } = ctx
+  const uniquePubkeys = uniq(pubkeys.filter(Boolean))
   if (uniquePubkeys.length === 0) {
     return { unsubscribe() {} }
   }
 
-  const seedRelays = Array.from(pool.relays.keys())
+  const seedRelays = Array.from(relayPool.relays.keys())
   const mailboxSeedSub = seedRelays.length
-    ? pool.request(seedRelays, { kinds: [10002], authors: uniquePubkeys }).subscribe((event) => {
-      eventStore.add(event)
+    ? relayPool.request(seedRelays, { kinds: [10002], authors: uniquePubkeys }).subscribe((event) => {
+      store.add(event)
     })
     : undefined
 
   const outboxMap$ = of(uniquePubkeys.map((pubkey) => ({ pubkey }))).pipe(
-    includeMailboxes(eventStore),
+    includeMailboxes(store),
     map((pointers) => (seedRelays.length > 0 ? setFallbackRelays(pointers, seedRelays) : pointers)),
     map((pointers) => selectOptimalRelays(pointers, { maxConnections: 8, maxRelaysPerUser: 3 })),
     map(createOutboxMap),
   )
 
-  const profileSub = pool.outboxSubscription(outboxMap$, { kinds: [0] }).subscribe((message) => {
-    if (message !== "EOSE") eventStore.add(message)
+  const profileSub = relayPool.outboxSubscription(outboxMap$, { kinds: [0] }).subscribe((message) => {
+    if (message !== "EOSE") store.add(message)
   })
 
   return {
@@ -136,7 +182,7 @@ export const reactivateRelayById = (id: string) => reactivateRelay(id)
 
 export async function tenantNeedsPaymentSetup(): Promise<boolean> {
   const tenant = await getTenant(account()!.pubkey)
-  return !tenant.nwc_is_set && !tenant.stripe_payment_method_id
+  return !autopayConfigured(tenant)
 }
 
 export async function getLatestOpenInvoice(): Promise<Invoice | null> {
@@ -148,3 +194,4 @@ export async function getLatestOpenInvoice(): Promise<Invoice | null> {
 }
 
 export type { Activity, Invoice, Relay, Tenant }
+export type { ProfileContent }

@@ -1,17 +1,13 @@
 import { useParams } from "@solidjs/router"
-import { createEffect, createSignal, For, onCleanup, Show } from "solid-js"
+import { For, Show } from "solid-js"
 import { getProfilePicture } from "applesauce-core/helpers/profile"
 import BackLink from "@/components/BackLink"
 import PageContainer from "@/components/PageContainer"
 import RelayListItem from "@/components/RelayListItem"
 import ResourceState from "@/components/ResourceState"
-import useMinLoading from "@/components/useMinLoading"
-import { primeProfiles, useAdminTenant, useAdminTenantRelays } from "@/lib/hooks"
-import { eventStore } from "@/lib/state"
-
-function shortenPubkey(pubkey: string) {
-  return pubkey.length <= 16 ? pubkey : `${pubkey.slice(0, 8)}...${pubkey.slice(-8)}`
-}
+import useMinLoading from "@/lib/useMinLoading"
+import { useAdminTenant, useAdminTenantRelays, useProfileMetadata } from "@/lib/hooks"
+import { shortenPubkey } from "@/lib/pubkey"
 
 export default function AdminTenantDetail() {
   const params = useParams()
@@ -19,28 +15,7 @@ export default function AdminTenantDetail() {
   const [tenant] = useAdminTenant(tenantId)
   const [relays] = useAdminTenantRelays(tenantId)
   const loading = useMinLoading(() => tenant.loading || relays.loading)
-  const [profile, setProfile] = createSignal<{ name?: string; picture?: string }>({})
-
-  createEffect(() => {
-    const pubkey = tenantId()
-    if (!pubkey) {
-      setProfile({})
-      return
-    }
-
-    const profileSub = eventStore.profile(pubkey).subscribe((metadata) => {
-      setProfile({
-        name: metadata?.name || metadata?.display_name,
-        picture: getProfilePicture(metadata),
-      })
-    })
-    const primeSub = primeProfiles([pubkey])
-
-    onCleanup(() => {
-      profileSub.unsubscribe()
-      primeSub.unsubscribe()
-    })
-  })
+  const metadata = useProfileMetadata(tenantId)
 
   const churnedLabel = () => {
     const ts = tenant()?.churned_at
@@ -53,17 +28,17 @@ export default function AdminTenantDetail() {
       <BackLink href="/admin/tenants" label="Tenants" />
       <div class="flex items-center gap-4 mb-6 py-2">
         <Show
-          when={profile().picture}
+          when={getProfilePicture(metadata())}
           fallback={
             <div class="h-14 w-14 flex-shrink-0 rounded-full bg-gray-200 flex items-center justify-center text-gray-500 text-lg">
-              {(profile().name || tenantId()).slice(0, 1).toUpperCase()}
+              {((metadata()?.name || metadata()?.display_name) || tenantId()).slice(0, 1).toUpperCase()}
             </div>
           }
         >
-          <img src={profile().picture} alt="Profile" class="h-14 w-14 flex-shrink-0 rounded-full object-cover" />
+          <img src={getProfilePicture(metadata())} alt="Profile" class="h-14 w-14 flex-shrink-0 rounded-full object-cover" />
         </Show>
         <div class="min-w-0">
-          <h1 class="text-2xl font-bold text-gray-900 truncate">{profile().name || shortenPubkey(tenantId())}</h1>
+          <h1 class="text-2xl font-bold text-gray-900 truncate">{(metadata()?.name || metadata()?.display_name) || shortenPubkey(tenantId())}</h1>
           <p class="text-xs text-gray-500 break-all">{tenantId()}</p>
         </div>
       </div>

@@ -1,3 +1,5 @@
+export const RELAY_DOMAIN = import.meta.env.VITE_RELAY_DOMAIN
+
 const SUBDOMAIN_LABEL_MAX_LEN = 63
 const RESERVED_SUBDOMAIN_LABELS = new Set(["api", "admin"])
 

@@ -7,8 +7,8 @@ import PaymentSetup from "@/components/PaymentSetup"
 import RelayForm, { type RelayFormValues } from "@/components/RelayForm"
 import { createRelayForActiveTenant, getLatestOpenInvoice, tenantNeedsPaymentSetup } from "@/lib/hooks"
 import type { Invoice } from "@/lib/api"
-import { setBillingFlowActive } from "@/lib/billing"
-import { refetchBilling } from "@/lib/state"
+import { decidePostPaidFlow } from "@/lib/relayPlanFlow"
+import { refetchBilling, setBillingFlowActive } from "@/lib/state"
 
 export default function RelayNew() {
   const navigate = useNavigate()
@@ -38,18 +38,21 @@ export default function RelayNew() {
       void refetchBilling()
 
       if (paid) {
+        // Materialize the invoice for this change (no collection, no DM) so we
+        // can prompt the tenant to pay it directly. listTenantInvoices reconciles
+        // first, so a just-created invoice is visible here.
         const needsSetup = await tenantNeedsPaymentSetup()
-        if (needsSetup) {
-          // Materialize the invoice for this change (no collection, no DM) so we
-          // can prompt the tenant to pay it directly. listTenantInvoices reconciles
-          // first, so a just-created invoice is visible here.
-          const invoice = await getLatestOpenInvoice()
-          if (invoice) {
-            setPendingInvoice(invoice)
+        const invoice = needsSetup ? await getLatestOpenInvoice() : null
+        const decision = decidePostPaidFlow({ needsSetup, invoice })
+        switch (decision.kind) {
+          case "pay_invoice":
+            setPendingInvoice(decision.invoice)
             return
-          }
-          setPaymentSetupOpen(true)
-          return
+          case "setup":
+            setPaymentSetupOpen(true)
+            return
+          case "navigate":
+            break
         }
       }
 

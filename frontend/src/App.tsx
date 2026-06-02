@@ -14,7 +14,8 @@ import AdminTenantDetail from "@/pages/admin/AdminTenantDetail"
 import AdminRelayList from "@/pages/admin/AdminRelayList"
 import AdminRelayDetail from "@/pages/admin/AdminRelayDetail"
 import AdminRelayEdit from "@/pages/admin/AdminRelayEdit"
-import { identity } from "@/lib/state"
+import { account, eventStore, identity, pool } from "@/lib/state"
+import { NostrProvider } from "@/lib/nostr"
 
 function Layout(props: { children?: any }) {
   const location = useLocation()
@@ -58,18 +59,20 @@ export default function App() {
   const requireTenant = (Page: Component) => requireCondition(Page, () => Boolean(identity()))
 
   return (
-    <Router root={Layout}>
-      <Route path="/" component={Home} />
-      <Route path="/relays" component={requireTenant(RelayList)} />
-      <Route path="/relays/new" component={requireTenant(RelayNew)} />
-      <Route path="/relays/:id" component={requireTenant(RelayDetail)} />
-      <Route path="/relays/:id/edit" component={requireTenant(RelayEdit)} />
-      <Route path="/account" component={requireTenant(Account)} />
-      <Route path="/admin/tenants" component={requireAdmin(AdminTenantList)} />
-      <Route path="/admin/tenants/:id" component={requireAdmin(AdminTenantDetail)} />
-      <Route path="/admin/relays" component={requireAdmin(AdminRelayList)} />
-      <Route path="/admin/relays/:id" component={requireAdmin(AdminRelayDetail)} />
-      <Route path="/admin/relays/:id/edit" component={requireAdmin(AdminRelayEdit)} />
-    </Router>
+    <NostrProvider value={{ account, eventStore, pool }}>
+      <Router root={Layout}>
+        <Route path="/" component={Home} />
+        <Route path="/relays" component={requireTenant(RelayList)} />
+        <Route path="/relays/new" component={requireTenant(RelayNew)} />
+        <Route path="/relays/:id" component={requireTenant(RelayDetail)} />
+        <Route path="/relays/:id/edit" component={requireTenant(RelayEdit)} />
+        <Route path="/account" component={requireTenant(Account)} />
+        <Route path="/admin/tenants" component={requireAdmin(AdminTenantList)} />
+        <Route path="/admin/tenants/:id" component={requireAdmin(AdminTenantDetail)} />
+        <Route path="/admin/relays" component={requireAdmin(AdminRelayList)} />
+        <Route path="/admin/relays/:id" component={requireAdmin(AdminRelayDetail)} />
+        <Route path="/admin/relays/:id/edit" component={requireAdmin(AdminRelayEdit)} />
+      </Router>
+    </NostrProvider>
   )
 }

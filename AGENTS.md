@@ -33,6 +33,10 @@ Avoid passing `&mut` to functions. The performance improvement often comes at th
 
 Don't be overly DRY. Deep call trees are harder to read; factoring functions into many tiny pieces means that function boundaries are defined less by the domain or the responsibility of a given piece of code than by coincidental similarity. New functions should be created when 1. they represent a different concern that is the responsibility of a different part of the codebase, 2. the contained logic is repeated 3+ times, or 3. the contents of the function are complex and naming them makes the logical flow of the code easier to follow.
 
+## Typescript
+
+Don't add re-export shims to preserve old import paths. When something moves, import it from its new canonical location at every call site and update all the imports. Each symbol has exactly one place it's exported from.
+
 ## Verification
 
 Check justfile and frontend/package.json for common commands for linting/building.

@@ -105,6 +105,12 @@ export type Tenant = {
   churned_at: number | null
 }
 
+// Internal aliases derived from the wire shapes below — pure naming, no payload
+// change. InvoiceMethod is the non-null members of Invoice.method; InvoiceStatus
+// is the lifecycle status derived from the paid_at/voided_at timestamps.
+export type InvoiceMethod = "nwc" | "stripe" | "oob"
+export type InvoiceStatus = "open" | "paid" | "void"
+
 export type Invoice = {
   id: string
   tenant_pubkey: string
@@ -114,7 +120,7 @@ export type Invoice = {
   created_at: number
   paid_at: number | null
   voided_at: number | null
-  method: "nwc" | "stripe" | "oob" | null
+  method: InvoiceMethod | null
 }
 
 export type InvoiceItem = {
@@ -142,7 +148,7 @@ export type Bolt11 = {
 // The backend models an invoice's lifecycle as timestamps rather than a status
 // field, so derive the display status from them: paid once paid_at is set, void
 // once voided_at is set, otherwise still open.
-export function invoiceStatus(invoice: Pick<Invoice, "paid_at" | "voided_at">): "open" | "paid" | "void" {
+export function invoiceStatus(invoice: Pick<Invoice, "paid_at" | "voided_at">): InvoiceStatus {
   if (invoice.paid_at != null) return "paid"
   if (invoice.voided_at != null) return "void"
   return "open"

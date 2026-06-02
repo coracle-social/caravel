@@ -1,11 +1,8 @@
-import { createMemo, createSignal } from "solid-js"
+import { createMemo } from "solid-js"
+import { indexBy } from "@welshman/lib"
 import { invoiceStatus, type Invoice, type Tenant } from "@/lib/api"
+import { autopayConfigured, cardState, nwcState } from "@/lib/paymentMethod"
 import { billingDraftInvoice, billingInvoices, billingRelays, billingTenant, plans, refetchBilling } from "@/lib/state"
-
-// Set while the create/upgrade flow drives its own payment/setup modals, so the
-// shared prompt surface doesn't double-prompt for the same invoice. Cleared on
-// every close path of that flow.
-export const [billingFlowActive, setBillingFlowActive] = createSignal(false)
 
 export type BillingPromptKind = "churned" | "pay_invoice" | "update_method" | "setup_autopay"
 
@@ -43,7 +40,7 @@ export function useBillingStatus() {
   const balance = () => openInvoices().reduce((sum, inv) => sum + inv.amount, 0)
 
   const hasPaidSubscription = createMemo(() => {
-    const planById = new Map(plans().map((p) => [p.id, p]))
+    const planById = indexBy((p) => p.id, plans())
     return (billingRelays() ?? []).some((relay) => {
       const plan = planById.get(relay.plan_id)
       return Boolean(plan && plan.amount > 0 && relay.status === "active")
@@ -76,8 +73,10 @@ export function activeBillingPrompt(
     }
   }
 
-  const autopayConfigured = tenant.nwc_is_set || Boolean(tenant.stripe_payment_method_id)
-  const methodError = tenant.nwc_error ?? tenant.stripe_error
+  const hasAutopay = autopayConfigured(tenant)
+  const nwc = nwcState(tenant)
+  const card = cardState(tenant)
+  const methodError = nwc.kind === "error" || card.kind === "error"
   const suppressInline = opts?.suppressInline ?? false
 
   // Any open invoice gets a "Pay now" surface, even with autopay configured:
@@ -96,13 +95,13 @@ export function activeBillingPrompt(
     return {
       kind: "update_method",
       severity: "warn",
-      message: tenant.nwc_error
+      message: nwc.kind === "error"
         ? "Your Lightning wallet couldn't be charged. Update your payment method."
         : "Your card couldn't be charged. Update your payment method.",
     }
   }
 
-  if (s.hasPaidSubscription && !autopayConfigured && !s.openInvoice && !suppressInline) {
+  if (s.hasPaidSubscription && !hasAutopay && !s.openInvoice && !suppressInline) {
     return {
       kind: "setup_autopay",
       severity: "info",
@@ -134,9 +133,9 @@ export function accountStatus(s: BillingStatusSnapshot): AccountStatus {
   if (!tenant) return "inactive"
   if (tenant.churned_at) return "delinquent"
 
-  const autopayConfigured = tenant.nwc_is_set || Boolean(tenant.stripe_payment_method_id)
+  const hasAutopay = autopayConfigured(tenant)
   const hasOpenInvoice = Boolean(s.openInvoice)
 
-  if (s.hasPaidSubscription || hasOpenInvoice || autopayConfigured) return "active"
+  if (s.hasPaidSubscription || hasOpenInvoice || hasAutopay) return "active"
   return "inactive"
 }

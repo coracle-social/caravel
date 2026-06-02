@@ -1,12 +1,17 @@
-import { createEffect, createResource, createSignal, For, Show } from "solid-js"
+import { createEffect, createResource, createSignal, Show } from "solid-js"
 import QRCode from "qrcode"
 import Modal from "@/components/Modal"
 import PaymentSetup from "@/components/PaymentSetup"
 import { CardSetupBody } from "@/components/PaymentSetupShell"
-import { setToastMessage } from "@/components/Toast"
+import InvoiceItemsList from "@/components/payment/InvoiceItemsList"
+import LightningPayBody from "@/components/payment/LightningPayBody"
+import { setToastMessage } from "@/lib/state"
+import { copyToClipboard } from "@/lib/clipboard"
 import { useCardPortal } from "@/lib/usePaymentSetup"
 import { getInvoice, getInvoiceBolt11, listInvoiceItems, type Invoice } from "@/lib/api"
+import { autopayConfigured } from "@/lib/paymentMethod"
 import { billingTenant } from "@/lib/state"
+import { formatUsd, formatPeriod } from "@/lib/format"
 
 type PayStatus = "idle" | "loading" | "success" | "error"
 type Bolt11Status = "idle" | "loading" | "ready" | "error"
@@ -39,9 +44,9 @@ export default function PaymentDialog(props: PaymentDialogProps) {
   // file we retry collection on this invoice automatically.
   const card = useCardPortal()
 
-  const autopayConfigured = () => {
+  const hasAutopay = () => {
     const t = billingTenant()
-    return Boolean(t?.nwc_is_set || t?.stripe_payment_method_id)
+    return t ? autopayConfigured(t) : false
   }
 
   async function loadBolt11() {
@@ -75,7 +80,7 @@ export default function PaymentDialog(props: PaymentDialogProps) {
   })
 
   function copyBolt11() {
-    void navigator.clipboard.writeText(bolt11())
+    void copyToClipboard(bolt11(), { successMessage: "Invoice copied" })
   }
 
   async function checkPayment() {
@@ -105,15 +110,9 @@ export default function PaymentDialog(props: PaymentDialogProps) {
     props.onClose()
   }
 
-  const amountLabel = () => `$${(props.invoice.amount / 100).toFixed(2)}`
+  const amountLabel = () => formatUsd(props.invoice.amount)
 
-  const periodLabel = () => {
-    const { period_start, period_end } = props.invoice
-    if (!period_start || !period_end) return ""
-    const start = new Date(period_start * 1000).toLocaleDateString()
-    const end = new Date(period_end * 1000).toLocaleDateString()
-    return `${start} – ${end}`
-  }
+  const periodLabel = () => formatPeriod(props.invoice.period_start, props.invoice.period_end)
 
   return (
     <>
@@ -154,19 +153,7 @@ export default function PaymentDialog(props: PaymentDialogProps) {
             <div class="w-full space-y-4">
               {/* What's being paid for — the invoice's actual line items */}
               <Show when={(items() ?? []).length > 0}>
-                <div class="rounded-lg border border-gray-200 bg-gray-50 p-3">
-                  <p class="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">On this invoice</p>
-                  <ul class="space-y-1.5">
-                    <For each={items()}>
-                      {(item) => (
-                        <li class="flex items-center justify-between gap-3 text-sm">
-                          <span class="truncate text-gray-900">{item.description}</span>
-                          <span class="flex-shrink-0 text-xs text-gray-500">${(item.amount / 100).toFixed(2)}</span>
-                        </li>
-                      )}
-                    </For>
-                  </ul>
-                </div>
+                <InvoiceItemsList items={items() ?? []} />
               </Show>
 
               {/* Method switcher */}
@@ -189,49 +176,14 @@ export default function PaymentDialog(props: PaymentDialogProps) {
 
               {/* Lightning: pay this invoice via a bolt11 QR */}
               <Show when={payMethod() === "lightning"}>
-                <Show when={bolt11Status() === "idle" || bolt11Status() === "loading"}>
-                  <div class="flex items-center justify-center py-12 text-sm text-gray-400">Generating invoice...</div>
-                </Show>
-                <Show when={bolt11Status() === "error"}>
-                  <div class="rounded-lg border border-red-200 bg-red-50 p-4">
-                    <p class="text-sm font-medium text-red-700">Unable to generate invoice</p>
-                    <p class="mt-1 text-xs text-red-600 wrap-break-word">{bolt11Error()}</p>
-                    <button
-                      type="button"
-                      onClick={() => void loadBolt11()}
-                      class="mt-3 inline-flex items-center rounded-lg bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-700"
-                    >
-                      Retry
-                    </button>
-                  </div>
-                </Show>
-                <Show when={bolt11Status() === "ready"}>
-                  <img src={qrDataUrl()} alt="Lightning invoice QR code" class="mx-auto rounded-lg" />
-                  <Show when={bolt11()}>
-                    <div class="flex rounded-lg border border-gray-300">
-                      <input
-                        type="text"
-                        readOnly
-                        value={bolt11()}
-                        class="min-w-0 flex-1 rounded-l-lg border-0 px-3 py-2 text-xs text-gray-500 bg-transparent focus:outline-none"
-                      />
-                      <button
-                        type="button"
-                        class="flex items-center px-3 text-gray-400 hover:text-gray-700"
-                        onClick={copyBolt11}
-                        title="Copy invoice"
-                      >
-                        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                          <rect x="9" y="9" width="13" height="13" rx="2" />
-                          <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
-                        </svg>
-                      </button>
-                    </div>
-                  </Show>
-                  <p class="text-xs text-gray-500 text-center">
-                    Scan this QR code with a Bitcoin Lightning wallet to pay.
-                  </p>
-                </Show>
+                <LightningPayBody
+                  bolt11Status={bolt11Status}
+                  bolt11={bolt11}
+                  qrDataUrl={qrDataUrl}
+                  bolt11Error={bolt11Error}
+                  onRetry={() => void loadBolt11()}
+                  onCopy={copyBolt11}
+                />
               </Show>
 
               {/* Card: redirect to the Stripe billing portal */}
@@ -249,7 +201,7 @@ export default function PaymentDialog(props: PaymentDialogProps) {
             </div>
             <p class="text-sm font-medium text-gray-900">Payment confirmed!</p>
             <p class="text-xs text-gray-500">Thank you. Your account is up to date.</p>
-            <Show when={!autopayConfigured()}>
+            <Show when={!hasAutopay()}>
               <button
                 type="button"
                 onClick={() => setShowPaymentSetup(true)}

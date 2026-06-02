@@ -5,11 +5,17 @@ import { PasswordSigner } from "applesauce-signers"
 import QrScanner from "qr-scanner"
 import QRCode from "qrcode"
 import { accountManager, ensureSessionTenant, identity, PLATFORM_NAME } from "@/lib/state"
-import useMinLoading from "@/components/useMinLoading"
+import { copyToClipboard } from "@/lib/clipboard"
+import { validateBunkerUri } from "@/lib/validation"
+import { decideKeyLogin, initialLoginTab, normalizeBunkerUrl, type Tab } from "@/lib/loginInput"
+import useMinLoading from "@/lib/useMinLoading"
+import LoginTabsScreen from "@/components/login/LoginTabsScreen"
+import LoginSignerScreen from "@/components/login/LoginSignerScreen"
+import LoginKeyScreen from "@/components/login/LoginKeyScreen"
+import QrScannerOverlay from "@/components/login/QrScannerOverlay"
 
 const NIP46_RELAYS = ['wss://bucket.coracle.social', 'wss://ephemeral.snowflare.cc']
 
-type Tab = "nip07" | "nip46" | "key"
 type Screen = "tabs" | "nip46" | "key"
 type SignerTab = "qr" | "paste"
 type KeyTab = "plaintext" | "encrypted"
@@ -20,24 +26,6 @@ type LoginProps = {
   onAuthenticated?: () => void | Promise<void>
 }
 
-function normalizeBunkerUrl(value: string): string {
-  const trimmed = value.trim()
-  if (!trimmed) return ""
-
-  if (trimmed.startsWith("nostrconnect://")) {
-    const url = new URL(trimmed)
-    const remote = url.host || url.pathname.replace(/^\/+/, "")
-    const relays = url.searchParams.getAll("relay")
-    const secret = url.searchParams.get("secret")
-    const params = new URLSearchParams()
-    for (const relay of relays) params.append("relay", relay)
-    if (secret) params.set("secret", secret)
-    return `bunker://${remote}?${params.toString()}`
-  }
-
-  return trimmed
-}
-
 async function loadNostrConnectSigner() {
   return import("applesauce-signers").then((m) => m.NostrConnectSigner)
 }
@@ -46,7 +34,7 @@ type LoginPageProps = LoginProps & Partial<RouteSectionProps<unknown>>
 
 export default function Login(props: LoginPageProps = {}) {
   const navigate = useNavigate()
-  const [tab, setTab] = createSignal<Tab>(window.nostr ? "nip07" : "nip46")
+  const [tab, setTab] = createSignal<Tab>(initialLoginTab(Boolean(window.nostr)))
   const [rawLoading, setRawLoading] = createSignal(false)
   const loading = useMinLoading(() => rawLoading())
   const [error, setError] = createSignal("")
@@ -78,23 +66,29 @@ export default function Login(props: LoginPageProps = {}) {
     await props.onAuthenticated?.()
   }
 
-  async function loginWithNip07() {
+  // Shared effect wrapper for the four login handlers: clear the error, hold the
+  // loading flag for the duration, and surface any thrown error with a per-handler
+  // fallback message. The signer construction / completeLogin lives in `fn`.
+  async function runLogin(fn: () => Promise<void>, fallbackMessage: string) {
     setError("")
     setRawLoading(true)
     try {
-      await completeLogin(await ExtensionAccount.fromExtension())
+      await fn()
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to login with extension")
+      setError(e instanceof Error ? e.message : fallbackMessage)
     } finally {
       setRawLoading(false)
     }
   }
 
-  async function startNostrConnect() {
-    setError("")
-    setRawLoading(true)
+  function loginWithNip07() {
+    return runLogin(async () => {
+      await completeLogin(await ExtensionAccount.fromExtension())
+    }, "Failed to login with extension")
+  }
 
-    try {
+  function startNostrConnect() {
+    return runLogin(async () => {
       const NostrConnectSigner = await loadNostrConnectSigner()
       const signer = new NostrConnectSigner({ relays: NIP46_RELAYS })
       const uri = signer.getNostrConnectURI({
@@ -115,54 +109,43 @@ export default function Login(props: LoginPageProps = {}) {
       } finally {
         window.clearTimeout(timeout)
       }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to connect signer")
-    } finally {
-      setRawLoading(false)
-    }
+    }, "Failed to connect signer")
   }
 
-  async function loginWithBunker() {
+  function loginWithBunker() {
     setError("")
-    setRawLoading(true)
-    try {
+    const validationError = validateBunkerUri(bunkerUrl())
+    if (validationError) {
+      setError(validationError)
+      return
+    }
+    return runLogin(async () => {
       const uri = normalizeBunkerUrl(bunkerUrl())
       const NostrConnectSigner = await loadNostrConnectSigner()
       const signer = await NostrConnectSigner.fromBunkerURI(uri)
       const pubkey = await signer.getPublicKey()
       const account = new NostrConnectAccount(pubkey, signer)
       await completeLogin(account)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Invalid bunker URL")
-    } finally {
-      setRawLoading(false)
-    }
+    }, "Invalid bunker URL")
   }
 
-  async function loginWithKeyMaterial() {
-    setError("")
-    setRawLoading(true)
-    try {
-      if (ncryptsecValue().trim()) {
-        if (!password().trim()) {
-          throw new Error("Password is required for ncryptsec")
+  function loginWithKeyMaterial() {
+    return runLogin(async () => {
+      const plan = decideKeyLogin({ ncryptsec: ncryptsecValue(), nsec: nsecValue(), password: password() })
+      switch (plan.kind) {
+        case "error":
+          throw new Error(plan.message)
+        case "ncryptsec": {
+          const signer = await PasswordSigner.fromNcryptsec(plan.ncryptsec, plan.password)
+          const pubkey = await signer.getPublicKey()
+          await completeLogin(new PasswordAccount(pubkey, signer))
+          break
         }
-        const signer = await PasswordSigner.fromNcryptsec(ncryptsecValue().trim(), password())
-        const pubkey = await signer.getPublicKey()
-        const account = new PasswordAccount(pubkey, signer)
-        await completeLogin(account)
-        return
+        case "nsec":
+          await completeLogin(PrivateKeyAccount.fromKey(plan.key))
+          break
       }
-
-      const key = nsecValue().trim()
-      if (!key) throw new Error("Enter an nsec or ncryptsec key")
-      const account = PrivateKeyAccount.fromKey(key)
-      await completeLogin(account)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Invalid key")
-    } finally {
-      setRawLoading(false)
-    }
+    }, "Invalid key")
   }
 
   function closeScanner() {
@@ -203,7 +186,7 @@ export default function Login(props: LoginPageProps = {}) {
   }
 
   function copyUri() {
-    void navigator.clipboard.writeText(nostrConnectUri())
+    void copyToClipboard(nostrConnectUri(), { successMessage: "Link copied" })
   }
 
   createEffect(() => {
@@ -261,219 +244,47 @@ export default function Login(props: LoginPageProps = {}) {
 
             <div class="rounded-xl border border-gray-200 bg-white/80 p-6">
               <Show when={screen() === "tabs"}>
-                <h2 class="text-lg font-semibold text-gray-900">Log in / Sign up</h2>
-                <p class="mt-2 text-xs text-gray-500">
-                  Use any Nostr signer method. New users are automatically onboarded.
-                </p>
-                <div class="mt-6 space-y-4">
-                  <div class="flex gap-2 border border-gray-200 rounded-lg p-1">
-                    <button
-                      type="button"
-                      class={`flex-1 rounded-md px-3 py-2 text-sm ${tab() === "nip07" ? "bg-gray-900 text-white" : "text-gray-700"}`}
-                      onClick={() => setTab("nip07")}
-                      disabled={!window.nostr}
-                    >
-                      Extension
-                    </button>
-                    <button
-                      type="button"
-                      class={`flex-1 rounded-md px-3 py-2 text-sm ${tab() === "nip46" ? "bg-gray-900 text-white" : "text-gray-700"}`}
-                      onClick={() => setTab("nip46")}
-                    >
-                      Signer
-                    </button>
-                    <button
-                      type="button"
-                      class={`flex-1 rounded-md px-3 py-2 text-sm ${tab() === "key" ? "bg-gray-900 text-white" : "text-gray-700"}`}
-                      onClick={() => setTab("key")}
-                    >
-                      Key
-                    </button>
-                  </div>
-
-                  <Show when={tab() === "nip07"}>
-                    <button
-                      type="button"
-                      class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium disabled:opacity-50"
-                      disabled={!window.nostr || loading()}
-                      onClick={loginWithNip07}
-                    >
-                      {loading() ? "Connecting..." : <>Continue with extension <svg class="inline-block w-4 h-4 ml-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg></>}
-                    </button>
-                  </Show>
-
-                  <Show when={tab() === "nip46"}>
-                    <button
-                      type="button"
-                      class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium"
-                      onClick={enterSignerScreen}
-                    >
-                      Continue with signer <svg class="inline-block w-4 h-4 ml-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
-                    </button>
-                  </Show>
-
-                  <Show when={tab() === "key"}>
-                    <button
-                      type="button"
-                      class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium"
-                      onClick={() => { setError(""); setScreen("key") }}
-                    >
-                      Continue with key <svg class="inline-block w-4 h-4 ml-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
-                    </button>
-                  </Show>
-                </div>
+                <LoginTabsScreen
+                  tab={tab}
+                  setTab={setTab}
+                  loading={loading}
+                  hasExtension={Boolean(window.nostr)}
+                  onContinueExtension={loginWithNip07}
+                  onContinueSigner={enterSignerScreen}
+                  onContinueKey={() => { setError(""); setScreen("key") }}
+                />
               </Show>
 
               <Show when={screen() === "nip46"}>
-                <button
-                  type="button"
-                  class="flex items-center gap-1 text-sm text-gray-500 hover:text-gray-900"
-                  onClick={() => { setError(""); setScreen("tabs") }}
-                >
-                  <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
-                  Back
-                </button>
-                <h2 class="mt-3 text-lg font-semibold text-gray-900">Log in with signer</h2>
-                <div class="mt-4 space-y-4">
-                  <div class="flex gap-2 border border-gray-200 rounded-lg p-1">
-                    <button
-                      type="button"
-                      class={`flex-1 rounded-md px-3 py-2 text-sm ${signerTab() === "qr" ? "bg-gray-900 text-white" : "text-gray-700"}`}
-                      onClick={() => setSignerTab("qr")}
-                    >
-                      Use QR Code
-                    </button>
-                    <button
-                      type="button"
-                      class={`flex-1 rounded-md px-3 py-2 text-sm ${signerTab() === "paste" ? "bg-gray-900 text-white" : "text-gray-700"}`}
-                      onClick={() => setSignerTab("paste")}
-                    >
-                      Paste Link
-                    </button>
-                  </div>
-
-                  <Show when={signerTab() === "qr"}>
-                    <Show when={qrDataUrl()} fallback={
-                      <div class="flex items-center justify-center py-8 text-sm text-gray-400">
-                        {loading() ? "Generating..." : "Loading QR code..."}
-                      </div>
-                    }>
-                      <img src={qrDataUrl()} alt="Nostrconnect QR code" class="mx-auto rounded-lg" />
-                    </Show>
-                    <div class="flex rounded-lg border border-gray-300">
-                      <input
-                        type="text"
-                        readOnly
-                        value={nostrConnectUri()}
-                        class="min-w-0 flex-1 rounded-l-lg border-0 px-3 py-2 text-xs text-gray-500 bg-transparent focus:outline-none"
-                      />
-                      <button
-                        type="button"
-                        class="flex items-center px-3 text-gray-400 hover:text-gray-700"
-                        onClick={copyUri}
-                        title="Copy link"
-                      >
-                        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
-                      </button>
-                    </div>
-                  </Show>
-
-                  <Show when={signerTab() === "paste"}>
-                    <div class="flex rounded-lg border border-gray-300">
-                      <input
-                        value={bunkerUrl()}
-                        onInput={(e) => setBunkerUrl(e.currentTarget.value)}
-                        placeholder="bunker://..."
-                        class="min-w-0 flex-1 rounded-l-lg border-0 px-3 py-2 text-sm bg-transparent focus:outline-none"
-                      />
-                      <button
-                        type="button"
-                        class="flex items-center px-3 text-gray-400 hover:text-gray-700"
-                        onClick={openScanner}
-                        title="Scan QR code"
-                      >
-                        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
-                      </button>
-                    </div>
-                    <button
-                      type="button"
-                      class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium disabled:opacity-50"
-                      disabled={loading() || !bunkerUrl().trim()}
-                      onClick={loginWithBunker}
-                    >
-                      Connect to Signer
-                    </button>
-                  </Show>
-                </div>
+                <LoginSignerScreen
+                  signerTab={signerTab}
+                  setSignerTab={setSignerTab}
+                  qrDataUrl={qrDataUrl}
+                  nostrConnectUri={nostrConnectUri}
+                  bunkerUrl={bunkerUrl}
+                  setBunkerUrl={setBunkerUrl}
+                  loading={loading}
+                  onBack={() => { setError(""); setScreen("tabs") }}
+                  onCopyUri={copyUri}
+                  onScan={openScanner}
+                  onConnectBunker={loginWithBunker}
+                />
               </Show>
 
               <Show when={screen() === "key"}>
-                <button
-                  type="button"
-                  class="flex items-center gap-1 text-sm text-gray-500 hover:text-gray-900"
-                  onClick={() => { setError(""); setScreen("tabs") }}
-                >
-                  <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
-                  Back
-                </button>
-                <h2 class="mt-3 text-lg font-semibold text-gray-900">Log in with key</h2>
-                <div class="mt-4 space-y-4">
-                  <div class="flex gap-2 border border-gray-200 rounded-lg p-1">
-                    <button
-                      type="button"
-                      class={`flex-1 rounded-md px-3 py-2 text-sm ${keyTab() === "plaintext" ? "bg-gray-900 text-white" : "text-gray-700"}`}
-                      onClick={() => setKeyTab("plaintext")}
-                    >
-                      Plaintext
-                    </button>
-                    <button
-                      type="button"
-                      class={`flex-1 rounded-md px-3 py-2 text-sm ${keyTab() === "encrypted" ? "bg-gray-900 text-white" : "text-gray-700"}`}
-                      onClick={() => setKeyTab("encrypted")}
-                    >
-                      Encrypted
-                    </button>
-                  </div>
-
-                  <form
-                    class="space-y-3"
-                    onSubmit={(e) => {
-                      e.preventDefault()
-                      void loginWithKeyMaterial()
-                    }}
-                  >
-                    <Show when={keyTab() === "plaintext"}>
-                      <input
-                        value={nsecValue()}
-                        onInput={(e) => setNsecValue(e.currentTarget.value)}
-                        placeholder="nsec1..."
-                        class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
-                      />
-                    </Show>
-                    <Show when={keyTab() === "encrypted"}>
-                      <input
-                        value={ncryptsecValue()}
-                        onInput={(e) => setNcryptsecValue(e.currentTarget.value)}
-                        placeholder="ncryptsec1..."
-                        class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
-                      />
-                      <input
-                        type="password"
-                        value={password()}
-                        onInput={(e) => setPassword(e.currentTarget.value)}
-                        placeholder="Password"
-                        class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
-                      />
-                    </Show>
-                    <button
-                      type="submit"
-                      class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium disabled:opacity-50"
-                      disabled={loading()}
-                    >
-                      Log in
-                    </button>
-                  </form>
-                </div>
+                <LoginKeyScreen
+                  keyTab={keyTab}
+                  setKeyTab={setKeyTab}
+                  nsecValue={nsecValue}
+                  setNsecValue={setNsecValue}
+                  ncryptsecValue={ncryptsecValue}
+                  setNcryptsecValue={setNcryptsecValue}
+                  password={password}
+                  setPassword={setPassword}
+                  loading={loading}
+                  onBack={() => { setError(""); setScreen("tabs") }}
+                  onSubmit={() => void loginWithKeyMaterial()}
+                />
               </Show>
 
               <Show when={error()}>
@@ -487,19 +298,7 @@ export default function Login(props: LoginPageProps = {}) {
         </p>
       </div>
 
-      <Show when={showScanner()}>
-        <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6" onClick={closeScanner}>
-          <div class="relative w-full max-w-sm rounded-2xl bg-white p-4 shadow-xl" onClick={(e) => e.stopPropagation()}>
-            <div class="flex items-center justify-between mb-3">
-              <h3 class="text-sm font-semibold text-gray-900">Scan QR Code</h3>
-              <button type="button" class="text-gray-400 hover:text-gray-700" onClick={closeScanner}>
-                <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
-              </button>
-            </div>
-            <video ref={scannerVideo} class="w-full rounded-lg" />
-          </div>
-        </div>
-      </Show>
+      <QrScannerOverlay open={showScanner()} onClose={closeScanner} videoRef={(el) => { scannerVideo = el }} />
     </div>
   )
 }

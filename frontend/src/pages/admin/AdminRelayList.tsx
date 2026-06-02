@@ -1,10 +1,10 @@
-import Fuse from "fuse.js"
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js"
+import { fuzzySearch } from "@/lib/search"
 import PageContainer from "@/components/PageContainer"
 import RelayListItem from "@/components/RelayListItem"
 import ResourceState from "@/components/ResourceState"
 import SearchInput from "@/components/SearchInput"
-import useMinLoading from "@/components/useMinLoading"
+import useMinLoading from "@/lib/useMinLoading"
 import { primeProfiles, useAdminRelays } from "@/lib/hooks"
 
 export default function AdminRelayList() {
@@ -25,7 +25,7 @@ export default function AdminRelayList() {
     const list = relays() ?? []
     const q = query().trim()
     if (!q) return list
-    return new Fuse(list, { keys: ["info_name", "subdomain", "tenant_pubkey"], threshold: 0.35, ignoreLocation: true }).search(q).map(r => r.item)
+    return fuzzySearch(list, ["info_name", "subdomain", "tenant_pubkey"], q)
   })
 
   return (

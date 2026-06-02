@@ -131,7 +131,15 @@ pub async fn get_invoice(invoice_id: &str) -> Result<Option<Invoice>> {
     )
 }
 
-pub async fn list_invoices(tenant_pubkey: &str) -> Result<Vec<Invoice>> {
+pub async fn list_invoices() -> Result<Vec<Invoice>> {
+    Ok(
+        sqlx::query_as::<_, Invoice>("SELECT * FROM invoice ORDER BY created_at DESC")
+            .fetch_all(pool())
+            .await?,
+    )
+}
+
+pub async fn list_invoices_for_tenant(tenant_pubkey: &str) -> Result<Vec<Invoice>> {
     Ok(sqlx::query_as::<_, Invoice>(
         "SELECT * FROM invoice WHERE tenant_pubkey = ? ORDER BY created_at DESC",
     )

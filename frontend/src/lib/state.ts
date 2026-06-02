@@ -25,7 +25,7 @@ export type EventSigner = {
   signEvent(event: UnsignedEvent): Promise<SignedEvent>
 }
 
-export const PLATFORM_NAME = import.meta.env.VITE_PLATFORM_NAME || "Caravel"
+export const PLATFORM_NAME = import.meta.env.VITE_PLATFORM_NAME
 
 export const eventStore = new EventStore()
 export const pool = new RelayPool()

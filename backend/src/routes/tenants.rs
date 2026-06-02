@@ -174,7 +174,9 @@ pub async fn list_tenant_invoices(
         .await
         .map_err(internal)?;
 
-    let invoices = query::list_invoices(&pubkey).await.map_err(internal)?;
+    let invoices = query::list_invoices_for_tenant(&pubkey)
+        .await
+        .map_err(internal)?;
 
     ok(invoices)
 }

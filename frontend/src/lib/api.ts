@@ -285,6 +285,10 @@ export function listRelays() {
   return callApi<undefined, Relay[]>("GET", "/relays")
 }
 
+export function listInvoices() {
+  return callApi<undefined, Invoice[]>("GET", "/invoices")
+}
+
 export function getRelay(id: string) {
   return callApi<undefined, Relay>("GET", `/relays/${id}`)
 }

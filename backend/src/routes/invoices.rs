@@ -6,6 +6,15 @@ use crate::api::{Api, AuthedPubkey};
 use crate::query;
 use crate::web::{ApiResult, internal, not_found, ok};
 
+pub async fn list_invoices(
+    State(api): State<Arc<Api>>,
+    AuthedPubkey(auth): AuthedPubkey,
+) -> ApiResult {
+    api.require_admin(&auth)?;
+
+    ok(query::list_invoices().await.map_err(internal)?)
+}
+
 pub async fn get_invoice(
     State(api): State<Arc<Api>>,
     AuthedPubkey(auth): AuthedPubkey,

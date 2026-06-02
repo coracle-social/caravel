@@ -32,7 +32,7 @@ use crate::models::{Relay, Tenant};
 use crate::query;
 use crate::robot::Robot;
 use crate::routes::identity::get_identity;
-use crate::routes::invoices::{get_invoice, get_invoice_bolt11, list_invoice_items};
+use crate::routes::invoices::{get_invoice, get_invoice_bolt11, list_invoice_items, list_invoices};
 use crate::routes::plans::{get_plan, list_plans};
 use crate::routes::relays::{
     create_relay, deactivate_relay, get_relay, list_relay_activity, list_relay_members,
@@ -87,6 +87,7 @@ impl Api {
             .route("/relays/:id/activity", get(list_relay_activity))
             .route("/relays/:id/deactivate", post(deactivate_relay))
             .route("/relays/:id/reactivate", post(reactivate_relay))
+            .route("/invoices", get(list_invoices))
             .route("/invoices/:id", get(get_invoice))
             .route("/invoices/:id/bolt11", get(get_invoice_bolt11))
             .route("/invoices/:id/items", get(list_invoice_items))

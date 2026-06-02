@@ -14,6 +14,8 @@ import AdminTenantDetail from "@/pages/admin/AdminTenantDetail"
 import AdminRelayList from "@/pages/admin/AdminRelayList"
 import AdminRelayDetail from "@/pages/admin/AdminRelayDetail"
 import AdminRelayEdit from "@/pages/admin/AdminRelayEdit"
+import AdminInvoiceList from "@/pages/admin/AdminInvoiceList"
+import AdminInvoiceDetail from "@/pages/admin/AdminInvoiceDetail"
 import { account, eventStore, identity, pool } from "@/lib/state"
 import { NostrProvider } from "@/lib/nostr"
 
@@ -72,6 +74,8 @@ export default function App() {
         <Route path="/admin/relays" component={requireAdmin(AdminRelayList)} />
         <Route path="/admin/relays/:id" component={requireAdmin(AdminRelayDetail)} />
         <Route path="/admin/relays/:id/edit" component={requireAdmin(AdminRelayEdit)} />
+        <Route path="/admin/invoices" component={requireAdmin(AdminInvoiceList)} />
+        <Route path="/admin/invoices/:id" component={requireAdmin(AdminInvoiceDetail)} />
       </Router>
     </NostrProvider>
   )

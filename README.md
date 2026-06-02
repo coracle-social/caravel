@@ -2,7 +2,64 @@
 
 A multi-tenant platform for hosting Nostr community relays, built on top of [zooid](https://github.com/coracle-social/zooid).
 
-## Quick Start (Local Development)
+## Deployment
+
+Caravel ships as a single Docker image, built from the repository-root [`Dockerfile`](./Dockerfile) and published by [`.gitea/workflows/docker-publish.yml`](./.gitea/workflows/docker-publish.yml) as `gitea.coracle.social/coracle/caravel`. One container runs both services: the backend API on port `2892` and the frontend on port `3000`.
+
+Both the backend and the frontend are compiled into the image at build time. The frontend is built with placeholder config that the entrypoint replaces with the real values when the container starts, so one image can be deployed with any configuration — no rebuild required.
+
+Caravel needs a reachable [zooid](https://github.com/coracle-social/zooid) instance (the [Local Development](#local-development) section below shows how to run one). Substitute your own values for the placeholders below:
+
+```sh
+docker run -d \
+  --name caravel \
+  -p 2892:2892 \
+  -p 3000:3000 \
+  -v my-caravel-data:/app/data \
+  -e PLATFORM_NAME=Caravel \
+  -e RELAY_DOMAIN=example.com \
+  -e APP_URL=https://example.com \
+  -e ZOOID_API_URL=http://zooid:3334 \
+  -e DATABASE_URL=sqlite://data/caravel.db \
+  -e SERVER_URL=https://api.example.com \
+  -e SERVER_PORT=2892 \
+  -e SERVER_ADMIN_PUBKEYS=<your-hex-pubkey> \
+  -e SERVER_ALLOW_ORIGINS=https://example.com \
+  -e ROBOT_SECRET=<hex-nostr-secret-key> \
+  -e ROBOT_NAME=Caravel \
+  -e ROBOT_DESCRIPTION="Relay manager bot" \
+  -e ROBOT_PICTURE=https://example.com/robot.png \
+  -e ROBOT_WALLET=<nwc-connection-uri> \
+  -e ROBOT_OUTBOX_RELAYS=wss://relay.damus.io,wss://relay.primal.net,wss://nos.lol \
+  -e ROBOT_INDEXER_RELAYS=wss://purplepag.es,wss://relay.damus.io,wss://indexer.coracle.social \
+  -e ROBOT_MESSAGING_RELAYS=wss://auth.nostr1.com,wss://relay.keychat.io,wss://relay.ditto.pub \
+  -e BLOSSOM_S3_ENDPOINT=https://s3.example.com \
+  -e BLOSSOM_S3_REGION=us-east-1 \
+  -e BLOSSOM_S3_BUCKET=caravel-blossom \
+  -e BLOSSOM_S3_ACCESS_KEY=<s3-access-key> \
+  -e BLOSSOM_S3_SECRET_KEY=<s3-secret-key> \
+  -e LIVEKIT_URL=wss://livekit.example.com \
+  -e LIVEKIT_API_KEY=<livekit-api-key> \
+  -e LIVEKIT_API_SECRET=<livekit-api-secret> \
+  -e STRIPE_SECRET_KEY=<stripe-secret-key> \
+  gitea.coracle.social/coracle/caravel
+```
+
+Notes:
+
+- Every backend variable above is **required** — the server exits on startup if any is missing or empty. See [`backend/.env.template`](./backend/.env.template) for what each one means.
+- `ROBOT_SECRET` is the robot account's hex nostr secret key; its pubkey must be in zooid's `API_WHITELIST` (the backend signs zooid requests with it via NIP-98).
+- `SERVER_ALLOW_ORIGINS` must include the frontend's public origin, or browsers will be blocked by CORS.
+- The frontend's `VITE_` prefixed env variables are automatically populated from the provided env variables.
+- `-v my-caravel-data:/app/data` persists the SQLite database.
+
+To build the image yourself instead of pulling it:
+
+```sh
+docker build -t caravel .
+```
+
+## Local Development
 
 ### Prerequisites
 

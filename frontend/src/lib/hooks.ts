@@ -10,9 +10,11 @@ import {
   createRelay,
   deactivateRelay,
   reactivateRelay,
+  getInvoice,
   getRelay,
   getTenant,
   invoiceStatus,
+  listInvoices,
   listRelayActivity,
   listRelays,
   listTenantInvoices,
@@ -144,6 +146,10 @@ export const useRelayActivity = (relayId: () => string) => createResource(relayI
 export const useAdminTenants = () => createResource(listTenants)
 
 export const useAdminRelays = () => createResource(listRelays)
+
+export const useAdminInvoices = () => createResource(listInvoices)
+
+export const useInvoice = (id: () => string) => createResource(id, getInvoice)
 
 export const useAdminTenant = (pubkey: () => string) => createResource(pubkey, getTenant)
 

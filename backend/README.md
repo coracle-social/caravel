@@ -16,17 +16,16 @@ Rust backend for Caravel. It manages tenants, relays, invoices, and background w
 backend/
   migrations/
     0001_init.sql
-  spec/            # Module-by-module design notes
   src/
     main.rs        # App bootstrap: load Env, build services, serve + spawn workers
     env.rs         # Configuration from the environment (+ NIP-44 encryption, NIP-98 signing)
     api.rs         # Shared Api state, router, NIP-98 auth + authorization helpers
     web.rs         # HTTP response envelope + helpers
-    routes/        # HTTP route handlers (identity, plans, tenants, relays, invoices, stripe)
+    routes/        # HTTP route handlers (identity, plans, tenants, relays, invoices)
     models.rs      # Domain models + sqlite rows
     query.rs       # Database reads
     command.rs     # Database writes + activity broadcast
-    pool.rs        # SQLite pool + migrations
+    db.rs          # SQLite pool, migrations, activity broadcast channel
     billing.rs     # Stripe subscription reconciliation + Lightning collection worker
     stripe.rs      # Thin Stripe REST client
     wallet.rs      # NWC wallet handle (NIP-47)
@@ -43,10 +42,11 @@ All configuration is read from the environment by `Env::load()` at startup. **Ev
 
 | Variable               | Description                                                          |
 | ---------------------- | ------------------------------------------------------------------- |
-| `SERVER_HOST`          | API bind host; also the value the NIP-98 `u` tag must contain       |
-| `SERVER_PORT`          | API bind port                                                       |
+| `SERVER_URL`           | Public API base URL; the value the NIP-98 `u` tag must equal exactly |
+| `SERVER_PORT`          | API bind port (the server always binds to `127.0.0.1`)             |
 | `SERVER_ADMIN_PUBKEYS` | Comma-separated admin pubkeys (hex)                                 |
 | `SERVER_ALLOW_ORIGINS` | Comma-separated allowed CORS origins                                |
+| `APP_URL`              | Frontend base URL; used to build links in DMs and invoices          |
 | `DATABASE_URL`         | SQLite URL; relative `sqlite://` paths are resolved under `backend/` |
 
 **Robot identity**
@@ -84,18 +84,15 @@ All configuration is read from the environment by `Env::load()` at startup. **Ev
 
 **Billing (Stripe)**
 
-| Variable                | Description                                                             |
-| ----------------------- | ----------------------------------------------------------------------- |
-| `STRIPE_SECRET_KEY`     | Stripe API secret key used for billing API operations                   |
-| `STRIPE_WEBHOOK_SECRET` | Stripe webhook signing secret used to verify `Stripe-Signature` headers |
-| `STRIPE_PRICE_BASIC`    | Stripe price ID (`price_...`) backing the Basic plan                    |
-| `STRIPE_PRICE_GROWTH`   | Stripe price ID (`price_...`) backing the Growth plan                   |
+| Variable            | Description                                            |
+| ------------------- | ----------------------------------------------------- |
+| `STRIPE_SECRET_KEY` | Stripe API secret key used for billing API operations |
 
 Comma-separated list variables are split on commas and trimmed; empty entries are dropped.
 
 ## Schema and Architecture
 
-See [spec](spec) for more details
+The database schema lives in [migrations](migrations); see the module-level doc comments in `src/` for architecture details.
 
 ## API Routes
 
@@ -105,7 +102,6 @@ Public exceptions:
 
 - `GET /plans`
 - `GET /plans/:id`
-- `POST /stripe/webhook` (validated with Stripe signatures)
 
 - `GET /identity` — get auth identity (`pubkey`, `is_admin`); side-effect-free
 - `GET /tenants` — list tenants (admin)
@@ -122,16 +118,19 @@ Public exceptions:
 - `POST /relays/:id/deactivate` — deactivate relay (admin or relay tenant)
 - `POST /relays/:id/reactivate` — reactivate relay (admin or relay tenant)
 - `GET /tenants/:pubkey/invoices` — list tenant invoices (admin or same tenant)
+- `GET /tenants/:pubkey/invoices/draft` — get the tenant's synthetic draft invoice for the current period, or `null` if nothing is due (admin or same tenant)
+- `GET /tenants/:pubkey/invoices/draft/items` — list the draft invoice's line items (admin or same tenant)
 - `GET /invoices/:id` — get invoice (admin or same tenant)
 - `GET /invoices/:id/bolt11` — get invoice bolt11 (admin or same tenant)
-- `GET /tenants/:pubkey/stripe/session` — create Stripe customer portal session (admin or same tenant)
+- `GET /invoices/:id/items` — list invoice line items (admin or same tenant)
+- `GET /tenants/:pubkey/stripe/session` — create Stripe customer portal session (same tenant only)
 
 ## API Auth Model
 
 Caravel intentionally uses a session-style variant of NIP-98 for client-to-backend API auth.
 
 - Frontend signs one kind `27235` event with `u = VITE_API_URL` and caches that header for about 10 minutes.
-- Backend verifies event kind, signature, and that `u` contains configured `SERVER_HOST`.
+- Backend verifies event kind, signature, and that `u` equals configured `SERVER_URL`.
 - Backend intentionally does not bind auth to exact request URL/method/query, and does not enforce payload hash, timestamp freshness window, or replay cache.
 - Goal: reduce repeated wallet signing prompts and avoid cookie-based sessions.
 - Tradeoff: this is weaker request-intent binding than strict NIP-98 semantics.

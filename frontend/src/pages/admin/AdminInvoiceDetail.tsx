@@ -26,7 +26,7 @@ export default function AdminInvoiceDetail() {
 
   return (
     <PageContainer>
-      <BackLink href="/admin/invoices" label="Invoices" />
+      <BackLink label="Back" />
       <ResourceState loading={loading()} error={invoice.error} loadingText="Loading invoice..." errorText="Failed to load invoice." class="mb-4" />
       <Show when={!loading() && invoice()}>
         {(i) => (

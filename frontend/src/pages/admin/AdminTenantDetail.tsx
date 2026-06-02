@@ -4,9 +4,10 @@ import { getProfilePicture } from "applesauce-core/helpers/profile"
 import BackLink from "@/components/BackLink"
 import PageContainer from "@/components/PageContainer"
 import RelayListItem from "@/components/RelayListItem"
+import AdminInvoiceListItem from "@/components/AdminInvoiceListItem"
 import ResourceState from "@/components/ResourceState"
 import useMinLoading from "@/lib/useMinLoading"
-import { useAdminTenant, useAdminTenantRelays, useProfileMetadata } from "@/lib/hooks"
+import { useAdminTenant, useAdminTenantInvoices, useAdminTenantRelays, useProfileMetadata } from "@/lib/hooks"
 import { shortenPubkey } from "@/lib/pubkey"
 
 export default function AdminTenantDetail() {
@@ -14,7 +15,8 @@ export default function AdminTenantDetail() {
   const tenantId = () => params.id ?? ""
   const [tenant] = useAdminTenant(tenantId)
   const [relays] = useAdminTenantRelays(tenantId)
-  const loading = useMinLoading(() => tenant.loading || relays.loading)
+  const [invoices] = useAdminTenantInvoices(tenantId)
+  const loading = useMinLoading(() => tenant.loading || relays.loading || invoices.loading)
   const metadata = useProfileMetadata(tenantId)
 
   const churnedLabel = () => {
@@ -25,7 +27,7 @@ export default function AdminTenantDetail() {
 
   return (
     <PageContainer>
-      <BackLink href="/admin/tenants" label="Tenants" />
+      <BackLink label="Back" />
       <div class="flex items-center gap-4 mb-6 py-2">
         <Show
           when={getProfilePicture(metadata())}
@@ -42,7 +44,7 @@ export default function AdminTenantDetail() {
           <p class="text-xs text-gray-500 break-all">{tenantId()}</p>
         </div>
       </div>
-      <ResourceState loading={loading()} error={tenant.error || relays.error} loadingText="Loading tenant..." errorText="Failed to load tenant." class="mb-4" />
+      <ResourceState loading={loading()} error={tenant.error || relays.error || invoices.error} loadingText="Loading tenant..." errorText="Failed to load tenant." class="mb-4" />
       <Show when={!loading()}>
         <div class="space-y-6">
           <section class="bg-white border border-gray-200 rounded-xl p-6">
@@ -92,6 +94,16 @@ export default function AdminTenantDetail() {
               <ul class="space-y-3">
                 <For each={relays() ?? []}>
                   {(relay) => <RelayListItem relay={relay} href={`/admin/relays/${relay.id}`} />}
+                </For>
+              </ul>
+            </Show>
+          </section>
+          <section class="bg-white border border-gray-200 rounded-xl p-6">
+            <h2 class="text-lg font-semibold mb-4">Invoices</h2>
+            <Show when={(invoices()?.length ?? 0) > 0} fallback={<p class="text-gray-500">No invoices.</p>}>
+              <ul class="space-y-3">
+                <For each={invoices() ?? []}>
+                  {(invoice) => <AdminInvoiceListItem invoice={invoice} href={`/admin/invoices/${invoice.id}`} />}
                 </For>
               </ul>
             </Show>

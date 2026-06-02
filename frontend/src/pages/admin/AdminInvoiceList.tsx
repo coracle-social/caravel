@@ -39,7 +39,7 @@ export default function AdminInvoiceList() {
         <Show when={filtered().length > 0} fallback={<p class="py-20 text-center text-gray-500">No invoices found.</p>}>
           <ul class="space-y-3">
             <For each={filtered()}>
-              {(invoice) => <AdminInvoiceListItem invoice={invoice} href={`/admin/invoices/${invoice.id}`} />}
+              {(invoice) => <AdminInvoiceListItem invoice={invoice} href={`/admin/invoices/${invoice.id}`} showTenant />}
             </For>
           </ul>
         </Show>

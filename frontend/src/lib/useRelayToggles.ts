@@ -1,7 +1,7 @@
 import { createSignal } from "solid-js"
-import { updateRelayById, deactivateRelayById, reactivateRelayById, getLatestOpenInvoice, tenantNeedsPaymentSetup, type Relay } from "@/lib/hooks"
+import { updateRelayById, deactivateRelayById, reactivateRelayById, resolvePostPaidFlow, type Relay } from "@/lib/hooks"
 import { setToastMessage } from "@/lib/state"
-import { applyPlanToRelay, decidePostPaidFlow, planUpdatePayload, toggleField } from "@/lib/relayPlanFlow"
+import { applyPlanToRelay, planUpdatePayload, toggleField } from "@/lib/relayPlanFlow"
 import type { Invoice, PlanId } from "@/lib/api"
 
 type RelayResource = {
@@ -85,12 +85,10 @@ export default function useRelayToggles(
 
     if (plan_id === "free") return
 
-    // Materialize the invoice for this upgrade (no collection, no DM) so we can
-    // prompt the tenant to pay it directly. listTenantInvoices reconciles first,
-    // so a just-created invoice is visible here.
-    const needsSetup = await tenantNeedsPaymentSetup()
-    const invoice = needsSetup ? await getLatestOpenInvoice() : null
-    const decision = decidePostPaidFlow({ needsSetup, invoice })
+    // Paid upgrades materialize an open invoice; resolvePostPaidFlow reconciles
+    // and decides whether to prompt the tenant to pay it, set up a payment method,
+    // or do nothing when autopay is already configured.
+    const decision = await resolvePostPaidFlow()
     switch (decision.kind) {
       case "pay_invoice":
         setPendingInvoice(decision.invoice)

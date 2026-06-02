@@ -15,12 +15,14 @@ const invoiceStatusStyles: Record<string, string> = {
 type AdminInvoiceListItemProps = {
   invoice: Invoice
   href: string
+  showTenant?: boolean
 }
 
 export default function AdminInvoiceListItem(props: AdminInvoiceListItemProps) {
-  // Resolve the owning tenant's profile from the event store. AdminInvoiceList
-  // primes these profiles in one batch, so this subscription does not prime.
-  const metadata = useProfileMetadata(() => props.invoice.tenant_pubkey, { prime: false })
+  // Resolve the owning tenant's profile from the event store. The list that
+  // passes `showTenant` is responsible for priming these profiles in one batch,
+  // so this subscription does not prime on its own.
+  const metadata = useProfileMetadata(() => (props.showTenant ? props.invoice.tenant_pubkey : undefined), { prime: false })
 
   const status = () => invoiceStatus(props.invoice)
 
@@ -31,19 +33,21 @@ export default function AdminInvoiceListItem(props: AdminInvoiceListItemProps) {
           <div class="min-w-0">
             <p class="font-medium text-gray-900">{formatUsd(props.invoice.amount)}</p>
             <p class="text-xs text-gray-500">{formatPeriod(props.invoice.period_start, props.invoice.period_end)}</p>
-            <div class="mt-1.5 flex items-center gap-2">
-              <Show
-                when={getProfilePicture(metadata())}
-                fallback={
-                  <div class="h-5 w-5 flex-shrink-0 rounded-full bg-gray-200 flex items-center justify-center text-[10px] text-gray-500">
-                    {((metadata()?.name || metadata()?.display_name) || props.invoice.tenant_pubkey).slice(0, 1).toUpperCase()}
-                  </div>
-                }
-              >
-                <img src={getProfilePicture(metadata())} alt="" class="h-5 w-5 flex-shrink-0 rounded-full object-cover" />
-              </Show>
-              <span class="text-xs text-gray-500 truncate">{(metadata()?.name || metadata()?.display_name) || shortenPubkey(props.invoice.tenant_pubkey)}</span>
-            </div>
+            <Show when={props.showTenant}>
+              <div class="mt-1.5 flex items-center gap-2">
+                <Show
+                  when={getProfilePicture(metadata())}
+                  fallback={
+                    <div class="h-5 w-5 flex-shrink-0 rounded-full bg-gray-200 flex items-center justify-center text-[10px] text-gray-500">
+                      {((metadata()?.name || metadata()?.display_name) || props.invoice.tenant_pubkey).slice(0, 1).toUpperCase()}
+                    </div>
+                  }
+                >
+                  <img src={getProfilePicture(metadata())} alt="" class="h-5 w-5 flex-shrink-0 rounded-full object-cover" />
+                </Show>
+                <span class="text-xs text-gray-500 truncate">{(metadata()?.name || metadata()?.display_name) || shortenPubkey(props.invoice.tenant_pubkey)}</span>
+              </div>
+            </Show>
           </div>
           <span class={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium capitalize ${invoiceStatusStyles[status()] ?? "bg-gray-100 text-gray-500 border-gray-200"}`}>
             {status()}

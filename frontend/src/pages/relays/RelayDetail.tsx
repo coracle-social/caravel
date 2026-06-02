@@ -46,7 +46,7 @@ export default function RelayDetail() {
 
   return (
     <PageContainer>
-      <BackLink href="/relays" label="Relays" />
+      <BackLink label="Back" />
       <ResourceState loading={loading()} error={relay.error} loadingText="Loading relay..." errorText="Failed to load relay." class="mb-4" />
       <Show when={!loading() && relay()}>
         {(r) => (

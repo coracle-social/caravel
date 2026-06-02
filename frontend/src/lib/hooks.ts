@@ -30,6 +30,7 @@ import {
   type UpdateRelayInput,
 } from "@/lib/api"
 import { autopayConfigured } from "@/lib/paymentMethod"
+import { decidePostPaidFlow, type PaidFlowDecision } from "@/lib/relayPlanFlow"
 import { account, eventStore, pool } from "@/lib/state"
 import { useNostr } from "@/lib/nostr"
 
@@ -155,6 +156,8 @@ export const useAdminTenant = (pubkey: () => string) => createResource(pubkey, g
 
 export const useAdminTenantRelays = (pubkey: () => string) => createResource(pubkey, listTenantRelays)
 
+export const useAdminTenantInvoices = (pubkey: () => string) => createResource(pubkey, listTenantInvoices)
+
 export const createRelayForActiveTenant = (input: CreateRelayInput) => {
   const defaults = {
     info_name: "",
@@ -197,6 +200,17 @@ export async function getLatestOpenInvoice(): Promise<Invoice | null> {
     .filter(inv => invoiceStatus(inv) === "open" && inv.amount > 0)
     .sort((a, b) => b.period_start - a.period_start)
   return open[0] ?? null
+}
+
+// Resolve what to do after a paid create/upgrade succeeds: a tenant that already
+// has autopay configured just navigates, otherwise we surface the freshly
+// materialized open invoice to pay directly (or fall back to payment setup when
+// none is available). Shared by RelayNew, Home's signup-and-create path, and the
+// plan-upgrade toggle so the post-paid ladder stays identical across all three.
+export async function resolvePostPaidFlow(): Promise<PaidFlowDecision> {
+  const needsSetup = await tenantNeedsPaymentSetup()
+  const invoice = needsSetup ? await getLatestOpenInvoice() : null
+  return decidePostPaidFlow({ needsSetup, invoice })
 }
 
 export type { Activity, Invoice, Relay, Tenant }

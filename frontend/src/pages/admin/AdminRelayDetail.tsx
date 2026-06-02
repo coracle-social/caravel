@@ -29,7 +29,7 @@ export default function AdminRelayDetail() {
 
   return (
     <PageContainer>
-      <BackLink href="/admin/relays" label="Relays" />
+      <BackLink label="Back" />
       <ResourceState loading={loading()} error={relay.error} loadingText="Loading relay..." errorText="Failed to load relay." class="mb-4" />
       <Show when={!loading() && relay()}>
         {(r) => (

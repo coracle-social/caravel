@@ -5,9 +5,12 @@ import ExternalLinkIcon from "@/components/ExternalLinkIcon"
 import PricingTable from "@/components/PricingTable"
 import RelayForm, { type RelayFormValues } from "@/components/RelayForm"
 import Modal from "@/components/Modal"
+import PaymentDialog from "@/components/PaymentDialog"
+import PaymentSetup from "@/components/PaymentSetup"
 import Login from "@/views/Login"
-import { createRelayForActiveTenant } from "@/lib/hooks"
-import { account } from "@/lib/state"
+import { createRelayForActiveTenant, resolvePostPaidFlow } from "@/lib/hooks"
+import type { Invoice } from "@/lib/api"
+import { account, refetchBilling, setToastMessage } from "@/lib/state"
 import FlotillaLogo from "@/assets/flotilla-logo.svg"
 import NostordLogo from "@/assets/nostord-logo.svg"
 
@@ -17,6 +20,9 @@ export default function Home() {
   const [showLoginModal, setShowLoginModal] = createSignal(false)
   const [draftRelay, setDraftRelay] = createSignal<RelayFormValues>()
   const [initialPlanId, setInitialPlanId] = createSignal<RelayFormValues["plan_id"]>("free")
+  const [pendingInvoice, setPendingInvoice] = createSignal<Invoice | undefined>()
+  const [paymentSetupOpen, setPaymentSetupOpen] = createSignal(false)
+  let createdRelayId = ""
 
   function openRelayModal(planId: RelayFormValues["plan_id"] = "free") {
     setInitialPlanId(planId)
@@ -24,25 +30,67 @@ export default function Home() {
   }
 
   async function onRelayFormSubmit(values: RelayFormValues) {
-    if (account()) {
-      const relay = await createRelayForActiveTenant(values)
-
-      navigate(`/relays/${relay.id}`)
-    } else {
+    // Not signed in yet: stash the draft and send them through login. The relay
+    // (and any payment prompt) is created in onAuthenticated once the session and
+    // its tenant exist, so signing up and creating a paid relay in one go still
+    // surfaces the invoice.
+    if (!account()) {
       setDraftRelay(values)
       setShowRelayModal(false)
       setShowLoginModal(true)
+      return
     }
+
+    const relay = await createRelayForActiveTenant(values)
+    createdRelayId = relay.id
+    setShowRelayModal(false)
+
+    // Paid plans materialize an open invoice on create. A just-signed-up tenant
+    // has no payment method yet, so open the payment dialog here instead of
+    // dropping them on the relay page with no prompt (the shared dashboard banner
+    // only catches up once they navigate and its billing reads refetch).
+    if (values.plan_id !== "free") {
+      void refetchBilling()
+      const decision = await resolvePostPaidFlow()
+      if (decision.kind === "pay_invoice") {
+        setPendingInvoice(decision.invoice)
+        return
+      }
+      if (decision.kind === "setup") {
+        setPaymentSetupOpen(true)
+        return
+      }
+    }
+
+    navigate(`/relays/${relay.id}`)
   }
 
   async function onAuthenticated() {
+    setShowLoginModal(false)
     const relay = draftRelay()
+    setDraftRelay(undefined)
 
-    if (relay) {
-      onRelayFormSubmit(relay)
-    } else {
+    if (!relay) {
       navigate("/relays")
+      return
     }
+
+    try {
+      await onRelayFormSubmit(relay)
+    } catch (e) {
+      setToastMessage(e instanceof Error ? e.message : "Failed to create relay")
+    }
+  }
+
+  function handleInvoiceClose() {
+    setPendingInvoice(undefined)
+    setPaymentSetupOpen(true)
+  }
+
+  function handleSetupClose() {
+    setPaymentSetupOpen(false)
+    void refetchBilling()
+    navigate(`/relays/${createdRelayId}`)
   }
 
   return (
@@ -384,6 +432,20 @@ export default function Home() {
           onAuthenticated={onAuthenticated}
         />
       </Modal>
+
+      <Show when={pendingInvoice()}>
+        {(inv) => (
+          <PaymentDialog
+            invoice={inv()}
+            open={true}
+            onClose={handleInvoiceClose}
+          />
+        )}
+      </Show>
+      <PaymentSetup
+        open={paymentSetupOpen()}
+        onClose={handleSetupClose}
+      />
     </div>
   )
 }

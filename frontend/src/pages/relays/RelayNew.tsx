@@ -5,9 +5,8 @@ import PageContainer from "@/components/PageContainer"
 import PaymentDialog from "@/components/PaymentDialog"
 import PaymentSetup from "@/components/PaymentSetup"
 import RelayForm, { type RelayFormValues } from "@/components/RelayForm"
-import { createRelayForActiveTenant, getLatestOpenInvoice, tenantNeedsPaymentSetup } from "@/lib/hooks"
+import { createRelayForActiveTenant, resolvePostPaidFlow } from "@/lib/hooks"
 import type { Invoice } from "@/lib/api"
-import { decidePostPaidFlow } from "@/lib/relayPlanFlow"
 import { refetchBilling, setBillingFlowActive } from "@/lib/state"
 
 export default function RelayNew() {
@@ -38,12 +37,10 @@ export default function RelayNew() {
       void refetchBilling()
 
       if (paid) {
-        // Materialize the invoice for this change (no collection, no DM) so we
-        // can prompt the tenant to pay it directly. listTenantInvoices reconciles
-        // first, so a just-created invoice is visible here.
-        const needsSetup = await tenantNeedsPaymentSetup()
-        const invoice = needsSetup ? await getLatestOpenInvoice() : null
-        const decision = decidePostPaidFlow({ needsSetup, invoice })
+        // Paid plans materialize an open invoice on create; resolvePostPaidFlow
+        // reconciles and decides whether to prompt the tenant to pay it, set up a
+        // payment method, or just navigate when autopay is already configured.
+        const decision = await resolvePostPaidFlow()
         switch (decision.kind) {
           case "pay_invoice":
             setPendingInvoice(decision.invoice)

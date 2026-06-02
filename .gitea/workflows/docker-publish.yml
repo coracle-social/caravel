@@ -6,6 +6,7 @@ on:
 
 env:
   REGISTRY: gitea.coracle.social
+  IMAGE: coracle/caravel
 
 jobs:
   build-and-push-image:
@@ -13,16 +14,6 @@ jobs:
     permissions:
       contents: read
       packages: write
-
-    strategy:
-      matrix:
-        include:
-          - component: frontend
-            image: coracle/caravel-frontend
-            context: frontend
-          - component: backend
-            image: coracle/caravel-backend
-            context: backend
 
     steps:
       - name: Checkout repository
@@ -39,7 +30,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ matrix.image }}
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE }}
           tags: |
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/master' }}
 
@@ -52,7 +43,7 @@ jobs:
         id: push
         uses: docker/build-push-action@v5
         with:
-          context: ${{ matrix.context }}
+          context: .
           push: true
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta.outputs.tags }}

@@ -4,6 +4,7 @@ node_modules
 target
 data
 .env
+.claude
 **/.env
 .playwright-cli
 .agents/settings.local.json

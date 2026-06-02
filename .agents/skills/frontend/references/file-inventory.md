@@ -1,0 +1,57 @@
+# File inventory and route wiring
+
+A concrete map of `frontend/src`, so the SKILL.md "where things live" section can stay prose-only. Use this when you need to find the right existing module instead of guessing.
+
+## Entry points
+
+- `index.tsx` — bootstrap. Imports `index.css`, dynamically imports Preline, then `render`s `<App />`.
+- `App.tsx` — `Router` + central route table + the auth-gate HOCs (see "Routes" below).
+- `index.css` — Tailwind v4 CSS-first config and the brand color remap.
+- `global.d.ts` — ambient declarations (`ImportMetaEnv`, `Window.HSStaticMethods`, `Window.nostr`).
+
+## `pages/` — route components
+
+- top level: `Home.tsx`, `Account.tsx`
+- `relays/` (tenant relay screens): `RelayList`, `RelayNew`, `RelayDetail`, `RelayEdit`
+- `admin/` (admin console): `AdminTenantList`, `AdminTenantDetail`, `AdminRelayList`, `AdminRelayDetail`, `AdminRelayEdit`, `AdminInvoiceList`, `AdminInvoiceDetail`
+
+## `views/` — the lone exception
+
+- `Login.tsx` — the login flow, the only thing under `views/` (not `pages/`).
+
+## `components/` — shared UI
+
+- shared kit: `PageContainer`, `ResourceState`, `LoadingState`, `Modal`, `ConfirmDialog`, `PaymentDialog`, `Field`, `ToggleField`, `Checkbox`, `SearchInput`, `ToggleButton`, `RelayForm`, `Toast`, `PromptBanner`, `PricingTable`, `BackLink`, plus small icon components
+- `AppShell` — the authenticated layout shell (note: carries a duplicate local `shortenPubkey`; prefer `lib/pubkey.ts`)
+- feature subfolders:
+  - `login/` — `LoginTabsScreen`, `LoginKeyScreen`, `LoginSignerScreen`, `QrScannerOverlay`
+  - `payment/` — `InvoiceItemsList`, `LightningPayBody`
+  - `account/` — `InvoiceListItem`, `PaymentMethodRow`
+  - `relay/` — `PlanGatedToggle`, `RelayCardHeader`
+  - plus billing/payment/relay cards at the components top level (`BillingPrompts`, `InvoiceDetailCard`, `RelayDetailCard`, `RelayListItem`, `PaymentSetup*`, `ActivityFeed`, `AdminInvoiceListItem`)
+
+## `lib/` — non-UI logic
+
+- **pillars:** `api.ts` (wire types + fetch wrappers), `state.ts` (singletons + global signals/resources), `hooks.ts` (`use*` read hooks + active-tenant action helpers), `nostr.ts` (`useNostr` DI seam)
+- **`use*` hooks:** `useMinLoading`, `useRelayToggles`, `usePaymentSetup`, `useInvoicePdf`
+- **pure helpers:** `relayPlanFlow`, `relayFlags`, `paymentMethod`, `loginInput`, `subdomain`, `slugify`, `search`, `format`, `clipboard`, `validation`, `pubkey`, `billing`
+
+## Routes (`App.tsx`)
+
+All declared under one `Router root={Layout}`:
+
+- `/` → `Home` (ungated)
+- `/relays`, `/relays/new`, `/relays/:id`, `/relays/:id/edit` → `requireTenant(...)`
+- `/account` → `requireTenant(Account)`
+- `/admin/tenants`, `/admin/tenants/:id`, `/admin/relays`, `/admin/relays/:id`, `/admin/relays/:id/edit`, `/admin/invoices`, `/admin/invoices/:id` → `requireAdmin(...)`
+
+`requireTenant(Page)` and `requireAdmin(Page)` are both built on a `requireCondition(Page, condition)` HOC: it waits for the `identity` resource to finish loading, redirects to `/` when the condition is false, and otherwise renders the page inside a `<Show>`. `requireTenant` checks `Boolean(identity())`; `requireAdmin` checks `Boolean(identity()?.is_admin)`. `Layout` wraps the page in `AppShell` when the path matches `/^\/(relays|account|admin)/` and identity has loaded.
+
+There is **no `/login` route** — login is rendered as a modal/embedded component (`views/Login.tsx`, mounted as a `<Modal>` in `pages/Home.tsx`), contrary to `frontend/README.md` (not the repo-root README), which lists a `/login` route.
+
+## Sources
+
+- src tree — verified live listing of `frontend/src`
+- route table + guards — `frontend/src/App.tsx:43-81`
+- entry bootstrap — `frontend/src/index.tsx:3-13`
+- `AppShell` duplicate `shortenPubkey` — `frontend/src/components/AppShell.tsx:11-14`

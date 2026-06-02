@@ -567,7 +567,13 @@ impl BillingPeriod {
             months += 1;
         }
 
-        let end = start.checked_add_months(Months::new(1)).unwrap_or(start);
+        // Derive `end` from the anchor (the next walk boundary), not `start + 1
+        // month`: month-add clamps to the last valid day, so re-adding from a
+        // clamped `start` lands short of `anchor + months` and leaves non-tiling
+        // gap days for day-29–31 anchors. `months` is already that next boundary.
+        let end = anchor_dt
+            .checked_add_months(Months::new(months))
+            .unwrap_or(start);
 
         Some(Self {
             start: start.timestamp(),

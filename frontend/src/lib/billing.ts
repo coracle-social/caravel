@@ -1,8 +1,8 @@
 import { createMemo } from "solid-js"
 import { indexBy } from "@welshman/lib"
-import { invoiceStatus, type Invoice, type Tenant } from "@/lib/api"
+import { invoiceStatus, selectPayableInvoice, type Invoice, type Tenant } from "@/lib/api"
 import { autopayConfigured, cardState, nwcState } from "@/lib/paymentMethod"
-import { billingDraftInvoice, billingInvoices, billingRelays, billingTenant, plans, refetchBilling } from "@/lib/state"
+import { autopayBilling, billingDraftInvoice, billingInvoices, billingRelays, billingTenant, plans, refetchBilling } from "@/lib/state"
 
 export type BillingPromptKind = "churned" | "pay_invoice" | "update_method" | "setup_autopay"
 
@@ -30,11 +30,10 @@ export function useBillingStatus() {
   const draftInvoice = () => billingDraftInvoice() ?? undefined
 
   const openInvoices = createMemo(() =>
-    invoices()
-      .filter((inv) => invoiceStatus(inv) === "open" && inv.amount > 0)
-      .sort((a, b) => a.created_at - b.created_at),
+    invoices().filter((inv) => invoiceStatus(inv) === "open" && inv.amount > 0),
   )
-  const openInvoice = () => openInvoices()[0]
+  // The autopay/dunning target — the same pick autopayBilling collects.
+  const openInvoice = () => selectPayableInvoice(invoices())
 
   // Amount due: the total of all open invoices.
   const balance = () => openInvoices().reduce((sum, inv) => sum + inv.amount, 0)
@@ -49,7 +48,7 @@ export function useBillingStatus() {
 
   const loading = () => billingTenant.loading || billingInvoices.loading || billingDraftInvoice.loading
 
-  return { tenant, invoices, draftInvoice, balance, openInvoice, hasPaidSubscription, loading, refetch: refetchBilling }
+  return { tenant, invoices, draftInvoice, balance, openInvoice, hasPaidSubscription, loading, refetch: refetchBilling, autopay: autopayBilling }
 }
 
 // Pure priority selector: returns the single highest-priority billing prompt to

@@ -15,6 +15,7 @@ pub async fn list_invoices(
     ok(query::list_invoices().await.map_err(internal)?)
 }
 
+/// Read a single invoice
 pub async fn get_invoice(
     State(api): State<Arc<Api>>,
     AuthedPubkey(auth): AuthedPubkey,
@@ -27,18 +28,50 @@ pub async fn get_invoice(
 
     api.require_admin_or_tenant(&auth, &invoice.tenant_pubkey)?;
 
-    // Implicitly reconcile an outstanding lightning invoice if we have one
+    ok(invoice)
+}
+
+/// Reconcile and collect an open invoice
+pub async fn reconcile_invoice(
+    State(api): State<Arc<Api>>,
+    AuthedPubkey(auth): AuthedPubkey,
+    Path(id): Path<String>,
+) -> ApiResult {
+    let invoice = query::get_invoice(&id)
+        .await
+        .map_err(internal)?
+        .ok_or_else(|| not_found("invoice not found"))?;
+
+    api.require_admin_or_tenant(&auth, &invoice.tenant_pubkey)?;
+
+    // Nothing to collect on an already-resolved invoice.
+    if invoice.paid_at.is_some() || invoice.voided_at.is_some() {
+        return ok(invoice);
+    }
+
+    let tenant = api.get_tenant_or_404(&invoice.tenant_pubkey).await?;
+
     api.billing
-        .reconcile_bolt11_for_invoice(&invoice)
+        .ensure_bolt11_for_invoice(&invoice)
         .await
         .map_err(internal)?;
+
+    api.billing
+        .attempt_payment(&tenant, &invoice, false)
+        .await
+        .map_err(internal)?;
+
+    // Re-read so the caller sees the possibly now-paid invoice.
+    let invoice = query::get_invoice(&id)
+        .await
+        .map_err(internal)?
+        .ok_or_else(|| not_found("invoice not found"))?;
 
     ok(invoice)
 }
 
-/// Return a payable Lightning invoice (bolt11) for an invoice, minting one if
-/// needed and first settling it if it was already paid out of band.
-pub async fn get_invoice_bolt11(
+/// Idempotently create a payable Lightning invoice (bolt11)
+pub async fn ensure_invoice_bolt11(
     State(api): State<Arc<Api>>,
     AuthedPubkey(auth): AuthedPubkey,
     Path(invoice_id): Path<String>,
@@ -50,24 +83,16 @@ pub async fn get_invoice_bolt11(
 
     api.require_admin_or_tenant(&auth, &invoice.tenant_pubkey)?;
 
-    // Make sure we have a bolt11 for this invoice
-    api.billing
+    let bolt11 = api
+        .billing
         .ensure_bolt11_for_invoice(&invoice)
         .await
         .map_err(internal)?;
 
-    // Check to see whether it was reconciled out of band
-    let bolt11 = api
-        .billing
-        .reconcile_bolt11_for_invoice(&invoice)
-        .await
-        .map_err(internal)?;
-
-    ok(serde_json::json!(bolt11))
+    ok(bolt11)
 }
 
-/// The line items billed on an invoice, for rendering its contents and a
-/// downloadable copy.
+/// The line items billed on an invoice
 pub async fn list_invoice_items(
     State(api): State<Arc<Api>>,
     AuthedPubkey(auth): AuthedPubkey,

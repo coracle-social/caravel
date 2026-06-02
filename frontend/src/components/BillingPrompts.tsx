@@ -5,7 +5,7 @@ import PaymentDialog from "@/components/PaymentDialog"
 import PaymentSetup from "@/components/PaymentSetup"
 import { getInvoice, type Invoice } from "@/lib/api"
 import { activeBillingPrompt, useBillingStatus, type BillingPromptKind } from "@/lib/billing"
-import { billingFlowActive } from "@/lib/state"
+import { account, billingFlowActive } from "@/lib/state"
 
 type BillingPromptsProps = {
   // "banner" sits in the dashboard shell (mounted on every page except the
@@ -84,6 +84,13 @@ export default function BillingPrompts(props: BillingPromptsProps) {
     if (searchParams.invoice) setSearchParams({ invoice: undefined })
   }
 
+  // After paying or saving a method, reconcile + sync + (auto)collect, then
+  // refresh — so a card added inside the dialog actually settles the invoice.
+  function refreshBilling() {
+    const pubkey = account()?.pubkey
+    if (pubkey) void status.autopay(pubkey)
+  }
+
   const outerClass = () => (props.variant === "inline" ? "" : "mx-4 mt-4 md:mx-6")
 
   return (
@@ -110,7 +117,7 @@ export default function BillingPrompts(props: BillingPromptsProps) {
               const wasDeepLink = !payInvoice()
               setPayInvoice(undefined)
               if (wasDeepLink) clearDeepLink()
-              status.refetch()
+              refreshBilling()
             }}
           />
         )}
@@ -121,7 +128,7 @@ export default function BillingPrompts(props: BillingPromptsProps) {
         initialTab={setupTab()}
         onClose={() => {
           setSetupOpen(false)
-          status.refetch()
+          refreshBilling()
         }}
       />
     </>

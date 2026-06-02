@@ -1,6 +1,6 @@
 import { createSignal } from "solid-js"
 import QRCode from "qrcode"
-import { getInvoiceBolt11, invoiceStatus, listInvoiceItems, type Invoice, type InvoiceItem } from "@/lib/api"
+import { ensureInvoiceBolt11, invoiceStatus, listInvoiceItems, type Invoice, type InvoiceItem } from "@/lib/api"
 import { methodLabel } from "@/lib/paymentMethod"
 import { formatUsd } from "@/lib/format"
 import { PLATFORM_NAME } from "@/lib/state"
@@ -36,7 +36,7 @@ export function useInvoicePdf() {
       let qrDataUrl: string | undefined
       if (invoice.method !== "stripe" && invoice.voided_at == null) {
         try {
-          const bolt11 = await getInvoiceBolt11(invoice.id)
+          const bolt11 = await ensureInvoiceBolt11(invoice.id)
           sats = Math.round(bolt11.msats / 1000)
           if (invoice.paid_at == null) {
             qrDataUrl = await QRCode.toDataURL(bolt11.lnbc, { width: 180, margin: 1 })

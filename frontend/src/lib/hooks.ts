@@ -20,6 +20,7 @@ import {
   listTenantInvoices,
   listTenantRelays,
   listTenants,
+  reconcileTenant,
   updateRelay,
   updateTenant,
   type Activity,
@@ -208,6 +209,11 @@ export async function getLatestOpenInvoice(): Promise<Invoice | null> {
 // none is available). Shared by RelayNew, Home's signup-and-create path, and the
 // plan-upgrade toggle so the post-paid ladder stays identical across all three.
 export async function resolvePostPaidFlow(): Promise<PaidFlowDecision> {
+  const pubkey = account()!.pubkey
+  // The reads below are pure GETs now, so explicitly materialize the just-created
+  // invoice and pick up any portal-added card before deciding the post-paid ladder.
+  await reconcileTenant(pubkey)
+
   const needsSetup = await tenantNeedsPaymentSetup()
   const invoice = needsSetup ? await getLatestOpenInvoice() : null
   return decidePostPaidFlow({ needsSetup, invoice })

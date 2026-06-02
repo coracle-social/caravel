@@ -8,7 +8,7 @@ import LightningPayBody from "@/components/payment/LightningPayBody"
 import { setToastMessage } from "@/lib/state"
 import { copyToClipboard } from "@/lib/clipboard"
 import { useCardPortal } from "@/lib/usePaymentSetup"
-import { getInvoice, getInvoiceBolt11, listInvoiceItems, type Invoice } from "@/lib/api"
+import { ensureInvoiceBolt11, listInvoiceItems, reconcileInvoice, type Invoice } from "@/lib/api"
 import { autopayConfigured } from "@/lib/paymentMethod"
 import { billingTenant } from "@/lib/state"
 import { formatUsd, formatPeriod } from "@/lib/format"
@@ -57,7 +57,7 @@ export default function PaymentDialog(props: PaymentDialogProps) {
     setQrDataUrl("")
 
     try {
-      const { lnbc } = await getInvoiceBolt11(props.invoice.id)
+      const { lnbc } = await ensureInvoiceBolt11(props.invoice.id)
       setBolt11(lnbc)
       setQrDataUrl(await QRCode.toDataURL(lnbc, { width: 256, margin: 2 }))
       setBolt11Status("ready")
@@ -86,7 +86,7 @@ export default function PaymentDialog(props: PaymentDialogProps) {
   async function checkPayment() {
     setPayStatus("loading")
     try {
-      const invoice = await getInvoice(props.invoice.id)
+      const invoice = await reconcileInvoice(props.invoice.id)
       if (invoice.paid_at != null) {
         setPayStatus("success")
       } else {

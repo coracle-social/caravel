@@ -154,6 +154,16 @@ export function invoiceStatus(invoice: Pick<Invoice, "paid_at" | "voided_at">): 
   return "open"
 }
 
+// The single invoice autopay collects and the dashboard surfaces as "Pay now":
+// the OLDEST open invoice with a positive balance, matching the backend's
+// dunning order so the UI pays the same one collection targets. undefined when
+// nothing is due. Canonical pick shared by useBillingStatus and autopayBilling.
+export function selectPayableInvoice(invoices: Invoice[]): Invoice | undefined {
+  return invoices
+    .filter(inv => invoiceStatus(inv) === "open" && inv.amount > 0)
+    .sort((a, b) => a.created_at - b.created_at)[0]
+}
+
 export type Activity = {
   id: string
   tenant_pubkey: string
@@ -265,6 +275,14 @@ export function listTenantInvoices(pubkey: string) {
   return callApi<undefined, Invoice[]>("GET", `/tenants/${pubkey}/invoices`)
 }
 
+// Reconcile a tenant's billing: sync the Stripe payment method (picking up a
+// card added via the portal), fold billable activity into invoice items, renew
+// the current period, and cut an invoice for any outstanding balance. Does not
+// attempt payment. Returns the reconciled tenant.
+export function reconcileTenant(pubkey: string) {
+  return callApi<undefined, Tenant>("POST", `/tenants/${pubkey}/reconcile`)
+}
+
 // The draft is a synthetic Invoice (id "draft", empty lifecycle fields) summing
 // the current period's not-yet-billed items, or null when there's nothing due.
 export function getDraftInvoice(pubkey: string) {
@@ -310,8 +328,19 @@ export function createPortalSession(pubkey: string, returnUrl?: string) {
   return callApi<undefined, { url: string }>("GET", `/tenants/${pubkey}/stripe/session${query}`)
 }
 
-export function getInvoiceBolt11(invoiceId: string) {
-  return callApi<undefined, Bolt11>("GET", `/invoices/${invoiceId}/bolt11`)
+// Idempotently create a payable bolt11 for an invoice (reusing a valid existing
+// one) and return it. No reconciliation — settlement is detected by
+// reconcileInvoice. The lnbc string is the data the QR needs.
+export function ensureInvoiceBolt11(invoiceId: string) {
+  return callApi<undefined, Bolt11>("POST", `/invoices/${invoiceId}/bolt11`)
+}
+
+// Reconcile and collect an open invoice: ensure a payable bolt11 exists, then
+// run the payment cascade (NWC, then an out-of-band Lightning settle, then a
+// saved card). Caller-initiated, so no dunning DM and no churn. Returns the
+// refreshed invoice (paid_at set once collected).
+export function reconcileInvoice(invoiceId: string) {
+  return callApi<undefined, Invoice>("POST", `/invoices/${invoiceId}/reconcile`)
 }
 
 export function listInvoiceItems(invoiceId: string) {

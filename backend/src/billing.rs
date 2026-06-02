@@ -122,7 +122,7 @@ impl Billing {
 
         // Attempt payment on every open invoice after syncing with stripe.
         if attempt_payment {
-            self.sync_stripe_customer(&mut tenant).await?;
+            tenant.stripe_payment_method_id = self.sync_stripe_customer(&tenant).await?;
             self.collect_open_invoices(&tenant).await?;
         }
 
@@ -311,17 +311,24 @@ impl Billing {
         }
 
         for invoice in &open {
-            self.attempt_payment(tenant, invoice).await?;
+            self.attempt_payment(tenant, invoice, true).await?;
         }
 
         Ok(())
     }
 
-    /// Collect an invoice via NWC, then a saved card, then a manual DM. A failing
-    /// method's error is stored on the tenant (to warn them in the UI) but never
-    /// aborts the cascade or future retries; a method's error is cleared when it
-    /// next succeeds.
-    pub async fn attempt_payment(&self, tenant: &Tenant, invoice: &Invoice) -> Result<()> {
+    /// Collect an invoice via NWC, then a saved card, then (when `notify`) a
+    /// manual DM. A failing method's error is stored on the tenant (to warn them
+    /// in the UI) but never aborts the cascade or future retries; a method's
+    /// error is cleared when it next succeeds. Caller-initiated payments pass
+    /// `notify = false` to skip the dunning DM, since the failure is already
+    /// surfaced on screen.
+    pub async fn attempt_payment(
+        &self,
+        tenant: &Tenant,
+        invoice: &Invoice,
+        notify: bool,
+    ) -> Result<()> {
         let mut error_message: Option<String> = None;
 
         // 1. NWC auto-pay: if the tenant has configured an nwc_url, try it first.
@@ -354,9 +361,10 @@ impl Billing {
         }
 
         // 4. Manual payment: DM a link to the in-app payment page for this invoice.
-        if let Err(e) = self
-            .attempt_payment_using_dm(tenant, invoice, error_message)
-            .await
+        if notify
+            && let Err(e) = self
+                .attempt_payment_using_dm(tenant, invoice, error_message)
+                .await
         {
             tracing::error!(
                 tenant = %tenant.pubkey,
@@ -493,44 +501,18 @@ impl Billing {
             .ok_or_else(|| anyhow!("failed to insert bolt11"))
     }
 
-    pub async fn reconcile_bolt11_for_invoice(&self, invoice: &Invoice) -> Result<Option<Bolt11>> {
-        if let Some(bolt11) = query::get_bolt11_for_invoice(&invoice.id).await? {
-            // Don't settle an invoice that is already resolved
-            if invoice.paid_at.is_some() || invoice.voided_at.is_some() {
-                return Ok(Some(bolt11));
-            }
-
-            return self.reconcile_bolt11(&bolt11).await;
-        };
-
-        Ok(None)
-    }
-
-    async fn reconcile_bolt11(&self, bolt11: &Bolt11) -> Result<Option<Bolt11>> {
-        if bolt11.settled_at.is_none() && self.wallet.is_settled(&bolt11.lnbc).await? {
-            command::settle_invoice_out_of_band(&bolt11.id, &bolt11.invoice_id).await?;
-
-            // Re-fetch so the caller sees that it's been settled.
-            return query::get_bolt11(&bolt11.id).await;
-        }
-
-        Ok(Some(bolt11.clone()))
-    }
-
     // --- Stripe utils ---
 
-    /// Copy down any stripe-related stuff to our local tenant model. Fail gracefully.
-    pub async fn sync_stripe_customer(&self, tenant: &mut Tenant) -> Result<()> {
+    /// Refresh stripe-related state for a tenant, returning the synced payment
+    /// method id (the tenant's existing one on failure). Fails gracefully.
+    pub async fn sync_stripe_customer(&self, tenant: &Tenant) -> Result<Option<String>> {
         match self.sync_stripe_payment_method(tenant).await {
-            Ok(payment_method_id) => {
-                tenant.stripe_payment_method_id = payment_method_id;
-            }
+            Ok(payment_method_id) => Ok(payment_method_id),
             Err(error) => {
                 tracing::error!(tenant = %tenant.pubkey, error = ?error, "failed to sync payment method");
+                Ok(tenant.stripe_payment_method_id.clone())
             }
-        };
-
-        Ok(())
+        }
     }
 
     /// Refresh the cached Stripe payment method from Stripe so collection can charge

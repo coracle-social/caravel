@@ -6,7 +6,8 @@ import { EventStore } from "applesauce-core"
 import { createEventLoaderForStore } from "applesauce-loaders/loaders"
 import { RelayPool } from "applesauce-relay"
 import { NostrConnectSigner } from "applesauce-signers"
-import { createTenant, getDraftInvoice, getIdentity, getTenant, listPlans, listTenantInvoices, listTenantRelays, registerAccountGetter, type Plan } from "@/lib/api"
+import { createTenant, getDraftInvoice, getIdentity, getTenant, listPlans, listTenantInvoices, listTenantRelays, reconcileInvoice, reconcileTenant, registerAccountGetter, selectPayableInvoice, type Plan } from "@/lib/api"
+import { autopayConfigured } from "@/lib/paymentMethod"
 
 export type UnsignedEvent = {
   kind: number
@@ -99,6 +100,50 @@ export function refetchBilling() {
       setToastMessage("Failed to refresh billing data")
     }
   })
+}
+
+// In-flight autopay run, keyed by pubkey, so concurrent triggers (a mount
+// double-fire, two dialog onClose handlers) collapse into one run.
+let autopayInFlight: { pubkey: string; promise: Promise<void> } | undefined
+
+// The side-effecting billing refresh, layered above the pure refetchBilling: on
+// load of the billing surface it reconciles the subscription (materializing the
+// current invoice), syncs the Stripe payment method (picking up a portal-added
+// card), and — when a method is on file and an invoice is due — collects it,
+// then refreshes all billing reads. This is what makes "add a card, return to
+// the app" actually pay the open invoice. Payment is skipped while the
+// create/upgrade flow owns the invoice (billingFlowActive).
+export function autopayBilling(pubkey: string): Promise<void> {
+  if (autopayInFlight?.pubkey === pubkey) return autopayInFlight.promise
+
+  const promise = (async () => {
+    try {
+      // The tenant row is provisioned lazily on first login; make sure it exists
+      // before the tenant-scoped POSTs, since autopay can fire (on the Account
+      // landing effect) before provisioning has completed.
+      if (billingPubkey() !== pubkey) await ensureSessionTenant()
+
+      // Sync the payment method + reconcile the subscription, then collect the
+      // oldest open invoice when a method is on file (and the create/upgrade
+      // flow isn't already driving its own invoice).
+      const tenant = await reconcileTenant(pubkey)
+
+      const invoice = selectPayableInvoice(await listTenantInvoices(pubkey))
+      if (invoice && autopayConfigured(tenant) && !billingFlowActive()) {
+        await reconcileInvoice(invoice.id)
+      }
+    } catch (e) {
+      console.error("Autopay billing failed", e)
+      setToastMessage(e instanceof Error ? e.message : "Failed to update billing")
+    } finally {
+      // Reflect the final state (paid invoice, cleared errors, relay changes).
+      refetchBilling()
+      if (autopayInFlight?.pubkey === pubkey) autopayInFlight = undefined
+    }
+  })()
+
+  autopayInFlight = { pubkey, promise }
+  return promise
 }
 
 // Ensure the active pubkey's tenant row exists, then unlock billing reads. The

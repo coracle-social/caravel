@@ -32,7 +32,9 @@ use crate::models::{Relay, Tenant};
 use crate::query;
 use crate::robot::Robot;
 use crate::routes::identity::get_identity;
-use crate::routes::invoices::{get_invoice, get_invoice_bolt11, list_invoice_items, list_invoices};
+use crate::routes::invoices::{
+    ensure_invoice_bolt11, get_invoice, list_invoice_items, list_invoices, reconcile_invoice,
+};
 use crate::routes::plans::{get_plan, list_plans};
 use crate::routes::relays::{
     create_relay, deactivate_relay, get_relay, list_relay_activity, list_relay_members,
@@ -40,7 +42,7 @@ use crate::routes::relays::{
 };
 use crate::routes::tenants::{
     create_stripe_session, create_tenant, get_draft_invoice, get_tenant, list_draft_invoice_items,
-    list_tenant_invoices, list_tenant_relays, list_tenants, update_tenant,
+    list_tenant_invoices, list_tenant_relays, list_tenants, reconcile_tenant, update_tenant,
 };
 use crate::stripe::Stripe;
 use crate::web::{ApiError, forbidden, internal, not_found, unauthorized};
@@ -77,6 +79,7 @@ impl Api {
                 "/tenants/:pubkey/invoices/draft/items",
                 get(list_draft_invoice_items),
             )
+            .route("/tenants/:pubkey/reconcile", post(reconcile_tenant))
             .route(
                 "/tenants/:pubkey/stripe/session",
                 get(create_stripe_session),
@@ -89,7 +92,8 @@ impl Api {
             .route("/relays/:id/reactivate", post(reactivate_relay))
             .route("/invoices", get(list_invoices))
             .route("/invoices/:id", get(get_invoice))
-            .route("/invoices/:id/bolt11", get(get_invoice_bolt11))
+            .route("/invoices/:id/reconcile", post(reconcile_invoice))
+            .route("/invoices/:id/bolt11", post(ensure_invoice_bolt11))
             .route("/invoices/:id/items", get(list_invoice_items))
             .with_state(api)
     }

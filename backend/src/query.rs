@@ -188,15 +188,6 @@ pub async fn list_open_invoices(tenant_pubkey: &str) -> Result<Vec<Invoice>> {
 
 // --- Bolt11 ---
 
-pub async fn get_bolt11(bolt11_id: &str) -> Result<Option<Bolt11>> {
-    Ok(
-        sqlx::query_as::<_, Bolt11>("SELECT * FROM bolt11 WHERE id = ?")
-            .bind(bolt11_id)
-            .fetch_optional(pool())
-            .await?,
-    )
-}
-
 pub async fn get_bolt11_for_invoice(invoice_id: &str) -> Result<Option<Bolt11>> {
     Ok(sqlx::query_as::<_, Bolt11>(
         "SELECT * FROM bolt11 WHERE invoice_id = ? ORDER BY created_at DESC LIMIT 1",

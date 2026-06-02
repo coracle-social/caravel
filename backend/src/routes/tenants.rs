@@ -57,7 +57,7 @@ pub async fn list_tenants(
         .collect::<Vec<_>>())
 }
 
-/// Fetch a tenant by pubkey. Automatically refreshes the tenant's stripe payment data.
+/// Fetch a tenant by pubkey.
 pub async fn get_tenant(
     State(api): State<Arc<Api>>,
     AuthedPubkey(auth): AuthedPubkey,
@@ -65,12 +65,7 @@ pub async fn get_tenant(
 ) -> ApiResult {
     api.require_admin_or_tenant(&auth, &pubkey)?;
 
-    let mut tenant = api.get_tenant_or_404(&pubkey).await?;
-
-    api.billing
-        .sync_stripe_customer(&mut tenant)
-        .await
-        .map_err(internal)?;
+    let tenant = api.get_tenant_or_404(&pubkey).await?;
 
     ok(TenantResponse::from(tenant))
 }
@@ -159,20 +154,13 @@ pub async fn list_tenant_relays(
     ok(relays)
 }
 
-/// List a tenant's invoices after reconciling the tenant's billing state.
+/// List a tenant's invoices.
 pub async fn list_tenant_invoices(
     State(api): State<Arc<Api>>,
     AuthedPubkey(auth): AuthedPubkey,
     Path(pubkey): Path<String>,
 ) -> ApiResult {
     api.require_admin_or_tenant(&auth, &pubkey)?;
-
-    let tenant = api.get_tenant_or_404(&pubkey).await?;
-
-    api.billing
-        .reconcile_subscription(&tenant, false)
-        .await
-        .map_err(internal)?;
 
     let invoices = query::list_invoices_for_tenant(&pubkey)
         .await
@@ -181,14 +169,8 @@ pub async fn list_tenant_invoices(
     ok(invoices)
 }
 
-/// Return the tenant's draft invoice: a synthetic, unsaved `Invoice` summing the
-/// outstanding line items for the current period (reconciled first so it reflects
-/// the latest activity). It mirrors what `create_invoice` would bill once the
-/// balance turns positive. `null` when the tenant has no billing anchor yet or
-/// nothing is outstanding. The id is a fixed `draft` sentinel and the lifecycle
-/// fields are empty — it isn't persisted or payable, so the UI renders it
-/// read-only with a `draft` status.
-pub async fn get_draft_invoice(
+/// Reconcile a tenant's subscription
+pub async fn reconcile_tenant(
     State(api): State<Arc<Api>>,
     AuthedPubkey(auth): AuthedPubkey,
     Path(pubkey): Path<String>,
@@ -198,12 +180,31 @@ pub async fn get_draft_invoice(
     let tenant = api.get_tenant_or_404(&pubkey).await?;
 
     api.billing
+        .sync_stripe_customer(&tenant)
+        .await
+        .map_err(internal)?;
+
+    api.billing
         .reconcile_subscription(&tenant, false)
         .await
         .map_err(internal)?;
 
-    // Re-read so the draft sees a billing anchor that reconcile may have just set
-    // (it persists the anchor but mutates only its own clone).
+    // Re-read so the response reflects the synced method and any billing anchor.
+    let tenant = api.get_tenant_or_404(&pubkey).await?;
+
+    ok(TenantResponse::from(tenant))
+}
+
+/// Return the tenant's draft invoice: a synthetic, unsaved `Invoice` summing the
+/// outstanding line items for the current period. It mirrors what `create_invoice`
+/// would bill once the balance turns positive.
+pub async fn get_draft_invoice(
+    State(api): State<Arc<Api>>,
+    AuthedPubkey(auth): AuthedPubkey,
+    Path(pubkey): Path<String>,
+) -> ApiResult {
+    api.require_admin_or_tenant(&auth, &pubkey)?;
+
     let tenant = api.get_tenant_or_404(&pubkey).await?;
 
     let draft = match BillingPeriod::current(&tenant) {

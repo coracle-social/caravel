@@ -42,11 +42,13 @@ export default function Account() {
   const invoicesLoading = useMinLoading(() => billing.loading())
   const { printInvoice, printing } = useInvoicePdf()
 
-  // On landing here (the billing portal returns to this page), refresh billing so
-  // a card just added in the portal — which get_tenant syncs onto the tenant — and
-  // any cleared error show immediately rather than only on the next reconcile.
+  // On landing here (the billing portal returns to this page), run the autopay
+  // composite: reconcile the subscription, sync a card just added in the portal,
+  // and collect the open invoice if a method is now on file — then refresh. This
+  // is what pays the outstanding invoice after the user adds a card and returns.
   createEffect(() => {
-    if (account()?.pubkey) billing.refetch()
+    const pubkey = account()?.pubkey
+    if (pubkey) void billing.autopay(pubkey)
   })
 
   // Coarse account-health summary for the badge. Same snapshot the inline prompt
@@ -176,7 +178,7 @@ export default function Account() {
             open={true}
             onClose={() => {
               setSelectedInvoice(undefined)
-              billing.refetch()
+              void billing.autopay(account()!.pubkey)
             }}
           />
         )}
@@ -187,7 +189,7 @@ export default function Account() {
         isUpdate={nwc().kind !== "not_set_up"}
         onClose={() => {
           setNwcModalOpen(false)
-          billing.refetch()
+          void billing.autopay(account()!.pubkey)
         }}
       />
 
@@ -196,7 +198,7 @@ export default function Account() {
         isUpdate={card().kind !== "not_set_up"}
         onClose={() => {
           setCardModalOpen(false)
-          billing.refetch()
+          void billing.autopay(account()!.pubkey)
         }}
       />
     </PageContainer>

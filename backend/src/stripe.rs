@@ -104,8 +104,10 @@ impl Stripe {
     /// A decline or an issuer authentication demand (`authentication_required`,
     /// which we can't satisfy off-session) comes back from Stripe as an HTTP
     /// error, so the caller naturally falls through to another payment method.
-    /// The charge is made idempotent on `invoice_id`, so a retried collection
-    /// reuses the same charge instead of billing the payment method twice.
+    /// The charge is made idempotent on `invoice_id` and `payment_method_id`,
+    /// so a retried collection against the same method reuses the same charge
+    /// instead of billing twice, while a fall-back to a different method issues
+    /// a distinct charge instead of colliding on the original key.
     pub async fn create_payment_intent(
         &self,
         customer_id: &str,
@@ -119,7 +121,7 @@ impl Stripe {
             .post("/payment_intents")
             .header(
                 "Idempotency-Key",
-                self.idempotency_key(&["payment_intent", invoice_id]),
+                self.idempotency_key(&["payment_intent", invoice_id, payment_method_id]),
             )
             .form(&[
                 ("amount", amount.as_str()),

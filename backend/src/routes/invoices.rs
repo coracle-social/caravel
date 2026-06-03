@@ -4,7 +4,7 @@ use axum::extract::{Path, State};
 
 use crate::api::{Api, AuthedPubkey};
 use crate::query;
-use crate::web::{ApiResult, bad_request, internal, not_found, ok};
+use crate::web::{ApiResult, internal, not_found, ok};
 
 pub async fn list_invoices(
     State(api): State<Arc<Api>>,
@@ -57,7 +57,7 @@ pub async fn reconcile_invoice(
         .map_err(internal)?;
 
     api.billing
-        .attempt_payment(&tenant, &invoice, false)
+        .reconcile_payments(&tenant, &invoice, true, false)
         .await
         .map_err(internal)?;
 

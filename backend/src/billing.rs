@@ -120,10 +120,25 @@ impl Billing {
             command::create_invoice(&tenant, &period).await?;
         }
 
-        // Attempt payment on every open invoice after syncing with stripe.
+        // Fetch the tenant's open invoices once
+        let invoices = query::list_open_invoices(&tenant.pubkey).await?;
+
+        // If the tenant is past due, churn them
+        if self.maybe_churn_tenant(&tenant, &invoices).await? {
+            return Ok(());
+        }
+
+        // If we're going to try to collect, make sure we have an updated payment method
         if attempt_payment {
             tenant.stripe_payment_method_id = self.sync_stripe_customer(&tenant).await?;
-            self.collect_open_invoices(&tenant).await?;
+        }
+
+        // Reconcile out-of-band payments (and, when collecting, charge) on every
+        // open invoice. The out-of-band checks run even when attempt_payment is
+        // false, so a checkout or bolt11 paid out of band settles on any reconcile.
+        for invoice in &invoices {
+            self.reconcile_payments(&tenant, invoice, attempt_payment, true)
+                .await?;
         }
 
         Ok(())
@@ -284,38 +299,37 @@ impl Billing {
         command::insert_invoice_items_for_renewal(&line_items, period).await
     }
 
-    // --- Payments ---
+    // --- Auto-churn ---
 
-    /// Dunning pass over a tenant's open invoices: if the oldest has been unpaid
-    /// past the grace period, churn the tenant; otherwise retry payment on each.
-    async fn collect_open_invoices(&self, tenant: &Tenant) -> Result<()> {
-        let open = query::list_open_invoices(&tenant.pubkey).await?;
-        let Some(oldest) = open.first() else {
-            return Ok(());
+    /// Churn a tenant whose oldest open invoice has blown past the grace period:
+    /// pause their relays and DM them once, on the transition into churn. Returns
+    /// whether the tenant is past due, so the caller can skip collecting this pass.
+    async fn maybe_churn_tenant(&self, tenant: &Tenant, invoices: &[Invoice]) -> Result<bool> {
+        let Some(oldest) = invoices.first() else {
+            return Ok(false);
         };
 
         let now = chrono::Utc::now().timestamp();
-        if now - oldest.created_at >= GRACE_PERIOD_SECS {
-            if tenant.churned_at.is_none() {
-                let relays = query::list_relays_for_tenant(&tenant.pubkey).await?;
-                command::churn_tenant(&tenant.pubkey, now, &relays).await?;
+        if now - oldest.created_at < GRACE_PERIOD_SECS {
+            return Ok(false);
+        }
 
-                // Notify the tenant once, on the transition into churn (the guard
-                // above fires this a single time). Log-and-continue on failure.
-                let message = format!("{CHURN_DM}\n\n{}/account", env::get().app_url);
-                if let Err(e) = self.robot.send_dm(&tenant.pubkey, &message).await {
-                    tracing::error!(tenant = %tenant.pubkey, error = %e, "failed to send churn DM");
-                }
+        // Past due. Churn once (the guard fires a single time on the transition)
+        // and notify the tenant, logging and continuing on DM failure.
+        if tenant.churned_at.is_none() {
+            let relays = query::list_relays_for_tenant(&tenant.pubkey).await?;
+            command::churn_tenant(&tenant.pubkey, now, &relays).await?;
+
+            let message = format!("{CHURN_DM}\n\n{}/account", env::get().app_url);
+            if let Err(e) = self.robot.send_dm(&tenant.pubkey, &message).await {
+                tracing::error!(tenant = %tenant.pubkey, error = %e, "failed to send churn DM");
             }
-            return Ok(());
         }
 
-        for invoice in &open {
-            self.attempt_payment(tenant, invoice, true).await?;
-        }
-
-        Ok(())
+        Ok(true)
     }
+
+    // --- Payments ---
 
     /// Collect an invoice. We check the out-of-band rails first — a Lightning
     /// invoice or Checkout session the tenant may have already paid — and only
@@ -326,10 +340,11 @@ impl Billing {
     /// retries; it's cleared when a method next succeeds. Caller-initiated
     /// payments pass `notify = false` to skip the dunning DM, since the failure
     /// is already surfaced on screen.
-    pub async fn attempt_payment(
+    pub async fn reconcile_payments(
         &self,
         tenant: &Tenant,
         invoice: &Invoice,
+        autopay: bool,
         notify: bool,
     ) -> Result<()> {
         let mut error_message: Option<String> = None;
@@ -360,6 +375,10 @@ impl Billing {
             return self.cleanup_pending_payments(invoice).await;
         }
 
+        if !autopay {
+            return Ok(());
+        }
+
         // 3. NWC auto-pay: if the tenant has configured an nwc_url, charge it.
         if !tenant.nwc_url.is_empty() {
             match self.attempt_payment_using_nwc(tenant, invoice).await {
@@ -380,11 +399,14 @@ impl Billing {
             }
         }
 
+        if !notify {
+            return Ok(());
+        }
+
         // 5. Manual payment: DM a link to the in-app payment page for this invoice.
-        if notify
-            && let Err(e) = self
-                .attempt_payment_using_dm(tenant, invoice, error_message)
-                .await
+        if let Err(e) = self
+            .attempt_payment_using_dm(tenant, invoice, error_message)
+            .await
         {
             tracing::error!(
                 tenant = %tenant.pubkey,
@@ -490,7 +512,6 @@ impl Billing {
 
         // Record the send to avoid spammy notifications.
         command::mark_invoice_notified(invoice_id).await
-
     }
 
     /// Run after an invoice is settled to invalidate out-of-band payment methods
@@ -567,16 +588,18 @@ impl Billing {
             && now < existing.expires_at
         {
             if existing.settled_at.is_some() {
-                return Err(anyhow!("a checkout has already been settled for this invoice"));
+                return Err(anyhow!(
+                    "a checkout has already been settled for this invoice"
+                ));
             }
 
             return Ok(existing);
         }
 
-        // Stripe returns the tenant to their account page; tag the invoice so the
-        // landing page reconciles it promptly instead of waiting for the poll.
-        let base = format!("{}/account", env::get().app_url);
-        let success_url = format!("{base}?paid_invoice={}", invoice.id);
+        // Stripe returns the tenant to their account page on success or cancel.
+        // The landing page reconciles the tenant, which now settles a paid
+        // Checkout out of band, so the URL needs no per-invoice marker.
+        let return_url = format!("{}/account", env::get().app_url);
 
         let (session_id, url, expires_at) = self
             .stripe
@@ -585,12 +608,14 @@ impl Billing {
                 &invoice.id,
                 invoice.amount,
                 "usd",
-                &success_url,
-                &base,
+                &return_url,
+                &return_url,
             )
             .await?;
 
-        command::insert_checkout(&invoice.id, &session_id, &url, expires_at).await
+        command::insert_checkout(&invoice.id, &session_id, &url, expires_at)
+            .await?
+            .ok_or_else(|| anyhow!("failed to insert checkout"))
     }
 
     // --- Stripe utils ---

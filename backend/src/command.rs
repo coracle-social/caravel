@@ -684,9 +684,7 @@ async fn insert_invoice_item_tx(
 
 /// Mark an invoice paid, but only while it is still open — a late Lightning
 /// payment never flips a voided/forgiven invoice to paid, and a Stripe-paid
-/// invoice never has its provenance overwritten by a later bolt11. When this
-/// call is the one that settles it, close out the invoice's other outstanding
-/// payment instruments so a late completion on another rail can't double-charge.
+/// invoice never has its provenance overwritten by a later bolt11.
 async fn mark_invoice_paid_tx(
     tx: &mut Transaction<'_, Sqlite>,
     invoice_id: &str,
@@ -702,7 +700,8 @@ async fn mark_invoice_paid_tx(
     .bind(paid_at)
     .bind(invoice_id)
     .execute(&mut **tx)
-    .await;
+    .await?;
+    Ok(())
 }
 
 /// Void all of a tenant's open invoices, forgiving the balance — used when a

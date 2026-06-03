@@ -33,7 +33,7 @@ use crate::query;
 use crate::robot::Robot;
 use crate::routes::identity::get_identity;
 use crate::routes::invoices::{
-    create_invoice_checkout, ensure_invoice_bolt11, get_invoice, list_invoice_items, list_invoices,
+    ensure_invoice_bolt11, ensure_invoice_checkout, get_invoice, list_invoice_items, list_invoices,
     reconcile_invoice,
 };
 use crate::routes::plans::{get_plan, list_plans};

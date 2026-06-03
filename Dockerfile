@@ -1,20 +1,36 @@
 # syntax=docker/dockerfile:1
 
 # ---------- Build the Rust backend ----------
-FROM rust:1.94-bookworm AS backend-build
-
+# cargo-chef caches the compiled dependency graph in its own layer, so a
+# source-only change recompiles just our crate instead of every dependency from
+# scratch. The recipe is derived solely from Cargo.toml/Cargo.lock, so the
+# expensive `cook` layer is reused until the dependency set changes.
+# https://github.com/LukeMathWalker/cargo-chef
+FROM rust:1.94-bookworm AS chef
 WORKDIR /app
-
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
     pkg-config \
     libsqlite3-dev \
-  && rm -rf /var/lib/apt/lists/*
+  && rm -rf /var/lib/apt/lists/* \
+  && cargo install --locked cargo-chef
 
+# Distill the dependency recipe. Cheap, and re-runs on any source change, but
+# yields a stable recipe.json as long as dependencies are unchanged — which is
+# what keeps the cook layer below cached.
+FROM chef AS planner
+COPY backend/Cargo.toml backend/Cargo.lock ./
+COPY backend/src ./src
+RUN cargo chef prepare --recipe-path recipe.json
+
+# Build (and cache) dependencies from the recipe, then compile the application.
+# Must share the chef stage's Rust version for the cached layer to apply.
+FROM chef AS backend-build
+COPY --from=planner /app/recipe.json recipe.json
+RUN cargo chef cook --release --recipe-path recipe.json
 COPY backend/Cargo.toml backend/Cargo.lock ./
 COPY backend/src ./src
 COPY backend/migrations ./migrations
-
 RUN cargo build --release
 
 # ---------- Build the frontend with placeholder config ----------

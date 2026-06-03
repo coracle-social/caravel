@@ -27,6 +27,7 @@ export type EventSigner = {
 }
 
 export const PLATFORM_NAME = import.meta.env.VITE_PLATFORM_NAME
+export const PLATFORM_LOGO = import.meta.env.VITE_PLATFORM_LOGO
 
 export const eventStore = new EventStore()
 export const pool = new RelayPool()

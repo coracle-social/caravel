@@ -17,6 +17,7 @@ docker run -d \
   -p 3000:3000 \
   -v my-caravel-data:/app/data \
   -e PLATFORM_NAME=Caravel \
+  -e PLATFORM_LOGO=/caravel.png \
   -e RELAY_DOMAIN=example.com \
   -e APP_URL=https://example.com \
   -e ZOOID_API_URL=http://zooid:3334 \

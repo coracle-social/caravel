@@ -10,7 +10,7 @@ import PaymentSetup from "@/components/PaymentSetup"
 import Login from "@/views/Login"
 import { createRelayForActiveTenant, resolvePostPaidFlow } from "@/lib/hooks"
 import type { Invoice } from "@/lib/api"
-import { account, refetchBilling, setToastMessage } from "@/lib/state"
+import { account, PLATFORM_LOGO, PLATFORM_NAME, refetchBilling, setToastMessage } from "@/lib/state"
 import FlotillaLogo from "@/assets/flotilla-logo.svg"
 import NostordLogo from "@/assets/nostord-logo.svg"
 
@@ -100,8 +100,8 @@ export default function Home() {
       <nav class="sticky top-0 z-20 bg-white/80 backdrop-blur border-b border-gray-100">
         <div class="max-w-5xl mx-auto px-6 h-14 flex items-center justify-between">
           <div class="flex items-center gap-2 font-bold text-gray-900">
-            <img src="/caravel.png" alt="Caravel" class="w-7 h-7 rounded" />
-            Caravel
+            <img src={PLATFORM_LOGO} alt={PLATFORM_NAME} class="w-7 h-7 rounded" />
+            {PLATFORM_NAME}
           </div>
           <Show
             when={account()}
@@ -177,7 +177,7 @@ export default function Home() {
         <div class="max-w-5xl mx-auto px-6 py-20">
           <h2 class="text-3xl font-bold text-center text-gray-900 mb-4">Everything you need</h2>
           <p class="text-center text-gray-500 mb-14 max-w-xl mx-auto">
-            Caravel takes care of the infrastructure so you can focus on building your community.
+            {PLATFORM_NAME} takes care of the infrastructure so you can focus on building your community.
           </p>
           <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
             {[
@@ -361,7 +361,7 @@ export default function Home() {
         <div class="relative max-w-5xl mx-auto px-6 py-28 text-center">
           <h2 class="text-4xl font-extrabold text-gray-900 mb-4">Ready to launch your relay?</h2>
           <p class="text-gray-500 mb-10 max-w-lg mx-auto text-lg">
-            Join communities already running on Caravel. Set up in minutes.
+            Join communities already running on {PLATFORM_NAME}. Set up in minutes.
           </p>
           <button
             type="button"
@@ -378,10 +378,10 @@ export default function Home() {
       <footer class="border-t border-gray-100 bg-gray-50">
         <div class="max-w-5xl mx-auto px-6 py-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-sm text-gray-400">
           <div class="flex items-center gap-2 font-semibold text-gray-500">
-            <img src="/caravel.png" alt="Caravel" class="w-5 h-5 rounded" />
-            Caravel
+            <img src={PLATFORM_LOGO} alt={PLATFORM_NAME} class="w-5 h-5 rounded" />
+            {PLATFORM_NAME}
           </div>
-          <p>© {new Date().getFullYear()} Caravel. Built on Nostr.</p>
+          <p>© {new Date().getFullYear()} {PLATFORM_NAME}. Built on Nostr.</p>
           <div class="flex gap-4">
             <a href="https://flotilla.social" target="_blank" rel="noopener noreferrer" class="hover:text-gray-600 transition-colors">Flotilla</a>
             <a href="https://chachi.chat" target="_blank" rel="noopener noreferrer" class="hover:text-gray-600 transition-colors">Chachi</a>

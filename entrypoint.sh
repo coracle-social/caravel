@@ -8,6 +8,7 @@ set -euo pipefail
 VITE_API_URL="${SERVER_URL:-}"
 VITE_RELAY_DOMAIN="${RELAY_DOMAIN:-}"
 VITE_PLATFORM_NAME="${PLATFORM_NAME:-}"
+VITE_PLATFORM_LOGO="${PLATFORM_LOGO:-/caravel.png}"
 
 # Escape characters that are special in a sed replacement.
 esc() { printf '%s' "$1" | sed -e 's/[&|\\]/\\&/g'; }
@@ -18,6 +19,7 @@ while IFS= read -r -d '' f; do
     -e "s|__VITE_API_URL__|$(esc "$VITE_API_URL")|g" \
     -e "s|__VITE_RELAY_DOMAIN__|$(esc "$VITE_RELAY_DOMAIN")|g" \
     -e "s|__VITE_PLATFORM_NAME__|$(esc "$VITE_PLATFORM_NAME")|g" \
+    -e "s|__VITE_PLATFORM_LOGO__|$(esc "$VITE_PLATFORM_LOGO")|g" \
     "$f"
 done < <(find /app/dist -type f \( -name '*.js' -o -name '*.html' \) -print0)
 

@@ -43,11 +43,11 @@ All configuration is read from the environment by `Env::load()` at startup. **Ev
 | Variable               | Description                                                          |
 | ---------------------- | ------------------------------------------------------------------- |
 | `SERVER_URL`           | Public API base URL; the value the NIP-98 `u` tag must equal exactly |
-| `SERVER_PORT`          | API bind port (the server always binds to `127.0.0.1`)             |
+| `SERVER_PORT`          | API bind port; the server binds `0.0.0.0` (all interfaces)             |
 | `SERVER_ADMIN_PUBKEYS` | Comma-separated admin pubkeys (hex)                                 |
 | `SERVER_ALLOW_ORIGINS` | Comma-separated allowed CORS origins                                |
 | `APP_URL`              | Frontend base URL; used to build links in DMs and invoices          |
-| `DATABASE_URL`         | SQLite URL; relative `sqlite://` paths are resolved under `backend/` |
+| `DATABASE_URL`         | SQLite URL; relative `sqlite://` paths resolve under the compile-time crate dir (`backend/` in dev, `/app` in the Docker image) |
 
 **Robot identity**
 

@@ -1,5 +1,4 @@
 import { createSignal } from "solid-js"
-import QRCode from "qrcode"
 import { ensureInvoiceBolt11, invoiceStatus, listInvoiceItems, type Invoice, type InvoiceItem } from "@/lib/api"
 import { methodLabel } from "@/lib/paymentMethod"
 import { formatUsd } from "@/lib/format"
@@ -33,20 +32,16 @@ export function useInvoicePdf() {
       })
 
       let sats: number | undefined
-      let qrDataUrl: string | undefined
       if (invoice.method !== "stripe" && invoice.voided_at == null) {
         try {
           const bolt11 = await ensureInvoiceBolt11(invoice.id)
           sats = Math.round(bolt11.msats / 1000)
-          if (invoice.paid_at == null) {
-            qrDataUrl = await QRCode.toDataURL(bolt11.lnbc, { width: 180, margin: 1 })
-          }
         } catch {
           // no bolt11 available — omit the bitcoin line
         }
       }
 
-      printHtml(buildHtml({ invoice, items, sats, qrDataUrl }))
+      printHtml(buildHtml({ invoice, items, sats }))
     } finally {
       setPrinting(false)
     }
@@ -55,8 +50,8 @@ export function useInvoicePdf() {
   return { printInvoice, printing }
 }
 
-function buildHtml(opts: { invoice: Invoice; items: InvoiceItem[]; sats?: number; qrDataUrl?: string }): string {
-  const { invoice, items, sats, qrDataUrl } = opts
+function buildHtml(opts: { invoice: Invoice; items: InvoiceItem[]; sats?: number }): string {
+  const { invoice, items, sats } = opts
   // The draft invoice carries the sentinel id and no lifecycle timestamps, so
   // invoiceStatus would read it as "open" — label it "draft" explicitly.
   const status = invoice.id === "draft" ? "draft" : invoiceStatus(invoice)
@@ -69,9 +64,6 @@ function buildHtml(opts: { invoice: Invoice; items: InvoiceItem[]; sats?: number
 
   const satsRow = sats != null ? `<tr><td>Bitcoin equivalent</td><td class="amt">${sats.toLocaleString()} sats</td></tr>` : ""
   const methodLine = invoice.method ? `<div>Paid via ${escapeHtml(methodLabel(invoice.method))}</div>` : ""
-  const qr = qrDataUrl
-    ? `<div class="qr"><img src="${qrDataUrl}" alt="Lightning invoice QR"/><div class="muted">Scan to pay by Lightning</div></div>`
-    : ""
 
   return `<!doctype html><html><head><meta charset="utf-8"><title>Invoice ${escapeHtml(invoice.id)}</title>
   <style>
@@ -86,7 +78,6 @@ function buildHtml(opts: { invoice: Invoice; items: InvoiceItem[]; sats?: number
     th, td { text-align: left; padding: 8px 0; border-bottom: 1px solid #e5e7eb; font-size: 14px; }
     .amt { text-align: right; white-space: nowrap; }
     tfoot td { font-weight: 600; border-bottom: none; border-top: 2px solid #111827; }
-    .qr { margin-top: 28px; text-align: center; }
   </style></head>
   <body>
     <div class="head">
@@ -105,7 +96,6 @@ function buildHtml(opts: { invoice: Invoice; items: InvoiceItem[]; sats?: number
       <tbody>${rows}${satsRow}</tbody>
       <tfoot><tr><td>Total</td><td class="amt">${formatUsd(invoice.amount)}</td></tr></tfoot>
     </table>
-    ${qr}
   </body></html>`
 }
 
@@ -133,7 +123,7 @@ function printHtml(html: string) {
   const cleanup = () => window.setTimeout(() => iframe.remove(), 1000)
   win.onafterprint = cleanup
 
-  // Let the iframe lay out (and decode the QR image) before printing.
+  // Let the iframe lay out before printing.
   window.setTimeout(() => {
     win.focus()
     win.print()

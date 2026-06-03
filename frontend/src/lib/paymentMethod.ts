@@ -18,7 +18,10 @@ export function nwcState(t: Pick<Tenant, "nwc_is_set" | "nwc_error">): PaymentMe
 
 export function cardState(t: Pick<Tenant, "stripe_payment_method_id" | "stripe_error">): PaymentMethodState {
   if (!t.stripe_payment_method_id) return { kind: "not_set_up" }
-  if (t.stripe_error) return { kind: "error", message: t.stripe_error }
+  // Don't surface Stripe's raw decline/error text to the tenant (it can be noisy
+  // or sensitive); show a generic message. The detail stays on the tenant record
+  // for admins (see AdminTenantDetail).
+  if (t.stripe_error) return { kind: "error", message: "Payment failed" }
   return { kind: "ok" }
 }
 

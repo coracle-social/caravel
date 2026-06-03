@@ -98,6 +98,7 @@ CREATE TABLE IF NOT EXISTS intent (
 CREATE TABLE IF NOT EXISTS checkout (
   id TEXT PRIMARY KEY,
   invoice_id TEXT NOT NULL,
+  session_id TEXT NOT NULL,
   url TEXT NOT NULL,
   created_at INTEGER NOT NULL,
   expires_at INTEGER NOT NULL,

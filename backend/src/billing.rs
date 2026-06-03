@@ -372,7 +372,7 @@ impl Billing {
             && checkout.settled_at.is_none()
             && self
                 .stripe
-                .is_checkout_paid(&checkout.id)
+                .is_checkout_paid(&checkout.session_id)
                 .await
                 .unwrap_or(false)
         {
@@ -534,7 +534,7 @@ impl Billing {
     /// transaction, so it's excluded here and not needlessly expired.
     async fn cleanup_pending_payments(&self, invoice: &Invoice) -> Result<()> {
         for checkout in query::list_pending_checkouts_for_invoice(&invoice.id).await? {
-            if let Err(error) = self.stripe.expire_checkout_session(&checkout.id).await {
+            if let Err(error) = self.stripe.expire_checkout_session(&checkout.session_id).await {
                 tracing::debug!(
                     invoice = %invoice.id,
                     checkout = %checkout.id,

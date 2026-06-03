@@ -435,7 +435,7 @@ pub async fn settle_invoice_via_intent(
 /// Atomically record an invoice paid via a hosted Checkout session: stamp the
 /// checkout settled, clear the tenant's stored Stripe error, and mark the invoice
 /// paid. The checkout was inserted unsettled by [`insert_checkout`]. `checkout_id`
-/// is the Stripe Checkout Session id, which is the checkout's primary key.
+/// is our row id, not the Stripe Checkout Session id.
 pub async fn settle_invoice_via_checkout(
     tenant_pubkey: &str,
     checkout_id: &str,
@@ -491,23 +491,24 @@ pub async fn insert_bolt11(
 // --- Checkout records ---
 
 /// Record a pending Stripe Checkout session for an invoice, returning the stored
-/// [`Checkout`]. Mirrors [`insert_bolt11`]: created unsettled, then stamped by
-/// [`settle_invoice_via_checkout`] once the session is paid. Keyed by the Stripe
-/// Checkout Session id, the same way `intent` is keyed by its PaymentIntent id.
+/// [`Checkout`]. Mirrors [`insert_bolt11`]: created unsettled with our own id,
+/// then stamped by [`settle_invoice_via_checkout`] once the session is paid.
 pub async fn insert_checkout(
     invoice_id: &str,
     session_id: &str,
     url: &str,
     expires_at: i64,
 ) -> Result<Option<Checkout>> {
+    let id = uuid::Uuid::new_v4().to_string();
     let created_at = chrono::Utc::now().timestamp();
 
     Ok(sqlx::query_as::<_, Checkout>(
-        "INSERT INTO checkout (id, invoice_id, url, created_at, expires_at)
-         VALUES (?, ?, ?, ?, ?) RETURNING *",
+        "INSERT INTO checkout (id, invoice_id, session_id, url, created_at, expires_at)
+         VALUES (?, ?, ?, ?, ?, ?) RETURNING *",
     )
-    .bind(session_id)
+    .bind(id)
     .bind(invoice_id)
+    .bind(session_id)
     .bind(url)
     .bind(created_at)
     .bind(expires_at)

@@ -89,13 +89,15 @@ impl Billing {
     ) -> Result<()> {
         let mut tenant = tenant.clone();
 
-        let activities = query::list_billable_activity(&tenant.pubkey).await?;
+        let mut activities = query::list_billable_activity(&tenant.pubkey).await?;
 
         // A churned tenant with fresh billable activity is using the service
         // again: re-activate billing (and restore their relays) before billing it.
+        // Reactivation records a billable activity for each restored relay; fold
+        // those into this pass so their prorated charges land on the same invoice.
         if tenant.churned_at.is_some() && !activities.is_empty() {
             let relays = query::list_relays_for_tenant(&tenant.pubkey).await?;
-            command::reactivate_tenant(&tenant.pubkey, &relays).await?;
+            activities.extend(command::reactivate_tenant(&tenant.pubkey, &relays).await?);
             tenant.churned_at = None;
         }
 
@@ -154,12 +156,12 @@ impl Billing {
                 self.make_prorated_item(tenant, activity, 1, "New relay created")
                     .await?
             }
-            "activate_relay" => {
+            "activate_relay" | "unmark_relay_delinquent" => {
                 self.make_prorated_item(tenant, activity, 1, "Relay reactivated")
                     .await?
             }
             "deactivate_relay" => {
-                self.make_prorated_item(tenant, activity, -1, "Relay deactivated (prorated credit)")
+                self.make_prorated_item(tenant, activity, -1, "Relay deactivated")
                     .await?
             }
             "update_relay" => self.make_plan_change_item(tenant, activity).await?,

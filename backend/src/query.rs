@@ -233,7 +233,8 @@ pub async fn list_billable_activity(tenant_pubkey: &str) -> Result<Vec<Activity>
         "WHERE tenant_pubkey = ?
            AND billed_at IS NULL
            AND activity_type IN (
-               'create_relay', 'update_relay', 'activate_relay', 'deactivate_relay'
+               'create_relay', 'update_relay', 'activate_relay', 'deactivate_relay',
+               'unmark_relay_delinquent'
            )
          ORDER BY created_at ASC",
     ))

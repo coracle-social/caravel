@@ -114,8 +114,10 @@ pub async fn churn_tenant(tenant_pubkey: &str, now: i64, relays: &[Relay]) -> Re
 }
 
 /// Atomically re-activate a churned tenant: clear the churn marker, restore every
-/// delinquent relay to active, and void any still-open invoices.
-pub async fn reactivate_tenant(tenant_pubkey: &str, relays: &[Relay]) -> Result<()> {
+/// delinquent relay to active, and void any still-open invoices. Returns the
+/// `unmark_relay_delinquent` activities recorded for the restored relays, so the
+/// caller can fold their prorated charges into the same reconcile pass.
+pub async fn reactivate_tenant(tenant_pubkey: &str, relays: &[Relay]) -> Result<Vec<Activity>> {
     let activities = with_tx(async |tx| {
         set_tenant_churned_at_tx(tx, tenant_pubkey, None).await?;
 
@@ -135,10 +137,10 @@ pub async fn reactivate_tenant(tenant_pubkey: &str, relays: &[Relay]) -> Result<
     })
     .await?;
 
-    for activity in activities {
-        publish(activity);
+    for activity in &activities {
+        publish(activity.clone());
     }
-    Ok(())
+    Ok(activities)
 }
 
 // --- Relays ---

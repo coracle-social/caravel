@@ -4,7 +4,7 @@ use axum::extract::{Path, State};
 
 use crate::api::{Api, AuthedPubkey};
 use crate::query;
-use crate::web::{ApiResult, internal, not_found, ok};
+use crate::web::{ApiResult, bad_request, internal, not_found, ok};
 
 pub async fn list_invoices(
     State(api): State<Arc<Api>>,
@@ -90,6 +90,33 @@ pub async fn ensure_invoice_bolt11(
         .map_err(internal)?;
 
     ok(bolt11)
+}
+
+/// Open a hosted Stripe Checkout session to pay a single open invoice by card,
+/// returning the URL to redirect the tenant to. Unlike the off-session card
+/// charge, Checkout can satisfy a 3D Secure authentication challenge; the
+/// resulting payment is reconciled by `reconcile_invoice` (or the dunning poll).
+pub async fn ensure_invoice_checkout(
+    State(api): State<Arc<Api>>,
+    AuthedPubkey(auth): AuthedPubkey,
+    Path(id): Path<String>,
+) -> ApiResult {
+    let invoice = query::get_invoice(&id)
+        .await
+        .map_err(internal)?
+        .ok_or_else(|| not_found("invoice not found"))?;
+
+    api.require_admin_or_tenant(&auth, &invoice.tenant_pubkey)?;
+
+    let tenant = api.get_tenant_or_404(&invoice.tenant_pubkey).await?;
+
+    let checkout = api
+        .billing
+        .ensure_checkout_for_invoice(&tenant, &invoice)
+        .await
+        .map_err(internal)?;
+
+    ok(serde_json::json!({ "url": checkout.url }))
 }
 
 /// The line items billed on an invoice

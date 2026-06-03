@@ -335,6 +335,15 @@ export function ensureInvoiceBolt11(invoiceId: string) {
   return callApi<undefined, Bolt11>("POST", `/invoices/${invoiceId}/bolt11`)
 }
 
+// Open a hosted Stripe Checkout session to pay a single invoice by card,
+// reusing a valid pending one. Unlike the off-session charge, Checkout can
+// satisfy a 3D Secure challenge. Returns the URL to redirect to; the payment is
+// reconciled by reconcileInvoice once the tenant returns (or by the poll). The
+// return URL is fixed to the account page server-side.
+export function createInvoiceCheckout(invoiceId: string) {
+  return callApi<undefined, { url: string }>("POST", `/invoices/${invoiceId}/checkout`)
+}
+
 // Reconcile and collect an open invoice: ensure a payable bolt11 exists, then
 // run the payment cascade (NWC, then an out-of-band Lightning settle, then a
 // saved card). Caller-initiated, so no dunning DM and no churn. Returns the

@@ -91,6 +91,16 @@ CREATE TABLE IF NOT EXISTS intent (
   FOREIGN KEY (invoice_id) REFERENCES invoice(id)
 );
 
+CREATE TABLE IF NOT EXISTS checkout (
+  id TEXT PRIMARY KEY,
+  invoice_id TEXT NOT NULL,
+  url TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL,
+  settled_at INTEGER,
+  FOREIGN KEY (invoice_id) REFERENCES invoice(id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_activity_tenant_created ON activity (tenant_pubkey, created_at);
 
 CREATE INDEX IF NOT EXISTS idx_activity_resource_created ON activity (resource_id, created_at);
@@ -112,3 +122,5 @@ CREATE INDEX IF NOT EXISTS idx_invoice_item_outstanding ON invoice_item (tenant_
 CREATE UNIQUE INDEX IF NOT EXISTS idx_invoice_item_activity ON invoice_item (activity_id);
 
 CREATE INDEX IF NOT EXISTS idx_bolt11_invoice_created ON bolt11 (invoice_id, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_checkout_invoice_created ON checkout (invoice_id, created_at);

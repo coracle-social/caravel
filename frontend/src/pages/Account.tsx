@@ -7,9 +7,9 @@ import { useInvoicePdf } from "@/lib/useInvoicePdf"
 import PaymentSetupNWC from "@/components/PaymentSetupNWC"
 import PaymentSetupCard from "@/components/PaymentSetupCard"
 import { useBillingStatus, accountStatus, type AccountStatus } from "@/lib/billing"
-import { invoiceStatus, listDraftInvoiceItems, type Invoice } from "@/lib/api"
+import { invoiceStatus, listDraftInvoiceItems, reconcileInvoice, type Invoice } from "@/lib/api"
 import { cardState, methodLabel, nwcState, type PaymentMethodState } from "@/lib/paymentMethod"
-import { account } from "@/lib/state"
+import { account, setToastMessage } from "@/lib/state"
 import { formatPeriod } from "@/lib/format"
 import PaymentMethodRow from "@/components/account/PaymentMethodRow"
 import InvoiceListItem from "@/components/account/InvoiceListItem"
@@ -49,6 +49,32 @@ export default function Account() {
   createEffect(() => {
     const pubkey = account()?.pubkey
     if (pubkey) void billing.autopay(pubkey)
+  })
+
+  // Returning from a per-invoice Stripe Checkout (the success_url carries
+  // ?paid_invoice=ID): reconcile that invoice so it flips to paid promptly —
+  // autopay above only collects when a recurring method is on file, and a
+  // one-off Checkout payment doesn't leave one — then strip the marker.
+  createEffect(() => {
+    const pubkey = account()?.pubkey
+    const paidInvoice = new URLSearchParams(window.location.search).get("paid_invoice")
+    if (!pubkey || !paidInvoice) return
+    void (async () => {
+      try {
+        const invoice = await reconcileInvoice(paidInvoice)
+        setToastMessage(
+          invoice.paid_at != null ? "Payment received. Thank you!" : "Your payment is still processing.",
+        )
+      } catch (e) {
+        setToastMessage(e instanceof Error ? e.message : "Failed to confirm payment")
+      } finally {
+        const params = new URLSearchParams(window.location.search)
+        params.delete("paid_invoice")
+        const qs = params.toString()
+        window.history.replaceState({}, "", `${window.location.pathname}${qs ? `?${qs}` : ""}`)
+        billing.refetch()
+      }
+    })()
   })
 
   // Coarse account-health summary for the badge. Same snapshot the inline prompt

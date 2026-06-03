@@ -1,6 +1,6 @@
 import { createSignal } from "solid-js"
 import { updateActiveTenant } from "@/lib/hooks"
-import { createPortalSession } from "@/lib/api"
+import { createInvoiceCheckout, createPortalSession } from "@/lib/api"
 import { account } from "@/lib/state"
 
 // Lightning/NWC save state machine, shared by the combined and focused setup
@@ -65,3 +65,33 @@ export function useCardPortal() {
 }
 
 export type CardPortal = ReturnType<typeof useCardPortal>
+
+// Paying one specific invoice by card is a full-page redirect to a Stripe
+// Checkout session scoped to that invoice (so a 3D Secure challenge can be
+// completed) — distinct from the billing-portal redirect that manages the
+// recurring card on file. Like the portal, there's no local "saved" state, only
+// the in-flight redirect and any failure to open the session.
+export function useInvoiceCheckout(invoiceId: () => string) {
+  const [redirecting, setRedirecting] = createSignal(false)
+  const [error, setError] = createSignal("")
+
+  async function openCheckout() {
+    setRedirecting(true)
+    setError("")
+    try {
+      const { url } = await createInvoiceCheckout(invoiceId())
+      window.location.href = url
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to open checkout")
+      setRedirecting(false)
+    }
+  }
+
+  function reset() {
+    setError("")
+  }
+
+  return { redirecting, error, openCheckout, reset }
+}
+
+export type InvoiceCheckout = ReturnType<typeof useInvoiceCheckout>

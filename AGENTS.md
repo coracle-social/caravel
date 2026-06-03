@@ -21,6 +21,8 @@ When referring to a tenant's pubkey, always name it `tenant_pubkey`, not `tenant
 
 Pre-release: squash schema changes into `0001_init.sql` rather than adding new migration files. Once released, migrations become append-only.
 
+Document indexes (what use cases they support), but not tables (those are documented in `models.rs`).
+
 ## Markdown
 
 Do not hard-break markdown files at a certain number of characters. Allow readers to implement line wrapping naturally instead.

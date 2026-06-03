@@ -2,12 +2,11 @@ import { createEffect, createResource, createSignal, Show } from "solid-js"
 import QRCode from "qrcode"
 import Modal from "@/components/Modal"
 import PaymentSetup from "@/components/PaymentSetup"
-import { CardSetupBody } from "@/components/PaymentSetupShell"
 import InvoiceItemsList from "@/components/payment/InvoiceItemsList"
 import LightningPayBody from "@/components/payment/LightningPayBody"
 import { setToastMessage } from "@/lib/state"
 import { copyToClipboard } from "@/lib/clipboard"
-import { useCardPortal } from "@/lib/usePaymentSetup"
+import { useInvoiceCheckout } from "@/lib/usePaymentSetup"
 import { ensureInvoiceBolt11, listInvoiceItems, reconcileInvoice, type Invoice } from "@/lib/api"
 import { autopayConfigured } from "@/lib/paymentMethod"
 import { billingTenant } from "@/lib/state"
@@ -40,9 +39,11 @@ export default function PaymentDialog(props: PaymentDialogProps) {
     listInvoiceItems,
   )
 
-  // Card payment is a redirect to the Stripe billing portal; once a card is on
-  // file we retry collection on this invoice automatically.
-  const card = useCardPortal()
+  // Paying by card opens a Stripe Checkout session scoped to this invoice (which
+  // can clear a 3D Secure challenge the off-session charge can't), then returns
+  // here where the payment is reconciled. Distinct from PaymentSetup, which
+  // manages the recurring card on file via the billing portal.
+  const checkout = useInvoiceCheckout(() => props.invoice.id)
 
   const hasAutopay = () => {
     const t = billingTenant()
@@ -72,10 +73,10 @@ export default function PaymentDialog(props: PaymentDialogProps) {
     void loadBolt11()
   })
 
-  // The card portal lives in a shared hook, so surface its failures here by
-  // mirroring its error signal into the toast.
+  // The checkout redirect lives in a shared hook, so surface its failures here
+  // by mirroring its error signal into the toast.
   createEffect(() => {
-    const err = card.error()
+    const err = checkout.error()
     if (err) setToastMessage(err)
   })
 
@@ -106,7 +107,7 @@ export default function PaymentDialog(props: PaymentDialogProps) {
     setBolt11("")
     setQrDataUrl("")
     setPayMethod("lightning")
-    card.reset()
+    checkout.reset()
     props.onClose()
   }
 
@@ -186,9 +187,27 @@ export default function PaymentDialog(props: PaymentDialogProps) {
                 />
               </Show>
 
-              {/* Card: redirect to the Stripe billing portal */}
+              {/* Card: redirect to a Stripe Checkout session for this invoice */}
               <Show when={payMethod() === "card"}>
-                <CardSetupBody card={card} />
+                <div class="text-center space-y-4">
+                  <div class="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-gray-100">
+                    <svg class="w-6 h-6 text-gray-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <rect x="1" y="4" width="22" height="16" rx="2" ry="2" />
+                      <line x1="1" y1="10" x2="23" y2="10" />
+                    </svg>
+                  </div>
+                  <p class="text-sm text-gray-600">
+                    Pay this invoice on Stripe's secure checkout. You'll be redirected and brought back here once it's done.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={checkout.openCheckout}
+                    disabled={checkout.redirecting()}
+                    class="w-full py-2 px-4 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                  >
+                    {checkout.redirecting() ? "Redirecting..." : `Pay ${amountLabel()} by card`}
+                  </button>
+                </div>
               </Show>
             </div>
           }

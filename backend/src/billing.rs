@@ -5,7 +5,7 @@ use crate::bitcoin;
 use crate::command;
 use crate::env;
 use crate::models::{
-    Activity, Bolt11, Invoice, InvoiceItem, RELAY_STATUS_ACTIVE, Snapshot, Tenant,
+    Activity, Bolt11, Checkout, Invoice, InvoiceItem, RELAY_STATUS_ACTIVE, Snapshot, Tenant,
 };
 use crate::query;
 use crate::robot::Robot;
@@ -317,12 +317,15 @@ impl Billing {
         Ok(())
     }
 
-    /// Collect an invoice via NWC, then a saved card, then (when `notify`) a
-    /// manual DM. A failing method's error is stored on the tenant (to warn them
-    /// in the UI) but never aborts the cascade or future retries; a method's
-    /// error is cleared when it next succeeds. Caller-initiated payments pass
-    /// `notify = false` to skip the dunning DM, since the failure is already
-    /// surfaced on screen.
+    /// Collect an invoice. We check the out-of-band rails first — a Lightning
+    /// invoice or Checkout session the tenant may have already paid — and only
+    /// then initiate a fresh charge (NWC, then a saved card), so a payment that's
+    /// already in flight is never duplicated. Falling all the way through sends a
+    /// manual-payment DM (when `notify`). A failing charge's error is stored on
+    /// the tenant (to warn them in the UI) but never aborts the cascade or future
+    /// retries; it's cleared when a method next succeeds. Caller-initiated
+    /// payments pass `notify = false` to skip the dunning DM, since the failure
+    /// is already surfaced on screen.
     pub async fn attempt_payment(
         &self,
         tenant: &Tenant,
@@ -331,36 +334,53 @@ impl Billing {
     ) -> Result<()> {
         let mut error_message: Option<String> = None;
 
-        // 1. NWC auto-pay: if the tenant has configured an nwc_url, try it first.
-        if !tenant.nwc_url.is_empty() {
-            match self.attempt_payment_using_nwc(tenant, invoice).await {
-                Ok(()) => return Ok(()),
-                Err(e) => error_message = Some(format!("{e}")),
-            }
-        }
-
-        // 2. Out-of-band lightning: catches partially failed NWC or manual payment
+        // 1. Out-of-band lightning: settle a bolt11 paid out of band (e.g. a
+        // manual QR scan, or an NWC pay that completed but failed to record).
+        // Checked before any charge so we never bill on top of it.
         if let Some(bolt11) = query::get_bolt11_for_invoice(&invoice.id).await?
             && bolt11.settled_at.is_none()
             && self.wallet.is_settled(&bolt11.lnbc).await.unwrap_or(false)
         {
             command::settle_invoice_out_of_band(&bolt11.id, &invoice.id).await?;
-            return Ok(());
+            return self.cleanup_pending_payments(invoice).await;
         }
 
-        // 3. Payment method on file: charge the tenant's cached Stripe payment
+        // 2. Hosted Checkout: settle an invoice the tenant paid (and
+        // authenticated) on a Stripe Checkout session that has since completed.
+        // Also checked before any charge so we never bill on top of it.
+        if let Some(checkout) = query::get_checkout_for_invoice(&invoice.id).await?
+            && checkout.settled_at.is_none()
+            && self
+                .stripe
+                .is_checkout_paid(&checkout.id)
+                .await
+                .unwrap_or(false)
+        {
+            command::settle_invoice_via_checkout(&tenant.pubkey, &checkout.id, &invoice.id).await?;
+            return self.cleanup_pending_payments(invoice).await;
+        }
+
+        // 3. NWC auto-pay: if the tenant has configured an nwc_url, charge it.
+        if !tenant.nwc_url.is_empty() {
+            match self.attempt_payment_using_nwc(tenant, invoice).await {
+                Ok(()) => return self.cleanup_pending_payments(invoice).await,
+                Err(e) => error_message = Some(format!("{e}")),
+            }
+        }
+
+        // 4. Payment method on file: charge the tenant's cached Stripe payment
         // method, kept fresh by sync_stripe_payment_method before collection.
         if let Some(payment_method) = &tenant.stripe_payment_method_id {
             match self
                 .attempt_payment_using_stripe(tenant, invoice, payment_method)
                 .await
             {
-                Ok(()) => return Ok(()),
+                Ok(()) => return self.cleanup_pending_payments(invoice).await,
                 Err(e) => error_message = error_message.or_else(|| Some(format!("{e}"))),
             }
         }
 
-        // 4. Manual payment: DM a link to the in-app payment page for this invoice.
+        // 5. Manual payment: DM a link to the in-app payment page for this invoice.
         if notify
             && let Err(e) = self
                 .attempt_payment_using_dm(tenant, invoice, error_message)
@@ -415,7 +435,7 @@ impl Billing {
                 )
                 .await?;
 
-            command::settle_invoice_via_stripe(&tenant.pubkey, &intent_id, &invoice.id).await
+            command::settle_invoice_via_intent(&tenant.pubkey, &intent_id, &invoice.id).await
         }
         .await;
 
@@ -470,6 +490,27 @@ impl Billing {
 
         // Record the send to avoid spammy notifications.
         command::mark_invoice_notified(invoice_id).await
+
+    }
+
+    /// Run after an invoice is settled to invalidate out-of-band payment methods
+    /// so the tenant can't pay twice. Only Stripe Checkout sessions can actually
+    /// be invalidated (by expiring them); Lightning/NWC has no such mechanism.
+    /// The session that just paid (if any) was marked settled in its settle
+    /// transaction, so it's excluded here and not needlessly expired.
+    async fn cleanup_pending_payments(&self, invoice: &Invoice) -> Result<()> {
+        for checkout in query::list_pending_checkouts_for_invoice(&invoice.id).await? {
+            if let Err(error) = self.stripe.expire_checkout_session(&checkout.id).await {
+                tracing::debug!(
+                    invoice = %invoice.id,
+                    checkout = %checkout.id,
+                    error = %error,
+                    "could not expire checkout session"
+                );
+            }
+        }
+
+        Ok(())
     }
 
     // --- Bolt11 utils ---
@@ -499,6 +540,57 @@ impl Billing {
         command::insert_bolt11(&invoice.id, &lnbc, msats as i64, now + expiry)
             .await?
             .ok_or_else(|| anyhow!("failed to insert bolt11"))
+    }
+
+    // --- Checkout utils ---
+
+    /// Idempotently produce a hosted Stripe Checkout session for an open invoice,
+    /// reusing an unsettled, unexpired one if present — the on-session card
+    /// counterpart to [`Self::ensure_bolt11_for_invoice`]. Checkout lets the
+    /// tenant clear a 3D Secure challenge the off-session card charge can't. On
+    /// success Stripe returns the tenant to their account page, where collection
+    /// is reconciled (here and on the dunning poll) once the session reads paid.
+    pub async fn ensure_checkout_for_invoice(
+        &self,
+        tenant: &Tenant,
+        invoice: &Invoice,
+    ) -> Result<Checkout> {
+        let now = chrono::Utc::now().timestamp();
+
+        // Never open a Checkout for an invoice that's already resolved.
+        if invoice.paid_at.is_some() || invoice.voided_at.is_some() {
+            return Err(anyhow!("invoice is not open"));
+        }
+
+        // Reuse a still-valid pending session so repeated clicks land on one page.
+        if let Some(existing) = query::get_checkout_for_invoice(&invoice.id).await?
+            && now < existing.expires_at
+        {
+            if existing.settled_at.is_some() {
+                return Err(anyhow!("a checkout has already been settled for this invoice"));
+            }
+
+            return Ok(existing);
+        }
+
+        // Stripe returns the tenant to their account page; tag the invoice so the
+        // landing page reconciles it promptly instead of waiting for the poll.
+        let base = format!("{}/account", env::get().app_url);
+        let success_url = format!("{base}?paid_invoice={}", invoice.id);
+
+        let (session_id, url, expires_at) = self
+            .stripe
+            .create_checkout_session(
+                &tenant.stripe_customer_id,
+                &invoice.id,
+                invoice.amount,
+                "usd",
+                &success_url,
+                &base,
+            )
+            .await?;
+
+        command::insert_checkout(&invoice.id, &session_id, &url, expires_at).await
     }
 
     // --- Stripe utils ---

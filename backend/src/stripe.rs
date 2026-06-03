@@ -128,6 +128,7 @@ impl Stripe {
                 ("currency", currency),
                 ("customer", customer_id),
                 ("payment_method", payment_method_id),
+                ("metadata[invoice_id]", invoice_id),
                 ("off_session", "true"),
                 ("confirm", "true"),
             ])
@@ -146,6 +147,77 @@ impl Stripe {
             .as_str()
             .map(str::to_string)
             .ok_or_else(|| anyhow!("missing payment intent id"))
+    }
+
+    // --- Checkout ---
+
+    /// Open a hosted Stripe Checkout session that charges `amount` (in the
+    /// currency's minor units) for a single invoice on-session, so the customer
+    /// can satisfy a 3D Secure authentication that an off-session saved-card
+    /// charge can't. Returns the session id, its hosted URL, and its expiry. The
+    /// session and the PaymentIntent it creates both carry `invoice_id` in
+    /// metadata so the charge is traceable back to our ledger.
+    pub async fn create_checkout_session(
+        &self,
+        customer_id: &str,
+        invoice_id: &str,
+        amount: i64,
+        currency: &str,
+        success_url: &str,
+        cancel_url: &str,
+    ) -> Result<(String, String, i64)> {
+        let amount = amount.to_string();
+        let body = self
+            .post("/checkout/sessions")
+            .form(&[
+                ("mode", "payment"),
+                ("customer", customer_id),
+                ("success_url", success_url),
+                ("cancel_url", cancel_url),
+                ("line_items[0][quantity]", "1"),
+                ("line_items[0][price_data][currency]", currency),
+                ("line_items[0][price_data][unit_amount]", amount.as_str()),
+                (
+                    "line_items[0][price_data][product_data][name]",
+                    "Relay subscription",
+                ),
+                ("payment_intent_data[metadata][invoice_id]", invoice_id),
+                ("metadata[invoice_id]", invoice_id),
+            ])
+            .send_json()
+            .await?;
+
+        let session_id = body["id"]
+            .as_str()
+            .ok_or_else(|| anyhow!("missing checkout session id"))?;
+        let url = body["url"]
+            .as_str()
+            .ok_or_else(|| anyhow!("missing checkout session url"))?;
+        let expires_at = body["expires_at"]
+            .as_i64()
+            .ok_or_else(|| anyhow!("missing checkout session expiry"))?;
+        Ok((session_id.to_string(), url.to_string(), expires_at))
+    }
+
+    /// Whether a Checkout session has been paid. Used to reconcile an invoice
+    /// once the customer returns from (or later completes) the hosted page.
+    pub async fn is_checkout_paid(&self, session_id: &str) -> Result<bool> {
+        let body = self
+            .get(&format!("/checkout/sessions/{session_id}"))
+            .send_json()
+            .await?;
+        Ok(body["payment_status"].as_str() == Some("paid"))
+    }
+
+    /// Expire a Checkout session so it can no longer be completed. Used to close
+    /// out a still-open session once its invoice has been paid another way,
+    /// preventing a double charge. Errors if the session isn't open (already
+    /// completed or expired), which the caller treats as best-effort.
+    pub async fn expire_checkout_session(&self, session_id: &str) -> Result<()> {
+        self.post(&format!("/checkout/sessions/{session_id}/expire"))
+            .send_ok()
+            .await?;
+        Ok(())
     }
 
     // --- Portal ---

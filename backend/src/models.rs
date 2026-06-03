@@ -166,3 +166,18 @@ pub struct Bolt11 {
     pub expires_at: i64,
     pub settled_at: Option<i64>,
 }
+
+/// A hosted Stripe Checkout session opened to pay an invoice on-session (so a 3D
+/// Secure challenge can be cleared), shaped like [`Bolt11`]: created pending and
+/// stamped `settled_at` once paid. `id` is the Stripe Checkout Session id
+/// (`cs_…`), used to reconcile and expire it; `url` is the hosted page we
+/// redirect the tenant to.
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct Checkout {
+    pub id: String,
+    pub invoice_id: String,
+    pub url: String,
+    pub created_at: i64,
+    pub expires_at: i64,
+    pub settled_at: Option<i64>,
+}

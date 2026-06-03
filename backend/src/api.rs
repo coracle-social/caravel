@@ -33,7 +33,8 @@ use crate::query;
 use crate::robot::Robot;
 use crate::routes::identity::get_identity;
 use crate::routes::invoices::{
-    ensure_invoice_bolt11, get_invoice, list_invoice_items, list_invoices, reconcile_invoice,
+    create_invoice_checkout, ensure_invoice_bolt11, get_invoice, list_invoice_items, list_invoices,
+    reconcile_invoice,
 };
 use crate::routes::plans::{get_plan, list_plans};
 use crate::routes::relays::{
@@ -93,6 +94,7 @@ impl Api {
             .route("/invoices", get(list_invoices))
             .route("/invoices/:id", get(get_invoice))
             .route("/invoices/:id/reconcile", post(reconcile_invoice))
+            .route("/invoices/:id/checkout", post(ensure_invoice_checkout))
             .route("/invoices/:id/bolt11", post(ensure_invoice_bolt11))
             .route("/invoices/:id/items", get(list_invoice_items))
             .with_state(api)

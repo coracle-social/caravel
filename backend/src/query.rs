@@ -1,7 +1,7 @@
 use anyhow::{Result, anyhow};
 
 use crate::db::pool;
-use crate::models::{Activity, Bolt11, Invoice, InvoiceItem, Plan, Relay, Tenant};
+use crate::models::{Activity, Bolt11, Checkout, Invoice, InvoiceItem, Plan, Relay, Tenant};
 
 fn select_tenant(tail: &str) -> String {
     format!("SELECT * FROM tenant {tail}")
@@ -194,6 +194,31 @@ pub async fn get_bolt11_for_invoice(invoice_id: &str) -> Result<Option<Bolt11>> 
     )
     .bind(invoice_id)
     .fetch_optional(pool())
+    .await?)
+}
+
+// --- Checkouts ---
+
+/// The most recent Checkout session for an invoice, regardless of `settled_at`,
+/// so a session can still be expired on Stripe after we've locally marked it
+/// settled. Mirrors [`get_bolt11_for_invoice`]; callers gate on `settled_at`.
+pub async fn get_checkout_for_invoice(invoice_id: &str) -> Result<Option<Checkout>> {
+    Ok(sqlx::query_as::<_, Checkout>(
+        "SELECT * FROM checkout WHERE invoice_id = ? ORDER BY created_at DESC LIMIT 1",
+    )
+    .bind(invoice_id)
+    .fetch_optional(pool())
+    .await?)
+}
+
+/// Every still-pending (unsettled) Checkout session for an invoice — the ones to
+/// expire on Stripe once the invoice has been paid another way.
+pub async fn list_pending_checkouts_for_invoice(invoice_id: &str) -> Result<Vec<Checkout>> {
+    Ok(sqlx::query_as::<_, Checkout>(
+        "SELECT * FROM checkout WHERE invoice_id = ? AND settled_at IS NULL ORDER BY created_at DESC",
+    )
+    .bind(invoice_id)
+    .fetch_all(pool())
     .await?)
 }
 

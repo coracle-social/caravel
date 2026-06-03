@@ -450,28 +450,36 @@ impl Billing {
         invoice: &Invoice,
         payment_method_id: &str,
     ) -> Result<()> {
-        let result: Result<()> = async {
-            let intent_id = self
-                .stripe
-                .create_payment_intent(
-                    &tenant.stripe_customer_id,
-                    payment_method_id,
-                    &invoice.id,
-                    invoice.amount,
-                    "usd",
-                )
-                .await?;
+        let intent = command::ensure_pending_intent(&invoice.id, payment_method_id).await?;
 
-            command::settle_invoice_via_intent(&tenant.pubkey, &intent_id, &invoice.id).await
-        }
-        .await;
+        let payment_intent_id = match self
+            .stripe
+            .create_payment_intent(
+                &tenant.stripe_customer_id,
+                &intent.payment_method_id,
+                &invoice.id,
+                invoice.amount,
+                "usd",
+            )
+            .await
+        {
+            Ok(id) => id,
+            // Drop the attempt so the next pass retries cleanly on the tenant's
+            // current method, and record the failure to warn the user in the UI.
+            Err(error) => {
+                command::delete_intent(&intent.id).await?;
+                command::set_tenant_stripe_error(&tenant.pubkey, &format!("{error}")).await?;
+                return Err(error);
+            }
+        };
 
-        // Record the failure on the tenant (to warn them in the UI) but still
-        // surface it, so the cascade can fall through and summarize it in the DM.
-        if let Err(error) = &result {
-            command::set_tenant_stripe_error(&tenant.pubkey, &format!("{error}")).await?;
-        }
-        result
+        command::settle_invoice_via_intent(
+            &tenant.pubkey,
+            &intent.id,
+            &payment_intent_id,
+            &invoice.id,
+        )
+        .await
     }
 
     async fn attempt_payment_using_dm(

@@ -88,7 +88,10 @@ CREATE TABLE IF NOT EXISTS bolt11 (
 CREATE TABLE IF NOT EXISTS intent (
   id TEXT PRIMARY KEY,
   invoice_id TEXT NOT NULL,
+  payment_method_id TEXT NOT NULL,
+  payment_intent_id TEXT,
   created_at INTEGER NOT NULL,
+  settled_at INTEGER,
   FOREIGN KEY (invoice_id) REFERENCES invoice(id)
 );
 
@@ -125,3 +128,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_invoice_item_activity ON invoice_item (act
 CREATE INDEX IF NOT EXISTS idx_bolt11_invoice_created ON bolt11 (invoice_id, created_at);
 
 CREATE INDEX IF NOT EXISTS idx_checkout_invoice_created ON checkout (invoice_id, created_at);
+
+-- At most one unsettled write-ahead intent per invoice: enforces the invariant
+-- and is the ON CONFLICT target for the get-or-create in `ensure_pending_intent`.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_intent_unsettled ON intent (invoice_id) WHERE settled_at IS NULL;

@@ -185,3 +185,18 @@ pub struct Checkout {
     pub expires_at: i64,
     pub settled_at: Option<i64>,
 }
+
+/// A write-ahead record of an off-session card charge: inserted before the Stripe
+/// call and stamped `settled_at` once the charge confirms and the invoice is paid.
+/// `payment_method_id` is the method it charges, so a retry after a lost settle
+/// re-confirms the same (idempotent) PaymentIntent rather than charging a second
+/// one; `payment_intent_id` is the Stripe `pi_…` that settled it.
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct Intent {
+    pub id: String,
+    pub invoice_id: String,
+    pub payment_method_id: String,
+    pub payment_intent_id: Option<String>,
+    pub created_at: i64,
+    pub settled_at: Option<i64>,
+}

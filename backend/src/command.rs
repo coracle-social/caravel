@@ -5,8 +5,8 @@ use sqlx::{Sqlite, Transaction};
 use crate::billing::BillingPeriod;
 use crate::db::{pool, publish, with_tx};
 use crate::models::{
-    Activity, Bolt11, Checkout, Invoice, InvoiceItem, RELAY_STATUS_ACTIVE, RELAY_STATUS_DELINQUENT,
-    RELAY_STATUS_INACTIVE, Relay, Snapshot, Tenant,
+    Activity, Bolt11, Checkout, Intent, Invoice, InvoiceItem, RELAY_STATUS_ACTIVE,
+    RELAY_STATUS_DELINQUENT, RELAY_STATUS_INACTIVE, Relay, Snapshot, Tenant,
 };
 
 // --- Tenants ---
@@ -350,9 +350,8 @@ pub async fn mark_activity_billed(activity_id: &str) -> Result<()> {
 
 // --- Invoices ---
 
-/// Claim all of a tenant's outstanding items onto a new invoice. A non-positive
-/// balance leaves the items outstanding so the credit carries to the next positive
-/// invoice. Returns the invoice, or `None` when there's nothing to bill.
+/// Claim a tenant's outstanding items onto a new invoice once the balance clears
+/// the minimum.
 pub async fn create_invoice(tenant: &Tenant, period: &BillingPeriod) -> Result<Option<Invoice>> {
     with_tx(async |tx| {
         let total = sqlx::query_scalar::<_, i64>(
@@ -363,7 +362,10 @@ pub async fn create_invoice(tenant: &Tenant, period: &BillingPeriod) -> Result<O
         .fetch_one(&mut **tx)
         .await?;
 
-        if total <= 0 {
+        // Stripe's minimum charge is $0.50 USD; $1 leaves margin so a later
+        // small credit can't drop a fresh invoice under that floor. Leave
+        // items outstanding and carry to a later invoice.
+        if total <= 100 {
             return Ok(None);
         }
 
@@ -411,16 +413,19 @@ pub async fn settle_invoice_via_nwc(
     .await
 }
 
-/// Atomically record a Stripe-settled invoice: persist the PaymentIntent, clear
-/// the tenant's stored Stripe error, and mark the invoice paid.
+/// Atomically settle an invoice paid off-session: stamp the write-ahead intent
+/// with the Stripe PaymentIntent that confirmed it, clear the tenant's stored
+/// Stripe error, and mark the invoice paid. `intent_id` is our row id (from
+/// [`insert_pending_intent`]); `payment_intent_id` is the Stripe `pi_…`.
 pub async fn settle_invoice_via_intent(
     tenant_pubkey: &str,
     intent_id: &str,
+    payment_intent_id: &str,
     invoice_id: &str,
 ) -> Result<()> {
     with_tx(async |tx| {
         clear_tenant_stripe_error_tx(tx, tenant_pubkey).await?;
-        insert_settled_intent_tx(tx, intent_id, invoice_id).await?;
+        mark_intent_settled_tx(tx, intent_id, payment_intent_id).await?;
         mark_invoice_paid_tx(tx, invoice_id, "stripe").await?;
         Ok(())
     })
@@ -778,24 +783,64 @@ async fn mark_checkout_settled_tx(
 
 // --- Intents ---
 
-/// Record the Stripe PaymentIntent that paid an invoice off-session. Keyed by
-/// the Stripe PaymentIntent id, so it's an idempotent audit record of what paid
-/// the invoice.
-async fn insert_settled_intent_tx(
-    tx: &mut Transaction<'_, Sqlite>,
-    intent_id: &str,
-    invoice_id: &str,
-) -> Result<()> {
+/// Write-ahead an off-session charge attempt before confirming it with Stripe,
+/// returning the stored [`Intent`]. Records the payment method so a retry after a
+/// lost settle re-confirms the same (idempotent) PaymentIntent; settled later by
+/// [`settle_invoice_via_intent`], or dropped by [`delete_intent`] if it declines.
+///
+/// Get-or-create, atomically: if the invoice already has an unsettled intent,
+/// returns it unchanged (keeping its original `payment_method_id`, so the retry
+/// re-confirms the same charge); otherwise inserts a fresh one. The partial
+/// unique index on (invoice_id) WHERE settled_at IS NULL makes this race-free —
+/// concurrent reconciles converge on one intent instead of two.
+pub async fn ensure_pending_intent(invoice_id: &str, payment_method_id: &str) -> Result<Intent> {
+    let id = uuid::Uuid::new_v4().to_string();
     let created_at = chrono::Utc::now().timestamp();
 
-    sqlx::query(
-        "INSERT INTO intent (id, invoice_id, created_at)
-         VALUES (?, ?, ?) ON CONFLICT(id) DO NOTHING",
+    Ok(sqlx::query_as::<_, Intent>(
+        "INSERT INTO intent (id, invoice_id, payment_method_id, created_at)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(invoice_id) WHERE settled_at IS NULL
+           DO UPDATE SET payment_method_id = intent.payment_method_id
+         RETURNING *",
     )
-    .bind(intent_id)
+    .bind(id)
     .bind(invoice_id)
+    .bind(payment_method_id)
     .bind(created_at)
+    .fetch_one(pool())
+    .await?)
+}
+
+/// Stamp an off-session intent settled with the Stripe PaymentIntent that
+/// confirmed it, but don't overwrite an existing settled_at — so reconciling the
+/// same attempt twice is a no-op.
+async fn mark_intent_settled_tx(
+    tx: &mut Transaction<'_, Sqlite>,
+    intent_id: &str,
+    payment_intent_id: &str,
+) -> Result<()> {
+    let settled_at = chrono::Utc::now().timestamp();
+
+    sqlx::query(
+        "UPDATE intent SET settled_at = ?, payment_intent_id = ?
+         WHERE id = ? AND settled_at IS NULL",
+    )
+    .bind(settled_at)
+    .bind(payment_intent_id)
+    .bind(intent_id)
     .execute(&mut **tx)
     .await?;
+    Ok(())
+}
+
+/// Drop a write-ahead intent whose charge didn't go through, so the next attempt
+/// starts clean (on the tenant's current method). A charge that confirmed but
+/// whose settle failed is instead left unsettled, for reconcile to re-confirm.
+pub async fn delete_intent(intent_id: &str) -> Result<()> {
+    sqlx::query("DELETE FROM intent WHERE id = ?")
+        .bind(intent_id)
+        .execute(pool())
+        .await?;
     Ok(())
 }

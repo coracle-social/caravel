@@ -355,7 +355,7 @@ pub async fn create_invoice(tenant: &Tenant, period: &BillingPeriod) -> Result<O
     with_tx(async |tx| {
         let total = sqlx::query_scalar::<_, i64>(
             "SELECT COALESCE(SUM(amount), 0) FROM invoice_item
-             WHERE tenant_pubkey = ? AND invoice_id IS NULL",
+             WHERE tenant_pubkey = ? AND invoice_id IS NULL AND voided_at IS NULL",
         )
         .bind(&tenant.pubkey)
         .fetch_one(&mut **tx)
@@ -369,7 +369,7 @@ pub async fn create_invoice(tenant: &Tenant, period: &BillingPeriod) -> Result<O
 
         sqlx::query(
             "UPDATE invoice_item SET invoice_id = ?
-             WHERE tenant_pubkey = ? AND invoice_id IS NULL",
+             WHERE tenant_pubkey = ? AND invoice_id IS NULL AND voided_at IS NULL",
         )
         .bind(&invoice.id)
         .bind(&tenant.pubkey)
@@ -665,8 +665,8 @@ async fn insert_invoice_item_tx(
 ) -> Result<()> {
     sqlx::query(
         "INSERT INTO invoice_item
-            (id, invoice_id, activity_id, tenant_pubkey, relay_id, plan_id, amount, description, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (id, invoice_id, activity_id, tenant_pubkey, relay_id, plan_id, amount, description, created_at, voided_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&item.id)
     .bind(&item.invoice_id)
@@ -677,6 +677,7 @@ async fn insert_invoice_item_tx(
     .bind(item.amount)
     .bind(&item.description)
     .bind(item.created_at)
+    .bind(item.voided_at)
     .execute(&mut **tx)
     .await?;
     Ok(())
@@ -704,8 +705,12 @@ async fn mark_invoice_paid_tx(
     Ok(())
 }
 
-/// Void all of a tenant's open invoices, forgiving the balance — used when a
-/// tenant churns or re-activates, so old debt never has to be collected.
+/// Void all of a tenant's open invoices and unpaid line items, forgiving the
+/// balance — used when a tenant churns or re-activates, so old debt never has to
+/// be collected. Voiding the items too (both outstanding ones and those on the
+/// just-voided invoices) keeps a credit from bleeding into a future invoice and
+/// lets a re-billed period start from a clean ledger. Items on a paid invoice are
+/// left untouched.
 async fn void_open_invoices_tx(
     tx: &mut Transaction<'_, Sqlite>,
     tenant_pubkey: &str,
@@ -715,6 +720,20 @@ async fn void_open_invoices_tx(
     sqlx::query(
         "UPDATE invoice SET voided_at = ?
          WHERE tenant_pubkey = ? AND paid_at IS NULL AND voided_at IS NULL",
+    )
+    .bind(voided_at)
+    .bind(tenant_pubkey)
+    .execute(&mut **tx)
+    .await?;
+
+    // Run after voiding the invoices above, so the `paid_at IS NULL` subquery
+    // catches their now-voided items along with the still-outstanding ones.
+    sqlx::query(
+        "UPDATE invoice_item SET voided_at = ?
+         WHERE tenant_pubkey = ? AND voided_at IS NULL
+           AND (invoice_id IS NULL OR invoice_id IN (
+               SELECT id FROM invoice WHERE paid_at IS NULL
+           ))",
     )
     .bind(voided_at)
     .bind(tenant_pubkey)

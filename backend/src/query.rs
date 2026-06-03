@@ -165,7 +165,7 @@ pub async fn list_invoice_items_for_invoice(invoice_id: &str) -> Result<Vec<Invo
 pub async fn list_unbilled_invoice_items(tenant_pubkey: &str) -> Result<Vec<InvoiceItem>> {
     Ok(sqlx::query_as::<_, InvoiceItem>(
         "SELECT * FROM invoice_item
-         WHERE tenant_pubkey = ? AND invoice_id IS NULL
+         WHERE tenant_pubkey = ? AND invoice_id IS NULL AND voided_at IS NULL
          ORDER BY created_at ASC",
     )
     .bind(tenant_pubkey)

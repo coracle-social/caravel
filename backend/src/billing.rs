@@ -203,6 +203,7 @@ impl Billing {
             amount,
             description: description.to_string(),
             created_at: activity.created_at,
+            voided_at: None,
         }))
     }
 
@@ -249,6 +250,7 @@ impl Billing {
             amount,
             description,
             created_at: activity.created_at,
+            voided_at: None,
         }))
     }
 
@@ -291,6 +293,7 @@ impl Billing {
                 amount: plan.amount,
                 description: "Subscription renewal".to_string(),
                 created_at: period.start,
+                voided_at: None,
             });
         }
 

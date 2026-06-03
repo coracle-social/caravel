@@ -69,6 +69,7 @@ CREATE TABLE IF NOT EXISTS invoice_item (
   amount INTEGER NOT NULL,
   description TEXT NOT NULL DEFAULT '',
   created_at INTEGER NOT NULL,
+  voided_at INTEGER,
   FOREIGN KEY (invoice_id) REFERENCES invoice(id),
   FOREIGN KEY (tenant_pubkey) REFERENCES tenant(pubkey)
 );
@@ -116,7 +117,7 @@ CREATE INDEX IF NOT EXISTS idx_invoice_open ON invoice (tenant_pubkey, created_a
 
 CREATE INDEX IF NOT EXISTS idx_invoice_item_invoice ON invoice_item (invoice_id);
 
-CREATE INDEX IF NOT EXISTS idx_invoice_item_outstanding ON invoice_item (tenant_pubkey) WHERE invoice_id IS NULL;
+CREATE INDEX IF NOT EXISTS idx_invoice_item_outstanding ON invoice_item (tenant_pubkey) WHERE invoice_id IS NULL AND voided_at IS NULL;
 
 -- At most one line item per billable activity to ensure no double-billing.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_invoice_item_activity ON invoice_item (activity_id);

@@ -133,6 +133,7 @@ export type InvoiceItem = {
   amount: number
   description: string
   created_at: number
+  voided_at: number | null
 }
 
 export type Bolt11 = {

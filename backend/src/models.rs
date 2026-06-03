@@ -154,6 +154,10 @@ pub struct InvoiceItem {
     pub amount: i64,
     pub description: String,
     pub created_at: i64,
+    /// Set when the item is forgiven — the tenant churned or reactivated — so it
+    /// is never billed or carried into a later invoice; `None` while live. Applies
+    /// whether or not the item has been claimed onto an invoice.
+    pub voided_at: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]

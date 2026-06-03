@@ -20,9 +20,7 @@ docker run -d \
   -e RELAY_DOMAIN=example.com \
   -e APP_URL=https://example.com \
   -e ZOOID_API_URL=http://zooid:3334 \
-  -e DATABASE_URL=sqlite://data/caravel.db \
   -e SERVER_URL=https://api.example.com \
-  -e SERVER_PORT=2892 \
   -e SERVER_ADMIN_PUBKEYS=<your-hex-pubkey> \
   -e SERVER_ALLOW_ORIGINS=https://example.com \
   -e ROBOT_SECRET=<hex-nostr-secret-key> \

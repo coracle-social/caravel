@@ -61,7 +61,7 @@ async fn main() -> Result<()> {
         billing.start().await;
     });
 
-    let url = format!("127.0.0.1:{}", env::get().server_port);
+    let url = format!("0.0.0.0:{}", env::get().server_port);
     let listener = tokio::net::TcpListener::bind(url).await?;
 
     axum::serve(listener, app).await?;

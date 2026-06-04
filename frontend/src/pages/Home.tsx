@@ -13,6 +13,7 @@ import type { Invoice } from "@/lib/api"
 import { account, PLATFORM_LOGO, PLATFORM_NAME, refetchBilling, setToastMessage } from "@/lib/state"
 import FlotillaLogo from "@/assets/flotilla-logo.svg"
 import NostordLogo from "@/assets/nostord-logo.svg"
+import ChachiLogo from "@/assets/chachi-logo.svg"
 
 export default function Home() {
   const navigate = useNavigate()
@@ -340,6 +341,44 @@ export default function Home() {
               </span>
             </div>
           </a>
+
+          {/* Chachi */}
+          <a
+            href="https://chachi.chat"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="group flex flex-col gap-5 rounded-2xl border border-gray-200 bg-white p-8 hover:border-purple-300 hover:shadow-md transition-all"
+          >
+            <div class="flex items-start justify-between gap-4">
+              <div class="flex items-center gap-3">
+                <img src={ChachiLogo} alt="Chachi" class="w-12 h-12 rounded-2xl shadow-md shadow-purple-200" />
+                <div>
+                  <h3 class="text-lg font-bold text-gray-900 group-hover:text-purple-600 transition-colors">Chachi</h3>
+                  <p class="text-xs text-gray-400">chachi.chat</p>
+                </div>
+              </div>
+              <span class="text-gray-300 group-hover:text-purple-400 transition-colors mt-1">
+                <ExternalLinkIcon />
+              </span>
+            </div>
+            <p class="text-sm text-gray-600 leading-relaxed">
+              A group chat app built on top of Nostr. Chachi makes it easy for your community
+              to have real-time conversations, all flowing through your own relay.
+            </p>
+            <div class="space-y-2">
+              {["Real-time group messaging", "Bring your own relay", "No accounts — just your Nostr key"].map(f => (
+                <div class="flex items-start gap-2 text-sm text-gray-600">
+                  <CheckIcon />
+                  {f}
+                </div>
+              ))}
+            </div>
+            <div class="mt-auto pt-2">
+              <span class="inline-flex items-center gap-1.5 text-sm font-semibold text-purple-600">
+                Visit chachi.chat <ExternalLinkIcon />
+              </span>
+            </div>
+          </a>
         </div>
       </section>
 
@@ -384,8 +423,8 @@ export default function Home() {
           <p>© {new Date().getFullYear()} {PLATFORM_NAME}. Built on Nostr.</p>
           <div class="flex gap-4">
             <a href="https://flotilla.social" target="_blank" rel="noopener noreferrer" class="hover:text-gray-600 transition-colors">Flotilla</a>
-            <a href="https://chachi.chat" target="_blank" rel="noopener noreferrer" class="hover:text-gray-600 transition-colors">Chachi</a>
             <a href="https://nostrord.com/" target="_blank" rel="noopener noreferrer" class="hover:text-gray-600 transition-colors">Nostrord</a>
+            <a href="https://chachi.chat" target="_blank" rel="noopener noreferrer" class="hover:text-gray-600 transition-colors">Chachi</a>
           </div>
         </div>
       </footer>

@@ -1,7 +1,7 @@
 import { A, useLocation } from "@solidjs/router"
 import { createMemo, createSignal, For, Show } from "solid-js"
 import { useProfileMetadata, useProfilePicture, useTenantRelays, type Relay } from "@/lib/hooks"
-import { account, identity } from "@/lib/state"
+import { account, identity, PLATFORM_LOGO, PLATFORM_NAME } from "@/lib/state"
 import { fuzzySearch } from "@/lib/search"
 import { RELAY_DOMAIN } from "@/lib/subdomain"
 import serverIcon from "@/assets/server.svg"
@@ -66,6 +66,10 @@ export default function AppShell(props: { children?: any }) {
   return (
     <div class="min-h-screen bg-gray-50">
       <aside class="hidden md:flex fixed inset-y-0 left-0 w-[260px] bg-slate-900 text-white flex-col z-10">
+        <A href="/" class="flex items-center gap-3 border-b border-white/15 px-7 py-5 text-lg font-bold text-white hover:bg-white/10">
+          <img src={PLATFORM_LOGO} alt={PLATFORM_NAME} class="h-7 w-7 rounded" />
+          <span class="truncate">{PLATFORM_NAME}</span>
+        </A>
         <div class="flex-1 px-4 py-6">
           <h2 class="px-3 text-xs font-semibold uppercase tracking-wider text-white/60">Resources</h2>
           <ul class="mt-2 space-y-1">

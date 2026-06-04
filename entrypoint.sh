@@ -26,7 +26,7 @@ done < <(find /app/dist -type f \( -name '*.js' -o -name '*.html' \) -print0)
 echo "Starting backend (:2892) and frontend (:3000)..."
 /app/backend &
 backend_pid=$!
-serve -s /app/dist -l 3000 &
+serve -L -s /app/dist -l 3000 &
 serve_pid=$!
 
 trap 'kill -TERM "$backend_pid" "$serve_pid" 2>/dev/null || true' TERM INT

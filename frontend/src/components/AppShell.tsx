@@ -26,6 +26,14 @@ function RelayIcon() {
   return <img src={serverIcon} alt="" aria-hidden="true" class="h-5 w-5" />
 }
 
+function AdminIcon() {
+  return (
+    <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+    </svg>
+  )
+}
+
 export default function AppShell(props: { children?: any }) {
   const location = useLocation()
   const picture = useProfilePicture(() => account()?.pubkey)
@@ -33,6 +41,7 @@ export default function AppShell(props: { children?: any }) {
   const [tenantRelays] = useTenantRelays()
   const [searchOpen, setSearchOpen] = createSignal(false)
   const [searchQuery, setSearchQuery] = createSignal("")
+  const [adminOpen, setAdminOpen] = createSignal(false)
 
   const username = createMemo(() => metadata()?.name || metadata()?.display_name || shortenPubkey(account()?.pubkey))
   const nip05 = createMemo(() => metadata()?.nip05)
@@ -57,11 +66,20 @@ export default function AppShell(props: { children?: any }) {
       : "block rounded-lg px-3 py-2 text-sm text-white/80 hover:bg-white/10 hover:text-white"
   }
 
+  const mobileNavItemClass = (href: string) => {
+    const active = location.pathname === href || location.pathname.startsWith(`${href}/`)
+    return active
+      ? "block rounded-lg bg-gray-100 px-3 py-3 text-sm font-medium text-gray-900"
+      : "block rounded-lg px-3 py-3 text-sm text-gray-700 hover:bg-gray-100"
+  }
+
   const openSearchModal = () => setSearchOpen(true)
   const closeSearchModal = () => {
     setSearchOpen(false)
     setSearchQuery("")
   }
+  const openAdminModal = () => setAdminOpen(true)
+  const closeAdminModal = () => setAdminOpen(false)
 
   return (
     <div class="min-h-screen bg-gray-50">
@@ -115,6 +133,7 @@ export default function AppShell(props: { children?: any }) {
         class="fixed inset-x-0 bottom-0 z-20 border-t border-gray-200 bg-white md:hidden"
         onClick={() => {
           if (searchOpen()) closeSearchModal()
+          if (adminOpen()) closeAdminModal()
         }}
       >
         <div class="flex h-16 items-center justify-between px-6">
@@ -133,6 +152,19 @@ export default function AppShell(props: { children?: any }) {
             <A href="/relays" aria-label="Relays" class="rounded-lg p-2 text-gray-700 hover:bg-gray-100">
               <RelayIcon />
             </A>
+            <Show when={identity()?.is_admin}>
+              <button
+                type="button"
+                aria-label="Administration"
+                class="rounded-lg p-2 text-gray-700 hover:bg-gray-100"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  openAdminModal()
+                }}
+              >
+                <AdminIcon />
+              </button>
+            </Show>
           </div>
           <A href="/account" aria-label="Account settings" class="rounded-full">
             <Show
@@ -201,6 +233,35 @@ export default function AppShell(props: { children?: any }) {
             </Show>
           </Show>
         </div>
+      </Modal>
+
+      <Modal
+        open={adminOpen()}
+        onClose={closeAdminModal}
+        wrapperClass="fixed inset-x-0 top-0 bottom-16 z-30 flex items-end bg-black/40 p-0 md:hidden"
+        panelClass="w-full overflow-hidden rounded-t-2xl bg-white"
+      >
+        <div class="flex items-center justify-between border-b border-gray-200 p-4">
+          <h2 class="text-xs font-semibold uppercase tracking-wider text-gray-500">Administration</h2>
+          <button
+            type="button"
+            class="rounded-lg px-3 py-2 text-sm text-gray-600 hover:bg-gray-100"
+            onClick={closeAdminModal}
+          >
+            Close
+          </button>
+        </div>
+        <ul class="space-y-1 p-4">
+          <For each={adminResources}>
+            {(item) => (
+              <li>
+                <A href={item.href} class={mobileNavItemClass(item.href)} onClick={closeAdminModal}>
+                  {item.label}
+                </A>
+              </li>
+            )}
+          </For>
+        </ul>
       </Modal>
     </div>
   )

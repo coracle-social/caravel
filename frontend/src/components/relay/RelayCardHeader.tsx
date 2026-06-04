@@ -84,7 +84,7 @@ export default function RelayCardHeader(props: RelayCardHeaderProps) {
               <StatusBadge status={r().status} />
             </div>
             <a
-              href={`wss://${r().subdomain}.${RELAY_DOMAIN}`}
+              href={`https://${r().subdomain}.${RELAY_DOMAIN}`}
               class="text-sm text-blue-600 hover:underline break-all"
             >
               wss://{r().subdomain}.{RELAY_DOMAIN}

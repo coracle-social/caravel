@@ -146,6 +146,7 @@ pub async fn reactivate_tenant(tenant_pubkey: &str, relays: &[Relay]) -> Result<
 // --- Relays ---
 
 pub async fn create_relay(relay: &Relay) -> Result<()> {
+    let created_at = chrono::Utc::now().timestamp();
     let activity = with_tx(async |tx| {
         sqlx::query(
             "INSERT INTO relay (
@@ -153,8 +154,8 @@ pub async fn create_relay(relay: &Relay) -> Result<()> {
                 info_name, info_icon, info_description,
                 policy_public_join, policy_strip_signatures,
                 groups_enabled, management_enabled, blossom_enabled,
-                livekit_enabled, push_enabled
-            ) VALUES (?, ?, ?, ?, 'active', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                livekit_enabled, push_enabled, created_at
+            ) VALUES (?, ?, ?, ?, 'active', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&relay.id)
         .bind(&relay.tenant_pubkey)
@@ -171,6 +172,7 @@ pub async fn create_relay(relay: &Relay) -> Result<()> {
         .bind(relay.blossom_enabled)
         .bind(relay.livekit_enabled)
         .bind(relay.push_enabled)
+        .bind(created_at)
         .execute(&mut **tx)
         .await?;
         let snapshot = Snapshot::Relay {

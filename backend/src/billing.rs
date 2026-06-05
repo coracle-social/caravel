@@ -352,8 +352,6 @@ impl Billing {
         autopay: bool,
         notify: bool,
     ) -> Result<()> {
-        let mut error_message: Option<String> = None;
-
         // 1. Out-of-band lightning: settle a bolt11 paid out of band (e.g. a
         // manual QR scan, or an NWC pay that completed but failed to record).
         // Checked before any charge so we never bill on top of it.
@@ -385,23 +383,24 @@ impl Billing {
         }
 
         // 3. NWC auto-pay: if the tenant has configured an nwc_url, charge it.
-        if !tenant.nwc_url.is_empty() {
-            match self.attempt_payment_using_nwc(tenant, invoice).await {
-                Ok(()) => return self.cleanup_pending_payments(invoice).await,
-                Err(e) => error_message = Some(format!("{e}")),
-            }
+        if !tenant.nwc_url.is_empty()
+            && self
+                .attempt_payment_using_nwc(tenant, invoice)
+                .await
+                .is_ok()
+        {
+            return self.cleanup_pending_payments(invoice).await;
         }
 
         // 4. Payment method on file: charge the tenant's cached Stripe payment
         // method, kept fresh by sync_stripe_payment_method before collection.
-        if let Some(payment_method) = &tenant.stripe_payment_method_id {
-            match self
+        if let Some(payment_method) = &tenant.stripe_payment_method_id
+            && self
                 .attempt_payment_using_stripe(tenant, invoice, payment_method)
                 .await
-            {
-                Ok(()) => return self.cleanup_pending_payments(invoice).await,
-                Err(e) => error_message = error_message.or_else(|| Some(format!("{e}"))),
-            }
+                .is_ok()
+        {
+            return self.cleanup_pending_payments(invoice).await;
         }
 
         if !notify {
@@ -409,10 +408,7 @@ impl Billing {
         }
 
         // 5. Manual payment: DM a link to the in-app payment page for this invoice.
-        if let Err(e) = self
-            .attempt_payment_using_dm(tenant, invoice, error_message)
-            .await
-        {
+        if let Err(e) = self.attempt_payment_using_dm(tenant, invoice).await {
             tracing::error!(
                 tenant = %tenant.pubkey,
                 error = %e,
@@ -482,12 +478,7 @@ impl Billing {
         .await
     }
 
-    async fn attempt_payment_using_dm(
-        &self,
-        tenant: &Tenant,
-        invoice: &Invoice,
-        error: Option<String>,
-    ) -> Result<()> {
+    async fn attempt_payment_using_dm(&self, tenant: &Tenant, invoice: &Invoice) -> Result<()> {
         let now = chrono::Utc::now().timestamp();
 
         // If the invoice was just generated, give the user a chance to check the dashboard before nagging them.
@@ -507,21 +498,10 @@ impl Billing {
         let invoice_id = &invoice.id;
         let url_base = &env::get().app_url;
         let payment_url = format!("{url_base}/account?invoice={invoice_id}");
-        let base = format!("{MANUAL_PAYMENT_DM}\n\n{payment_url}");
-        let dm_message = match error {
-            Some(error) if !error.is_empty() => {
-                let limit: usize = 240;
-                let summary = error
-                    .chars()
-                    .take(limit.saturating_sub(3))
-                    .collect::<String>();
-                format!("{base}\n\nAuto-payment failed: {summary}")
-            }
-            _ => base,
-        };
+        let message = format!("{MANUAL_PAYMENT_DM}\n\n{payment_url}");
 
         // Send via NIP 17
-        self.robot.send_dm(&tenant.pubkey, &dm_message).await?;
+        self.robot.send_dm(&tenant.pubkey, &message).await?;
 
         // Record the send to avoid spammy notifications.
         command::mark_invoice_notified(invoice_id).await
@@ -534,7 +514,11 @@ impl Billing {
     /// transaction, so it's excluded here and not needlessly expired.
     async fn cleanup_pending_payments(&self, invoice: &Invoice) -> Result<()> {
         for checkout in query::list_pending_checkouts_for_invoice(&invoice.id).await? {
-            if let Err(error) = self.stripe.expire_checkout_session(&checkout.session_id).await {
+            if let Err(error) = self
+                .stripe
+                .expire_checkout_session(&checkout.session_id)
+                .await
+            {
                 tracing::debug!(
                     invoice = %invoice.id,
                     checkout = %checkout.id,
@@ -561,7 +545,8 @@ impl Billing {
         }
 
         if let Some(existing) = query::get_bolt11_for_invoice(&invoice.id).await?
-            && (existing.settled_at.is_none() || now < existing.expires_at)
+            && existing.settled_at.is_none()
+            && now < existing.expires_at
         {
             return Ok(existing);
         }
@@ -713,15 +698,17 @@ impl BillingPeriod {
 
     /// Fraction of this period still unused at `at`, in `[0.0, 1.0]`, for
     /// prorating a mid-period charge or credit. The remaining time is rounded to
-    /// the nearest hour so proration tracks whole hours rather than exact seconds.
+    /// the nearest day so proration tracks whole days rather than exact seconds.
+    /// Rounding by the day keeps a relay created within the first half-day of a
+    /// period billed at the full plan amount instead of a few cents short.
     fn fraction_remaining(&self, at: i64) -> f64 {
-        const HOUR: i64 = 60 * 60;
+        const DAY: i64 = 24 * 60 * 60;
 
         let len = (self.end - self.start) as f64;
         if len <= 0.0 {
             return 1.0;
         }
-        let remaining = ((self.end - at) + HOUR / 2) / HOUR * HOUR;
+        let remaining = ((self.end - at) + DAY / 2) / DAY * DAY;
         (remaining as f64 / len).clamp(0.0, 1.0)
     }
 

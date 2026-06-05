@@ -56,9 +56,11 @@ pub fn get_plan(plan_id: &str) -> Result<Plan> {
 // --- Tenants ---
 
 pub async fn list_tenants() -> Result<Vec<Tenant>> {
-    Ok(sqlx::query_as::<_, Tenant>(&select_tenant(""))
-        .fetch_all(pool())
-        .await?)
+    Ok(
+        sqlx::query_as::<_, Tenant>(&select_tenant("ORDER BY created_at DESC"))
+            .fetch_all(pool())
+            .await?,
+    )
 }
 
 pub async fn get_tenant(pubkey: &str) -> Result<Option<Tenant>> {
@@ -73,9 +75,11 @@ pub async fn get_tenant(pubkey: &str) -> Result<Option<Tenant>> {
 // --- Relays ---
 
 pub async fn list_relays() -> Result<Vec<Relay>> {
-    Ok(sqlx::query_as::<_, Relay>(&select_relay(""))
-        .fetch_all(pool())
-        .await?)
+    Ok(
+        sqlx::query_as::<_, Relay>(&select_relay("ORDER BY created_at DESC"))
+            .fetch_all(pool())
+            .await?,
+    )
 }
 
 pub async fn list_relays_pending_sync() -> Result<Vec<Relay>> {
@@ -87,12 +91,12 @@ pub async fn list_relays_pending_sync() -> Result<Vec<Relay>> {
 }
 
 pub async fn list_relays_for_tenant(tenant_pubkey: &str) -> Result<Vec<Relay>> {
-    Ok(
-        sqlx::query_as::<_, Relay>(&select_relay("WHERE tenant_pubkey = ?"))
-            .bind(tenant_pubkey)
-            .fetch_all(pool())
-            .await?,
-    )
+    Ok(sqlx::query_as::<_, Relay>(&select_relay(
+        "WHERE tenant_pubkey = ? ORDER BY created_at DESC",
+    ))
+    .bind(tenant_pubkey)
+    .fetch_all(pool())
+    .await?)
 }
 
 pub async fn get_relay(id: &str) -> Result<Option<Relay>> {

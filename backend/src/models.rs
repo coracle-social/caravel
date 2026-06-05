@@ -91,6 +91,7 @@ pub struct Relay {
     pub livekit_enabled: i64,
     pub push_enabled: i64,
     pub synced: i64,
+    pub created_at: i64,
 }
 
 impl Default for Relay {
@@ -113,6 +114,7 @@ impl Default for Relay {
             livekit_enabled: 0,
             push_enabled: 1,
             synced: 0,
+            created_at: 0,
         }
     }
 }

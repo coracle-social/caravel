@@ -29,6 +29,13 @@ export default function BillingPrompts(props: BillingPromptsProps) {
     (id) => getInvoice(id),
   )
 
+  // A resource keeps its last value once its source goes falsy, so deepLinked()
+  // still returns the fetched invoice after the param is cleared. Gate on the
+  // param so clearing it actually closes the dialog (otherwise it can't be).
+  const deepLinkedInvoice = createMemo(() =>
+    searchParams.invoice ? deepLinked() : undefined,
+  )
+
   const prompt = createMemo(() =>
     activeBillingPrompt(
       {
@@ -108,7 +115,7 @@ export default function BillingPrompts(props: BillingPromptsProps) {
       </Show>
 
       {/* Pay an invoice — from a prompt action or a deep link. */}
-      <Show when={payInvoice() ?? deepLinked()}>
+      <Show when={payInvoice() ?? deepLinkedInvoice()}>
         {(invoice) => (
           <PaymentDialog
             invoice={invoice()}

@@ -42,7 +42,6 @@ CREATE TABLE IF NOT EXISTS relay (
   blossom_enabled INTEGER NOT NULL DEFAULT 0,
   livekit_enabled INTEGER NOT NULL DEFAULT 0,
   push_enabled INTEGER NOT NULL DEFAULT 1,
-  created_at INTEGER NOT NULL,
   FOREIGN KEY (tenant_pubkey) REFERENCES tenant(pubkey)
 );
 
@@ -114,8 +113,6 @@ CREATE INDEX IF NOT EXISTS idx_activity_resource_created ON activity (resource_i
 CREATE INDEX IF NOT EXISTS idx_activity_unbilled ON activity (tenant_pubkey, created_at) WHERE billed_at IS NULL;
 
 CREATE INDEX IF NOT EXISTS idx_relay_tenant_pubkey ON relay (tenant_pubkey);
-
-CREATE INDEX IF NOT EXISTS idx_relay_created ON relay (created_at);
 
 CREATE INDEX IF NOT EXISTS idx_invoice_tenant_created ON invoice (tenant_pubkey, created_at);
 

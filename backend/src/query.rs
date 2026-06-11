@@ -82,6 +82,22 @@ pub async fn list_relays() -> Result<Vec<Relay>> {
     )
 }
 
+pub async fn list_relays_with_unverified_custom_domain() -> Result<Vec<Relay>> {
+    Ok(sqlx::query_as::<_, Relay>(&select_relay(
+        "WHERE custom_domain != '' AND custom_domain_verified = 0",
+    ))
+    .fetch_all(pool())
+    .await?)
+}
+
+pub async fn list_relays_with_verified_custom_domain() -> Result<Vec<Relay>> {
+    Ok(sqlx::query_as::<_, Relay>(&select_relay(
+        "WHERE custom_domain != '' AND custom_domain_verified = 1",
+    ))
+    .fetch_all(pool())
+    .await?)
+}
+
 pub async fn list_relays_pending_sync() -> Result<Vec<Relay>> {
     Ok(
         sqlx::query_as::<_, Relay>(&select_relay("WHERE synced = 0 OR TRIM(sync_error) != ''"))
@@ -104,6 +120,15 @@ pub async fn get_relay(id: &str) -> Result<Option<Relay>> {
         .bind(id)
         .fetch_optional(pool())
         .await?)
+}
+
+pub async fn get_relay_by_verified_custom_domain(domain: &str) -> Result<Option<Relay>> {
+    Ok(sqlx::query_as::<_, Relay>(&select_relay(
+        "WHERE custom_domain = ? AND custom_domain_verified = 1",
+    ))
+    .bind(domain)
+    .fetch_optional(pool())
+    .await?)
 }
 
 /// The relay's plan immediately before `before`, read from the most recent

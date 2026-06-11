@@ -58,6 +58,67 @@ To build the image yourself instead of pulling it:
 docker build -t caravel .
 ```
 
+### Zooid and TLS
+
+Zooid (the relay engine) should run on its own server with [Caddy](https://caddyserver.com/) as the TLS-terminating reverse proxy. Keeping Zooid separate lets it scale independently and makes custom relay domains work without touching the Caravel host.
+
+**Why Caddy?** Caravel supports tenant-facing custom domains, which require per-domain TLS certificates that are provisioned automatically. Caddy's [on-demand TLS](https://caddyserver.com/docs/automatic-https#on-demand-tls) handles this: it calls a Caravel endpoint before issuing each certificate, so only known domains get one.
+
+#### Zooid server setup
+
+On the Zooid server, create a `Caddyfile`:
+
+```
+{
+  on_demand_tls {
+    ask http://<caravel-host>:2892/domains/check
+    interval 2m
+    burst 5
+  }
+}
+
+:443 {
+  tls {
+    on_demand
+  }
+  reverse_proxy localhost:3334
+}
+```
+
+Replace `<caravel-host>` with the hostname or IP of the Caravel server. The `/domains/check` endpoint returns `200` for any subdomain of `RELAY_DOMAIN` and for any tenant custom domain that has been verified, and `404` otherwise — Caddy will only obtain a certificate if it gets a `200`.
+
+Run Caddy and Zooid together, for example with Docker Compose:
+
+```yaml
+services:
+  caddy:
+    image: caddy:2
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+    restart: unless-stopped
+
+  zooid:
+    image: gitea.coracle.social/coracle/zooid
+    environment:
+      API_HOST: api.zooid.example.com
+      API_WHITELIST: <hex-pubkey-matching-ROBOT_SECRET>
+    volumes:
+      - zooid_data:/app/data
+    restart: unless-stopped
+
+volumes:
+  caddy_data:
+  zooid_data:
+```
+
+Point your wildcard DNS record (`*.relay_domain`) at this server's IP. Custom domains are pointed there by tenants via a CNAME to their relay's canonical subdomain; Caravel verifies the CNAME in the background and notifies Zooid once confirmed.
+
+Set `ZOOID_API_URL` in Caravel's environment to the same value as zooid's `API_HOST` value, prefixed with the protocol, e.g. `https://api.zooid.example.com`.
+
 ## Local Development
 
 ### Prerequisites

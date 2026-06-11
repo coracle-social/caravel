@@ -60,6 +60,7 @@ export default function RelayDetail() {
               deactivating={busy()}
               reactivating={busy()}
               onUpdatePlan={handleUpdatePlan}
+              mutateRelay={mutate}
               {...toggles}
             />
             <ActivityFeed activity={activity() ?? []} loading={activity.loading} />

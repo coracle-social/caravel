@@ -31,6 +31,7 @@ use crate::env;
 use crate::models::{Relay, Tenant};
 use crate::query;
 use crate::robot::Robot;
+use crate::routes::domains::check_domain;
 use crate::routes::identity::get_identity;
 use crate::routes::invoices::{
     ensure_invoice_bolt11, ensure_invoice_checkout, get_invoice, list_invoice_items, list_invoices,
@@ -91,6 +92,7 @@ impl Api {
             .route("/relays/:id/activity", get(list_relay_activity))
             .route("/relays/:id/deactivate", post(deactivate_relay))
             .route("/relays/:id/reactivate", post(reactivate_relay))
+            .route("/domains/check", get(check_domain))
             .route("/invoices", get(list_invoices))
             .route("/invoices/:id", get(get_invoice))
             .route("/invoices/:id/reconcile", post(reconcile_invoice))

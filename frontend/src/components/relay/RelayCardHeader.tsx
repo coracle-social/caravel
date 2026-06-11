@@ -9,6 +9,7 @@ import { RELAY_DOMAIN } from "@/lib/subdomain"
 const STATUS_STYLES: Record<string, string> = {
   active:   "bg-green-50 text-green-700 border-green-200",
   inactive: "bg-gray-100 text-gray-500 border-gray-200",
+  verified: "bg-green-50 text-green-700 border-green-200",
 }
 
 export function StatusBadge(props: { status: string }) {
@@ -47,6 +48,7 @@ type RelayCardHeaderProps = {
   reactivating?: boolean
   onRequestDeactivate?: () => void
   onRequestReactivate?: () => void
+  onRequestManageCustomDomain?: () => void
 }
 
 export default function RelayCardHeader(props: RelayCardHeaderProps) {
@@ -127,7 +129,7 @@ export default function RelayCardHeader(props: RelayCardHeaderProps) {
           </div>
         </div>
 
-        <Show when={props.editHref && (props.onRequestDeactivate || props.onRequestReactivate)}>
+        <Show when={props.editHref || props.onRequestDeactivate || props.onRequestReactivate || props.onRequestManageCustomDomain}>
           <div class="relative shrink-0" ref={menuContainerRef}>
             <button
               type="button"
@@ -145,13 +147,27 @@ export default function RelayCardHeader(props: RelayCardHeaderProps) {
                 "opacity-0 scale-95 pointer-events-none": !menuOpen(),
               }}
             >
-              <A
-                href={props.editHref!}
-                class="block px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
-                onClick={() => setMenuOpen(false)}
-              >
-                Edit Details
-              </A>
+              <Show when={props.editHref}>
+                <A
+                  href={props.editHref!}
+                  class="block px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                  onClick={() => setMenuOpen(false)}
+                >
+                  Edit Details
+                </A>
+              </Show>
+              <Show when={props.onRequestManageCustomDomain}>
+                <button
+                  type="button"
+                  class="block w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                  onClick={() => {
+                    setMenuOpen(false)
+                    props.onRequestManageCustomDomain?.()
+                  }}
+                >
+                  Manage custom domain
+                </button>
+              </Show>
               <Show when={r().status === "active" && props.onRequestDeactivate}>
                 <button
                   type="button"

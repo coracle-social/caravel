@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use crate::command;
 use crate::db;
+use crate::domains;
 use crate::env;
 use crate::models::{Activity, RELAY_STATUS_DELINQUENT, RELAY_STATUS_INACTIVE, Relay};
 use crate::query;
@@ -15,6 +16,111 @@ use crate::query;
 const RELAY_SYNC_RETRY_BASE_DELAY_SECS: u64 = 30;
 const RELAY_SYNC_RETRY_MAX_DELAY_SECS: u64 = 15 * 60;
 const RELAY_SYNC_RETRY_MAX_ATTEMPTS: usize = 6;
+
+const DOMAIN_VERIFY_INTERVAL_SECS: u64 = 30;
+const DOMAIN_REVERIFY_INTERVAL_SECS: u64 = 3 * 60 * 60;
+
+/// Poll for relays with an unverified custom domain and attempt DNS verification.
+/// Runs for the life of the process; each cycle waits for all checks to finish
+/// before sleeping, so cycles never overlap.
+pub async fn start_domain_verification() {
+    loop {
+        if let Err(e) = verify_pending_custom_domains().await {
+            tracing::error!(error = %e, "domain verification poll failed");
+        }
+        tokio::time::sleep(Duration::from_secs(DOMAIN_VERIFY_INTERVAL_SECS)).await;
+    }
+}
+
+async fn verify_pending_custom_domains() -> Result<()> {
+    let relays = query::list_relays_with_unverified_custom_domain().await?;
+    for relay in relays {
+        let canonical = format!("{}.{}", relay.subdomain, env::get().relay_domain);
+        match domains::domain_points_to(&relay.custom_domain, &canonical).await {
+            Ok(true) => {
+                tracing::info!(
+                    relay = %relay.id,
+                    domain = %relay.custom_domain,
+                    "custom domain verified",
+                );
+                if let Err(e) = command::verify_relay_custom_domain(&relay.id).await {
+                    tracing::error!(relay = %relay.id, error = %e, "failed to mark domain verified");
+                    continue;
+                }
+                // Fetch the updated relay and sync so Zooid learns the new host.
+                match query::get_relay(&relay.id).await {
+                    Ok(Some(updated)) => sync_relay(&updated).await,
+                    Ok(None) => {}
+                    Err(e) => {
+                        tracing::error!(relay = %relay.id, error = %e, "failed to fetch relay after domain verify")
+                    }
+                }
+            }
+            Ok(false) => {
+                tracing::debug!(
+                    relay = %relay.id,
+                    domain = %relay.custom_domain,
+                    target = %canonical,
+                    "custom domain not yet pointing to relay",
+                );
+            }
+            Err(e) => {
+                tracing::warn!(relay = %relay.id, error = %e, "DNS check failed for custom domain");
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Poll verified custom domains every 3 hours and un-verify any whose DNS no
+/// longer points at the relay. Triggers a Zooid sync so the relay reverts to
+/// its canonical subdomain as its host.
+pub async fn start_domain_reverification() {
+    loop {
+        tokio::time::sleep(Duration::from_secs(DOMAIN_REVERIFY_INTERVAL_SECS)).await;
+        if let Err(e) = check_verified_custom_domains().await {
+            tracing::error!(error = %e, "verified domain check poll failed");
+        }
+    }
+}
+
+async fn check_verified_custom_domains() -> Result<()> {
+    let relays = query::list_relays_with_verified_custom_domain().await?;
+    for relay in relays {
+        let canonical = format!("{}.{}", relay.subdomain, env::get().relay_domain);
+        match domains::domain_points_to(&relay.custom_domain, &canonical).await {
+            Ok(true) => {
+                tracing::debug!(
+                    relay = %relay.id,
+                    domain = %relay.custom_domain,
+                    "verified custom domain still points to relay",
+                );
+            }
+            Ok(false) => {
+                tracing::warn!(
+                    relay = %relay.id,
+                    domain = %relay.custom_domain,
+                    "verified custom domain no longer points to relay; removing verification",
+                );
+                if let Err(e) = command::unverify_relay_custom_domain(&relay.id).await {
+                    tracing::error!(relay = %relay.id, error = %e, "failed to un-verify custom domain");
+                    continue;
+                }
+                match query::get_relay(&relay.id).await {
+                    Ok(Some(updated)) => sync_relay(&updated).await,
+                    Ok(None) => {}
+                    Err(e) => {
+                        tracing::error!(relay = %relay.id, error = %e, "failed to fetch relay after domain un-verify")
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!(relay = %relay.id, error = %e, "DNS check failed for verified custom domain");
+            }
+        }
+    }
+    Ok(())
+}
 
 /// Run the reactor for the life of the process: reconcile any relays left
 /// unsynced from a previous run, then sync each relay as its activity arrives.
@@ -175,8 +281,14 @@ async fn try_sync_relay(relay: &Relay) -> Result<()> {
             .await?
             .is_none();
 
+    let host = if relay.custom_domain_verified == 1 && !relay.custom_domain.is_empty() {
+        relay.custom_domain.clone()
+    } else {
+        format!("{}.{}", relay.subdomain, env::get().relay_domain)
+    };
+
     let mut body = serde_json::json!({
-        "host": format!("{}.{}", relay.subdomain, env::get().relay_domain),
+        "host": host,
         "schema": relay.id,
         "inactive": relay.status == RELAY_STATUS_INACTIVE
             || relay.status == RELAY_STATUS_DELINQUENT,

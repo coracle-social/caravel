@@ -45,6 +45,7 @@ export default function AdminRelayDetail() {
               reactivating={busy()}
               enforcePlanLimits={false}
               showPlanActions={false}
+              mutateRelay={mutate}
               {...toggles}
             />
             <ActivityFeed activity={activity() ?? []} loading={activity.loading} />

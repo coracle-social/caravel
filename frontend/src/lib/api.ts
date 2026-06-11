@@ -50,6 +50,8 @@ export type Relay = {
   status: string
   sync_error: string
   synced: number
+  custom_domain: string
+  custom_domain_verified: number
   info_name: string
   info_icon: string
   info_description: string
@@ -76,6 +78,7 @@ export type CreateRelayInput = {
   blossom_enabled?: number
   livekit_enabled?: number
   push_enabled?: number
+  custom_domain?: string
 }
 
 export type UpdateRelayInput = {
@@ -91,6 +94,7 @@ export type UpdateRelayInput = {
   blossom_enabled?: number
   livekit_enabled?: number
   push_enabled?: number
+  custom_domain?: string
 }
 
 export type Tenant = {

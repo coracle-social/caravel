@@ -3,6 +3,7 @@ mod billing;
 mod bitcoin;
 mod command;
 mod db;
+mod domains;
 mod env;
 mod infra;
 mod models;
@@ -55,6 +56,12 @@ async fn main() -> Result<()> {
 
     tokio::spawn(async {
         infra::start().await;
+    });
+    tokio::spawn(async {
+        infra::start_domain_verification().await;
+    });
+    tokio::spawn(async {
+        infra::start_domain_reverification().await;
     });
 
     tokio::spawn(async move {

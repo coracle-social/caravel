@@ -1,3 +1,4 @@
+pub mod domains;
 pub mod identity;
 pub mod invoices;
 pub mod plans;

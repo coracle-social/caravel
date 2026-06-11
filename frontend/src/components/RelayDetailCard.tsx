@@ -1,16 +1,20 @@
 import { Show, createSignal } from "solid-js"
 import type { Relay, PlanId } from "@/lib/api"
+import { RELAY_DOMAIN } from "@/lib/subdomain"
 import ConfirmDialog from "@/components/ConfirmDialog"
+import CustomDomainModal from "@/components/relay/CustomDomainModal"
 import Field from "@/components/Field"
 import PricingTable from "@/components/PricingTable"
 import ToggleButton from "@/components/ToggleButton"
 import ToggleField from "@/components/ToggleField"
-import RelayCardHeader from "@/components/relay/RelayCardHeader"
+import RelayCardHeader, { StatusBadge } from "@/components/relay/RelayCardHeader"
 import PlanGatedToggle from "@/components/relay/PlanGatedToggle"
 import { setToastMessage } from "@/lib/state"
 import { useProfileMetadata } from "@/lib/hooks"
+import useMinLoading from "@/lib/useMinLoading"
 import { flagToBool } from "@/lib/relayFlags"
 import { plans } from "@/lib/state"
+import useCustomDomain from "@/lib/useCustomDomain"
 
 function DetailSection(props: { title: string; children: any }) {
   return (
@@ -53,12 +57,17 @@ type RelayDetailCardProps = {
   onUpdatePlan?: (planId: PlanId) => Promise<void>
   enforcePlanLimits?: boolean
   showPlanActions?: boolean
+  mutateRelay?: (relay: Relay) => void
 }
 
 export default function RelayDetailCard(props: RelayDetailCardProps) {
   const r = () => props.relay
   const [planId, setPlanId] = createSignal<PlanId>(props.relay.plan_id)
   const [pendingAction, setPendingAction] = createSignal<"deactivate" | "reactivate" | null>(null)
+  const [customDomainModalOpen, setCustomDomainModalOpen] = createSignal(false)
+  const { saving: cdSaving, verifying: cdVerifying, error: cdError, saveDomain, verifyDomain } =
+    useCustomDomain(() => props.relay.id, props.mutateRelay ?? (() => {}))
+  const cdVerifyingVisible = useMinLoading(cdVerifying)
 
   // Resolve the owning tenant's profile so the Tenant field can show a name and
   // avatar instead of a raw pubkey. Only relevant in admin (showTenant) views.
@@ -134,6 +143,70 @@ export default function RelayDetailCard(props: RelayDetailCardProps) {
         reactivating={props.reactivating}
         onRequestDeactivate={props.onDeactivate ? () => openActionDialog("deactivate") : undefined}
         onRequestReactivate={props.onReactivate ? () => openActionDialog("reactivate") : undefined}
+        onRequestManageCustomDomain={() => setCustomDomainModalOpen(true)}
+      />
+
+      <hr class="border-gray-200" />
+
+      <div>
+        <h3 class="text-sm font-semibold uppercase tracking-wider mb-6">Custom Domain</h3>
+        <div class="space-y-3">
+          <div class="flex items-center justify-between gap-2">
+            <Show
+              when={r().custom_domain}
+              fallback={<span class="text-gray-400 text-sm">Not configured</span>}
+            >
+              <div class="flex items-center gap-2">
+                <span class="font-medium text-gray-900">{r().custom_domain}</span>
+                <Show when={r().custom_domain_verified === 1}>
+                  <StatusBadge status="verified" />
+                </Show>
+              </div>
+            </Show>
+            <button
+              class="inline-flex items-center rounded-lg border border-gray-200 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              onClick={() => setCustomDomainModalOpen(true)}
+            >
+              Update
+            </button>
+          </div>
+          <Show when={r().custom_domain && r().custom_domain_verified !== 1}>
+            <div class="rounded-lg border border-yellow-200 bg-yellow-50 px-4 py-3 space-y-3">
+              <div class="flex items-start gap-2">
+                <span class="mt-0.5 text-yellow-600 text-sm shrink-0">⚠</span>
+                <p class="text-sm font-medium text-yellow-800">
+                  Not yet verified — add this DNS record, then verify:
+                </p>
+              </div>
+              <div class="rounded border border-yellow-200 bg-white px-3 py-2 font-mono text-xs text-gray-700 break-all">
+                {r().custom_domain} CNAME {r().subdomain}.{RELAY_DOMAIN}
+              </div>
+              <p class="text-xs text-yellow-700">
+                For apex domains (e.g. example.com), use an ALIAS or ANAME record instead.
+              </p>
+              <Show when={cdError()}>
+                <p class="text-sm text-red-600">{cdError()}</p>
+              </Show>
+              <button
+                type="button"
+                onClick={verifyDomain}
+                disabled={cdVerifyingVisible()}
+                class="inline-flex items-center rounded-lg bg-yellow-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-yellow-700 disabled:opacity-50"
+              >
+                {cdVerifyingVisible() ? "Verifying…" : "Verify DNS record"}
+              </button>
+            </div>
+          </Show>
+        </div>
+      </div>
+
+      <CustomDomainModal
+        open={customDomainModalOpen()}
+        onClose={() => setCustomDomainModalOpen(false)}
+        relay={r}
+        saving={cdSaving}
+        error={cdError}
+        onSave={saveDomain}
       />
 
       <hr class="border-gray-200" />

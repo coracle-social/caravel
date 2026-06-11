@@ -90,6 +90,8 @@ pub struct Relay {
     pub blossom_enabled: i64,
     pub livekit_enabled: i64,
     pub push_enabled: i64,
+    pub custom_domain: String,
+    pub custom_domain_verified: i64,
     pub synced: i64,
     pub created_at: i64,
 }
@@ -113,6 +115,8 @@ impl Default for Relay {
             blossom_enabled: 0,
             livekit_enabled: 0,
             push_enabled: 1,
+            custom_domain: String::new(),
+            custom_domain_verified: 0,
             synced: 0,
             created_at: 0,
         }

@@ -9,6 +9,8 @@ use regex::Regex;
 use serde::Deserialize;
 
 use crate::api::{Api, AuthedPubkey};
+use crate::domains;
+use crate::env;
 use crate::models::{RELAY_STATUS_ACTIVE, RELAY_STATUS_DELINQUENT, RELAY_STATUS_INACTIVE, Relay};
 use crate::web::{
     ApiError, ApiResult, bad_request, created, internal, map_unique_error, ok, parse_bool_default,
@@ -77,6 +79,8 @@ pub struct CreateRelayRequest {
     pub blossom_enabled: i64,
     pub livekit_enabled: i64,
     pub push_enabled: i64,
+    #[serde(default)]
+    pub custom_domain: String,
 }
 
 pub async fn create_relay(
@@ -107,6 +111,7 @@ pub async fn create_relay(
         blossom_enabled: payload.blossom_enabled,
         livekit_enabled: payload.livekit_enabled,
         push_enabled: payload.push_enabled,
+        custom_domain: normalize_custom_domain(&payload.custom_domain)?,
         ..Default::default()
     };
 
@@ -133,6 +138,7 @@ pub struct UpdateRelayRequest {
     pub blossom_enabled: Option<i64>,
     pub livekit_enabled: Option<i64>,
     pub push_enabled: Option<i64>,
+    pub custom_domain: Option<String>,
 }
 
 pub async fn update_relay(
@@ -183,6 +189,17 @@ pub async fn update_relay(
     }
     if let Some(v) = payload.push_enabled {
         relay.push_enabled = v;
+    }
+    // Changing the custom domain invalidates any prior verification, so clear the
+    // flag and let the background poller re-verify the new domain. An update that
+    // round-trips the existing domain (e.g. a feature toggle) leaves it untouched;
+    // the matching reset in `command::update_relay` keeps the persisted row right.
+    if let Some(v) = payload.custom_domain {
+        let normalized = normalize_custom_domain(&v)?;
+        if normalized != relay.custom_domain {
+            relay.custom_domain = normalized;
+            relay.custom_domain_verified = 0;
+        }
     }
 
     let relay = prepare_relay(relay)?;
@@ -304,6 +321,32 @@ fn prepare_relay(mut relay: Relay) -> Result<Relay, ApiError> {
     relay.push_enabled = parse_bool_default(relay.push_enabled, 1);
 
     Ok(relay)
+}
+
+/// Normalize and validate a tenant custom domain. An empty string is allowed and
+/// clears the domain. Rejects malformed hostnames and any domain under the
+/// platform's relay domain, which belong in the subdomain field instead.
+fn normalize_custom_domain(domain: &str) -> Result<String, ApiError> {
+    let domain = domain.trim().to_lowercase();
+
+    if !domain.is_empty() {
+        if !domains::CUSTOM_DOMAIN_RE.is_match(&domain) {
+            return Err(unprocessable(
+                "invalid-domain",
+                "domain must be a valid hostname (e.g. relay.example.com)",
+            ));
+        }
+
+        let relay_domain = &env::get().relay_domain;
+        if domain == *relay_domain || domain.ends_with(&format!(".{relay_domain}")) {
+            return Err(unprocessable(
+                "reserved-domain",
+                "use the subdomain field for domains under the platform's relay domain",
+            ));
+        }
+    }
+
+    Ok(domain)
 }
 
 /// Translate a duplicate-subdomain write into a 422; anything else is a 500.

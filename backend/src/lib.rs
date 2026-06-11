@@ -3,6 +3,7 @@ pub mod billing;
 pub mod bitcoin;
 pub mod command;
 pub mod db;
+pub mod domains;
 pub mod env;
 pub mod infra;
 pub mod models;

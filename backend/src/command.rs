@@ -154,8 +154,8 @@ pub async fn create_relay(relay: &Relay) -> Result<()> {
                 info_name, info_icon, info_description,
                 policy_public_join, policy_strip_signatures,
                 groups_enabled, management_enabled, blossom_enabled,
-                livekit_enabled, push_enabled, created_at
-            ) VALUES (?, ?, ?, ?, 'active', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                livekit_enabled, push_enabled, custom_domain, created_at
+            ) VALUES (?, ?, ?, ?, 'active', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&relay.id)
         .bind(&relay.tenant_pubkey)
@@ -172,6 +172,7 @@ pub async fn create_relay(relay: &Relay) -> Result<()> {
         .bind(relay.blossom_enabled)
         .bind(relay.livekit_enabled)
         .bind(relay.push_enabled)
+        .bind(&relay.custom_domain)
         .bind(created_at)
         .execute(&mut **tx)
         .await?;
@@ -188,13 +189,20 @@ pub async fn create_relay(relay: &Relay) -> Result<()> {
 
 pub async fn update_relay(relay: &Relay) -> Result<()> {
     let activity = with_tx(async |tx| {
+        // Reset custom_domain_verified only when the domain actually changes. The
+        // CASE compares the row's existing custom_domain (SQLite evaluates SET
+        // expressions against the original row) against the incoming one, so an
+        // update that round-trips the same domain — e.g. a feature toggle — leaves
+        // a verification set by the background poller untouched.
         sqlx::query(
             "UPDATE relay
              SET tenant_pubkey = ?, subdomain = ?, plan_id = ?, status = ?, sync_error = ?, synced = 0,
                  info_name = ?, info_icon = ?, info_description = ?,
                  policy_public_join = ?, policy_strip_signatures = ?,
                  groups_enabled = ?, management_enabled = ?, blossom_enabled = ?,
-                 livekit_enabled = ?, push_enabled = ?
+                 livekit_enabled = ?, push_enabled = ?,
+                 custom_domain = ?,
+                 custom_domain_verified = CASE WHEN custom_domain = ? THEN custom_domain_verified ELSE 0 END
              WHERE id = ?",
         )
         .bind(&relay.tenant_pubkey)
@@ -212,6 +220,8 @@ pub async fn update_relay(relay: &Relay) -> Result<()> {
         .bind(relay.blossom_enabled)
         .bind(relay.livekit_enabled)
         .bind(relay.push_enabled)
+        .bind(&relay.custom_domain)
+        .bind(&relay.custom_domain)
         .bind(&relay.id)
         .execute(&mut **tx)
         .await?;
@@ -256,6 +266,22 @@ pub async fn fail_relay_sync(relay: &Relay, sync_error: String) -> Result<()> {
     })
     .await?;
     publish(activity);
+    Ok(())
+}
+
+pub async fn verify_relay_custom_domain(relay_id: &str) -> Result<()> {
+    sqlx::query("UPDATE relay SET custom_domain_verified = 1, synced = 0 WHERE id = ?")
+        .bind(relay_id)
+        .execute(pool())
+        .await?;
+    Ok(())
+}
+
+pub async fn unverify_relay_custom_domain(relay_id: &str) -> Result<()> {
+    sqlx::query("UPDATE relay SET custom_domain_verified = 0, synced = 0 WHERE id = ?")
+        .bind(relay_id)
+        .execute(pool())
+        .await?;
     Ok(())
 }
 

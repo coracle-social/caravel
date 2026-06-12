@@ -6,7 +6,8 @@ import ResourceState from "@/components/ResourceState"
 import SearchInput from "@/components/SearchInput"
 import useMinLoading from "@/lib/useMinLoading"
 import { useAdminTenants, useProfileMetadataMap } from "@/lib/hooks"
-import { shortenPubkey } from "@/lib/pubkey"
+import CopyNpub from "@/components/CopyNpub"
+import { shortenNpub } from "@/lib/pubkey"
 import { fuzzySearch } from "@/lib/search"
 
 export default function AdminTenantList() {
@@ -56,9 +57,11 @@ export default function AdminTenantList() {
                             <img src={getProfilePicture(profile())} alt="Profile" class="h-10 w-10 rounded-full object-cover" />
                           </Show>
                           <div class="min-w-0">
-                            <p class="font-medium text-gray-900 truncate">{profileName() || shortenPubkey(tenant.pubkey)}</p>
+                            <p class="font-medium text-gray-900 truncate">{profileName() || shortenNpub(tenant.pubkey)}</p>
+                            <p class="-mt-1">
+                              <CopyNpub pubkey={tenant.pubkey} class="text-xs text-gray-500" />
+                            </p>
                             <p class="mt-1 text-sm text-gray-600 line-clamp-2">{profile()?.about || "No profile bio"}</p>
-                            <p class="mt-1 text-xs text-gray-500 break-all">{tenant.pubkey}</p>
                           </div>
                         </div>
                         <span class={`inline-flex flex-shrink-0 items-center rounded-full border px-2.5 py-0.5 text-xs font-medium capitalize ${tenant.churned_at ? "bg-red-50 text-red-700 border-red-200" : "bg-green-50 text-green-700 border-green-200"}`}>

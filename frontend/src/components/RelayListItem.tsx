@@ -3,8 +3,8 @@ import { Show } from "solid-js"
 import { getProfilePicture } from "applesauce-core/helpers/profile"
 import type { Relay } from "@/lib/api"
 import { PlanBadge, StatusBadge } from "@/components/relay/RelayCardHeader"
+import CopyNpub from "@/components/CopyNpub"
 import { useProfileMetadata } from "@/lib/hooks"
-import { shortenPubkey } from "@/lib/pubkey"
 import { RELAY_DOMAIN } from "@/lib/subdomain"
 
 type RelayListItemProps = {
@@ -38,7 +38,12 @@ export default function RelayListItem(props: RelayListItemProps) {
                 >
                   <img src={getProfilePicture(metadata())} alt="" class="h-5 w-5 flex-shrink-0 rounded-full object-cover" />
                 </Show>
-                <span class="text-xs text-gray-500 truncate">{(metadata()?.name || metadata()?.display_name) || shortenPubkey(props.relay.tenant_pubkey)}</span>
+                <Show
+                  when={metadata()?.name || metadata()?.display_name}
+                  fallback={<CopyNpub pubkey={props.relay.tenant_pubkey} class="text-xs text-gray-500" />}
+                >
+                  <span class="text-xs text-gray-500 truncate">{metadata()?.name || metadata()?.display_name}</span>
+                </Show>
               </div>
             </Show>
           </div>

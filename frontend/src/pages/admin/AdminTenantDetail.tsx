@@ -8,7 +8,8 @@ import AdminInvoiceListItem from "@/components/AdminInvoiceListItem"
 import ResourceState from "@/components/ResourceState"
 import useMinLoading from "@/lib/useMinLoading"
 import { useAdminTenant, useAdminTenantInvoices, useAdminTenantRelays, useProfileMetadata } from "@/lib/hooks"
-import { shortenPubkey } from "@/lib/pubkey"
+import CopyNpub from "@/components/CopyNpub"
+import { shortenNpub } from "@/lib/pubkey"
 
 export default function AdminTenantDetail() {
   const params = useParams()
@@ -40,8 +41,10 @@ export default function AdminTenantDetail() {
           <img src={getProfilePicture(metadata())} alt="Profile" class="h-14 w-14 flex-shrink-0 rounded-full object-cover" />
         </Show>
         <div class="min-w-0">
-          <h1 class="text-2xl font-bold text-gray-900 truncate">{(metadata()?.name || metadata()?.display_name) || shortenPubkey(tenantId())}</h1>
-          <p class="text-xs text-gray-500 break-all">{tenantId()}</p>
+          <h1 class="text-2xl font-bold text-gray-900 truncate">{(metadata()?.name || metadata()?.display_name) || shortenNpub(tenantId())}</h1>
+          <p class="mt-0.5">
+            <CopyNpub pubkey={tenantId()} class="text-xs text-gray-500" />
+          </p>
         </div>
       </div>
       <ResourceState loading={loading()} error={tenant.error || relays.error || invoices.error} loadingText="Loading tenant..." errorText="Failed to load tenant." class="mb-4" />

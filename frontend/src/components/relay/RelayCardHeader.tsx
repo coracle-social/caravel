@@ -3,7 +3,7 @@ import { Show, createEffect, createSignal, onCleanup } from "solid-js"
 import { getProfilePicture, type ProfileContent } from "applesauce-core/helpers/profile"
 import type { Relay } from "@/lib/api"
 import menuDotsIcon from "@/assets/menu-dots-2.svg"
-import { shortenPubkey } from "@/lib/pubkey"
+import CopyNpub from "@/components/CopyNpub"
 import { RELAY_DOMAIN } from "@/lib/subdomain"
 
 const STATUS_STYLES: Record<string, string> = {
@@ -113,7 +113,12 @@ export default function RelayCardHeader(props: RelayCardHeaderProps) {
                 >
                   <img src={getProfilePicture(metadata())} alt="" class="h-6 w-6 flex-shrink-0 rounded-full object-cover" />
                 </Show>
-                <span class="text-sm text-blue-600 group-hover:underline truncate">{(metadata()?.name || metadata()?.display_name) || shortenPubkey(r().tenant_pubkey)}</span>
+                <Show
+                  when={metadata()?.name || metadata()?.display_name}
+                  fallback={<CopyNpub pubkey={r().tenant_pubkey} class="text-sm text-blue-600 group-hover:underline" />}
+                >
+                  <span class="text-sm text-blue-600 group-hover:underline truncate">{metadata()?.name || metadata()?.display_name}</span>
+                </Show>
               </A>
             </Show>
             <Show when={r().info_description.trim()}>

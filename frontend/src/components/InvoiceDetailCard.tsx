@@ -3,9 +3,9 @@ import { Show } from "solid-js"
 import { getProfilePicture } from "applesauce-core/helpers/profile"
 import { invoiceStatus, type Invoice } from "@/lib/api"
 import Field from "@/components/Field"
+import CopyNpub from "@/components/CopyNpub"
 import { useProfileMetadata } from "@/lib/hooks"
 import { formatPeriod, formatUsd } from "@/lib/format"
-import { shortenPubkey } from "@/lib/pubkey"
 
 const invoiceStatusStyles: Record<string, string> = {
   open: "bg-yellow-50 text-yellow-700 border-yellow-200",
@@ -59,7 +59,12 @@ export default function InvoiceDetailCard(props: InvoiceDetailCardProps) {
             >
               <img src={getProfilePicture(metadata())} alt="" class="h-5 w-5 flex-shrink-0 rounded-full object-cover" />
             </Show>
-            <span class="truncate text-blue-600 group-hover:underline">{(metadata()?.name || metadata()?.display_name) || shortenPubkey(props.invoice.tenant_pubkey)}</span>
+            <Show
+              when={metadata()?.name || metadata()?.display_name}
+              fallback={<CopyNpub pubkey={props.invoice.tenant_pubkey} class="text-blue-600 group-hover:underline" />}
+            >
+              <span class="truncate text-blue-600 group-hover:underline">{metadata()?.name || metadata()?.display_name}</span>
+            </Show>
           </A>
         </Field>
       </dl>

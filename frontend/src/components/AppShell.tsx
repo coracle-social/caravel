@@ -7,11 +7,8 @@ import { RELAY_DOMAIN } from "@/lib/subdomain"
 import serverIcon from "@/assets/server.svg"
 import Modal from "@/components/Modal"
 import BillingPrompts from "@/components/BillingPrompts"
-
-function shortenPubkey(pubkey?: string) {
-  if (!pubkey) return ""
-  return `${pubkey.slice(0, 8)}…${pubkey.slice(-6)}`
-}
+import CopyNpub from "@/components/CopyNpub"
+import { shortenNpub } from "@/lib/pubkey"
 
 function SearchIcon() {
   return (
@@ -43,7 +40,12 @@ export default function AppShell(props: { children?: any }) {
   const [searchQuery, setSearchQuery] = createSignal("")
   const [adminOpen, setAdminOpen] = createSignal(false)
 
-  const username = createMemo(() => metadata()?.name || metadata()?.display_name || shortenPubkey(account()?.pubkey))
+  const displayName = createMemo(() => metadata()?.name || metadata()?.display_name)
+  const username = createMemo(() => {
+    const pubkey = account()?.pubkey
+    return displayName() || (pubkey ? shortenNpub(pubkey) : "")
+  })
+  const initial = createMemo(() => (displayName() || account()?.pubkey || "?").slice(0, 1).toUpperCase())
   const nip05 = createMemo(() => metadata()?.nip05)
   const searchedRelays = createMemo<Relay[]>(() => {
     const list = tenantRelays() ?? []
@@ -110,14 +112,19 @@ export default function AppShell(props: { children?: any }) {
               when={picture()}
               fallback={
                 <div class="h-10 w-10 rounded-full bg-white/15 text-sm font-medium text-white flex items-center justify-center">
-                  {username().slice(0, 1).toUpperCase()}
+                  {initial()}
                 </div>
               }
             >
               <img src={picture()} alt="Profile" class="h-10 w-10 rounded-full object-cover" />
             </Show>
             <div class="min-w-0">
-              <p class="truncate text-sm font-medium text-white">{username()}</p>
+              <Show
+                when={displayName()}
+                fallback={<CopyNpub pubkey={account()?.pubkey ?? ""} class="text-sm font-medium text-white" />}
+              >
+                <p class="truncate text-sm font-medium text-white">{username()}</p>
+              </Show>
               <p class="truncate text-xs text-white/60">{nip05()}</p>
             </div>
           </A>
@@ -169,7 +176,7 @@ export default function AppShell(props: { children?: any }) {
           <A href="/account" aria-label="Account settings" class="rounded-full">
             <Show
               when={picture()}
-              fallback={<div class="h-9 w-9 rounded-full bg-gray-200 text-gray-600 flex items-center justify-center text-sm font-medium">{username().slice(0, 1).toUpperCase()}</div>}
+              fallback={<div class="h-9 w-9 rounded-full bg-gray-200 text-gray-600 flex items-center justify-center text-sm font-medium">{initial()}</div>}
             >
               <img src={picture()} alt="Profile" class="h-9 w-9 rounded-full object-cover" />
             </Show>

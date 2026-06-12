@@ -2,9 +2,9 @@ import { A } from "@solidjs/router"
 import { Show } from "solid-js"
 import { getProfilePicture } from "applesauce-core/helpers/profile"
 import { invoiceStatus, type Invoice } from "@/lib/api"
+import CopyNpub from "@/components/CopyNpub"
 import { useProfileMetadata } from "@/lib/hooks"
 import { formatPeriod, formatUsd } from "@/lib/format"
-import { shortenPubkey } from "@/lib/pubkey"
 
 const invoiceStatusStyles: Record<string, string> = {
   open: "bg-yellow-50 text-yellow-700 border-yellow-200",
@@ -45,7 +45,12 @@ export default function AdminInvoiceListItem(props: AdminInvoiceListItemProps) {
                 >
                   <img src={getProfilePicture(metadata())} alt="" class="h-5 w-5 flex-shrink-0 rounded-full object-cover" />
                 </Show>
-                <span class="text-xs text-gray-500 truncate">{(metadata()?.name || metadata()?.display_name) || shortenPubkey(props.invoice.tenant_pubkey)}</span>
+                <Show
+                  when={metadata()?.name || metadata()?.display_name}
+                  fallback={<CopyNpub pubkey={props.invoice.tenant_pubkey} class="text-xs text-gray-500" />}
+                >
+                  <span class="text-xs text-gray-500 truncate">{metadata()?.name || metadata()?.display_name}</span>
+                </Show>
               </div>
             </Show>
           </div>

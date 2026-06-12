@@ -2,7 +2,7 @@ import { A } from "@solidjs/router"
 import { Show } from "solid-js"
 import { getProfilePicture } from "applesauce-core/helpers/profile"
 import type { Relay } from "@/lib/api"
-import { StatusBadge } from "@/components/relay/RelayCardHeader"
+import { PlanBadge, StatusBadge } from "@/components/relay/RelayCardHeader"
 import { useProfileMetadata } from "@/lib/hooks"
 import { shortenPubkey } from "@/lib/pubkey"
 import { RELAY_DOMAIN } from "@/lib/subdomain"
@@ -42,7 +42,7 @@ export default function RelayListItem(props: RelayListItemProps) {
               </div>
             </Show>
           </div>
-          <div class="flex flex-col items-end gap-1.5 shrink-0">
+          <div class="flex items-center gap-2 shrink-0">
             <Show
               when={props.relay.sync_error}
               fallback={<StatusBadge status={props.relay.status} />}
@@ -54,7 +54,7 @@ export default function RelayListItem(props: RelayListItemProps) {
                 Failed to sync
               </span>
             </Show>
-            <span class="text-xs capitalize text-gray-500">{props.relay.plan_id}</span>
+            <PlanBadge planId={props.relay.plan_id} />
           </div>
         </div>
       </A>

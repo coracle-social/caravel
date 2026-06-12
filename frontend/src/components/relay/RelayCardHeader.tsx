@@ -21,6 +21,17 @@ export function StatusBadge(props: { status: string }) {
   )
 }
 
+export function PlanBadge(props: { planId: string }) {
+  const styles = () => props.planId === "free"
+    ? "bg-gray-100 text-gray-500 border-gray-200"
+    : "bg-blue-50 text-blue-700 border-blue-200"
+  return (
+    <span class={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium capitalize ${styles()}`}>
+      {props.planId}
+    </span>
+  )
+}
+
 // Presentational header for RelayDetailCard: icon/title/status, the WSS link, the
 // optional tenant profile link, the sync_error banner, and the actions dropdown.
 // The dropdown owns its own open/close UI state and document listeners; all relay
@@ -82,6 +93,7 @@ export default function RelayCardHeader(props: RelayCardHeaderProps) {
             <div class="flex items-center gap-3 flex-wrap">
               <h1 class="text-2xl font-bold text-gray-900">{r().info_name || r().subdomain}</h1>
               <StatusBadge status={r().status} />
+              <PlanBadge planId={r().plan_id} />
             </div>
             <a
               href={`https://${r().subdomain}.${RELAY_DOMAIN}`}

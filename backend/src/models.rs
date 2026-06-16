@@ -96,6 +96,18 @@ pub struct Relay {
     pub created_at: i64,
 }
 
+impl Relay {
+    /// The relay's effective public host: its verified custom domain when set,
+    /// otherwise its canonical `<subdomain>.<relay_domain>`.
+    pub fn host(&self) -> String {
+        if self.custom_domain_verified == 1 && !self.custom_domain.is_empty() {
+            self.custom_domain.clone()
+        } else {
+            format!("{}.{}", self.subdomain, crate::env::get().relay_domain)
+        }
+    }
+}
+
 impl Default for Relay {
     fn default() -> Self {
         Self {

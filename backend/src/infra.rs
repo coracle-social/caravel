@@ -281,11 +281,7 @@ async fn try_sync_relay(relay: &Relay) -> Result<()> {
             .await?
             .is_none();
 
-    let host = if relay.custom_domain_verified == 1 && !relay.custom_domain.is_empty() {
-        relay.custom_domain.clone()
-    } else {
-        format!("{}.{}", relay.subdomain, env::get().relay_domain)
-    };
+    let host = relay.host();
 
     let mut body = serde_json::json!({
         "host": host,

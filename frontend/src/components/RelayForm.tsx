@@ -113,7 +113,7 @@ export default function RelayForm(props: RelayFormProps) {
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-3">Plan</label>
           <div class="grid grid-cols-3 gap-3">
-            <For each={plans()}>
+            <For each={plans().filter((p) => !p.hidden)}>
               {(p) => (
                 <button
                   type="button"

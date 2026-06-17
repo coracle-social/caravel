@@ -38,9 +38,24 @@ type PricingTableProps = {
 }
 
 export default function PricingTable(props: PricingTableProps) {
+  // Hidden plans (e.g. the legacy "basic" tier) stay resolvable for billing via
+  // the backend but never show up in the public pricing table or plan selector.
+  // This is the only place the hidden flag is honored.
+  const visiblePlans = () => plans().filter((plan) => !plan.hidden)
+
+  // The full pricing page also shows the synthetic "Custom" card, so the column
+  // count tracks the real number of cards (literal classes so Tailwind keeps them).
+  const cardCount = () => visiblePlans().length + (props.selectable ? 0 : 1)
+  const gridCols: Record<number, string> = {
+    1: "lg:grid-cols-1",
+    2: "lg:grid-cols-2",
+    3: "lg:grid-cols-3",
+    4: "lg:grid-cols-4",
+  }
+
   return (
-    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
-      <For each={plans()}>
+    <div class={`grid grid-cols-1 gap-6 items-start ${gridCols[cardCount()] ?? "lg:grid-cols-4"}`}>
+      <For each={visiblePlans()}>
         {(plan) => {
           const isPopular = plan.id === "basic"
           const isSelected = () => props.selectable && props.selectedPlanId === plan.id
@@ -99,6 +114,27 @@ export default function PricingTable(props: PricingTableProps) {
           )
         }}
       </For>
+      {!props.selectable && (
+        <div class="relative bg-white rounded-2xl p-8 border border-gray-200">
+          <h3 class="text-lg font-bold text-gray-900 mb-1">Custom</h3>
+          <div class="mb-8">
+            <span class="text-4xl font-extrabold text-gray-900">Let's talk</span>
+          </div>
+          <ul class="mb-8 text-sm text-gray-600 space-y-3">
+            <li class="flex items-start gap-2"><CheckIcon />White-labeled app</li>
+            <li class="flex items-start gap-2"><CheckIcon />Dedicated support</li>
+            <li class="flex items-start gap-2"><CheckIcon />Custom feature development</li>
+          </ul>
+          <a
+            href="https://cal.com/coracle.social/30min"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="block w-full text-center py-2.5 px-4 text-sm rounded-xl font-semibold transition-colors border border-gray-200 text-gray-700 hover:bg-gray-50"
+          >
+            Contact us
+          </a>
+        </div>
+      )}
     </div>
   )
 }

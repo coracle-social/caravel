@@ -28,6 +28,7 @@ pub struct Plan {
     pub id: String,
     pub name: String,
     pub amount: i64,
+    pub hidden: bool,
     pub members: Option<i64>,
     pub blossom: bool,
     pub livekit: bool,

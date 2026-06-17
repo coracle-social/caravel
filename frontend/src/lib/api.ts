@@ -35,6 +35,7 @@ export type Plan = {
   id: string
   name: string
   amount: number
+  hidden: boolean
   members: number | null
   blossom: boolean
   livekit: boolean

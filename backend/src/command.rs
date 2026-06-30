@@ -152,10 +152,11 @@ pub async fn create_relay(relay: &Relay) -> Result<()> {
             "INSERT INTO relay (
                 id, tenant_pubkey, subdomain, plan_id, status, synced, sync_error,
                 info_name, info_icon, info_description,
+                policy_public_read, policy_public_write,
                 policy_public_join, policy_strip_signatures,
                 groups_enabled, management_enabled, blossom_enabled,
                 livekit_enabled, push_enabled, custom_domain, created_at
-            ) VALUES (?, ?, ?, ?, 'active', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ) VALUES (?, ?, ?, ?, 'active', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&relay.id)
         .bind(&relay.tenant_pubkey)
@@ -165,6 +166,8 @@ pub async fn create_relay(relay: &Relay) -> Result<()> {
         .bind(&relay.info_name)
         .bind(&relay.info_icon)
         .bind(&relay.info_description)
+        .bind(relay.policy_public_read)
+        .bind(relay.policy_public_write)
         .bind(relay.policy_public_join)
         .bind(relay.policy_strip_signatures)
         .bind(relay.groups_enabled)
@@ -198,6 +201,7 @@ pub async fn update_relay(relay: &Relay) -> Result<()> {
             "UPDATE relay
              SET tenant_pubkey = ?, subdomain = ?, plan_id = ?, status = ?, sync_error = ?, synced = 0,
                  info_name = ?, info_icon = ?, info_description = ?,
+                 policy_public_read = ?, policy_public_write = ?,
                  policy_public_join = ?, policy_strip_signatures = ?,
                  groups_enabled = ?, management_enabled = ?, blossom_enabled = ?,
                  livekit_enabled = ?, push_enabled = ?,
@@ -213,6 +217,8 @@ pub async fn update_relay(relay: &Relay) -> Result<()> {
         .bind(&relay.info_name)
         .bind(&relay.info_icon)
         .bind(&relay.info_description)
+        .bind(relay.policy_public_read)
+        .bind(relay.policy_public_write)
         .bind(relay.policy_public_join)
         .bind(relay.policy_strip_signatures)
         .bind(relay.groups_enabled)

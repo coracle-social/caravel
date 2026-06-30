@@ -103,6 +103,8 @@ export default function useRelayToggles(
   }
 
   const toggles = {
+    onTogglePublicRead: () => toggle("policy_public_read", false),
+    onTogglePublicWrite: () => toggle("policy_public_write", false),
     onTogglePublicJoin: () => toggle("policy_public_join", false),
     onToggleStripSignatures: () => toggle("policy_strip_signatures", false),
     onToggleGroups: () => toggle("groups_enabled", true),

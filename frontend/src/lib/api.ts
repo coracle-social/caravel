@@ -56,6 +56,8 @@ export type Relay = {
   info_name: string
   info_icon: string
   info_description: string
+  policy_public_read: number
+  policy_public_write: number
   policy_public_join: number
   policy_strip_signatures: number
   groups_enabled: number
@@ -72,6 +74,8 @@ export type CreateRelayInput = {
   info_name?: string
   info_icon?: string
   info_description?: string
+  policy_public_read?: number
+  policy_public_write?: number
   policy_public_join?: number
   policy_strip_signatures?: number
   groups_enabled?: number
@@ -88,6 +92,8 @@ export type UpdateRelayInput = {
   info_name?: string
   info_icon?: string
   info_description?: string
+  policy_public_read?: number
+  policy_public_write?: number
   policy_public_join?: number
   policy_strip_signatures?: number
   groups_enabled?: number

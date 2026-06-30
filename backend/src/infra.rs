@@ -295,6 +295,8 @@ async fn try_sync_relay(relay: &Relay) -> Result<()> {
             "pubkey": relay.tenant_pubkey,
         },
         "policy": {
+            "public_read": relay.policy_public_read == 1,
+            "public_write": relay.policy_public_write == 1,
             "public_join": relay.policy_public_join == 1,
             "strip_signatures": relay.policy_strip_signatures == 1,
         },

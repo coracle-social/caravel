@@ -72,6 +72,8 @@ pub struct CreateRelayRequest {
     pub info_name: String,
     pub info_icon: String,
     pub info_description: String,
+    pub policy_public_read: i64,
+    pub policy_public_write: i64,
     pub policy_public_join: i64,
     pub policy_strip_signatures: i64,
     pub groups_enabled: i64,
@@ -104,6 +106,8 @@ pub async fn create_relay(
         info_name: payload.info_name,
         info_icon: payload.info_icon,
         info_description: payload.info_description,
+        policy_public_read: payload.policy_public_read,
+        policy_public_write: payload.policy_public_write,
         policy_public_join: payload.policy_public_join,
         policy_strip_signatures: payload.policy_strip_signatures,
         groups_enabled: payload.groups_enabled,
@@ -131,6 +135,8 @@ pub struct UpdateRelayRequest {
     pub info_name: Option<String>,
     pub info_icon: Option<String>,
     pub info_description: Option<String>,
+    pub policy_public_read: Option<i64>,
+    pub policy_public_write: Option<i64>,
     pub policy_public_join: Option<i64>,
     pub policy_strip_signatures: Option<i64>,
     pub groups_enabled: Option<i64>,
@@ -168,6 +174,12 @@ pub async fn update_relay(
     }
     if let Some(v) = payload.info_description {
         relay.info_description = v;
+    }
+    if let Some(v) = payload.policy_public_read {
+        relay.policy_public_read = v;
+    }
+    if let Some(v) = payload.policy_public_write {
+        relay.policy_public_write = v;
     }
     if let Some(v) = payload.policy_public_join {
         relay.policy_public_join = v;
@@ -312,6 +324,8 @@ fn prepare_relay(mut relay: Relay) -> Result<Relay, ApiError> {
         ));
     }
 
+    relay.policy_public_read = parse_bool_default(relay.policy_public_read, 0);
+    relay.policy_public_write = parse_bool_default(relay.policy_public_write, 0);
     relay.policy_public_join = parse_bool_default(relay.policy_public_join, 0);
     relay.policy_strip_signatures = parse_bool_default(relay.policy_strip_signatures, 0);
     relay.groups_enabled = parse_bool_default(relay.groups_enabled, 1);

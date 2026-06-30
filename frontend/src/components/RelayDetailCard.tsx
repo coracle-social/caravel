@@ -47,6 +47,8 @@ type RelayDetailCardProps = {
   onReactivate?: () => void | Promise<void>
   deactivating?: boolean
   reactivating?: boolean
+  onTogglePublicRead?: () => void
+  onTogglePublicWrite?: () => void
   onTogglePublicJoin?: () => void
   onToggleStripSignatures?: () => void
   onToggleGroups?: () => void
@@ -212,6 +214,18 @@ export default function RelayDetailCard(props: RelayDetailCardProps) {
       <hr class="border-gray-200" />
 
       <DetailSection title="Policy">
+        <ToggleField label="Public read">
+          <ToggleButton
+            enabled={flagToBool(r().policy_public_read, false)}
+            onToggle={props.onTogglePublicRead}
+          />
+        </ToggleField>
+        <ToggleField label="Public write">
+          <ToggleButton
+            enabled={flagToBool(r().policy_public_write, false)}
+            onToggle={props.onTogglePublicWrite}
+          />
+        </ToggleField>
         <ToggleField label="Public join">
           <ToggleButton
             enabled={flagToBool(r().policy_public_join, false)}

@@ -164,6 +164,8 @@ export const createRelayForActiveTenant = (input: CreateRelayInput) => {
     info_name: "",
     info_icon: "",
     info_description: "",
+    policy_public_read: 0,
+    policy_public_write: 0,
     policy_public_join: 0,
     policy_strip_signatures: 0,
     groups_enabled: 1,

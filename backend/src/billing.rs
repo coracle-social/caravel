@@ -567,12 +567,16 @@ impl Billing {
     /// reusing an unsettled, unexpired one if present — the on-session card
     /// counterpart to [`Self::ensure_bolt11_for_invoice`]. Checkout lets the
     /// tenant clear a 3D Secure challenge the off-session card charge can't. On
-    /// success Stripe returns the tenant to their account page, where collection
-    /// is reconciled (here and on the dunning poll) once the session reads paid.
+    /// success or cancel Stripe returns the tenant to `return_url` (a caller-
+    /// supplied landing page — e.g. a native-app deep link — defaulting to the
+    /// hosted account page), where collection is reconciled (here and on the
+    /// dunning poll) once the session reads paid. A reused pending session keeps
+    /// the return_url it was created with until it expires.
     pub async fn ensure_checkout_for_invoice(
         &self,
         tenant: &Tenant,
         invoice: &Invoice,
+        return_url: Option<&str>,
     ) -> Result<Checkout> {
         let now = chrono::Utc::now().timestamp();
 
@@ -594,10 +598,14 @@ impl Billing {
             return Ok(existing);
         }
 
-        // Stripe returns the tenant to their account page on success or cancel.
-        // The landing page reconciles the tenant, which now settles a paid
-        // Checkout out of band, so the URL needs no per-invoice marker.
-        let return_url = format!("{}/account", env::get().app_url);
+        // Stripe returns the tenant to `return_url` on success or cancel, falling
+        // back to their account page. The landing page reconciles the tenant,
+        // which now settles a paid Checkout out of band, so the URL needs no
+        // per-invoice marker.
+        let return_url = match return_url {
+            Some(url) => url.to_string(),
+            None => format!("{}/account", env::get().app_url),
+        };
 
         let (session_id, url, expires_at) = self
             .stripe

@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
+use serde::Deserialize;
 
 use crate::api::{Api, AuthedPubkey};
 use crate::query;
@@ -92,14 +93,24 @@ pub async fn ensure_invoice_bolt11(
     ok(bolt11)
 }
 
+#[derive(Deserialize)]
+pub struct CheckoutParams {
+    /// Where Stripe returns the tenant after success or cancel. Optional; when
+    /// omitted the session falls back to the hosted account page. Clients pass
+    /// this to land back in a native app (a deep link) instead of the web app.
+    return_url: Option<String>,
+}
+
 /// Open a hosted Stripe Checkout session to pay a single open invoice by card,
 /// returning the URL to redirect the tenant to. Unlike the off-session card
 /// charge, Checkout can satisfy a 3D Secure authentication challenge; the
 /// resulting payment is reconciled by `reconcile_invoice` (or the dunning poll).
+/// Accepts an optional `?return_url=` (mirroring the billing-portal session).
 pub async fn ensure_invoice_checkout(
     State(api): State<Arc<Api>>,
     AuthedPubkey(auth): AuthedPubkey,
     Path(id): Path<String>,
+    Query(params): Query<CheckoutParams>,
 ) -> ApiResult {
     let invoice = query::get_invoice(&id)
         .await
@@ -112,7 +123,7 @@ pub async fn ensure_invoice_checkout(
 
     let checkout = api
         .billing
-        .ensure_checkout_for_invoice(&tenant, &invoice)
+        .ensure_checkout_for_invoice(&tenant, &invoice, params.return_url.as_deref())
         .await
         .map_err(internal)?;
 

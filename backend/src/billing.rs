@@ -351,7 +351,7 @@ impl Billing {
             let relays = query::list_relays_for_tenant(&tenant.pubkey).await?;
             command::churn_tenant(&tenant.pubkey, now, &relays).await?;
 
-            let message = format!("{CHURN_DM}\n\n{}/account", env::get().app_url);
+            let message = format!("{CHURN_DM}\n\n{}", tenant.return_url);
             if let Err(e) = self.robot.send_dm(&tenant.pubkey, &message).await {
                 tracing::error!(tenant = %tenant.pubkey, error = %e, "failed to send churn DM");
             }
@@ -522,8 +522,8 @@ impl Billing {
 
         // Build the message
         let invoice_id = &invoice.id;
-        let url_base = &env::get().app_url;
-        let payment_url = format!("{url_base}/account?invoice={invoice_id}");
+        let return_url = &tenant.return_url;
+        let payment_url = format!("{return_url}?invoice={invoice_id}");
         let message = format!("{MANUAL_PAYMENT_DM}\n\n{payment_url}");
 
         // Send via NIP 17
@@ -593,16 +593,16 @@ impl Billing {
     /// reusing an unsettled, unexpired one if present — the on-session card
     /// counterpart to [`Self::ensure_bolt11_for_invoice`]. Checkout lets the
     /// tenant clear a 3D Secure challenge the off-session card charge can't. On
-    /// success or cancel Stripe returns the tenant to `return_url` (a caller-
-    /// supplied landing page — e.g. a native-app deep link — defaulting to the
-    /// hosted account page), where collection is reconciled (here and on the
-    /// dunning poll) once the session reads paid. A reused pending session keeps
-    /// the return_url it was created with until it expires.
+    /// success or cancel Stripe returns the tenant to `return_url` — the
+    /// caller-supplied landing page (e.g. a native-app deep link), where
+    /// collection is reconciled (here and on the dunning poll) once the session
+    /// reads paid. A reused pending session keeps the return_url it was created
+    /// with until it expires.
     pub async fn ensure_checkout_for_invoice(
         &self,
         tenant: &Tenant,
         invoice: &Invoice,
-        return_url: Option<&str>,
+        return_url: &str,
     ) -> Result<Checkout> {
         let now = chrono::Utc::now().timestamp();
 
@@ -624,15 +624,9 @@ impl Billing {
             return Ok(existing);
         }
 
-        // Stripe returns the tenant to `return_url` on success or cancel, falling
-        // back to their account page. The landing page reconciles the tenant,
-        // which now settles a paid Checkout out of band, so the URL needs no
-        // per-invoice marker.
-        let return_url = match return_url {
-            Some(url) => url.to_string(),
-            None => format!("{}/account", env::get().app_url),
-        };
-
+        // Stripe returns the tenant to `return_url` on success or cancel. The
+        // landing page reconciles the tenant, which now settles a paid Checkout
+        // out of band, so the URL needs no per-invoice marker.
         let (session_id, url, expires_at) = self
             .stripe
             .create_checkout_session(
@@ -640,8 +634,8 @@ impl Billing {
                 &invoice.id,
                 invoice.amount,
                 "usd",
-                &return_url,
-                &return_url,
+                return_url,
+                return_url,
             )
             .await?;
 

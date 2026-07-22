@@ -1,6 +1,5 @@
 import { Show, createSignal } from "solid-js"
 import type { Relay, PlanId } from "@/lib/api"
-import { RELAY_DOMAIN } from "@/lib/subdomain"
 import ConfirmDialog from "@/components/ConfirmDialog"
 import CustomDomainModal from "@/components/relay/CustomDomainModal"
 import Field from "@/components/Field"
@@ -196,7 +195,7 @@ export default function RelayDetailCard(props: RelayDetailCardProps) {
                 </p>
               </div>
               <div class="rounded border border-yellow-200 bg-white px-3 py-2 font-mono text-xs text-gray-700 break-all">
-                {r().custom_domain} CNAME {r().subdomain}.{RELAY_DOMAIN}
+                {r().custom_domain} CNAME {r().subdomain}.{r().zooid_domain}
               </div>
               <p class="text-xs text-yellow-700">
                 For apex domains (e.g. example.com), use an ALIAS or ANAME record instead.

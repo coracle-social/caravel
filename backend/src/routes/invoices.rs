@@ -95,17 +95,17 @@ pub async fn ensure_invoice_bolt11(
 
 #[derive(Deserialize)]
 pub struct CheckoutParams {
-    /// Where Stripe returns the tenant after success or cancel. Optional; when
-    /// omitted the session falls back to the hosted account page. Clients pass
-    /// this to land back in a native app (a deep link) instead of the web app.
-    return_url: Option<String>,
+    /// Where Stripe returns the tenant after success or cancel. Required, since
+    /// the server has no way to guess where the caller wants to land — a native
+    /// app passes a deep link, the web app the page it opened checkout from.
+    return_url: String,
 }
 
 /// Open a hosted Stripe Checkout session to pay a single open invoice by card,
 /// returning the URL to redirect the tenant to. Unlike the off-session card
 /// charge, Checkout can satisfy a 3D Secure authentication challenge; the
 /// resulting payment is reconciled by `reconcile_invoice` (or the dunning poll).
-/// Accepts an optional `?return_url=` (mirroring the billing-portal session).
+/// Requires a `?return_url=` naming the page Stripe sends the tenant back to.
 pub async fn ensure_invoice_checkout(
     State(api): State<Arc<Api>>,
     AuthedPubkey(auth): AuthedPubkey,
@@ -123,7 +123,7 @@ pub async fn ensure_invoice_checkout(
 
     let checkout = api
         .billing
-        .ensure_checkout_for_invoice(&tenant, &invoice, params.return_url.as_deref())
+        .ensure_checkout_for_invoice(&tenant, &invoice, &params.return_url)
         .await
         .map_err(internal)?;
 

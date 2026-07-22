@@ -1,0 +1,1 @@
+ALTER TABLE tenant ADD COLUMN return_url TEXT NOT NULL DEFAULT '';

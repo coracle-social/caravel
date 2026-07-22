@@ -46,7 +46,6 @@ All configuration is read from the environment by `Env::load()` at startup. **Ev
 | `SERVER_PORT`          | API bind port; the server binds `0.0.0.0` (all interfaces)             |
 | `SERVER_ADMIN_PUBKEYS` | Comma-separated admin pubkeys (hex)                                 |
 | `SERVER_ALLOW_ORIGINS` | Comma-separated allowed CORS origins                                |
-| `APP_URL`              | Frontend base URL; used to build links in DMs and invoices          |
 | `DATABASE_URL`         | SQLite URL; relative `sqlite://` paths resolve under the compile-time crate dir (`backend/` in dev, `/app` in the Docker image) |
 
 **Robot identity**
@@ -67,7 +66,7 @@ All configuration is read from the environment by `Env::load()` at startup. **Ev
 | Variable             | Description                                             |
 | -------------------- | ------------------------------------------------------- |
 | `ZOOID_API_URL`      | Zooid API base URL used by the infra sync worker        |
-| `RELAY_DOMAIN`       | Base domain appended to relay subdomains                |
+| `ZOOID_DOMAINS`      | Comma-separated domains relay subdomains may live under; a relay records the one it was created on |
 | `LIVEKIT_URL`        | LiveKit URL sent to zooid when a relay enables livekit   |
 | `LIVEKIT_API_KEY`    | LiveKit API key sent to zooid                           |
 | `LIVEKIT_API_SECRET` | LiveKit API secret sent to zooid                        |

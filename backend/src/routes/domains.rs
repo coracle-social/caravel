@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use axum::{extract::Query, http::StatusCode, response::IntoResponse};
 
-use crate::env;
+use crate::domains;
 use crate::query;
 
 /// Caddy on-demand TLS "ask" endpoint. Returns 200 if Caddy should provision a
@@ -15,9 +15,8 @@ pub async fn check_domain(Query(params): Query<HashMap<String, String>>) -> impl
     };
 
     let domain = domain.trim_end_matches('.');
-    let relay_domain = &env::get().relay_domain;
 
-    if domain == relay_domain.as_str() || domain.ends_with(&format!(".{relay_domain}")) {
+    if domains::is_zooid_domain(domain) {
         return StatusCode::OK;
     }
 

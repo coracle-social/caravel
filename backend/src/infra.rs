@@ -35,7 +35,7 @@ pub async fn start_domain_verification() {
 async fn verify_pending_custom_domains() -> Result<()> {
     let relays = query::list_relays_with_unverified_custom_domain().await?;
     for relay in relays {
-        let canonical = format!("{}.{}", relay.subdomain, env::get().relay_domain);
+        let canonical = relay.canonical_host();
         match domains::domain_points_to(&relay.custom_domain, &canonical).await {
             Ok(true) => {
                 tracing::info!(
@@ -87,7 +87,7 @@ pub async fn start_domain_reverification() {
 async fn check_verified_custom_domains() -> Result<()> {
     let relays = query::list_relays_with_verified_custom_domain().await?;
     for relay in relays {
-        let canonical = format!("{}.{}", relay.subdomain, env::get().relay_domain);
+        let canonical = relay.canonical_host();
         match domains::domain_points_to(&relay.custom_domain, &canonical).await {
             Ok(true) => {
                 tracing::debug!(

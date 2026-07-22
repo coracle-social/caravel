@@ -3,7 +3,6 @@ import { createMemo, createSignal, For, Show } from "solid-js"
 import { useProfileMetadata, useProfilePicture, useTenantRelays, type Relay } from "@/lib/hooks"
 import { account, identity, PLATFORM_LOGO, PLATFORM_NAME } from "@/lib/state"
 import { fuzzySearch } from "@/lib/search"
-import { RELAY_DOMAIN } from "@/lib/subdomain"
 import serverIcon from "@/assets/server.svg"
 import Modal from "@/components/Modal"
 import BillingPrompts from "@/components/BillingPrompts"
@@ -232,7 +231,7 @@ export default function AppShell(props: { children?: any }) {
                         onClick={closeSearchModal}
                       >
                         <p class="text-sm font-medium text-gray-900">{relay.info_name || relay.subdomain}</p>
-                        <p class="text-xs text-gray-500">{relay.subdomain}.{RELAY_DOMAIN}</p>
+                        <p class="text-xs text-gray-500">{relay.subdomain}.{relay.zooid_domain}</p>
                       </A>
                     </li>
                   )}

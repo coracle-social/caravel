@@ -24,7 +24,7 @@ Bun is the package manager: `bun.lock` is present and there is no `package-lock.
 | Var | Declared in `global.d.ts`? | In `.env.template`? | Where it's read | Role |
 | --- | --- | --- | --- | --- |
 | `VITE_API_URL` | yes | yes (`http://127.0.0.1:2892`) | `api.ts` → `API_URL` | backend base URL for requests; also the NIP-98 `u`-tag value |
-| `VITE_RELAY_DOMAIN` | yes | yes (`spaces.coracle.social`) | `subdomain.ts` → `RELAY_DOMAIN` | relay subdomain suffix; must match the backend's `RELAY_DOMAIN` |
+| `VITE_RELAY_DOMAIN` | yes | yes (`spaces.coracle.social`) | `subdomain.ts` → `RELAY_DOMAIN` | the domain this client creates relays under, sent as each new relay's `zooid_domain`; must be one of the backend's `ZOOID_DOMAINS` |
 | `VITE_PLATFORM_NAME` | yes (optional) | yes (`Caravel`) | `state.ts` → `PLATFORM_NAME` | platform display name (title, login, invoice PDF) |
 | `VITE_PORT` | **no** | **no** | `vite.config.ts` only (`Number(env.VITE_PORT) || 5173`) | dev-server port; never reaches client code |
 
@@ -36,7 +36,7 @@ Convention: read each client var once at module top-level into a named `const` t
 
 `VITE_*` values are **baked into the bundle at build time**, so editing `frontend/.env` requires a rebuild to take effect.
 
-In Docker this is sidestepped: the frontend is built once with sentinel placeholder values (`VITE_API_URL=__VITE_API_URL__`, etc.). The container entrypoint then maps runtime env (`SERVER_URL`, `RELAY_DOMAIN`, `PLATFORM_NAME`) onto those placeholders and `sed`-substitutes them into every `*.js`/`*.html` in `/app/dist` at startup, before serving with `serve -s /app/dist -l 3000`. So one image can be deployed with any config without a rebuild, but runtime config there does *not* require a rebuild — unlike a local `.env` change.
+In Docker this is sidestepped: the frontend is built once with sentinel placeholder values (`VITE_API_URL=__VITE_API_URL__`, etc.). The container entrypoint then maps runtime env (`SERVER_URL`, `RELAY_DOMAIN` or the first entry of `ZOOID_DOMAINS`, `PLATFORM_NAME`) onto those placeholders and `sed`-substitutes them into every `*.js`/`*.html` in `/app/dist` at startup, before serving with `serve -s /app/dist -l 3000`. So one image can be deployed with any config without a rebuild, but runtime config there does *not* require a rebuild — unlike a local `.env` change.
 
 When adding a new build-time-substituted `VITE_` var intended for Docker, mirror the existing pattern: declare the placeholder `ENV` in the build stage and add the matching `sed -e` mapping in the entrypoint.
 

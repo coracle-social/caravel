@@ -32,6 +32,7 @@ import {
   type UpdateRelayInput,
 } from "@/lib/api"
 import { autopayConfigured } from "@/lib/paymentMethod"
+import { RELAY_DOMAIN } from "@/lib/subdomain"
 import { decidePostPaidFlow, type PaidFlowDecision } from "@/lib/relayPlanFlow"
 import { account, eventStore, pool } from "@/lib/state"
 import { useNostr } from "@/lib/nostr"
@@ -160,7 +161,10 @@ export const useAdminTenantRelays = (pubkey: () => string) => createResource(pub
 
 export const useAdminTenantInvoices = (pubkey: () => string) => createResource(pubkey, listTenantInvoices)
 
-export const createRelayForActiveTenant = (input: CreateRelayInput) => {
+// This client is built for a single zooid domain, so it supplies its own
+// VITE_RELAY_DOMAIN as the relay's zooid_domain; the backend validates it
+// against the platform's ZOOID_DOMAINS.
+export const createRelayForActiveTenant = (input: Omit<CreateRelayInput, "zooid_domain">) => {
   const defaults = {
     info_name: "",
     info_icon: "",
@@ -176,6 +180,7 @@ export const createRelayForActiveTenant = (input: CreateRelayInput) => {
 
   const overrides = {
     tenant_pubkey: account()!.pubkey,
+    zooid_domain: RELAY_DOMAIN,
     blossom_enabled: input.plan_id === "free" ? 0 : 1,
     livekit_enabled: input.plan_id === "free" ? 0 : 1,
   }

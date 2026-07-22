@@ -6,7 +6,9 @@ set -euo pipefail
 
 # Map the provided runtime variables onto the frontend's VITE_* placeholders.
 VITE_API_URL="${SERVER_URL:-}"
-VITE_RELAY_DOMAIN="${RELAY_DOMAIN:-}"
+# The frontend is built for a single domain, so it gets the first of ZOOID_DOMAINS.
+VITE_RELAY_DOMAIN="${ZOOID_DOMAINS:-}"
+VITE_RELAY_DOMAIN="${VITE_RELAY_DOMAIN%%,*}"
 VITE_PLATFORM_NAME="${PLATFORM_NAME:-}"
 VITE_PLATFORM_LOGO="${PLATFORM_LOGO:-/caravel.png}"
 

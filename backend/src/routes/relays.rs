@@ -68,6 +68,7 @@ pub async fn list_relay_members(
 pub struct CreateRelayRequest {
     pub tenant_pubkey: String,
     pub subdomain: String,
+    pub zooid_domain: String,
     pub plan_id: String,
     pub info_name: String,
     pub info_icon: String,
@@ -107,6 +108,7 @@ pub async fn create_relay(
         id: relay_id.clone(),
         tenant_pubkey: payload.tenant_pubkey,
         subdomain: payload.subdomain,
+        zooid_domain: payload.zooid_domain,
         plan_id: payload.plan_id,
         info_name: payload.info_name,
         info_icon: payload.info_icon,
@@ -136,6 +138,7 @@ pub async fn create_relay(
 #[derive(Deserialize)]
 pub struct UpdateRelayRequest {
     pub subdomain: Option<String>,
+    pub zooid_domain: Option<String>,
     pub plan_id: Option<String>,
     pub info_name: Option<String>,
     pub info_icon: Option<String>,
@@ -171,6 +174,14 @@ pub async fn update_relay(
 
     if let Some(v) = payload.subdomain {
         relay.subdomain = v;
+    }
+    // Moving the relay to another zooid domain changes the canonical host a
+    // custom domain must CNAME to, so any prior verification no longer holds.
+    if let Some(v) = payload.zooid_domain
+        && v != relay.zooid_domain
+    {
+        relay.zooid_domain = v;
+        relay.custom_domain_verified = 0;
     }
     if let Some(v) = requested_plan.clone() {
         relay.plan_id = v;
@@ -340,13 +351,23 @@ static SUBDOMAIN_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$").unwrap());
 
 /// Validate and normalize a relay before persistence: enforce the subdomain
-/// format and reserved names, require an existing plan that permits any enabled
-/// premium features, and coerce the boolean columns to 0/1.
+/// format and reserved names, require the zooid domain to be one the platform
+/// serves, require an existing plan that permits any enabled premium features,
+/// and coerce the boolean columns to 0/1.
 fn prepare_relay(mut relay: Relay) -> Result<Relay, ApiError> {
     if !SUBDOMAIN_RE.is_match(&relay.subdomain)
         || RESERVED_SUBDOMAINS.contains(&relay.subdomain.as_str())
     {
         return Err(unprocessable("invalid-subdomain", "subdomain is invalid"));
+    }
+
+    relay.zooid_domain = relay.zooid_domain.trim().to_lowercase();
+
+    if !env::get().zooid_domains.contains(&relay.zooid_domain) {
+        return Err(unprocessable(
+            "invalid-zooid-domain",
+            "zooid_domain is not a domain this platform serves",
+        ));
     }
 
     let plan = query::get_plan(&relay.plan_id)
@@ -375,8 +396,8 @@ fn prepare_relay(mut relay: Relay) -> Result<Relay, ApiError> {
 }
 
 /// Normalize and validate a tenant custom domain. An empty string is allowed and
-/// clears the domain. Rejects malformed hostnames and any domain under the
-/// platform's relay domain, which belong in the subdomain field instead.
+/// clears the domain. Rejects malformed hostnames and any domain under one of the
+/// platform's zooid domains, which belong in the subdomain field instead.
 fn normalize_custom_domain(domain: &str) -> Result<String, ApiError> {
     let domain = domain.trim().to_lowercase();
 
@@ -388,11 +409,10 @@ fn normalize_custom_domain(domain: &str) -> Result<String, ApiError> {
             ));
         }
 
-        let relay_domain = &env::get().relay_domain;
-        if domain == *relay_domain || domain.ends_with(&format!(".{relay_domain}")) {
+        if domains::is_zooid_domain(&domain) {
             return Err(unprocessable(
                 "reserved-domain",
-                "use the subdomain field for domains under the platform's relay domain",
+                "use the subdomain field for domains under one of the platform's zooid domains",
             ));
         }
     }

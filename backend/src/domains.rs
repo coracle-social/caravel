@@ -7,6 +7,15 @@ use regex::Regex;
 pub static CUSTOM_DOMAIN_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^([a-z0-9][a-z0-9\-]*\.)+[a-z]{2,}$").unwrap());
 
+/// Whether `domain` is one of the platform's zooid domains or sits under one —
+/// the hosts we serve ourselves, as opposed to a tenant's custom domain.
+pub fn is_zooid_domain(domain: &str) -> bool {
+    crate::env::get()
+        .zooid_domains
+        .iter()
+        .any(|zooid_domain| domain == zooid_domain || domain.ends_with(&format!(".{zooid_domain}")))
+}
+
 /// Returns true if `domain` either has a CNAME pointing to `expected` or
 /// resolves to the same IPv4 addresses. The A-record fallback accepts
 /// Cloudflare CNAME flattening and ALIAS/ANAME records, which external

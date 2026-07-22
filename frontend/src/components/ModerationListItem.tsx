@@ -5,7 +5,6 @@ import { fetchModerationBlob, type ModerationItem, type Relay, type Upload } fro
 import CopyNpub from "@/components/CopyNpub"
 import NoteContent from "@/components/NoteContent"
 import { formatBytes, formatTimeAgo } from "@/lib/format"
-import { RELAY_DOMAIN } from "@/lib/subdomain"
 
 // The kinds these relays actually carry, so the feed reads as content instead
 // of as numbers. Anything else falls back to its raw kind.
@@ -171,7 +170,7 @@ export default function ModerationListItem(props: ModerationListItemProps) {
       <div class="mt-3 border-t border-gray-100 pt-3">
         <A href={`/admin/relays/${props.item.tenant}`} class="text-xs text-gray-500 hover:text-gray-900 hover:underline">
           <Show when={props.relay} fallback={props.item.tenant}>
-            {(relay) => <>{relay().info_name || relay().subdomain} · {relay().subdomain}.{RELAY_DOMAIN}</>}
+            {(relay) => <>{relay().info_name || relay().subdomain} · {relay().subdomain}.{relay().zooid_domain}</>}
           </Show>
         </A>
       </div>

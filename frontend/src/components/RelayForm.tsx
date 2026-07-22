@@ -9,6 +9,10 @@ export type RelayFormValues = Pick<Relay, "info_name" | "subdomain" | "info_icon
 
 type RelayFormProps = {
   initialValues?: Partial<RelayFormValues>
+  // Domain shown as the subdomain suffix. Defaults to this client's configured
+  // domain, which is where a newly created relay lands; the edit form passes the
+  // relay's own so it reads right for a relay on some other zooid domain.
+  zooidDomain?: string
   syncSubdomainWithName?: boolean
   // The plan can't be changed by editing a relay (only at creation or via the
   // detail card), so the edit form hides the selector by passing false here.
@@ -20,6 +24,7 @@ type RelayFormProps = {
 
 export default function RelayForm(props: RelayFormProps) {
   const showPlanSelector = () => props.showPlanSelector ?? true
+  const zooidDomain = () => props.zooidDomain ?? RELAY_DOMAIN
   const defaultPlanId = createMemo(() => props.initialValues?.plan_id ?? plans()[0]?.id ?? "free")
   const [planId, setPlanId] = createSignal(defaultPlanId())
   const [name, setName] = createSignal(props.initialValues?.info_name ?? "")
@@ -88,7 +93,7 @@ export default function RelayForm(props: RelayFormProps) {
             required
             class="flex-1 px-3 py-2"
           />
-          <span class="px-3 py-2 bg-gray-50 text-gray-500 text-sm border-l border-gray-300">.{RELAY_DOMAIN}</span>
+          <span class="px-3 py-2 bg-gray-50 text-gray-500 text-sm border-l border-gray-300">.{zooidDomain()}</span>
         </div>
       </div>
       <div>

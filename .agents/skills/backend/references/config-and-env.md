@@ -4,11 +4,11 @@ This is the lookup-depth companion to the SKILL.md "config" section: the full va
 
 ## The variable surface
 
-`Env` is `#[derive(Clone)]` with 24 fields plus a parsed `keys: Keys`. The full grouped surface:
+`Env` is `#[derive(Clone)]` with 23 fields plus a parsed `keys: Keys`. The full grouped surface:
 
-- **server** — `SERVER_URL`, `SERVER_PORT` (u16), `SERVER_ADMIN_PUBKEYS` (csv), `SERVER_ALLOW_ORIGINS` (csv), `APP_URL`, `DATABASE_URL`
+- **server** — `SERVER_URL`, `SERVER_PORT` (u16), `SERVER_ADMIN_PUBKEYS` (csv), `SERVER_ALLOW_ORIGINS` (csv), `DATABASE_URL`
 - **robot identity** — `ROBOT_SECRET` (parsed into `Keys`), `ROBOT_NAME`, `ROBOT_DESCRIPTION`, `ROBOT_PICTURE`, `ROBOT_WALLET`, `ROBOT_OUTBOX_RELAYS`, `ROBOT_INDEXER_RELAYS`, `ROBOT_MESSAGING_RELAYS`
-- **zooid/livekit** — `ZOOID_API_URL`, `RELAY_DOMAIN`, `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`
+- **zooid/livekit** — `ZOOID_API_URL`, `ZOOID_DOMAINS` (csv), `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`
 - **blossom S3** — `BLOSSOM_S3_ENDPOINT`, `BLOSSOM_S3_REGION`, `BLOSSOM_S3_BUCKET`, `BLOSSOM_S3_ACCESS_KEY`, `BLOSSOM_S3_SECRET_KEY`
 - **billing** — `STRIPE_SECRET_KEY`
 
@@ -28,7 +28,7 @@ Source: `env.rs:22-82`, `.env.template:1-38`.
 - `SERVER_PORT` binds `127.0.0.1` only (localhost, not `0.0.0.0`).
 - `SERVER_ADMIN_PUBKEYS` is checked by membership for `is_admin`.
 - `SERVER_ALLOW_ORIGINS` is parsed into `CorsLayer` `HeaderValue`s, with unparseable origins **silently dropped** via `filter_map(...ok())` — a typo won't error at startup, it just won't allow that origin and surfaces later as a browser CORS block.
-- `APP_URL` is the only var trailing-slash-trimmed at load (`zooid_api_url` is trimmed at use).
+- No var is trailing-slash-trimmed at load (`zooid_api_url` is trimmed at use). There is no frontend base URL in the env at all — each tenant carries its own `return_url`, supplied when the tenant is created, and DM links are built against that.
 
 Source: `api.rs:104,158-202`, `main.rs:44-65`, `env.rs:62`.
 

@@ -37,6 +37,11 @@ pub struct Plan {
 #[derive(Debug, Default, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Tenant {
     pub pubkey: String,
+    /// Where the robot's DMs send this tenant — their account page in whichever
+    /// client they signed up through, supplied at creation. Used as-is for the
+    /// churn DM, and with `?invoice=<id>` appended for a payment reminder, so a
+    /// tenant on a third-party client lands back in that client, not in ours.
+    pub return_url: String,
     pub nwc_url: String,
     /// Last NWC auto-payment error, or `None` when the wallet last paid (or has
     /// never been tried). Surfaced in the UI to warn the user; it never blocks a
@@ -83,6 +88,10 @@ pub struct Relay {
     pub id: String,
     pub tenant_pubkey: String,
     pub subdomain: String,
+    /// Which of the platform's `ZOOID_DOMAINS` this relay's canonical host sits
+    /// under, chosen by the client on create. Subdomains are unique platform-wide,
+    /// so moving a relay between domains keeps its name reserved on both.
+    pub zooid_domain: String,
     pub plan_id: String,
     pub status: String,
     pub sync_error: String,
@@ -112,13 +121,19 @@ pub struct Relay {
 
 impl Relay {
     /// The relay's effective public host: its verified custom domain when set,
-    /// otherwise its canonical `<subdomain>.<relay_domain>`.
+    /// otherwise its canonical subdomain.
     pub fn host(&self) -> String {
         if self.custom_domain_verified == 1 && !self.custom_domain.is_empty() {
             self.custom_domain.clone()
         } else {
-            format!("{}.{}", self.subdomain, crate::env::get().relay_domain)
+            self.canonical_host()
         }
+    }
+
+    /// The relay's `<subdomain>.<zooid_domain>` host, which it always answers on
+    /// and which a custom domain must CNAME to before it can be verified.
+    pub fn canonical_host(&self) -> String {
+        format!("{}.{}", self.subdomain, self.zooid_domain)
     }
 }
 
@@ -128,6 +143,7 @@ impl Default for Relay {
             id: String::new(),
             tenant_pubkey: String::new(),
             subdomain: String::new(),
+            zooid_domain: String::new(),
             plan_id: String::new(),
             status: RELAY_STATUS_ACTIVE.to_string(),
             sync_error: String::new(),

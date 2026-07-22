@@ -33,6 +33,7 @@ export default function RelayEdit(props: { basePath?: string; title?: string }) 
       <Show when={relay() && !loading()}>
         <RelayForm
           initialValues={relay()!}
+          zooidDomain={relay()!.zooid_domain}
           showPlanSelector={false}
           onSubmit={handleSubmit}
           submitLabel="Save Changes"

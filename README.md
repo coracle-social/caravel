@@ -18,8 +18,7 @@ docker run -d \
   -v my-caravel-data:/app/data \
   -e PLATFORM_NAME=Caravel \
   -e PLATFORM_LOGO=/caravel.png \
-  -e RELAY_DOMAIN=example.com \
-  -e APP_URL=https://example.com \
+  -e ZOOID_DOMAINS=example.com \
   -e ZOOID_API_URL=http://zooid:3334 \
   -e SERVER_URL=https://api.example.com \
   -e SERVER_ADMIN_PUBKEYS=<your-hex-pubkey> \
@@ -85,7 +84,7 @@ On the Zooid server, create a `Caddyfile`:
 }
 ```
 
-Replace `<caravel-host>` with the hostname or IP of the Caravel server. The `/domains/check` endpoint returns `200` for any subdomain of `RELAY_DOMAIN` and for any tenant custom domain that has been verified, and `404` otherwise — Caddy will only obtain a certificate if it gets a `200`.
+Replace `<caravel-host>` with the hostname or IP of the Caravel server. The `/domains/check` endpoint returns `200` for any subdomain of a `ZOOID_DOMAINS` entry and for any tenant custom domain that has been verified, and `404` otherwise — Caddy will only obtain a certificate if it gets a `200`.
 
 Run Caddy and Zooid together, for example with Docker Compose:
 
@@ -115,7 +114,7 @@ volumes:
   zooid_data:
 ```
 
-Point your wildcard DNS record (`*.relay_domain`) at this server's IP. Custom domains are pointed there by tenants via a CNAME to their relay's canonical subdomain; Caravel verifies the CNAME in the background and notifies Zooid once confirmed.
+Point a wildcard DNS record (`*.<domain>`) for each of your `ZOOID_DOMAINS` at this server's IP. Custom domains are pointed there by tenants via a CNAME to their relay's canonical subdomain; Caravel verifies the CNAME in the background and notifies Zooid once confirmed.
 
 Set `ZOOID_API_URL` in Caravel's environment to the same value as zooid's `API_HOST` value, prefixed with the protocol, e.g. `https://api.zooid.example.com`.
 
@@ -160,7 +159,7 @@ At minimum for local dev, set:
 |---|---|---|
 | `ADMINS` | Your hex pubkey | Gives you admin access in the UI |
 | `ZOOID_API_SECRET` | Hex Nostr secret key | The keypair whose pubkey you put in `API_WHITELIST` above |
-| `RELAY_DOMAIN` | `localhost` | Base domain appended to relay subdomains |
+| `ZOOID_DOMAINS` | `localhost` | Comma-separated domains relay subdomains may live under |
 
 The rest of the defaults work as-is. `ROBOT_*`, `LIVEKIT_*`, billing, and Stripe vars are optional for basic local development.
 

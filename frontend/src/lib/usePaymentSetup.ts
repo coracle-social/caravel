@@ -79,7 +79,7 @@ export function useInvoiceCheckout(invoiceId: () => string) {
     setRedirecting(true)
     setError("")
     try {
-      const { url } = await createInvoiceCheckout(invoiceId())
+      const { url } = await createInvoiceCheckout(invoiceId(), window.location.href)
       window.location.href = url
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to open checkout")

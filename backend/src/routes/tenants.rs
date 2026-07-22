@@ -16,6 +16,7 @@ use crate::{command, env, query};
 #[derive(Serialize)]
 pub struct TenantResponse {
     pub pubkey: String,
+    pub return_url: String,
     pub nwc_is_set: bool,
     pub nwc_error: Option<String>,
     pub stripe_error: Option<String>,
@@ -36,6 +37,7 @@ impl From<Tenant> for TenantResponse {
         TenantResponse {
             nwc_is_set: !t.nwc_url.is_empty(),
             pubkey: t.pubkey,
+            return_url: t.return_url,
             nwc_error: t.nwc_error,
             stripe_error: t.stripe_error,
             created_at: t.created_at,
@@ -74,13 +76,28 @@ pub async fn get_tenant(
     ok(TenantResponse::from(tenant))
 }
 
+#[derive(Deserialize)]
+pub struct CreateTenantRequest {
+    /// The calling client's account page; recorded on the tenant and used as the
+    /// destination for every link the robot DMs them.
+    pub return_url: String,
+}
+
 /// Create the tenant row for the calling pubkey and provision its Stripe
 /// customer. Idempotent: an existing tenant (including one created by a
-/// concurrent unique-constraint race) is returned as-is.
+/// concurrent unique-constraint race) is returned as-is, keeping the
+/// `return_url` it was first created with.
 pub async fn create_tenant(
     State(api): State<Arc<Api>>,
     AuthedPubkey(pubkey): AuthedPubkey,
+    Json(payload): Json<CreateTenantRequest>,
 ) -> ApiResult {
+    let return_url = payload.return_url.trim().trim_end_matches('/').to_string();
+
+    if return_url.is_empty() {
+        return Err(bad_request("return-url-required", "return_url is required"));
+    }
+
     if let Some(t) = query::get_tenant(&pubkey).await.map_err(internal)? {
         return ok(TenantResponse::from(t));
     }
@@ -99,6 +116,7 @@ pub async fn create_tenant(
 
     let tenant = Tenant {
         pubkey: pubkey.clone(),
+        return_url,
         created_at: Utc::now().timestamp(),
         stripe_customer_id,
         ..Default::default()

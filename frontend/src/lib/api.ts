@@ -11,6 +11,10 @@ type ApiOk<T> = {
   code: string
 }
 
+type CreateTenantInput = {
+  return_url: string
+}
+
 type UpdateTenantInput = {
   nwc_url?: string
 }
@@ -47,6 +51,7 @@ export type Relay = {
   id: string
   tenant_pubkey: string
   subdomain: string
+  zooid_domain: string
   plan_id: PlanId
   status: string
   sync_error: string
@@ -79,6 +84,9 @@ export function relayStatus(relay: Pick<Relay, "status" | "purged_at">): string 
 export type CreateRelayInput = {
   tenant_pubkey?: string
   subdomain: string
+  // Which of the platform's ZOOID_DOMAINS the relay's canonical host sits under.
+  // The backend rejects anything it doesn't serve.
+  zooid_domain: string
   plan_id: string
   info_name?: string
   info_icon?: string
@@ -97,6 +105,7 @@ export type CreateRelayInput = {
 
 export type UpdateRelayInput = {
   subdomain?: string
+  zooid_domain?: string
   plan_id?: string
   info_name?: string
   info_icon?: string
@@ -115,6 +124,7 @@ export type UpdateRelayInput = {
 
 export type Tenant = {
   pubkey: string
+  return_url: string
   nwc_is_set: boolean
   created_at: number
   billing_anchor: number | null
@@ -312,8 +322,11 @@ export function getIdentity() {
   return callApi<undefined, Identity>("GET", "/identity")
 }
 
-export function createTenant() {
-  return callApi<undefined, Tenant>("POST", "/tenants")
+// Create the calling pubkey's tenant. `return_url` is where the robot's DMs
+// send them, so it's this app's account page. Idempotent — an existing tenant
+// comes back with the return_url it was first created with.
+export function createTenant(returnUrl: string) {
+  return callApi<CreateTenantInput, Tenant>("POST", "/tenants", { return_url: returnUrl })
 }
 
 export function getPlan(id: string) {
@@ -447,10 +460,11 @@ export function ensureInvoiceBolt11(invoiceId: string) {
 // Open a hosted Stripe Checkout session to pay a single invoice by card,
 // reusing a valid pending one. Unlike the off-session charge, Checkout can
 // satisfy a 3D Secure challenge. Returns the URL to redirect to; the payment is
-// reconciled by reconcileInvoice once the tenant returns (or by the poll). The
-// return URL is fixed to the account page server-side.
-export function createInvoiceCheckout(invoiceId: string) {
-  return callApi<undefined, { url: string }>("POST", `/invoices/${invoiceId}/checkout`)
+// reconciled by reconcileInvoice once the tenant returns (or by the poll) to
+// returnUrl, which Stripe sends them back to on success or cancel.
+export function createInvoiceCheckout(invoiceId: string, returnUrl: string) {
+  const query = `?return_url=${encodeURIComponent(returnUrl)}`
+  return callApi<undefined, { url: string }>("POST", `/invoices/${invoiceId}/checkout${query}`)
 }
 
 // Reconcile and collect an open invoice: ensure a payable bolt11 exists, then

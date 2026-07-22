@@ -33,7 +33,7 @@ Environment variables (see `.env.template`):
 | Variable | Description | Default |
 |---|---|---|
 | `VITE_API_URL` | Backend API base URL | `http://127.0.0.1:2892` |
-| `VITE_RELAY_DOMAIN` | Domain relay subdomains live under (match backend `RELAY_DOMAIN`) | `spaces.coracle.social` |
+| `VITE_RELAY_DOMAIN` | Domain this client creates relays under (one of backend `ZOOID_DOMAINS`) | `spaces.coracle.social` |
 
 ## Running
 

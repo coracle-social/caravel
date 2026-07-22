@@ -4,7 +4,6 @@ import { getProfilePicture, type ProfileContent } from "applesauce-core/helpers/
 import { relayStatus, type Relay } from "@/lib/api"
 import ActionsMenu, { ActionsMenuItem } from "@/components/ActionsMenu"
 import CopyNpub from "@/components/CopyNpub"
-import { RELAY_DOMAIN } from "@/lib/subdomain"
 
 const STATUS_STYLES: Record<string, string> = {
   active:     "bg-green-50 text-green-700 border-green-200",
@@ -80,10 +79,10 @@ export default function RelayCardHeader(props: RelayCardHeaderProps) {
               <PlanBadge planId={r().plan_id} />
             </div>
             <a
-              href={`https://${r().subdomain}.${RELAY_DOMAIN}`}
+              href={`https://${r().subdomain}.${r().zooid_domain}`}
               class="text-sm text-blue-600 hover:underline break-all"
             >
-              wss://{r().subdomain}.{RELAY_DOMAIN}
+              wss://{r().subdomain}.{r().zooid_domain}
             </a>
             <Show when={props.showTenant}>
               <A href={`/admin/tenants/${r().tenant_pubkey}`} class="group mt-1.5 flex w-fit items-center gap-2 min-w-0">

@@ -1,0 +1,1 @@
+ALTER TABLE relay ADD COLUMN zooid_domain TEXT NOT NULL DEFAULT '';

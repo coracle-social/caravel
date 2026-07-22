@@ -13,10 +13,11 @@ use crate::models::{
 
 pub async fn create_tenant(tenant: &Tenant) -> Result<()> {
     sqlx::query(
-        "INSERT INTO tenant (pubkey, nwc_url, created_at, stripe_customer_id)
-         VALUES (?, ?, ?, ?)",
+        "INSERT INTO tenant (pubkey, return_url, nwc_url, created_at, stripe_customer_id)
+         VALUES (?, ?, ?, ?, ?)",
     )
     .bind(&tenant.pubkey)
+    .bind(&tenant.return_url)
     .bind(&tenant.nwc_url)
     .bind(tenant.created_at)
     .bind(&tenant.stripe_customer_id)
@@ -205,17 +206,18 @@ pub async fn create_relay(relay: &Relay) -> Result<()> {
     let activity = with_tx(async |tx| {
         sqlx::query(
             "INSERT INTO relay (
-                id, tenant_pubkey, subdomain, plan_id, status, synced, sync_error,
+                id, tenant_pubkey, subdomain, zooid_domain, plan_id, status, synced, sync_error,
                 info_name, info_icon, info_description,
                 policy_public_read, policy_public_write,
                 policy_public_join, policy_strip_signatures,
                 groups_enabled, management_enabled, blossom_enabled,
                 livekit_enabled, push_enabled, custom_domain, created_at
-            ) VALUES (?, ?, ?, ?, 'active', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ) VALUES (?, ?, ?, ?, ?, 'active', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&relay.id)
         .bind(&relay.tenant_pubkey)
         .bind(&relay.subdomain)
+        .bind(&relay.zooid_domain)
         .bind(&relay.plan_id)
         .bind(&relay.sync_error)
         .bind(&relay.info_name)
@@ -247,25 +249,31 @@ pub async fn create_relay(relay: &Relay) -> Result<()> {
 
 pub async fn update_relay(relay: &Relay) -> Result<()> {
     let activity = with_tx(async |tx| {
-        // Reset custom_domain_verified only when the domain actually changes. The
-        // CASE compares the row's existing custom_domain (SQLite evaluates SET
-        // expressions against the original row) against the incoming one, so an
-        // update that round-trips the same domain — e.g. a feature toggle — leaves
-        // a verification set by the background poller untouched.
+        // Reset custom_domain_verified only when the verified pairing actually
+        // changes — either the custom domain itself, or the zooid domain whose
+        // canonical host that domain must CNAME to. The CASE compares the row's
+        // existing values (SQLite evaluates SET expressions against the original
+        // row) against the incoming ones, so an update that round-trips both —
+        // e.g. a feature toggle — leaves a verification set by the background
+        // poller untouched.
         sqlx::query(
             "UPDATE relay
-             SET tenant_pubkey = ?, subdomain = ?, plan_id = ?, status = ?, sync_error = ?, synced = 0,
+             SET tenant_pubkey = ?, subdomain = ?, zooid_domain = ?, plan_id = ?, status = ?, sync_error = ?, synced = 0,
                  info_name = ?, info_icon = ?, info_description = ?,
                  policy_public_read = ?, policy_public_write = ?,
                  policy_public_join = ?, policy_strip_signatures = ?,
                  groups_enabled = ?, management_enabled = ?, blossom_enabled = ?,
                  livekit_enabled = ?, push_enabled = ?,
                  custom_domain = ?,
-                 custom_domain_verified = CASE WHEN custom_domain = ? THEN custom_domain_verified ELSE 0 END
+                 custom_domain_verified = CASE
+                     WHEN custom_domain = ? AND zooid_domain = ? THEN custom_domain_verified
+                     ELSE 0
+                 END
              WHERE id = ?",
         )
         .bind(&relay.tenant_pubkey)
         .bind(&relay.subdomain)
+        .bind(&relay.zooid_domain)
         .bind(&relay.plan_id)
         .bind(&relay.status)
         .bind(&relay.sync_error)
@@ -283,6 +291,7 @@ pub async fn update_relay(relay: &Relay) -> Result<()> {
         .bind(relay.push_enabled)
         .bind(&relay.custom_domain)
         .bind(&relay.custom_domain)
+        .bind(&relay.zooid_domain)
         .bind(&relay.id)
         .execute(&mut **tx)
         .await?;

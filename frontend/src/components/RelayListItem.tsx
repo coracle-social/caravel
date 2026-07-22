@@ -5,7 +5,6 @@ import { relayStatus, type Relay } from "@/lib/api"
 import { PlanBadge, StatusBadge } from "@/components/relay/RelayCardHeader"
 import CopyNpub from "@/components/CopyNpub"
 import { useProfileMetadata } from "@/lib/hooks"
-import { RELAY_DOMAIN } from "@/lib/subdomain"
 
 type RelayListItemProps = {
   relay: Relay
@@ -25,7 +24,7 @@ export default function RelayListItem(props: RelayListItemProps) {
         <div class="flex items-center justify-between gap-3">
           <div class="min-w-0">
             <p class="font-medium text-gray-900">{props.relay.info_name || props.relay.subdomain}</p>
-            <p class="text-xs text-gray-500">{props.relay.subdomain}.{RELAY_DOMAIN}</p>
+            <p class="text-xs text-gray-500">{props.relay.subdomain}.{props.relay.zooid_domain}</p>
             <Show when={props.showTenant}>
               <div class="mt-1.5 flex items-center gap-2">
                 <Show

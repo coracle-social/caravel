@@ -161,7 +161,7 @@ export function ensureSessionTenant(): Promise<void> {
 
   const promise = (async () => {
     try {
-      await createTenant()
+      await createTenant(window.location.origin + '/account')
       if (account()?.pubkey === pubkey) setBillingPubkey(pubkey)
     } finally {
       if (tenantEnsure?.pubkey === pubkey) tenantEnsure = undefined

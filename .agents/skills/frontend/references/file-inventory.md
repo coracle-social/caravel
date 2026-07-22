@@ -13,7 +13,8 @@ A concrete map of `frontend/src`, so the SKILL.md "where things live" section ca
 
 - top level: `Home.tsx`, `Account.tsx`
 - `relays/` (tenant relay screens): `RelayList`, `RelayNew`, `RelayDetail`, `RelayEdit`
-- `admin/` (admin console): `AdminTenantList`, `AdminTenantDetail`, `AdminRelayList`, `AdminRelayDetail`, `AdminRelayEdit`, `AdminInvoiceList`, `AdminInvoiceDetail`
+- `admin/` (admin console): `AdminTenantList`, `AdminTenantDetail`, `AdminRelayList`, `AdminRelayDetail`, `AdminRelayEdit`, `AdminInvoiceList`, `AdminInvoiceDetail`, `AdminModeration`
+  - `AdminModeration` is the one list screen that doesn't wrap a `createResource` hook from `hooks.ts`: it accumulates pages of the cross-relay content feed in its own signals so "load more" can append, and its search/type filters therefore run over what has been loaded rather than over the whole window. It reads a bounded time window (the range chips) whose `since` is frozen when the range is picked, then pages backwards inside it by lowering `until`; because switching ranges restarts the feed mid-flight, it carries a `generation` counter and discards responses belonging to a superseded window.
 
 ## `views/` — the lone exception
 
@@ -28,7 +29,9 @@ A concrete map of `frontend/src`, so the SKILL.md "where things live" section ca
   - `payment/` — `InvoiceItemsList`, `LightningPayBody`
   - `account/` — `InvoiceListItem`, `PaymentMethodRow`
   - `relay/` — `PlanGatedToggle`, `RelayCardHeader`
-  - plus billing/payment/relay cards at the components top level (`BillingPrompts`, `InvoiceDetailCard`, `RelayDetailCard`, `RelayListItem`, `PaymentSetup*`, `ActivityFeed`, `AdminInvoiceListItem`)
+  - plus billing/payment/relay cards at the components top level (`BillingPrompts`, `InvoiceDetailCard`, `RelayDetailCard`, `RelayListItem`, `PaymentSetup*`, `ActivityFeed`, `AdminInvoiceListItem`, `ModerationListItem`)
+  - `NoteContent` renders nostr note content — the only place the app displays text authored by strangers. It parses with `@welshman/content` and builds JSX from the parsed segments rather than using that package's own `renderAsHtml`, specifically so hostile content never reaches `innerHTML`; it also only linkifies `http:`/`https:` and renders custom emoji as their shortcode rather than fetching an image from a poster-controlled host. It `truncate()`s as well as CSS line-clamping, because the clamp only hides overflow while a feed page's DOM cost is real.
+  - `ModerationListItem`'s upload preview is the only place the app renders an image it can't just point an `<img>` at: blobs are proxied through the API for authorization, and `<img src>` can't carry the NIP-98 header, so it fetches the bytes and renders an object URL. That trades away native `loading="lazy"`, which it wins back with an `IntersectionObserver`; the object URL is revoked on cleanup, including when the row unmounts while the fetch is still in flight.
 
 ## `lib/` — non-UI logic
 

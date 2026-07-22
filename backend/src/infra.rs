@@ -364,10 +364,98 @@ pub async fn list_relay_members(relay_id: &str) -> Result<Vec<String>> {
     Ok(parsed.members)
 }
 
+/// One reviewable item from a relay: a published event or an uploaded blob,
+/// tagged with the relay (zooid tenant schema, which is our relay id) it came
+/// from. `data` is the raw nostr event for `"event"` items and a blob
+/// descriptor for `"upload"` items.
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct ModerationItem {
+    #[serde(rename = "type")]
+    pub item_type: String,
+    pub tenant: String,
+    pub data: serde_json::Value,
+}
+
+/// One page of the moderation feed. `truncated` reports that the requested
+/// window held more than fit, so the caller has ground left to cover inside it.
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct ModerationPage {
+    pub items: Vec<ModerationItem>,
+    pub truncated: bool,
+}
+
+/// Fetch the newest events and uploads across every relay within a window from
+/// the zooid API. Both bounds are optional inclusive unix timestamps.
+pub async fn list_moderation(since: Option<i64>, until: Option<i64>) -> Result<ModerationPage> {
+    let bounds: Vec<String> = [("since", since), ("until", until)]
+        .into_iter()
+        .filter_map(|(key, value)| value.map(|value| format!("{key}={value}")))
+        .collect();
+
+    let path = if bounds.is_empty() {
+        "moderation".to_string()
+    } else {
+        format!("moderation?{}", bounds.join("&"))
+    };
+
+    let response = request(HttpMethod::GET, &path, None).await?;
+    Ok(response.json().await?)
+}
+
+/// Fetch one stored blob from the zooid API, returning its content type and
+/// bytes. Goes through zooid's whitelisted management API rather than the
+/// relay's public Blossom URL, which gates reads on relay membership that we
+/// don't hold. Subject to the same 5s client timeout as every other zooid call,
+/// against a blob that can be up to 10 MiB.
+/// `None` when zooid doesn't host that relay or never stored that blob, which
+/// is an ordinary miss rather than a failure — zooid, not our relay table, is
+/// the authority here, since it also serves relays we never provisioned.
+pub async fn get_relay_blob(relay_id: &str, sha256: &str) -> Result<Option<(String, Vec<u8>)>> {
+    let path = format!("relay/{relay_id}/blob/{sha256}");
+    let response = send(HttpMethod::GET, &path, None).await?;
+
+    if response.status() == reqwest::StatusCode::NOT_FOUND {
+        return Ok(None);
+    }
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let text = response.text().await.unwrap_or_default();
+        anyhow::bail!("zooid GET {path} returned {status}: {text}");
+    }
+
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("application/octet-stream")
+        .to_string();
+
+    Ok(Some((content_type, response.bytes().await?.to_vec())))
+}
+
 /// Sends an authenticated request to the zooid API at `path` (relative to
 /// `env.zooid_api_url`). Returns the response on 2xx; bails with the body
 /// text otherwise.
 async fn request(
+    method: HttpMethod,
+    path: &str,
+    body: Option<&serde_json::Value>,
+) -> Result<reqwest::Response> {
+    let response = send(method, path, body).await?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let text = response.text().await.unwrap_or_default();
+        anyhow::bail!("zooid {method} {path} returned {status}: {text}");
+    }
+
+    Ok(response)
+}
+
+/// The bare authenticated call, without the 2xx check, for callers that read a
+/// status as data rather than as a failure.
+async fn send(
     method: HttpMethod,
     path: &str,
     body: Option<&serde_json::Value>,
@@ -378,7 +466,10 @@ async fn request(
     let base = env::get().zooid_api_url.trim_end_matches('/');
     let path = path.trim_start_matches('/');
     let url = format!("{base}/{path}");
-    let auth = env::get().make_auth(&url, method).await?;
+    // Zooid matches the NIP-98 `u` tag against the request path alone, so a
+    // signature over a url carrying a query string is rejected.
+    let auth_url = url.split('?').next().unwrap_or(&url);
+    let auth = env::get().make_auth(auth_url, method).await?;
 
     let reqwest_method = match method {
         HttpMethod::GET => reqwest::Method::GET,
@@ -394,12 +485,5 @@ async fn request(
         req = req.json(body);
     }
 
-    let response = req.send().await?;
-
-    if !response.status().is_success() {
-        let status = response.status();
-        let text = response.text().await.unwrap_or_default();
-        anyhow::bail!("zooid {method} {path} returned {status}: {text}");
-    }
-    Ok(response)
+    Ok(req.send().await?)
 }

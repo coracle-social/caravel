@@ -190,6 +190,36 @@ export type Identity = {
   is_admin: boolean
 }
 
+export type NostrEvent = {
+  id: string
+  pubkey: string
+  created_at: number
+  kind: number
+  tags: string[][]
+  content: string
+  sig: string
+}
+
+export type Upload = {
+  sha256: string
+  url: string
+  type: string
+  size: number
+  pubkey: string
+  created_at: number
+}
+
+// One reviewable item from a relay. `tenant` is the relay id it was published
+// to, so it links straight to that relay's admin page.
+export type ModerationItem =
+  | { type: "event"; tenant: string; data: NostrEvent }
+  | { type: "upload"; tenant: string; data: Upload }
+
+export type ModerationPage = {
+  items: ModerationItem[]
+  truncated: boolean
+}
+
 let authCache: AuthCache | undefined
 
 export async function makeAuth(): Promise<string | undefined> {
@@ -329,6 +359,37 @@ export function listRelayMembers(id: string) {
 
 export function listRelayActivity(id: string) {
   return callApi<undefined, { activity: Activity[] }>("GET", `/relays/${id}/activity`)
+}
+
+// A page of the newest events and uploads across every relay within a window,
+// newest first. Page backwards inside a window by moving `until` down to the
+// created_at of the last item received; `truncated` reports whether the window
+// still holds more than what came back.
+export function listModeration(params: { since?: number; until?: number } = {}) {
+  const query = new URLSearchParams()
+  if (params.since !== undefined) query.set("since", String(params.since))
+  if (params.until !== undefined) query.set("until", String(params.until))
+
+  const search = query.toString()
+
+  return callApi<undefined, ModerationPage>("GET", `/moderation${search ? `?${search}` : ""}`)
+}
+
+// Blobs come through the API rather than straight from the relay, which serves
+// its own blobs only to its members — not something an admin reviewing other
+// people's relays is. Since <img> can't carry the NIP-98 auth header, fetch the
+// bytes here and hand back an object URL; the caller owns revoking it.
+export async function fetchModerationBlob(relayId: string, sha256: string): Promise<string> {
+  const auth = await makeAuth()
+  const url = new URL(`/moderation/blob/${relayId}/${sha256}`, API_URL).toString()
+
+  const response = await fetch(url, {headers: auth ? {Authorization: auth} : {}})
+
+  if (!response.ok) {
+    throw new ApiError(`Failed to load blob (${response.status})`, response.status)
+  }
+
+  return URL.createObjectURL(await response.blob())
 }
 
 export function reactivateRelay(id: string) {

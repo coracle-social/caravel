@@ -10,6 +10,7 @@
         "@tailwindcss/vite": "^4.2.1",
         "@tanstack/solid-query": "^5.90.23",
         "@types/qrcode": "^1.5.6",
+        "@welshman/content": "^0.9.0-pre1",
         "@welshman/lib": "^0.8.9",
         "applesauce-accounts": "^5.1.0",
         "applesauce-common": "^5.1.0",
@@ -69,6 +70,8 @@
     "@babel/traverse": ["@babel/traverse@7.29.0", "", { "dependencies": { "@babel/code-frame": "^7.29.0", "@babel/generator": "^7.29.0", "@babel/helper-globals": "^7.28.0", "@babel/parser": "^7.29.0", "@babel/template": "^7.28.6", "@babel/types": "^7.29.0", "debug": "^4.3.1" } }, "sha512-4HPiQr0X7+waHfyXPZpWPfWL/J7dcN1mx9gL6WdQVMbPnF3+ZhSMs8tCxN7oHddJE9fhNE7+lxdnlyemKfJRuA=="],
 
     "@babel/types": ["@babel/types@7.29.0", "", { "dependencies": { "@babel/helper-string-parser": "^7.27.1", "@babel/helper-validator-identifier": "^7.28.5" } }, "sha512-LwdZHpScM4Qz8Xw2iKSzS+cfglZzJGvofQICy7W7v4caru4EaAmyUuO6BGrbyQ2mYV11W0U8j5mBhd14dd3B0A=="],
+
+    "@braintree/sanitize-url": ["@braintree/sanitize-url@7.1.2", "", {}, "sha512-jigsZK+sMF/cuiB7sERuo9V7N9jx+dhmHHnQyDSVdpZwVutaBu7WvNYqMDLSgFgfB30n452TP3vjDAvFC973mA=="],
 
     "@esbuild/aix-ppc64": ["@esbuild/aix-ppc64@0.27.3", "", { "os": "aix", "cpu": "ppc64" }, "sha512-9fJMTNFTWZMh5qwrBItuziu834eOCUcEqymSH7pY+zoMVEZg3gcPuBNxH1EvfVYe9h0x/Ptw8KBzv7qxb7l8dg=="],
 
@@ -271,6 +274,8 @@
     "@types/offscreencanvas": ["@types/offscreencanvas@2019.7.3", "", {}, "sha512-ieXiYmgSRXUDeOntE1InxjWyvEelZGP63M+cGuquuRLuIKKT1osnkXjxev9B7d1nXSug5vpunx+gNlbVxMlC9A=="],
 
     "@types/qrcode": ["@types/qrcode@1.5.6", "", { "dependencies": { "@types/node": "*" } }, "sha512-te7NQcV2BOvdj2b1hCAHzAoMNuj65kNBMz0KBaxM6c3VGBOhU0dURQKOtH8CFNI/dsKkwlv32p26qYQTWoB5bw=="],
+
+    "@welshman/content": ["@welshman/content@0.9.0-pre1", "", { "dependencies": { "@braintree/sanitize-url": "^7.0.2" }, "peerDependencies": { "nostr-tools": "^2.19.4" } }, "sha512-IJWH3Sq+XiuejEGgBDXm2e2n+Tb2cwc5GlOQGPwCA9p9rzOkg37AtRre2qqTIYox6i63yH6UdltwAVeahYp4lw=="],
 
     "@welshman/lib": ["@welshman/lib@0.8.9", "", { "dependencies": { "@scure/base": "^1.1.6", "@types/events": "^3.0.3", "events": "^3.3.0" } }, "sha512-Gk9MXaJNuLL9EguP2RnoaGaQy6x0BrneZfj9gL5t6ZNIF+1g+maJssKDbCRjdDPeuNQbRhh7AlSGSQUJuhkq6Q=="],
 

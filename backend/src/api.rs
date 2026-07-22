@@ -37,6 +37,7 @@ use crate::routes::invoices::{
     ensure_invoice_bolt11, ensure_invoice_checkout, get_invoice, list_invoice_items, list_invoices,
     reconcile_invoice,
 };
+use crate::routes::moderation::{get_moderation_blob, list_moderation};
 use crate::routes::plans::{get_plan, list_plans};
 use crate::routes::relays::{
     create_relay, deactivate_relay, get_relay, list_relay_activity, list_relay_members,
@@ -92,6 +93,11 @@ impl Api {
             .route("/relays/:id/activity", get(list_relay_activity))
             .route("/relays/:id/deactivate", post(deactivate_relay))
             .route("/relays/:id/reactivate", post(reactivate_relay))
+            .route("/moderation", get(list_moderation))
+            .route(
+                "/moderation/blob/:relay_id/:sha256",
+                get(get_moderation_blob),
+            )
             .route("/domains/check", get(check_domain))
             .route("/invoices", get(list_invoices))
             .route("/invoices/:id", get(get_invoice))

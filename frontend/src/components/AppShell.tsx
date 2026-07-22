@@ -59,6 +59,7 @@ export default function AppShell(props: { children?: any }) {
     { href: "/admin/tenants", label: "Tenants" },
     { href: "/admin/relays", label: "Relays" },
     { href: "/admin/invoices", label: "Invoices" },
+    { href: "/admin/moderation", label: "Moderation" },
   ]
 
   const navItemClass = (href: string) => {

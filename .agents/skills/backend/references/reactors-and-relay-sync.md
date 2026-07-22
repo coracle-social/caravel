@@ -28,6 +28,12 @@ This is the lookup-depth companion to the SKILL.md "background reactors" section
 
 All zooid calls go through `request(method, path, body)`: a 5-second `reqwest` client, base from `zooid_api_url` (trailing slash trimmed), NIP-98 `Authorization` via `env.make_auth`, and a non-2xx response is turned into an `anyhow::bail!` carrying the status and body. Source: `infra.rs:168-295`.
 
+**`path` may carry a query string, and the auth signature deliberately does not cover it.** Zooid builds the url it matches the NIP-98 `u` tag against from `r.URL.Path` alone, ignoring the raw query, so signing the full url 401s on any endpoint taking parameters. `request` therefore truncates at the first `?` before calling `make_auth`, while still sending the complete url. Don't "fix" that by signing the whole url without changing zooid's `validateNIP98Auth` to match.
+
+`get_relay_blob(relay_id, sha256)` hits `GET /relay/{id}/blob/{sha256}` and returns `(content_type, bytes)`. It exists because a relay serves its own Blossom blobs only to its members, which we are not — so the admin console can't link a tenant's uploads directly and proxies them through `GET /moderation/blob/:relay_id/:sha256` instead (the one route in the whole API that returns raw bytes rather than the `{data, code}` envelope; it validates `sha256` as 64 hex chars before interpolating it into the upstream url). Watch the timeout: it reuses `request`'s 5-second client against a blob that Blossom allows to be up to 10 MiB.
+
+The other non-sync reads sharing this client are `list_relay_members` (per relay) and `list_moderation(since, until)` (cross-relay). The latter hits `GET /moderation[?since=<unix secs>][&until=<unix secs>]` and deserializes into a `ModerationPage` — `{items, truncated}`, each item `{item_type, tenant, data}`, where `tenant` is the zooid schema and therefore our `relay.id`, and `data` stays an opaque `serde_json::Value` (a nostr event or a blob descriptor, depending on `item_type`) passed straight through to the frontend rather than modeled here. Both bounds are optional and inclusive; `truncated` means the window holds more than the page returned, so the caller pages backwards *inside* the window by lowering `until` rather than moving on to an older one. It inherits the same 5-second timeout as the small sync calls despite a page being up to 1000 items gathered across every relay.
+
 ## Billing worker timing
 
 `POLL_INTERVAL` is 1 hour, so dunning runs at hour granularity. The DM guards exist specifically so the hourly tick doesn't re-DM on every pass:

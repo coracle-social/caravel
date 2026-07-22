@@ -6,6 +6,8 @@ import ResourceState from "@/components/ResourceState"
 import SearchInput from "@/components/SearchInput"
 import useMinLoading from "@/lib/useMinLoading"
 import { useAdminTenants, useProfileMetadataMap } from "@/lib/hooks"
+import { tenantStatus } from "@/lib/api"
+import { StatusBadge } from "@/components/relay/RelayCardHeader"
 import CopyNpub from "@/components/CopyNpub"
 import { shortenNpub } from "@/lib/pubkey"
 import { fuzzySearch } from "@/lib/search"
@@ -64,9 +66,7 @@ export default function AdminTenantList() {
                             <p class="mt-1 text-sm text-gray-600 line-clamp-2">{profile()?.about || "No profile bio"}</p>
                           </div>
                         </div>
-                        <span class={`inline-flex flex-shrink-0 items-center rounded-full border px-2.5 py-0.5 text-xs font-medium capitalize ${tenant.churned_at ? "bg-red-50 text-red-700 border-red-200" : "bg-green-50 text-green-700 border-green-200"}`}>
-                          {tenant.churned_at ? "delinquent" : "active"}
-                        </span>
+                        <StatusBadge status={tenantStatus(tenant)} />
                       </div>
                     </A>
                   </li>

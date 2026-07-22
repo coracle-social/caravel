@@ -87,7 +87,7 @@ pub async fn list_relays() -> Result<Vec<Relay>> {
 
 pub async fn list_relays_with_unverified_custom_domain() -> Result<Vec<Relay>> {
     Ok(sqlx::query_as::<_, Relay>(&select_relay(
-        "WHERE custom_domain != '' AND custom_domain_verified = 0",
+        "WHERE custom_domain != '' AND custom_domain_verified = 0 AND purged_at IS NULL",
     ))
     .fetch_all(pool())
     .await?)
@@ -95,18 +95,22 @@ pub async fn list_relays_with_unverified_custom_domain() -> Result<Vec<Relay>> {
 
 pub async fn list_relays_with_verified_custom_domain() -> Result<Vec<Relay>> {
     Ok(sqlx::query_as::<_, Relay>(&select_relay(
-        "WHERE custom_domain != '' AND custom_domain_verified = 1",
+        "WHERE custom_domain != '' AND custom_domain_verified = 1 AND purged_at IS NULL",
     ))
     .fetch_all(pool())
     .await?)
 }
 
+/// Relays the infra reactor still owes zooid work: live relays awaiting a
+/// config sync, plus purged relays whose deletion failed and must be retried
+/// (a purged relay never gets re-synced — that would undo the purge).
 pub async fn list_relays_pending_sync() -> Result<Vec<Relay>> {
-    Ok(
-        sqlx::query_as::<_, Relay>(&select_relay("WHERE synced = 0 OR TRIM(sync_error) != ''"))
-            .fetch_all(pool())
-            .await?,
-    )
+    Ok(sqlx::query_as::<_, Relay>(&select_relay(
+        "WHERE (purged_at IS NULL AND (synced = 0 OR TRIM(sync_error) != ''))
+            OR (purged_at IS NOT NULL AND TRIM(sync_error) != '')",
+    ))
+    .fetch_all(pool())
+    .await?)
 }
 
 pub async fn list_relays_for_tenant(tenant_pubkey: &str) -> Result<Vec<Relay>> {
@@ -266,7 +270,7 @@ pub async fn list_billable_activity(tenant_pubkey: &str) -> Result<Vec<Activity>
            AND billed_at IS NULL
            AND activity_type IN (
                'create_relay', 'update_relay', 'activate_relay', 'deactivate_relay',
-               'unmark_relay_delinquent'
+               'purge_relay', 'unmark_relay_delinquent'
            )
          ORDER BY created_at ASC",
     ))

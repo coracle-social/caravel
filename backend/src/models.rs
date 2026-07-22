@@ -59,6 +59,11 @@ pub struct Tenant {
     /// is re-activated (the tenant has new billable activity), at which point the
     /// then-open invoices are voided rather than collected. `None` in good standing.
     pub churned_at: Option<i64>,
+    /// When an admin banned the tenant. Banning blocks relay creation, cancels
+    /// billing (outstanding activity is forgiven and open invoices voided), and
+    /// purges every relay the tenant has. Cleared by unban, which restores none
+    /// of that — the tenant simply starts over from no relays.
+    pub banned_at: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -96,6 +101,12 @@ pub struct Relay {
     pub custom_domain: String,
     pub custom_domain_verified: i64,
     pub synced: i64,
+    /// When the relay's data and config were deleted from the zooid backend (on
+    /// tenant ban or admin/tenant purge). Purged relays are excluded from
+    /// syncing, renewal, and member fetches; the row remains as a historical
+    /// record. Purging an active relay credits the tenant for the remainder of
+    /// the period, exactly like deactivation.
+    pub purged_at: Option<i64>,
     pub created_at: i64,
 }
 
@@ -135,6 +146,7 @@ impl Default for Relay {
             custom_domain: String::new(),
             custom_domain_verified: 0,
             synced: 0,
+            purged_at: None,
             created_at: 0,
         }
     }

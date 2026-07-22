@@ -33,6 +33,8 @@ Each tenant is billed in monthly cycles. The cycle is anchored to the moment of 
 
 **"I deactivated a relay mid-month."** The customer receives a prorated credit for the unused remainder of the period.
 
+**"A relay was purged mid-month."** Purging deletes a relay's data for good (a tenant can purge their own relay; an admin can purge anyone's). Billing treats it exactly like a deactivation, whoever triggered it — ban included: if the relay was active, the customer receives a prorated credit for the rest of the period; if it was already inactive or delinquent, there is nothing to refund.
+
 **"A new month started."** Every relay that was active on a paid plan at the moment the new period began is charged a full month. A relay created partway through the previous month already paid its prorated slice, so the renewal and the proration compose to exactly one fair month — never double-charged.
 
 Credits and charges accumulate together. A customer's net balance can be zero or negative; in that case nothing is billed and the credit simply carries forward to the next time there is something to pay.
@@ -75,6 +77,10 @@ Delinquency is the visible signal — to the customer and to admins — that the
 ## Coming back (reactivation)
 
 A churned customer who re-engages with the service is welcomed back automatically: their churn is cleared and their delinquent relays are restored to active. Critically, **old unpaid invoices do not have to be settled to return** — the past balance was already forgiven at churn, so reactivation is a clean slate rather than a debt collection.
+
+## Banning (administrative, not billing)
+
+An admin can **ban** a tenant for abuse. Banning is harsher than churn and is not part of the dunning cycle: it blocks the tenant from creating relays, cancels billing (open invoices are voided and outstanding charges forgiven, and the billing loop leaves the tenant alone while banned), and **purges** every relay the tenant has — the relays' data and config are deleted from the hosting backend for good. The purge credits still accrue, like any other: they sit on the tenant's ledger and offset future charges if the tenant is ever welcomed back. Purged relays are never billed, synced, or re-activated; the database rows remain only as a historical record. Lifting a ban restores nothing that was destroyed — the tenant simply starts over from no relays, and billing resumes naturally when they create new ones.
 
 ## Principles to preserve
 

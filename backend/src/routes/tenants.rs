@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use crate::api::{Api, AuthedPubkey};
 use crate::billing::BillingPeriod;
 use crate::models::{Invoice, Tenant};
-use crate::web::{ApiResult, internal, map_unique_error, ok};
+use crate::web::{ApiResult, bad_request, internal, map_unique_error, ok};
 use crate::{command, env, query};
 
 #[derive(Serialize)]
@@ -26,6 +26,9 @@ pub struct TenantResponse {
     /// Set when billing has churned the tenant; the UI uses it to warn that the
     /// account is delinquent until billing is re-activated.
     pub churned_at: Option<i64>,
+    /// Set when an admin has banned the tenant: relay creation is blocked,
+    /// billing is canceled, and all of its relays have been purged.
+    pub banned_at: Option<i64>,
 }
 
 impl From<Tenant> for TenantResponse {
@@ -40,6 +43,7 @@ impl From<Tenant> for TenantResponse {
             stripe_customer_id: t.stripe_customer_id,
             stripe_payment_method_id: t.stripe_payment_method_id,
             churned_at: t.churned_at,
+            banned_at: t.banned_at,
         }
     }
 }
@@ -137,6 +141,53 @@ pub async fn update_tenant(
     }
 
     command::update_tenant(&tenant).await.map_err(internal)?;
+    ok(TenantResponse::from(tenant))
+}
+
+/// Ban a tenant (admin only): block relay creation, cancel billing, and purge
+/// all of the tenant's relays.
+pub async fn ban_tenant(
+    State(api): State<Arc<Api>>,
+    AuthedPubkey(auth): AuthedPubkey,
+    Path(pubkey): Path<String>,
+) -> ApiResult {
+    api.require_admin(&auth)?;
+
+    let tenant = api.get_tenant_or_404(&pubkey).await?;
+
+    if tenant.banned_at.is_some() {
+        return Err(bad_request("tenant-is-banned", "tenant is already banned"));
+    }
+
+    let relays = query::list_relays_for_tenant(&pubkey)
+        .await
+        .map_err(internal)?;
+
+    command::ban_tenant(&pubkey, &relays)
+        .await
+        .map_err(internal)?;
+
+    let tenant = api.get_tenant_or_404(&pubkey).await?;
+    ok(TenantResponse::from(tenant))
+}
+
+/// Lift a tenant's ban (admin only). Purged relays are not restored.
+pub async fn unban_tenant(
+    State(api): State<Arc<Api>>,
+    AuthedPubkey(auth): AuthedPubkey,
+    Path(pubkey): Path<String>,
+) -> ApiResult {
+    api.require_admin(&auth)?;
+
+    let tenant = api.get_tenant_or_404(&pubkey).await?;
+
+    if tenant.banned_at.is_none() {
+        return Err(bad_request("tenant-not-banned", "tenant is not banned"));
+    }
+
+    command::unban_tenant(&pubkey).await.map_err(internal)?;
+
+    let tenant = api.get_tenant_or_404(&pubkey).await?;
     ok(TenantResponse::from(tenant))
 }
 

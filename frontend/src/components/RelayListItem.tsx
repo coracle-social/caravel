@@ -1,7 +1,7 @@
 import { A } from "@solidjs/router"
 import { Show } from "solid-js"
 import { getProfilePicture } from "applesauce-core/helpers/profile"
-import type { Relay } from "@/lib/api"
+import { relayStatus, type Relay } from "@/lib/api"
 import { PlanBadge, StatusBadge } from "@/components/relay/RelayCardHeader"
 import CopyNpub from "@/components/CopyNpub"
 import { useProfileMetadata } from "@/lib/hooks"
@@ -50,7 +50,7 @@ export default function RelayListItem(props: RelayListItemProps) {
           <div class="flex items-center gap-2 shrink-0">
             <Show
               when={props.relay.sync_error}
-              fallback={<StatusBadge status={props.relay.status} />}
+              fallback={<StatusBadge status={relayStatus(props.relay)} />}
             >
               <span
                 class="inline-flex items-center rounded-full border border-red-200 bg-red-50 px-2.5 py-0.5 text-xs font-medium text-red-700 max-w-56 truncate"

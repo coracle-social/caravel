@@ -87,6 +87,13 @@ impl Billing {
         tenant: &Tenant,
         attempt_payment: bool,
     ) -> Result<()> {
+        // A banned tenant's billing is canceled: the ban already forgave its
+        // outstanding charges and purged its relays, so there is nothing to
+        // reconcile, and nothing should be collected or churned.
+        if tenant.banned_at.is_some() {
+            return Ok(());
+        }
+
         let mut tenant = tenant.clone();
 
         let mut activities = query::list_billable_activity(&tenant.pubkey).await?;
@@ -163,6 +170,21 @@ impl Billing {
             "deactivate_relay" => {
                 self.make_prorated_item(tenant, activity, -1, "Relay deactivated")
                     .await?
+            }
+            "purge_relay" => {
+                // Credit only a relay that was active when purged — the snapshot
+                // holds the pre-purge status, and purging an already-inactive or
+                // delinquent relay refunds nothing (same reason re-deactivation is
+                // rejected). Applies whoever purged, ban included: a banned
+                // tenant's purge activities stay unbilled and land here if the
+                // tenant is ever unbanned and reconciled.
+                let Snapshot::Relay { status, .. } = &*activity.snapshot;
+                if status == RELAY_STATUS_ACTIVE {
+                    self.make_prorated_item(tenant, activity, -1, "Relay purged")
+                        .await?
+                } else {
+                    None
+                }
             }
             "update_relay" => self.make_plan_change_item(tenant, activity).await?,
             _ => None,
@@ -268,6 +290,10 @@ impl Billing {
 
         let mut line_items = Vec::new();
         for relay in relays {
+            // Purged relays no longer exist, so they're never renewed.
+            if relay.purged_at.is_some() {
+                continue;
+            }
             let Some(activity) =
                 query::get_latest_relay_activity_before(&relay.id, period.start).await?
             else {

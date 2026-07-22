@@ -47,6 +47,8 @@ type RelayDetailCardProps = {
   onReactivate?: () => void | Promise<void>
   deactivating?: boolean
   reactivating?: boolean
+  onPurge?: () => void | Promise<void>
+  purging?: boolean
   onTogglePublicRead?: () => void
   onTogglePublicWrite?: () => void
   onTogglePublicJoin?: () => void
@@ -65,7 +67,7 @@ type RelayDetailCardProps = {
 export default function RelayDetailCard(props: RelayDetailCardProps) {
   const r = () => props.relay
   const [planId, setPlanId] = createSignal<PlanId>(props.relay.plan_id)
-  const [pendingAction, setPendingAction] = createSignal<"deactivate" | "reactivate" | null>(null)
+  const [pendingAction, setPendingAction] = createSignal<"deactivate" | "reactivate" | "purge" | null>(null)
   const [customDomainModalOpen, setCustomDomainModalOpen] = createSignal(false)
   const { saving: cdSaving, verifying: cdVerifying, error: cdError, saveDomain, verifyDomain } =
     useCustomDomain(() => props.relay.id, props.mutateRelay ?? (() => {}))
@@ -83,24 +85,33 @@ export default function RelayDetailCard(props: RelayDetailCardProps) {
   }
   const planLimited = () => (props.enforcePlanLimits ?? true) && r().plan_id === "free"
   const showPlanActions = () => props.showPlanActions ?? true
-  const actionBusy = () => pendingAction() === "deactivate" ? !!props.deactivating : pendingAction() === "reactivate" ? !!props.reactivating : false
+  const actionBusy = () => pendingAction() === "deactivate" ? !!props.deactivating : pendingAction() === "reactivate" ? !!props.reactivating : pendingAction() === "purge" ? !!props.purging : false
   const relayLabel = () => r().info_name || r().subdomain
-  const confirmTitle = () => pendingAction() === "deactivate" ? "Deactivate relay?" : "Reactivate relay?"
-  const confirmDescription = () => pendingAction() === "deactivate"
-    ? `${relayLabel()} will be taken offline immediately.`
-    : `${relayLabel()} will come back online and start accepting connections.`
-  const confirmDetails = () => pendingAction() === "deactivate"
+  const confirmTitle = () => pendingAction() === "purge" ? "Purge relay?" : pendingAction() === "deactivate" ? "Deactivate relay?" : "Reactivate relay?"
+  const confirmDescription = () => pendingAction() === "purge"
+    ? `${relayLabel()} and all of its data will be permanently deleted.`
+    : pendingAction() === "deactivate"
+      ? `${relayLabel()} will be taken offline immediately.`
+      : `${relayLabel()} will come back online and start accepting connections.`
+  const confirmDetails = () => pendingAction() === "purge"
     ? [
-        "All client connections will be dropped immediately.",
-        "Members will be unable to read from or publish to the relay.",
-        "Scheduled and automated tasks (billing, syncing) will be paused.",
-        "All relay data, settings, and members are preserved, nothing is deleted.",
-        "You can reactivate at any time from this page.",
+        "All events, uploads, members, and settings are deleted from the hosting backend.",
+        "The relay's subdomain and custom domain stop serving immediately.",
+        "An active paid relay earns a prorated credit for the rest of the billing period.",
+        "This cannot be undone — a purged relay cannot be re-activated.",
       ]
-    : undefined
-  const confirmLabel = () => pendingAction() === "deactivate" ? "Yes, deactivate" : "Yes, reactivate"
-  const confirmBusyLabel = () => pendingAction() === "deactivate" ? "Deactivating..." : "Reactivating..."
-  const confirmTone = () => pendingAction() === "deactivate" ? "danger" : "primary"
+    : pendingAction() === "deactivate"
+      ? [
+          "All client connections will be dropped immediately.",
+          "Members will be unable to read from or publish to the relay.",
+          "Scheduled and automated tasks (billing, syncing) will be paused.",
+          "All relay data, settings, and members are preserved, nothing is deleted.",
+          "You can reactivate at any time from this page.",
+        ]
+      : undefined
+  const confirmLabel = () => pendingAction() === "purge" ? "Yes, purge relay" : pendingAction() === "deactivate" ? "Yes, deactivate" : "Yes, reactivate"
+  const confirmBusyLabel = () => pendingAction() === "purge" ? "Purging..." : pendingAction() === "deactivate" ? "Deactivating..." : "Reactivating..."
+  const confirmTone = () => pendingAction() === "reactivate" ? "primary" : "danger"
 
   async function changePlanId(planId: PlanId) {
     setPlanId(planId)
@@ -112,7 +123,7 @@ export default function RelayDetailCard(props: RelayDetailCardProps) {
     }
   }
 
-  function openActionDialog(action: "deactivate" | "reactivate") {
+  function openActionDialog(action: "deactivate" | "reactivate" | "purge") {
     setPendingAction(action)
   }
 
@@ -127,8 +138,10 @@ export default function RelayDetailCard(props: RelayDetailCardProps) {
 
     if (action === "deactivate") {
       await props.onDeactivate?.()
-    } else {
+    } else if (action === "reactivate") {
       await props.onReactivate?.()
+    } else {
+      await props.onPurge?.()
     }
 
     setPendingAction(null)
@@ -143,9 +156,11 @@ export default function RelayDetailCard(props: RelayDetailCardProps) {
         editHref={props.editHref}
         deactivating={props.deactivating}
         reactivating={props.reactivating}
+        purging={props.purging}
         onRequestDeactivate={props.onDeactivate ? () => openActionDialog("deactivate") : undefined}
         onRequestReactivate={props.onReactivate ? () => openActionDialog("reactivate") : undefined}
         onRequestManageCustomDomain={() => setCustomDomainModalOpen(true)}
+        onRequestPurge={props.onPurge ? () => openActionDialog("purge") : undefined}
       />
 
       <hr class="border-gray-200" />

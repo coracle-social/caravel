@@ -98,12 +98,22 @@ impl Env {
             .map_err(|e| anyhow!("decryption failed: {e}"))
     }
 
-    pub async fn make_auth(&self, url: &str, method: HttpMethod) -> Result<String> {
-        let server_url = Url::parse(url)?;
-        let auth = HttpData::new(server_url, method)
-            .to_authorization(&self.keys)
+    /// Sign a NIP-98 `Authorization` header for a request to `url` with the
+    /// given (uppercase) HTTP method. Built by hand rather than via nostr-sdk's
+    /// `HttpData` because that type has no DELETE variant, which zooid requires.
+    pub async fn make_auth(&self, url: &str, method: &str) -> Result<String> {
+        Url::parse(url)?;
+
+        let event = EventBuilder::new(Kind::HttpAuth, "")
+            .tags([Tag::parse(["u", url])?, Tag::parse(["method", method])?])
+            .sign(&self.keys)
             .await?;
-        Ok(auth)
+
+        use base64::Engine;
+        Ok(format!(
+            "Nostr {}",
+            base64::engine::general_purpose::STANDARD.encode(event.as_json())
+        ))
     }
 }
 

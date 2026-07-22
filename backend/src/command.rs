@@ -89,7 +89,7 @@ pub async fn churn_tenant(tenant_pubkey: &str, now: i64, relays: &[Relay]) -> Re
 
         let mut activities = Vec::new();
         for relay in relays {
-            if relay.status == RELAY_STATUS_ACTIVE {
+            if relay.status == RELAY_STATUS_ACTIVE && relay.purged_at.is_none() {
                 let activity = set_relay_status_tx(
                     tx,
                     relay,
@@ -123,7 +123,7 @@ pub async fn reactivate_tenant(tenant_pubkey: &str, relays: &[Relay]) -> Result<
 
         let mut activities = Vec::new();
         for relay in relays {
-            if relay.status == RELAY_STATUS_DELINQUENT {
+            if relay.status == RELAY_STATUS_DELINQUENT && relay.purged_at.is_none() {
                 let activity =
                     set_relay_status_tx(tx, relay, RELAY_STATUS_ACTIVE, "unmark_relay_delinquent")
                         .await?;
@@ -141,6 +141,61 @@ pub async fn reactivate_tenant(tenant_pubkey: &str, relays: &[Relay]) -> Result<
         publish(activity.clone());
     }
     Ok(activities)
+}
+
+/// Atomically ban a tenant: set the ban marker, purge every relay the tenant
+/// has, and forgive everything outstanding (open invoices voided; unbilled
+/// activity marked billed — except the purge activities, which stay unbilled
+/// so the prorated credit still accrues to the tenant's ledger, reconciled
+/// like any other credit if the tenant is ever unbanned). The relay purges are
+/// published after commit so the infra reactor deletes them from zooid.
+pub async fn ban_tenant(tenant_pubkey: &str, relays: &[Relay]) -> Result<()> {
+    let now = chrono::Utc::now().timestamp();
+
+    let activities = with_tx(async |tx| {
+        sqlx::query("UPDATE tenant SET banned_at = ? WHERE pubkey = ?")
+            .bind(now)
+            .bind(tenant_pubkey)
+            .execute(&mut **tx)
+            .await?;
+
+        sqlx::query(
+            "UPDATE activity SET billed_at = ? WHERE tenant_pubkey = ? AND billed_at IS NULL
+               AND activity_type != 'purge_relay'",
+        )
+        .bind(now)
+        .bind(tenant_pubkey)
+        .execute(&mut **tx)
+        .await?;
+
+        void_open_invoices_tx(tx, tenant_pubkey).await?;
+
+        let mut activities = Vec::new();
+        for relay in relays {
+            if relay.purged_at.is_none() {
+                activities.push(purge_relay_tx(tx, relay).await?);
+            }
+        }
+
+        Ok(activities)
+    })
+    .await?;
+
+    for activity in activities {
+        publish(activity);
+    }
+    Ok(())
+}
+
+/// Clear a tenant's ban marker. Restores nothing the ban destroyed — purged
+/// relays stay purged and forgiven debt stays forgiven — but the tenant can
+/// create relays again and billing resumes on new activity.
+pub async fn unban_tenant(tenant_pubkey: &str) -> Result<()> {
+    sqlx::query("UPDATE tenant SET banned_at = NULL WHERE pubkey = ?")
+        .bind(tenant_pubkey)
+        .execute(pool())
+        .await?;
+    Ok(())
 }
 
 // --- Relays ---
@@ -248,6 +303,16 @@ pub async fn activate_relay(relay: &Relay) -> Result<()> {
 
 pub async fn deactivate_relay(relay: &Relay) -> Result<()> {
     set_relay_status(relay, RELAY_STATUS_INACTIVE, "deactivate_relay").await
+}
+
+/// Mark a relay purged and record the `purge_relay` activity the infra reactor
+/// reacts to by deleting the relay's data and config from zooid. `synced` is
+/// reset so the row reflects that zooid no longer matches it. The activity is
+/// billable: purging an active relay credits the tenant like a deactivation.
+pub async fn purge_relay(relay: &Relay) -> Result<()> {
+    let activity = with_tx(async |tx| purge_relay_tx(tx, relay).await).await?;
+    publish(activity);
+    Ok(())
 }
 
 async fn set_relay_status(relay: &Relay, status: &str, activity_type: &str) -> Result<()> {
@@ -674,6 +739,23 @@ async fn set_relay_status_tx(
         status: status.to_string(),
     };
     insert_activity_tx(tx, activity_type, &relay.id, snapshot).await
+}
+
+/// Mark a relay purged inside an enclosing transaction, returning the
+/// `purge_relay` activity for the caller to publish after commit.
+async fn purge_relay_tx(tx: &mut Transaction<'_, Sqlite>, relay: &Relay) -> Result<Activity> {
+    let now = chrono::Utc::now().timestamp();
+
+    sqlx::query("UPDATE relay SET purged_at = ?, synced = 0, sync_error = '' WHERE id = ?")
+        .bind(now)
+        .bind(&relay.id)
+        .execute(&mut **tx)
+        .await?;
+    let snapshot = Snapshot::Relay {
+        plan: relay.plan_id.clone(),
+        status: relay.status.clone(),
+    };
+    insert_activity_tx(tx, "purge_relay", &relay.id, snapshot).await
 }
 
 // --- Invoices ---

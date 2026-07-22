@@ -25,7 +25,7 @@ export default function AdminRelayDetail() {
   })
   const loading = useMinLoading(() => relay.loading && !relay())
   const [activity] = useRelayActivity(relayId)
-  const { busy, handleDeactivate, handleReactivate, toggles } = useRelayToggles(relayId, relay, { refetch, mutate })
+  const { busy, handleDeactivate, handleReactivate, handlePurge, toggles } = useRelayToggles(relayId, relay, { refetch, mutate })
 
   return (
     <PageContainer>
@@ -43,6 +43,8 @@ export default function AdminRelayDetail() {
               onReactivate={handleReactivate}
               deactivating={busy()}
               reactivating={busy()}
+              onPurge={handlePurge}
+              purging={busy()}
               enforcePlanLimits={false}
               showPlanActions={false}
               mutateRelay={mutate}

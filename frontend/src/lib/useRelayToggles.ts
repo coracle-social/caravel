@@ -1,5 +1,5 @@
 import { createSignal } from "solid-js"
-import { updateRelayById, deactivateRelayById, reactivateRelayById, resolvePostPaidFlow, type Relay } from "@/lib/hooks"
+import { updateRelayById, deactivateRelayById, purgeRelayById, reactivateRelayById, resolvePostPaidFlow, type Relay } from "@/lib/hooks"
 import { setToastMessage } from "@/lib/state"
 import { applyPlanToRelay, planUpdatePayload, toggleField } from "@/lib/relayPlanFlow"
 import type { Invoice, PlanId } from "@/lib/api"
@@ -67,6 +67,20 @@ export default function useRelayToggles(
     }
   }
 
+  async function handlePurge() {
+    if (busy()) return
+    setBusy(true)
+    try {
+      await purgeRelayById(relayId())
+      await refetch()
+      setToastMessage("Relay purged", "success")
+    } catch (e) {
+      setToastMessage(e instanceof Error ? e.message : "Failed to purge relay")
+    } finally {
+      setBusy(false)
+    }
+  }
+
   async function handleUpdatePlan(plan_id: PlanId) {
     const current = relay()
     if (!current) return
@@ -114,5 +128,5 @@ export default function useRelayToggles(
     onToggleLivekitSupport: () => toggle("livekit_enabled", relay()?.plan_id !== "free"),
   }
 
-  return { busy, handleDeactivate, handleReactivate, handleUpdatePlan, pendingInvoice, clearPendingInvoice: () => setPendingInvoice(undefined), pendingPaymentSetup, clearPendingPaymentSetup: () => setPendingPaymentSetup(false), toggles }
+  return { busy, handleDeactivate, handleReactivate, handlePurge, handleUpdatePlan, pendingInvoice, clearPendingInvoice: () => setPendingInvoice(undefined), pendingPaymentSetup, clearPendingPaymentSetup: () => setPendingPaymentSetup(false), toggles }
 }

@@ -1,15 +1,18 @@
 import { A } from "@solidjs/router"
-import { Show, createEffect, createSignal, onCleanup } from "solid-js"
+import { Show } from "solid-js"
 import { getProfilePicture, type ProfileContent } from "applesauce-core/helpers/profile"
-import type { Relay } from "@/lib/api"
-import menuDotsIcon from "@/assets/menu-dots-2.svg"
+import { relayStatus, type Relay } from "@/lib/api"
+import ActionsMenu, { ActionsMenuItem } from "@/components/ActionsMenu"
 import CopyNpub from "@/components/CopyNpub"
 import { RELAY_DOMAIN } from "@/lib/subdomain"
 
 const STATUS_STYLES: Record<string, string> = {
-  active:   "bg-green-50 text-green-700 border-green-200",
-  inactive: "bg-gray-100 text-gray-500 border-gray-200",
-  verified: "bg-green-50 text-green-700 border-green-200",
+  active:     "bg-green-50 text-green-700 border-green-200",
+  inactive:   "bg-gray-100 text-gray-500 border-gray-200",
+  verified:   "bg-green-50 text-green-700 border-green-200",
+  delinquent: "bg-red-50 text-red-700 border-red-200",
+  purged:     "bg-red-50 text-red-700 border-red-200",
+  banned:     "bg-gray-800 text-gray-100 border-gray-800",
 }
 
 export function StatusBadge(props: { status: string }) {
@@ -35,10 +38,10 @@ export function PlanBadge(props: { planId: string }) {
 
 // Presentational header for RelayDetailCard: icon/title/status, the WSS link, the
 // optional tenant profile link, the sync_error banner, and the actions dropdown.
-// The dropdown owns its own open/close UI state and document listeners; all relay
-// mutations are surfaced as callbacks. Props are reactive only when read lazily,
-// so access props.* (and accessor props like props.relay()) inside JSX, never
-// destructure at the top.
+// All relay mutations are surfaced as callbacks. Props are reactive only when
+// read lazily, so access props.* (and accessor props like props.relay()) inside
+// JSX, never destructure at the top. A purged relay is terminal, so its actions
+// menu is hidden entirely.
 type RelayCardHeaderProps = {
   relay: () => Relay
   showTenant?: boolean
@@ -46,42 +49,21 @@ type RelayCardHeaderProps = {
   editHref?: string
   deactivating?: boolean
   reactivating?: boolean
+  purging?: boolean
   onRequestDeactivate?: () => void
   onRequestReactivate?: () => void
   onRequestManageCustomDomain?: () => void
+  onRequestPurge?: () => void
 }
 
 export default function RelayCardHeader(props: RelayCardHeaderProps) {
   const r = () => props.relay()
   const metadata = () => props.tenantProfile()
-  const [menuOpen, setMenuOpen] = createSignal(false)
 
-  let menuContainerRef: HTMLDivElement | undefined
-
-  createEffect(() => {
-    if (!menuOpen()) return
-
-    const handleClickOutside = (event: MouseEvent) => {
-      const target = event.target as Node | null
-      if (target && !menuContainerRef?.contains(target)) {
-        setMenuOpen(false)
-      }
-    }
-
-    const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setMenuOpen(false)
-      }
-    }
-
-    document.addEventListener("mousedown", handleClickOutside)
-    document.addEventListener("keydown", handleEscape)
-
-    onCleanup(() => {
-      document.removeEventListener("mousedown", handleClickOutside)
-      document.removeEventListener("keydown", handleEscape)
-    })
-  })
+  const showMenu = () =>
+    r().purged_at == null &&
+    (props.editHref || props.onRequestDeactivate || props.onRequestReactivate ||
+      props.onRequestManageCustomDomain || props.onRequestPurge)
 
   return (
     <>
@@ -94,7 +76,7 @@ export default function RelayCardHeader(props: RelayCardHeaderProps) {
           <div class="min-w-0">
             <div class="flex items-center gap-3 flex-wrap">
               <h1 class="text-2xl font-bold text-gray-900">{r().info_name || r().subdomain}</h1>
-              <StatusBadge status={r().status} />
+              <StatusBadge status={relayStatus(r())} />
               <PlanBadge planId={r().plan_id} />
             </div>
             <a
@@ -129,73 +111,68 @@ export default function RelayCardHeader(props: RelayCardHeaderProps) {
           </div>
         </div>
 
-        <Show when={props.editHref || props.onRequestDeactivate || props.onRequestReactivate || props.onRequestManageCustomDomain}>
-          <div class="relative shrink-0" ref={menuContainerRef}>
-            <button
-              type="button"
-              class="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-gray-200 hover:bg-gray-50"
-              aria-label="Open relay actions"
-              onClick={() => setMenuOpen((open) => !open)}
-            >
-              <img src={menuDotsIcon} alt="" class="h-5 w-5" />
-            </button>
-
-            <div
-              class="absolute right-0 mt-2 w-44 rounded-lg border border-gray-200 bg-white shadow-lg z-10 py-1 origin-top-right transition-all duration-150 ease-out"
-              classList={{
-                "opacity-100 scale-100": menuOpen(),
-                "opacity-0 scale-95 pointer-events-none": !menuOpen(),
-              }}
-            >
-              <Show when={props.editHref}>
-                <A
-                  href={props.editHref!}
-                  class="block px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
-                  onClick={() => setMenuOpen(false)}
-                >
-                  Edit Details
-                </A>
-              </Show>
-              <Show when={props.onRequestManageCustomDomain}>
-                <button
-                  type="button"
-                  class="block w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
-                  onClick={() => {
-                    setMenuOpen(false)
-                    props.onRequestManageCustomDomain?.()
-                  }}
-                >
-                  Manage custom domain
-                </button>
-              </Show>
-              <Show when={r().status === "active" && props.onRequestDeactivate}>
-                <button
-                  type="button"
-                  class="block w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50 disabled:opacity-50"
-                  onClick={() => {
-                    setMenuOpen(false)
-                    props.onRequestDeactivate?.()
-                  }}
-                  disabled={props.deactivating}
-                >
-                  {props.deactivating ? "Deactivating..." : "Deactivate"}
-                </button>
-              </Show>
-              <Show when={r().status === "inactive" && props.onRequestReactivate}>
-                <button
-                  type="button"
-                  class="block w-full text-left px-3 py-2 text-sm text-blue-600 hover:bg-blue-50 disabled:opacity-50"
-                  onClick={() => {
-                    setMenuOpen(false)
-                    props.onRequestReactivate?.()
-                  }}
-                  disabled={props.reactivating}
-                >
-                  {props.reactivating ? "Reactivating..." : "Reactivate"}
-                </button>
-              </Show>
-            </div>
-          </div>
+        <Show when={showMenu()}>
+          <ActionsMenu>
+            {(close) => (
+              <>
+                <Show when={props.editHref}>
+                  <A
+                    href={props.editHref!}
+                    class="block px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                    onClick={close}
+                  >
+                    Edit Details
+                  </A>
+                </Show>
+                <Show when={props.onRequestManageCustomDomain}>
+                  <ActionsMenuItem
+                    onClick={() => {
+                      close()
+                      props.onRequestManageCustomDomain?.()
+                    }}
+                  >
+                    Manage custom domain
+                  </ActionsMenuItem>
+                </Show>
+                <Show when={r().status === "active" && props.onRequestDeactivate}>
+                  <ActionsMenuItem
+                    tone="danger"
+                    disabled={props.deactivating}
+                    onClick={() => {
+                      close()
+                      props.onRequestDeactivate?.()
+                    }}
+                  >
+                    {props.deactivating ? "Deactivating..." : "Deactivate"}
+                  </ActionsMenuItem>
+                </Show>
+                <Show when={r().status === "inactive" && props.onRequestReactivate}>
+                  <ActionsMenuItem
+                    tone="primary"
+                    disabled={props.reactivating}
+                    onClick={() => {
+                      close()
+                      props.onRequestReactivate?.()
+                    }}
+                  >
+                    {props.reactivating ? "Reactivating..." : "Reactivate"}
+                  </ActionsMenuItem>
+                </Show>
+                <Show when={props.onRequestPurge}>
+                  <ActionsMenuItem
+                    tone="danger"
+                    disabled={props.purging}
+                    onClick={() => {
+                      close()
+                      props.onRequestPurge?.()
+                    }}
+                  >
+                    {props.purging ? "Purging..." : "Purge relay"}
+                  </ActionsMenuItem>
+                </Show>
+              </>
+            )}
+          </ActionsMenu>
         </Show>
       </div>
 

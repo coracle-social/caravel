@@ -41,11 +41,12 @@ use crate::routes::moderation::{get_moderation_blob, list_moderation};
 use crate::routes::plans::{get_plan, list_plans};
 use crate::routes::relays::{
     create_relay, deactivate_relay, get_relay, list_relay_activity, list_relay_members,
-    list_relays, reactivate_relay, update_relay,
+    list_relays, purge_relay, reactivate_relay, update_relay,
 };
 use crate::routes::tenants::{
-    create_stripe_session, create_tenant, get_draft_invoice, get_tenant, list_draft_invoice_items,
-    list_tenant_invoices, list_tenant_relays, list_tenants, reconcile_tenant, update_tenant,
+    ban_tenant, create_stripe_session, create_tenant, get_draft_invoice, get_tenant,
+    list_draft_invoice_items, list_tenant_invoices, list_tenant_relays, list_tenants,
+    reconcile_tenant, unban_tenant, update_tenant,
 };
 use crate::stripe::Stripe;
 use crate::web::{ApiError, forbidden, internal, not_found, unauthorized};
@@ -83,6 +84,8 @@ impl Api {
                 get(list_draft_invoice_items),
             )
             .route("/tenants/:pubkey/reconcile", post(reconcile_tenant))
+            .route("/tenants/:pubkey/ban", post(ban_tenant))
+            .route("/tenants/:pubkey/unban", post(unban_tenant))
             .route(
                 "/tenants/:pubkey/stripe/session",
                 get(create_stripe_session),
@@ -93,6 +96,7 @@ impl Api {
             .route("/relays/:id/activity", get(list_relay_activity))
             .route("/relays/:id/deactivate", post(deactivate_relay))
             .route("/relays/:id/reactivate", post(reactivate_relay))
+            .route("/relays/:id/purge", post(purge_relay))
             .route("/moderation", get(list_moderation))
             .route(
                 "/moderation/blob/:relay_id/:sha256",

@@ -20,6 +20,7 @@ import {
   listTenantInvoices,
   listTenantRelays,
   listTenants,
+  purgeRelay,
   reconcileTenant,
   updateRelay,
   updateTenant,
@@ -191,6 +192,8 @@ export const updateRelayPlanById = (id: string, plan_id: string) => updateRelay(
 export const deactivateRelayById = (id: string) => deactivateRelay(id)
 
 export const reactivateRelayById = (id: string) => reactivateRelay(id)
+
+export const purgeRelayById = (id: string) => purgeRelay(id)
 
 export async function tenantNeedsPaymentSetup(): Promise<boolean> {
   const tenant = await getTenant(account()!.pubkey)

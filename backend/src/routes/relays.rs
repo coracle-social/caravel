@@ -92,6 +92,11 @@ pub async fn create_relay(
 ) -> ApiResult {
     api.require_admin_or_tenant(&auth, &payload.tenant_pubkey)?;
 
+    let tenant = api.get_tenant_or_404(&payload.tenant_pubkey).await?;
+    if tenant.banned_at.is_some() {
+        return Err(bad_request("tenant-is-banned", "tenant is banned"));
+    }
+
     let relay_id = format!(
         "{}_{}",
         payload.subdomain.replace('-', "_"),
@@ -156,6 +161,10 @@ pub async fn update_relay(
     let mut relay = api.get_relay_or_404(&id).await?;
 
     api.require_admin_or_tenant(&auth, &relay.tenant_pubkey)?;
+
+    if relay.purged_at.is_some() {
+        return Err(bad_request("relay-is-purged", "relay has been purged"));
+    }
 
     let current_plan = relay.plan_id.clone();
     let requested_plan = payload.plan_id.clone();
@@ -250,6 +259,10 @@ pub async fn deactivate_relay(
     let relay = api.get_relay_or_404(&id).await?;
     api.require_admin_or_tenant(&auth, &relay.tenant_pubkey)?;
 
+    if relay.purged_at.is_some() {
+        return Err(bad_request("relay-is-purged", "relay has been purged"));
+    }
+
     if relay.status == RELAY_STATUS_DELINQUENT {
         return Err(bad_request("relay-is-delinquent", "relay is delinquent"));
     }
@@ -274,6 +287,10 @@ pub async fn reactivate_relay(
     let relay = api.get_relay_or_404(&id).await?;
     api.require_admin_or_tenant(&auth, &relay.tenant_pubkey)?;
 
+    if relay.purged_at.is_some() {
+        return Err(bad_request("relay-is-purged", "relay has been purged"));
+    }
+
     if relay.status == RELAY_STATUS_DELINQUENT {
         return Err(bad_request("relay-is-delinquent", "relay is delinquent"));
     }
@@ -283,6 +300,26 @@ pub async fn reactivate_relay(
     }
 
     command::activate_relay(&relay).await.map_err(internal)?;
+
+    ok(())
+}
+
+/// Purge a relay: delete its data and config from the zooid backend. Terminal
+/// — the row remains as a record, but the relay itself is gone and can't be
+/// re-activated.
+pub async fn purge_relay(
+    State(api): State<Arc<Api>>,
+    AuthedPubkey(auth): AuthedPubkey,
+    Path(id): Path<String>,
+) -> ApiResult {
+    let relay = api.get_relay_or_404(&id).await?;
+    api.require_admin_or_tenant(&auth, &relay.tenant_pubkey)?;
+
+    if relay.purged_at.is_some() {
+        return Err(bad_request("relay-is-purged", "relay is already purged"));
+    }
+
+    command::purge_relay(&relay).await.map_err(internal)?;
 
     ok(())
 }

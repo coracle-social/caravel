@@ -153,7 +153,12 @@ pub async fn start() {
 async fn handle_activity(activity: &Activity) -> Result<()> {
     let needs_sync = matches!(
         activity.activity_type.as_str(),
-        "create_relay" | "update_relay" | "activate_relay" | "deactivate_relay" | "fail_relay_sync"
+        "create_relay"
+            | "update_relay"
+            | "activate_relay"
+            | "deactivate_relay"
+            | "purge_relay"
+            | "fail_relay_sync"
     );
 
     if activity.resource_type != "relay" || !needs_sync {
@@ -255,6 +260,12 @@ async fn schedule_relay_sync_retry(relay_id: &str, source: &str) -> Result<()> {
 }
 
 async fn sync_relay(relay: &Relay) {
+    // A purged relay is never re-provisioned — pending work for it is the
+    // purge itself (e.g. a retry after a failed delete).
+    if relay.purged_at.is_some() {
+        return purge_relay(relay).await;
+    }
+
     match try_sync_relay(relay).await {
         Ok(()) => {
             tracing::info!(relay = %relay.id, "relay sync succeeded");
@@ -344,12 +355,44 @@ async fn try_sync_relay(relay: &Relay) -> Result<()> {
     }
 
     let method = if is_new {
-        HttpMethod::POST
+        reqwest::Method::POST
     } else {
-        HttpMethod::PATCH
+        reqwest::Method::PATCH
     };
     request(method, &format!("relay/{}", relay.id), Some(&body)).await?;
     Ok(())
+}
+
+/// Delete a purged relay's data and config from zooid. On failure the error is
+/// recorded via `fail_relay_sync`, which schedules a retry with the usual
+/// backoff — the purge is only complete once zooid confirms it.
+async fn purge_relay(relay: &Relay) {
+    match try_purge_relay(relay).await {
+        Ok(()) => {
+            tracing::info!(relay = %relay.id, "relay purge succeeded");
+        }
+        Err(e) => {
+            tracing::warn!(relay = %relay.id, error = %e, "relay purge failed");
+            if let Err(e2) = command::fail_relay_sync(relay, e.to_string()).await {
+                tracing::error!(relay = %relay.id, error = %e2, "failed to record purge failure");
+            }
+        }
+    }
+}
+
+/// A 404 counts as success: the relay is already gone from zooid, which is
+/// exactly the state the purge is trying to reach.
+async fn try_purge_relay(relay: &Relay) -> Result<()> {
+    let path = format!("relay/{}", relay.id);
+    let response = send(&reqwest::Method::DELETE, &path, None).await?;
+
+    if response.status() == reqwest::StatusCode::NOT_FOUND || response.status().is_success() {
+        return Ok(());
+    }
+
+    let status = response.status();
+    let text = response.text().await.unwrap_or_default();
+    anyhow::bail!("zooid DELETE {path} returned {status}: {text}");
 }
 
 /// Fetch the member pubkeys of a relay from the zooid API.
@@ -359,7 +402,12 @@ pub async fn list_relay_members(relay_id: &str) -> Result<Vec<String>> {
         members: Vec<String>,
     }
 
-    let response = request(HttpMethod::GET, &format!("relay/{relay_id}/members"), None).await?;
+    let response = request(
+        reqwest::Method::GET,
+        &format!("relay/{relay_id}/members"),
+        None,
+    )
+    .await?;
     let parsed: MembersResponse = response.json().await?;
     Ok(parsed.members)
 }
@@ -398,7 +446,7 @@ pub async fn list_moderation(since: Option<i64>, until: Option<i64>) -> Result<M
         format!("moderation?{}", bounds.join("&"))
     };
 
-    let response = request(HttpMethod::GET, &path, None).await?;
+    let response = request(reqwest::Method::GET, &path, None).await?;
     Ok(response.json().await?)
 }
 
@@ -412,7 +460,7 @@ pub async fn list_moderation(since: Option<i64>, until: Option<i64>) -> Result<M
 /// the authority here, since it also serves relays we never provisioned.
 pub async fn get_relay_blob(relay_id: &str, sha256: &str) -> Result<Option<(String, Vec<u8>)>> {
     let path = format!("relay/{relay_id}/blob/{sha256}");
-    let response = send(HttpMethod::GET, &path, None).await?;
+    let response = send(&reqwest::Method::GET, &path, None).await?;
 
     if response.status() == reqwest::StatusCode::NOT_FOUND {
         return Ok(None);
@@ -438,11 +486,11 @@ pub async fn get_relay_blob(relay_id: &str, sha256: &str) -> Result<Option<(Stri
 /// `env.zooid_api_url`). Returns the response on 2xx; bails with the body
 /// text otherwise.
 async fn request(
-    method: HttpMethod,
+    method: reqwest::Method,
     path: &str,
     body: Option<&serde_json::Value>,
 ) -> Result<reqwest::Response> {
-    let response = send(method, path, body).await?;
+    let response = send(&method, path, body).await?;
 
     if !response.status().is_success() {
         let status = response.status();
@@ -456,7 +504,7 @@ async fn request(
 /// The bare authenticated call, without the 2xx check, for callers that read a
 /// status as data rather than as a failure.
 async fn send(
-    method: HttpMethod,
+    method: &reqwest::Method,
     path: &str,
     body: Option<&serde_json::Value>,
 ) -> Result<reqwest::Response> {
@@ -469,17 +517,10 @@ async fn send(
     // Zooid matches the NIP-98 `u` tag against the request path alone, so a
     // signature over a url carrying a query string is rejected.
     let auth_url = url.split('?').next().unwrap_or(&url);
-    let auth = env::get().make_auth(auth_url, method).await?;
-
-    let reqwest_method = match method {
-        HttpMethod::GET => reqwest::Method::GET,
-        HttpMethod::POST => reqwest::Method::POST,
-        HttpMethod::PUT => reqwest::Method::PUT,
-        HttpMethod::PATCH => reqwest::Method::PATCH,
-    };
+    let auth = env::get().make_auth(auth_url, method.as_str()).await?;
 
     let mut req = client
-        .request(reqwest_method, &url)
+        .request(method.clone(), &url)
         .header("Authorization", auth);
     if let Some(body) = body {
         req = req.json(body);

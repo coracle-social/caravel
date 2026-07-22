@@ -28,7 +28,7 @@ export default function RelayDetail() {
   })
   const loading = useMinLoading(() => relay.loading && !relay())
   const [activity] = useRelayActivity(relayId)
-  const { busy, handleDeactivate, handleReactivate, handleUpdatePlan, pendingInvoice, clearPendingInvoice, pendingPaymentSetup, clearPendingPaymentSetup, toggles } = useRelayToggles(relayId, relay, { refetch, mutate })
+  const { busy, handleDeactivate, handleReactivate, handlePurge, handleUpdatePlan, pendingInvoice, clearPendingInvoice, pendingPaymentSetup, clearPendingPaymentSetup, toggles } = useRelayToggles(relayId, relay, { refetch, mutate })
 
   const [paymentSetupOpen, setPaymentSetupOpen] = createSignal(false)
 
@@ -59,6 +59,8 @@ export default function RelayDetail() {
               onReactivate={handleReactivate}
               deactivating={busy()}
               reactivating={busy()}
+              onPurge={handlePurge}
+              purging={busy()}
               onUpdatePlan={handleUpdatePlan}
               mutateRelay={mutate}
               {...toggles}

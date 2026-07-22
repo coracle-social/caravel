@@ -65,6 +65,15 @@ export type Relay = {
   blossom_enabled: number
   livekit_enabled: number
   push_enabled: number
+  purged_at: number | null
+}
+
+// The backend keeps a purged relay's original status, so derive the display
+// status: purged once purged_at is set (the relay's data is deleted for good),
+// otherwise the stored status.
+export function relayStatus(relay: Pick<Relay, "status" | "purged_at">): string {
+  if (relay.purged_at != null) return "purged"
+  return relay.status
 }
 
 export type CreateRelayInput = {
@@ -114,6 +123,16 @@ export type Tenant = {
   nwc_error: string | null
   stripe_error: string | null
   churned_at: number | null
+  banned_at: number | null
+}
+
+// A tenant's display status, derived from its lifecycle timestamps: banned
+// (admin action, terminal for its relays) takes precedence over delinquent
+// (billing churn), which takes precedence over active.
+export function tenantStatus(tenant: Pick<Tenant, "churned_at" | "banned_at">): string {
+  if (tenant.banned_at != null) return "banned"
+  if (tenant.churned_at != null) return "delinquent"
+  return "active"
 }
 
 // Internal aliases derived from the wire shapes below — pure naming, no payload
@@ -394,6 +413,23 @@ export async function fetchModerationBlob(relayId: string, sha256: string): Prom
 
 export function reactivateRelay(id: string) {
   return callApi<undefined, void>("POST", `/relays/${id}/reactivate`)
+}
+
+// Ban a tenant (admin only): blocks relay creation, cancels billing, and
+// purges all of the tenant's relays. Returns the updated tenant.
+export function banTenant(pubkey: string) {
+  return callApi<undefined, Tenant>("POST", `/tenants/${pubkey}/ban`)
+}
+
+// Lift a tenant's ban (admin only). Purged relays are not restored.
+export function unbanTenant(pubkey: string) {
+  return callApi<undefined, Tenant>("POST", `/tenants/${pubkey}/unban`)
+}
+
+// Purge a relay (admin only): permanently deletes its data and config from the
+// hosting backend. Terminal — a purged relay can't be re-activated.
+export function purgeRelay(id: string) {
+  return callApi<undefined, void>("POST", `/relays/${id}/purge`)
 }
 
 export function createPortalSession(pubkey: string, returnUrl?: string) {

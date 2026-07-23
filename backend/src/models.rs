@@ -109,6 +109,10 @@ pub struct Relay {
     pub push_enabled: i64,
     pub custom_domain: String,
     pub custom_domain_verified: i64,
+    /// Hostnames that redirect to the relay's current host, accumulated when a
+    /// verified custom domain is replaced so its old links keep working. Synced
+    /// to zooid as its `redirect_from` map.
+    pub redirect_from: Json<Vec<String>>,
     pub synced: i64,
     /// When the relay's data and config were deleted from the zooid backend (on
     /// tenant ban or admin/tenant purge). Purged relays are excluded from
@@ -161,6 +165,7 @@ impl Default for Relay {
             push_enabled: 1,
             custom_domain: String::new(),
             custom_domain_verified: 0,
+            redirect_from: Json(Vec::new()),
             synced: 0,
             purged_at: None,
             created_at: 0,

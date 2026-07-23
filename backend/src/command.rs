@@ -264,7 +264,7 @@ pub async fn update_relay(relay: &Relay) -> Result<()> {
                  policy_public_join = ?, policy_strip_signatures = ?,
                  groups_enabled = ?, management_enabled = ?, blossom_enabled = ?,
                  livekit_enabled = ?, push_enabled = ?,
-                 custom_domain = ?,
+                 custom_domain = ?, redirect_from = ?,
                  custom_domain_verified = CASE
                      WHEN custom_domain = ? AND zooid_domain = ? THEN custom_domain_verified
                      ELSE 0
@@ -290,6 +290,7 @@ pub async fn update_relay(relay: &Relay) -> Result<()> {
         .bind(relay.livekit_enabled)
         .bind(relay.push_enabled)
         .bind(&relay.custom_domain)
+        .bind(&relay.redirect_from)
         .bind(&relay.custom_domain)
         .bind(&relay.zooid_domain)
         .bind(&relay.id)

@@ -58,6 +58,7 @@ export type Relay = {
   synced: number
   custom_domain: string
   custom_domain_verified: number
+  redirect_from: string[]
   info_name: string
   info_icon: string
   info_description: string

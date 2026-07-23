@@ -294,9 +294,29 @@ async fn try_sync_relay(relay: &Relay) -> Result<()> {
 
     let host = relay.host();
 
+    let mut redirect_from: serde_json::Map<String, serde_json::Value> = relay
+        .redirect_from
+        .0
+        .iter()
+        .map(|from| (from.clone(), serde_json::json!({ "status": 302 })))
+        .collect();
+
+    // While a verified custom domain is the effective host, zooid no longer
+    // serves the canonical <subdomain>.<zooid_domain> host directly, so redirect
+    // it to the custom domain too. Derived at sync time rather than stored so it
+    // stays correct across subdomain changes and custom-domain un-verification.
+    let canonical = relay.canonical_host();
+    if canonical != host {
+        redirect_from.insert(
+            canonical,
+            serde_json::json!({ "status": 302 }),
+        );
+    }
+
     let mut body = serde_json::json!({
         "host": host,
         "schema": relay.id,
+        "redirect_from": redirect_from,
         "inactive": relay.status == RELAY_STATUS_INACTIVE
             || relay.status == RELAY_STATUS_DELINQUENT,
         "info": {

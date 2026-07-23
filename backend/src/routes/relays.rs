@@ -229,6 +229,11 @@ pub async fn update_relay(
     if let Some(v) = payload.custom_domain {
         let normalized = normalize_custom_domain(&v)?;
         if normalized != relay.custom_domain {
+            // Preserve a verified domain we're replacing so its old links redirect
+            // to the relay's new host instead of breaking.
+            if relay.custom_domain_verified == 1 && !relay.custom_domain.is_empty() {
+                relay.redirect_from.0.push(relay.custom_domain.clone());
+            }
             relay.custom_domain = normalized;
             relay.custom_domain_verified = 0;
         }
@@ -391,6 +396,16 @@ fn prepare_relay(mut relay: Relay) -> Result<Relay, ApiError> {
     relay.blossom_enabled = parse_bool_default(relay.blossom_enabled, 0);
     relay.livekit_enabled = parse_bool_default(relay.livekit_enabled, 0);
     relay.push_enabled = parse_bool_default(relay.push_enabled, 1);
+
+    // Never redirect from a host the relay already answers on, and keep the list
+    // unique — zooid ignores such entries anyway, but a clean list is clearer.
+    let current_hosts = [relay.custom_domain.clone(), relay.canonical_host()];
+    relay
+        .redirect_from
+        .0
+        .retain(|host| !host.is_empty() && !current_hosts.contains(host));
+    relay.redirect_from.0.sort();
+    relay.redirect_from.0.dedup();
 
     Ok(relay)
 }

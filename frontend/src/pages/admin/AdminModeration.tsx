@@ -45,7 +45,7 @@ export default function AdminModeration() {
   const [exhausted, setExhausted] = createSignal(false)
   const [query, setQuery] = createSignal("")
   const [typeFilter, setTypeFilter] = createSignal<TypeFilter>("all")
-  const [range, setRange] = createSignal<RangeValue>("7d")
+  const [range, setRange] = createSignal<RangeValue>("1d")
   const [since, setSince] = createSignal<number | undefined>(startOfRange("7d"))
   const [relays] = useAdminRelays()
 

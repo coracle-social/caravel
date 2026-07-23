@@ -451,7 +451,13 @@ impl Billing {
             let tenant_wallet = Wallet::from_url(&nwc_url)?;
             let bolt11 = self.ensure_bolt11_for_invoice(invoice).await?;
 
-            tenant_wallet.pay_invoice(bolt11.lnbc.clone()).await?;
+            // Handle race conditions - if the invoice is settled, we're ok
+            if let Err(pay_error) = tenant_wallet.pay_invoice(bolt11.lnbc.clone()).await
+                && !self.wallet.is_settled(&bolt11.lnbc).await.unwrap_or(false)
+                && !matches!(query::get_invoice(&invoice.id).await, Ok(Some(inv)) if inv.paid_at.is_some())
+            {
+                return Err(pay_error);
+            }
 
             command::settle_invoice_via_nwc(&tenant.pubkey, &bolt11.id, &invoice.id).await
         }

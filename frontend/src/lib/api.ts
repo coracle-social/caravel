@@ -1,3 +1,5 @@
+import { sortBy } from "@welshman/lib"
+
 const API_URL = import.meta.env.VITE_API_URL
 
 // Populated by state.ts after it initializes, breaking the circular dependency
@@ -196,14 +198,15 @@ export function invoiceStatus(invoice: Pick<Invoice, "paid_at" | "voided_at">): 
   return "open"
 }
 
-// The single invoice autopay collects and the dashboard surfaces as "Pay now":
-// the OLDEST open invoice with a positive balance, matching the backend's
-// dunning order so the UI pays the same one collection targets. undefined when
-// nothing is due. Canonical pick shared by useBillingStatus and autopayBilling.
-export function selectPayableInvoice(invoices: Invoice[]): Invoice | undefined {
-  return invoices
-    .filter(inv => invoiceStatus(inv) === "open" && inv.amount > 0)
-    .sort((a, b) => a.created_at - b.created_at)[0]
+// Every invoice that can be collected — open with a positive balance — oldest
+// first, matching the backend's dunning order so the UI pays the same invoices
+// collection targets, in the same order. Canonical filter shared by
+// useBillingStatus and autopayBilling, which collects all of them.
+export function listPayableInvoices(invoices: Invoice[]): Invoice[] {
+  return sortBy(
+    inv => inv.created_at,
+    invoices.filter(inv => invoiceStatus(inv) === "open" && inv.amount > 0),
+  )
 }
 
 export type Activity = {

@@ -6,7 +6,7 @@ import { EventStore } from "applesauce-core"
 import { createEventLoaderForStore } from "applesauce-loaders/loaders"
 import { RelayPool } from "applesauce-relay"
 import { NostrConnectSigner } from "applesauce-signers"
-import { createTenant, getDraftInvoice, getIdentity, getTenant, listPlans, listTenantInvoices, listTenantRelays, reconcileInvoice, reconcileTenant, registerAccountGetter, selectPayableInvoice, type Plan } from "@/lib/api"
+import { createTenant, getDraftInvoice, getIdentity, getTenant, listPayableInvoices, listPlans, listTenantInvoices, listTenantRelays, reconcileInvoice, reconcileTenant, registerAccountGetter, type Plan } from "@/lib/api"
 import { autopayConfigured } from "@/lib/paymentMethod"
 
 export type UnsignedEvent = {
@@ -124,14 +124,17 @@ export function autopayBilling(pubkey: string): Promise<void> {
       // landing effect) before provisioning has completed.
       if (billingPubkey() !== pubkey) await ensureSessionTenant()
 
-      // Sync the payment method + reconcile the subscription, then collect the
-      // oldest open invoice when a method is on file (and the create/upgrade
-      // flow isn't already driving its own invoice).
+      // Sync the payment method + reconcile the subscription, then collect every
+      // open invoice when a method is on file (and the create/upgrade flow isn't
+      // already driving its own invoice). Sequentially and oldest first, so a
+      // tenant carrying more than one invoice clears the whole balance in one
+      // pass without firing concurrent charges at their wallet or card.
       const tenant = await reconcileTenant(pubkey)
 
-      const invoice = selectPayableInvoice(await listTenantInvoices(pubkey))
-      if (invoice && autopayConfigured(tenant) && !billingFlowActive()) {
-        await reconcileInvoice(invoice.id)
+      if (autopayConfigured(tenant) && !billingFlowActive()) {
+        for (const invoice of listPayableInvoices(await listTenantInvoices(pubkey))) {
+          await reconcileInvoice(invoice.id)
+        }
       }
     } catch (e) {
       console.error("Autopay billing failed", e)

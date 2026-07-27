@@ -1,6 +1,6 @@
 import { createMemo } from "solid-js"
 import { indexBy } from "@welshman/lib"
-import { invoiceStatus, selectPayableInvoice, type Invoice, type Tenant } from "@/lib/api"
+import { listPayableInvoices, type Invoice, type Tenant } from "@/lib/api"
 import { autopayConfigured, cardState, nwcState } from "@/lib/paymentMethod"
 import { autopayBilling, billingDraftInvoice, billingInvoices, billingRelays, billingTenant, plans, refetchBilling } from "@/lib/state"
 
@@ -20,7 +20,7 @@ export type BillingStatusSnapshot = {
 
 // The single billing read shared by the dashboard shell and the billing page.
 // `openInvoice` is the OLDEST open, positive invoice — matching the backend's
-// dunning order so the UI pays the same one collection targets.
+// dunning order, so a manual "Pay now" clears invoices in collection order.
 export function useBillingStatus() {
   const tenant = () => billingTenant()
   const invoices = () => billingInvoices() ?? []
@@ -29,11 +29,10 @@ export function useBillingStatus() {
   // real invoice), or undefined when nothing is due. Shown as a "draft" row.
   const draftInvoice = () => billingDraftInvoice() ?? undefined
 
-  const openInvoices = createMemo(() =>
-    invoices().filter((inv) => invoiceStatus(inv) === "open" && inv.amount > 0),
-  )
-  // The autopay/dunning target — the same pick autopayBilling collects.
-  const openInvoice = () => selectPayableInvoice(invoices())
+  // Every open, positive invoice, oldest first — the same set autopay collects.
+  const openInvoices = createMemo(() => listPayableInvoices(invoices()))
+  // The dunning target surfaced as "Pay now" — the oldest of them.
+  const openInvoice = () => openInvoices()[0]
 
   // Amount due: the total of all open invoices.
   const balance = () => openInvoices().reduce((sum, inv) => sum + inv.amount, 0)

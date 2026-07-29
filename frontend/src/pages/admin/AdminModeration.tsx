@@ -46,7 +46,7 @@ export default function AdminModeration() {
   const [query, setQuery] = createSignal("")
   const [typeFilter, setTypeFilter] = createSignal<TypeFilter>("all")
   const [range, setRange] = createSignal<RangeValue>("1d")
-  const [since, setSince] = createSignal<number | undefined>(startOfRange("7d"))
+  const [since, setSince] = createSignal<number | undefined>(startOfRange("1d"))
   const [relays] = useAdminRelays()
 
   // Bumped whenever the window changes, so a response for the old window can't

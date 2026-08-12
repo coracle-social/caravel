@@ -120,13 +120,16 @@ impl Billing {
         }
 
         // If the tenant has a billing anchor, renew the current period if due and
-        // claim any outstanding items onto an invoice.
+        // claim any outstanding items onto an invoice. Server operators are
+        // comped: their invoices are still cut, so the ledger stays complete and
+        // their usage is visible, but they're issued paid rather than collected.
         if let Some(period) = BillingPeriod::current(&tenant) {
             if tenant.renewed_at.is_none_or(|at| at < period.start) {
                 self.reconcile_renewal(&tenant, &period).await?;
             }
 
-            command::create_invoice(&tenant, &period).await?;
+            let comped = env::get().is_admin(&tenant.pubkey);
+            command::create_invoice(&tenant, &period, comped).await?;
         }
 
         // Fetch the tenant's open invoices once

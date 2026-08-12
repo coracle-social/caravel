@@ -1,9 +1,7 @@
-use std::sync::Arc;
-
-use axum::extract::State;
 use serde::Serialize;
 
-use crate::api::{Api, AuthedPubkey};
+use crate::api::AuthedPubkey;
+use crate::env;
 use crate::web::{ApiResult, ok};
 
 #[derive(Serialize)]
@@ -12,10 +10,7 @@ struct IdentityResponse {
     is_admin: bool,
 }
 
-pub async fn get_identity(
-    State(api): State<Arc<Api>>,
-    AuthedPubkey(pubkey): AuthedPubkey,
-) -> ApiResult {
-    let is_admin = api.is_admin(&pubkey);
+pub async fn get_identity(AuthedPubkey(pubkey): AuthedPubkey) -> ApiResult {
+    let is_admin = env::get().is_admin(&pubkey);
     ok(IdentityResponse { pubkey, is_admin })
 }

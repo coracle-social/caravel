@@ -83,6 +83,11 @@ impl Env {
         }
     }
 
+    /// Whether `pubkey` is a server operator, listed in `SERVER_ADMIN_PUBKEYS`.
+    pub fn is_admin(&self, pubkey: &str) -> bool {
+        self.server_admin_pubkeys.iter().any(|a| a == pubkey)
+    }
+
     pub fn encrypt(&self, plaintext: &str) -> Result<String> {
         nip44::encrypt(
             self.keys.secret_key(),

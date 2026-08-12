@@ -151,7 +151,7 @@ export function tenantStatus(tenant: Pick<Tenant, "churned_at" | "banned_at">): 
 // Internal aliases derived from the wire shapes below — pure naming, no payload
 // change. InvoiceMethod is the non-null members of Invoice.method; InvoiceStatus
 // is the lifecycle status derived from the paid_at/voided_at timestamps.
-export type InvoiceMethod = "nwc" | "stripe" | "oob"
+export type InvoiceMethod = "nwc" | "stripe" | "oob" | "comp"
 export type InvoiceStatus = "open" | "paid" | "void"
 
 export type Invoice = {

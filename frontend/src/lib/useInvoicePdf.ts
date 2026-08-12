@@ -32,7 +32,7 @@ export function useInvoicePdf() {
       })
 
       let sats: number | undefined
-      if (invoice.method !== "stripe" && invoice.voided_at == null) {
+      if (invoice.method !== "stripe" && invoice.method !== "comp" && invoice.voided_at == null) {
         try {
           const bolt11 = await ensureInvoiceBolt11(invoice.id)
           sats = Math.round(bolt11.msats / 1000)

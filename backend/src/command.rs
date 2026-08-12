@@ -460,8 +460,13 @@ pub async fn mark_activity_billed(activity_id: &str) -> Result<()> {
 // --- Invoices ---
 
 /// Claim a tenant's outstanding items onto a new invoice once the balance clears
-/// the minimum.
-pub async fn create_invoice(tenant: &Tenant, period: &BillingPeriod) -> Result<Option<Invoice>> {
+/// the minimum. A `comped` invoice is born paid (method `comp`), so it is never
+/// collected, dunned, or counted toward churn — see [`crate::billing`].
+pub async fn create_invoice(
+    tenant: &Tenant,
+    period: &BillingPeriod,
+    comped: bool,
+) -> Result<Option<Invoice>> {
     with_tx(async |tx| {
         let total = sqlx::query_scalar::<_, i64>(
             "SELECT COALESCE(SUM(amount), 0) FROM invoice_item
@@ -478,7 +483,7 @@ pub async fn create_invoice(tenant: &Tenant, period: &BillingPeriod) -> Result<O
             return Ok(None);
         }
 
-        let invoice = insert_invoice_tx(tx, tenant, period, total).await?;
+        let invoice = insert_invoice_tx(tx, tenant, period, total, comped).await?;
 
         sqlx::query(
             "UPDATE invoice_item SET invoice_id = ?
@@ -775,13 +780,20 @@ async fn insert_invoice_tx(
     tenant: &Tenant,
     period: &BillingPeriod,
     amount: i64,
+    comped: bool,
 ) -> Result<Invoice> {
     let now = chrono::Utc::now().timestamp();
     let invoice_id = uuid::Uuid::new_v4().to_string();
+    let (paid_at, method) = if comped {
+        (Some(now), Some("comp"))
+    } else {
+        (None, None)
+    };
 
     Ok(sqlx::query_as::<_, Invoice>(
-        "INSERT INTO invoice (id, tenant_pubkey, amount, period_start, period_end, created_at)
-         VALUES (?, ?, ?, ?, ?, ?) RETURNING *",
+        "INSERT INTO invoice
+            (id, tenant_pubkey, amount, period_start, period_end, created_at, paid_at, method)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING *",
     )
     .bind(invoice_id)
     .bind(&tenant.pubkey)
@@ -789,6 +801,8 @@ async fn insert_invoice_tx(
     .bind(period.start)
     .bind(period.end)
     .bind(now)
+    .bind(paid_at)
+    .bind(method)
     .fetch_one(&mut **tx)
     .await?)
 }

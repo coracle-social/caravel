@@ -114,12 +114,8 @@ impl Api {
 
     // --- authorization helpers ----------------------------------------------
 
-    pub fn is_admin(&self, pubkey: &str) -> bool {
-        env::get().server_admin_pubkeys.iter().any(|a| a == pubkey)
-    }
-
     pub fn require_admin(&self, authorized_pubkey: &str) -> Result<(), ApiError> {
-        if self.is_admin(authorized_pubkey) {
+        if env::get().is_admin(authorized_pubkey) {
             Ok(())
         } else {
             Err(forbidden("admin required"))
@@ -143,7 +139,7 @@ impl Api {
         authorized_pubkey: &str,
         tenant_pubkey: &str,
     ) -> Result<(), ApiError> {
-        if self.is_admin(authorized_pubkey) || authorized_pubkey == tenant_pubkey {
+        if env::get().is_admin(authorized_pubkey) || authorized_pubkey == tenant_pubkey {
             Ok(())
         } else {
             Err(forbidden("not authorized"))

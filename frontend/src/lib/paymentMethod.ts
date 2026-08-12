@@ -36,6 +36,7 @@ const METHOD_LABELS: Record<InvoiceMethod, string> = {
   nwc: "Lightning",
   stripe: "Card",
   oob: "Lightning",
+  comp: "Complimentary",
 }
 
 export function methodLabel(m: InvoiceMethod): string {

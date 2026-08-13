@@ -4,7 +4,7 @@ use std::sync::OnceLock;
 
 use anyhow::Result;
 use sqlx::{
-    Sqlite, SqlitePool, Transaction,
+    ConnectOptions, Connection, Sqlite, SqlitePool, Transaction,
     sqlite::{SqliteConnectOptions, SqlitePoolOptions},
 };
 use tokio::sync::broadcast;
@@ -83,14 +83,25 @@ async fn create_pool(database_url: &str) -> Result<SqlitePool> {
 
     let pool = SqlitePoolOptions::new()
         .max_connections(5)
-        .connect_with(connect_options)
+        .connect_with(connect_options.clone())
         .await?;
 
     sqlx::query("PRAGMA journal_mode = WAL;")
         .execute(&pool)
         .await?;
 
-    sqlx::migrate!("./migrations").run(&pool).await?;
+    // Migrations get their own connection, with foreign key enforcement off.
+    // SQLite's procedure for changing a table's schema — rebuild, copy, drop,
+    // rename — requires that, and `PRAGMA foreign_keys` is a no-op inside the
+    // transaction sqlx wraps each migration in, so it has to be set at connect
+    // time. The pool above keeps enforcement on for everything at runtime.
+    let mut migrate_conn = connect_options.foreign_keys(false).connect().await?;
+
+    sqlx::migrate!("./migrations")
+        .run(&mut migrate_conn)
+        .await?;
+
+    migrate_conn.close().await?;
 
     Ok(pool)
 }

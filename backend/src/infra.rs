@@ -307,10 +307,7 @@ async fn try_sync_relay(relay: &Relay) -> Result<()> {
     // stays correct across subdomain changes and custom-domain un-verification.
     let canonical = relay.canonical_host();
     if canonical != host {
-        redirect_from.insert(
-            canonical,
-            serde_json::json!({ "status": 302 }),
-        );
+        redirect_from.insert(canonical, serde_json::json!({ "status": 302 }));
     }
 
     let mut body = serde_json::json!({

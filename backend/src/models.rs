@@ -192,8 +192,9 @@ pub struct Invoice {
     /// When the manual-payment reminder DM was sent for this invoice, or `None` if
     /// it hasn't been sent in order to avoid duplicate reminders for the same invoice.
     pub notified_at: Option<i64>,
-    /// How the invoice was paid — `nwc`, `stripe`, or `oob` (out-of-band
-    /// Lightning) — set when it is marked paid; `None` while open or void.
+    /// How the invoice was paid — `nwc`, `stripe`, `oob` (out-of-band
+    /// Lightning), or `comp` (comped, never collected) — set when it is marked
+    /// paid; `None` while open or void.
     pub method: Option<String>,
 }
 

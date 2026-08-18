@@ -141,12 +141,21 @@ export default function ModerationListItem(props: ModerationListItemProps) {
       <Show when={props.item.type === "event" ? props.item.data : undefined}>
         {(event) => (
           <Show
-            when={event().content.trim()}
-            fallback={<p class="mt-3 text-sm italic text-gray-400">No content</p>}
+            when={event().kind !== 0}
+            fallback={
+              <p class="mt-3 text-sm italic text-gray-400">
+                {displayName() || "This user"} updated their profile
+              </p>
+            }
           >
-            <div class="mt-3">
-              <NoteContent content={event().content} tags={event().tags} />
-            </div>
+            <Show
+              when={event().content.trim()}
+              fallback={<p class="mt-3 text-sm italic text-gray-400">No content</p>}
+            >
+              <div class="mt-3">
+                <NoteContent content={event().content} tags={event().tags} />
+              </div>
+            </Show>
           </Show>
         )}
       </Show>

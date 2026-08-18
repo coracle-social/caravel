@@ -38,6 +38,15 @@ const startOfRange = (range: RangeValue) => {
 const itemKey = (item: ModerationItem) =>
   item.type === "upload" ? `${item.tenant}:${item.data.sha256}` : `${item.tenant}:${item.data.id}`
 
+// Relay machinery rather than user content: role/permission events (8000/8001),
+// relay lists (10002), group lists (10009), and 13534. NIP-29's group management
+// events (9000-9020 moderation, 9021/9022 join/leave) are matched as a range.
+const CONTROL_KINDS = new Set([8000, 8001, 10002, 10009, 13534])
+
+const isControlEvent = (item: ModerationItem) =>
+  item.type === "event" &&
+  (CONTROL_KINDS.has(item.data.kind) || (item.data.kind >= 9000 && item.data.kind <= 9022))
+
 export default function AdminModeration() {
   const [items, setItems] = createSignal<ModerationItem[]>([])
   const [loading, setLoading] = createSignal(false)
@@ -54,7 +63,11 @@ export default function AdminModeration() {
   let generation = 0
 
   const relaysById = createMemo(() => new Map((relays() ?? []).map(relay => [relay.id, relay])))
-  const metadata = useProfileMetadataMap(() => uniq(items().map(item => item.data.pubkey)))
+
+  // Control events stay in `items` so the pagination cursor and dedupe still see
+  // them; they're only hidden from the feed.
+  const visible = createMemo(() => items().filter(item => !isControlEvent(item)))
+  const metadata = useProfileMetadataMap(() => uniq(visible().map(item => item.data.pubkey)))
 
   const loadMore = async () => {
     if (loading() || exhausted()) return
@@ -109,7 +122,7 @@ export default function AdminModeration() {
   // further back can surface more matches.
   const filtered = createMemo(() => {
     const type = typeFilter()
-    const matching = type === "all" ? items() : items().filter(item => item.type === type)
+    const matching = type === "all" ? visible() : visible().filter(item => item.type === type)
     const q = query().trim()
 
     if (!q) return matching

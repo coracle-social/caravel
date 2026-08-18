@@ -329,7 +329,14 @@ async fn try_sync_relay(relay: &Relay) -> Result<()> {
             "strip_signatures": relay.policy_strip_signatures == 1,
         },
         "groups": { "enabled": relay.groups_enabled == 1 },
-        "management": { "enabled": relay.management_enabled == 1 },
+        "management": {
+            "enabled": relay.management_enabled == 1,
+            "member_methods": if relay.members_can_invite == 1 {
+                vec!["listclaims", "createclaim"]
+            } else {
+                vec![]
+            },
+        },
         "blossom": if relay.blossom_enabled == 1 {
             serde_json::json!({
                 "enabled": true,

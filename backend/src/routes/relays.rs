@@ -79,6 +79,7 @@ pub struct CreateRelayRequest {
     pub policy_strip_signatures: i64,
     pub groups_enabled: i64,
     pub management_enabled: i64,
+    pub members_can_invite: i64,
     pub blossom_enabled: i64,
     pub livekit_enabled: i64,
     pub push_enabled: i64,
@@ -119,6 +120,7 @@ pub async fn create_relay(
         policy_strip_signatures: payload.policy_strip_signatures,
         groups_enabled: payload.groups_enabled,
         management_enabled: payload.management_enabled,
+        members_can_invite: payload.members_can_invite,
         blossom_enabled: payload.blossom_enabled,
         livekit_enabled: payload.livekit_enabled,
         push_enabled: payload.push_enabled,
@@ -149,6 +151,7 @@ pub struct UpdateRelayRequest {
     pub policy_strip_signatures: Option<i64>,
     pub groups_enabled: Option<i64>,
     pub management_enabled: Option<i64>,
+    pub members_can_invite: Option<i64>,
     pub blossom_enabled: Option<i64>,
     pub livekit_enabled: Option<i64>,
     pub push_enabled: Option<i64>,
@@ -212,6 +215,9 @@ pub async fn update_relay(
     }
     if let Some(v) = payload.management_enabled {
         relay.management_enabled = v;
+    }
+    if let Some(v) = payload.members_can_invite {
+        relay.members_can_invite = v;
     }
     if let Some(v) = payload.blossom_enabled {
         relay.blossom_enabled = v;
@@ -393,6 +399,7 @@ fn prepare_relay(mut relay: Relay) -> Result<Relay, ApiError> {
     relay.policy_strip_signatures = parse_bool_default(relay.policy_strip_signatures, 0);
     relay.groups_enabled = parse_bool_default(relay.groups_enabled, 1);
     relay.management_enabled = parse_bool_default(relay.management_enabled, 1);
+    relay.members_can_invite = parse_bool_default(relay.members_can_invite, 1);
     relay.blossom_enabled = parse_bool_default(relay.blossom_enabled, 0);
     relay.livekit_enabled = parse_bool_default(relay.livekit_enabled, 0);
     relay.push_enabled = parse_bool_default(relay.push_enabled, 1);

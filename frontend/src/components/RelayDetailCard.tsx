@@ -51,6 +51,7 @@ type RelayDetailCardProps = {
   onTogglePublicRead?: () => void
   onTogglePublicWrite?: () => void
   onTogglePublicJoin?: () => void
+  onToggleMembersCanInvite?: () => void
   onToggleStripSignatures?: () => void
   onToggleGroups?: () => void
   onToggleManagement?: () => void
@@ -244,6 +245,12 @@ export default function RelayDetailCard(props: RelayDetailCardProps) {
           <ToggleButton
             enabled={flagToBool(r().policy_public_join, false)}
             onToggle={props.onTogglePublicJoin}
+          />
+        </ToggleField>
+        <ToggleField label="Members can invite others">
+          <ToggleButton
+            enabled={flagToBool(r().members_can_invite, true)}
+            onToggle={props.onToggleMembersCanInvite}
           />
         </ToggleField>
         <ToggleField label="Strip signatures">

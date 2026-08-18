@@ -210,9 +210,9 @@ pub async fn create_relay(relay: &Relay) -> Result<()> {
                 info_name, info_icon, info_description,
                 policy_public_read, policy_public_write,
                 policy_public_join, policy_strip_signatures,
-                groups_enabled, management_enabled, blossom_enabled,
+                groups_enabled, management_enabled, members_can_invite, blossom_enabled,
                 livekit_enabled, push_enabled, custom_domain, created_at
-            ) VALUES (?, ?, ?, ?, ?, 'active', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ) VALUES (?, ?, ?, ?, ?, 'active', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&relay.id)
         .bind(&relay.tenant_pubkey)
@@ -229,6 +229,7 @@ pub async fn create_relay(relay: &Relay) -> Result<()> {
         .bind(relay.policy_strip_signatures)
         .bind(relay.groups_enabled)
         .bind(relay.management_enabled)
+        .bind(relay.members_can_invite)
         .bind(relay.blossom_enabled)
         .bind(relay.livekit_enabled)
         .bind(relay.push_enabled)
@@ -262,7 +263,7 @@ pub async fn update_relay(relay: &Relay) -> Result<()> {
                  info_name = ?, info_icon = ?, info_description = ?,
                  policy_public_read = ?, policy_public_write = ?,
                  policy_public_join = ?, policy_strip_signatures = ?,
-                 groups_enabled = ?, management_enabled = ?, blossom_enabled = ?,
+                 groups_enabled = ?, management_enabled = ?, members_can_invite = ?, blossom_enabled = ?,
                  livekit_enabled = ?, push_enabled = ?,
                  custom_domain = ?, redirect_from = ?,
                  custom_domain_verified = CASE
@@ -286,6 +287,7 @@ pub async fn update_relay(relay: &Relay) -> Result<()> {
         .bind(relay.policy_strip_signatures)
         .bind(relay.groups_enabled)
         .bind(relay.management_enabled)
+        .bind(relay.members_can_invite)
         .bind(relay.blossom_enabled)
         .bind(relay.livekit_enabled)
         .bind(relay.push_enabled)

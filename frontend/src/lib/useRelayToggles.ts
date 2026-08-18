@@ -123,6 +123,7 @@ export default function useRelayToggles(
     onToggleStripSignatures: () => toggle("policy_strip_signatures", false),
     onToggleGroups: () => toggle("groups_enabled", true),
     onToggleManagement: () => toggle("management_enabled", true),
+    onToggleMembersCanInvite: () => toggle("members_can_invite", true),
     onToggleMediaStorage: () => toggle("blossom_enabled", relay()?.plan_id !== "free"),
     onTogglePushNotifications: () => toggle("push_enabled", true),
     onToggleLivekitSupport: () => toggle("livekit_enabled", relay()?.plan_id !== "free"),

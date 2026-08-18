@@ -175,6 +175,7 @@ export const createRelayForActiveTenant = (input: Omit<CreateRelayInput, "zooid_
     policy_strip_signatures: 0,
     groups_enabled: 1,
     management_enabled: 1,
+    members_can_invite: 1,
     push_enabled: 1,
   }
 

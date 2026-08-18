@@ -70,6 +70,7 @@ export type Relay = {
   policy_strip_signatures: number
   groups_enabled: number
   management_enabled: number
+  members_can_invite: number
   blossom_enabled: number
   livekit_enabled: number
   push_enabled: number
@@ -100,6 +101,7 @@ export type CreateRelayInput = {
   policy_strip_signatures?: number
   groups_enabled?: number
   management_enabled?: number
+  members_can_invite?: number
   blossom_enabled?: number
   livekit_enabled?: number
   push_enabled?: number
@@ -119,6 +121,7 @@ export type UpdateRelayInput = {
   policy_strip_signatures?: number
   groups_enabled?: number
   management_enabled?: number
+  members_can_invite?: number
   blossom_enabled?: number
   livekit_enabled?: number
   push_enabled?: number

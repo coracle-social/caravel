@@ -22,7 +22,7 @@ This is the lookup-depth companion to the SKILL.md "background reactors" section
 
 ## The zooid request
 
-`try_sync_relay` assembles the request body inline as a `serde_json::json!`: `host` (the relay's `host()` — its verified custom domain, else subdomain + its `zooid_domain`), `schema` (`relay.id`), an `inactive` flag, and the `info`/`policy`/`groups`/`management`/`push`/`roles` blocks, plus a conditional blossom S3 block and a livekit block — each gated on the relay's `*_enabled` i64 flag and falling back to `{enabled: false}`.
+`try_sync_relay` assembles the request body inline as a `serde_json::json!`: `host` (the relay's `host()` — its verified custom domain, else subdomain + its `zooid_domain`), `schema` (`relay.id`), an `inactive` flag, and the `info`/`policy`/`groups`/`management`/`push` blocks, plus a conditional blossom S3 block and a livekit block — each gated on the relay's `*_enabled` i64 flag and falling back to `{enabled: false}`.
 
 `is_new` is true **only** when `synced != 1` *and* there is no prior `complete_relay_sync` activity. `is_new` alone decides `POST` (with a freshly generated `Keys::generate` secret inserted into the body) vs `PATCH` (secret omitted). Because `update_relay` resets `synced = 0`, a re-sync after an update would look "new" by the `synced` flag alone — the second condition (no prior `complete_relay_sync`) is what makes it a `PATCH`, so the relay is not re-created and its secret is not clobbered. Caravel never persists the secret, so this check is load-bearing.
 

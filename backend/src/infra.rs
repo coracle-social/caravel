@@ -357,10 +357,6 @@ async fn try_sync_relay(relay: &Relay) -> Result<()> {
             serde_json::json!({ "enabled": false })
         },
         "push": { "enabled": relay.push_enabled == 1 },
-        "roles": {
-            "admin": { "can_manage": true, "can_invite": true },
-            "member": { "can_invite": true },
-        },
     });
 
     // Only provide a secret if the relay is new. This allows us to not store the relay secrets on our side.

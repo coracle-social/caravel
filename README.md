@@ -84,7 +84,7 @@ On the Zooid server, create a `Caddyfile`:
 }
 ```
 
-Replace `<caravel-host>` with the hostname or IP of the Caravel server. The `/domains/check` endpoint returns `200` for any subdomain of a `ZOOID_DOMAINS` entry and for any tenant custom domain that has been verified, and `404` otherwise — Caddy will only obtain a certificate if it gets a `200`.
+Replace `<caravel-host>` with the hostname or IP of the Caravel server. The `/domains/check` endpoint returns `200` only for a host some existing relay is actually served on — its `<subdomain>.<ZOOID_DOMAINS entry>` host, its verified custom domain, or a hostname redirecting to it — and `404` otherwise, so Caddy will only obtain a certificate for domains that have been registered.
 
 Run Caddy and Zooid together, for example with Docker Compose:
 

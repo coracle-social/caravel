@@ -129,11 +129,16 @@ pub async fn get_relay(id: &str) -> Result<Option<Relay>> {
         .await?)
 }
 
-pub async fn get_relay_by_verified_custom_domain(domain: &str) -> Result<Option<Relay>> {
+pub async fn get_relay_by_host(host: &str) -> Result<Option<Relay>> {
     Ok(sqlx::query_as::<_, Relay>(&select_relay(
-        "WHERE custom_domain = ? AND custom_domain_verified = 1",
+        "WHERE purged_at IS NULL
+           AND (subdomain || '.' || zooid_domain = ?
+                OR (custom_domain = ? AND custom_domain_verified = 1)
+                OR EXISTS (SELECT 1 FROM json_each(relay.redirect_from) WHERE value = ?))",
     ))
-    .bind(domain)
+    .bind(host)
+    .bind(host)
+    .bind(host)
     .fetch_optional(pool())
     .await?)
 }

@@ -43,6 +43,8 @@ Don't add re-export shims to preserve old import paths. When something moves, im
 
 Check justfile and frontend/package.json for common commands for linting/building.
 
+Pull requests run `.gitea/workflows/ci.yml`, which is the backend's fmt/clippy/test plus the frontend build. Keep it in step with the justfile.
+
 ## Skills
 
 Skills should be created and maintained when updating the codebase. Before creating a skill, check to see if a relevant one already exists.

@@ -180,6 +180,10 @@ just dev
 
 This starts the backend (with auto-reload on file changes) at `http://127.0.0.1:2892` and the frontend at `http://127.0.0.1:5173`.
 
+### Checks
+
+Every pull request runs [`.gitea/workflows/ci.yml`](./.gitea/workflows/ci.yml): `cargo fmt --check`, `cargo clippy -D warnings` and `cargo test` for the backend, and `bun run build` for the frontend. `just check` runs the same set locally, except that it rewrites formatting rather than failing on it.
+
 ## Project docs
 
 - Frontend: [frontend/README.md](./frontend/README.md)

@@ -316,6 +316,7 @@ async fn try_sync_relay(relay: &Relay) -> Result<()> {
         "redirect_from": redirect_from,
         "inactive": relay.status == RELAY_STATUS_INACTIVE
             || relay.status == RELAY_STATUS_DELINQUENT,
+        "unmoderated": env::get().is_admin(&relay.tenant_pubkey),
         "info": {
             "name": relay.info_name,
             "icon": relay.info_icon,

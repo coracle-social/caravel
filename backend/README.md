@@ -65,7 +65,7 @@ All configuration is read from the environment by `Env::load()` at startup. **Ev
 
 | Variable             | Description                                             |
 | -------------------- | ------------------------------------------------------- |
-| `ZOOID_API_URL`      | Zooid API base URL used by the infra sync worker        |
+| `ZOOID_API_URL`      | Zooid API base URL used by the infra sync worker; its host is also approved by `/domains/check` |
 | `ZOOID_DOMAINS`      | Comma-separated domains relay subdomains may live under; a relay records the one it was created on |
 | `LIVEKIT_URL`        | LiveKit URL sent to zooid when a relay enables livekit   |
 | `LIVEKIT_API_KEY`    | LiveKit API key sent to zooid                           |

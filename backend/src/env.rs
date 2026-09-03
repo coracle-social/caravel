@@ -39,6 +39,9 @@ pub struct Env {
     pub blossom_s3_access_key: String,
     pub blossom_s3_secret_key: String,
     pub zooid_api_url: String,
+    /// Host of `zooid_api_url`, lowercased. Zooid's API shares the relays'
+    /// on-demand-TLS Caddy but has no relay row, so it is approved by name.
+    pub zooid_api_host: String,
     /// Domains relay subdomains may live under. A relay carries the one it was
     /// created on; any host at or under one of these is ours to serve.
     pub zooid_domains: Vec<String>,
@@ -54,6 +57,12 @@ impl Env {
     fn load() -> Self {
         let keys = Keys::parse(&require_str("ROBOT_SECRET"))
             .expect("ROBOT_SECRET is not a valid nostr secret key");
+
+        let zooid_api_url = require_str("ZOOID_API_URL");
+        let zooid_api_host = Url::parse(&zooid_api_url)
+            .ok()
+            .and_then(|url| url.host_str().map(str::to_lowercase))
+            .expect("ZOOID_API_URL is not a url with a host");
 
         Self {
             server_url: require_str("SERVER_URL"),
@@ -73,7 +82,8 @@ impl Env {
             blossom_s3_endpoint: require_str("BLOSSOM_S3_ENDPOINT"),
             blossom_s3_access_key: require_str("BLOSSOM_S3_ACCESS_KEY"),
             blossom_s3_secret_key: require_str("BLOSSOM_S3_SECRET_KEY"),
-            zooid_api_url: require_str("ZOOID_API_URL"),
+            zooid_api_url,
+            zooid_api_host,
             zooid_domains: require_csv("ZOOID_DOMAINS"),
             livekit_url: require_str("LIVEKIT_URL"),
             livekit_api_key: require_str("LIVEKIT_API_KEY"),

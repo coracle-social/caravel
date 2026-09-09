@@ -47,7 +47,7 @@ Notes:
 
 - Every backend variable above is **required** — the server exits on startup if any is missing or empty. See [`backend/.env.template`](./backend/.env.template) for what each one means.
 - `ROBOT_SECRET` is the robot account's hex nostr secret key; its pubkey must be in zooid's `API_WHITELIST` (the backend signs zooid requests with it via NIP-98).
-- `SERVER_ALLOW_ORIGINS` must include the frontend's public origin, or browsers will be blocked by CORS.
+- `SERVER_ALLOW_ORIGINS` must include the frontend's public origin, or browsers will be blocked by CORS. An entry may be a wildcard like `https://*.example.com`, which allows every subdomain of `example.com` but not `example.com` itself.
 - The frontend's `VITE_` prefixed env variables are automatically populated from the provided env variables.
 - `-v my-caravel-data:/app/data` persists the SQLite database.
 

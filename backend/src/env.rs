@@ -98,6 +98,13 @@ impl Env {
         self.server_admin_pubkeys.iter().any(|a| a == pubkey)
     }
 
+    /// Whether a browser `Origin` header is allowed by `SERVER_ALLOW_ORIGINS`.
+    pub fn allows_origin(&self, origin: &str) -> bool {
+        self.server_allow_origins
+            .iter()
+            .any(|allowed| origin_matches(allowed, origin))
+    }
+
     pub fn encrypt(&self, plaintext: &str) -> Result<String> {
         nip44::encrypt(
             self.keys.secret_key(),
@@ -132,6 +139,20 @@ impl Env {
     }
 }
 
+/// Match an origin against one `SERVER_ALLOW_ORIGINS` entry, which is either an
+/// exact origin or a wildcard like `https://*.example.com` covering every
+/// subdomain of `example.com`, at any depth but never the bare domain.
+fn origin_matches(allowed: &str, origin: &str) -> bool {
+    match allowed.split_once("://*.") {
+        None => allowed == origin,
+        Some((scheme, domain)) => origin
+            .strip_prefix(scheme)
+            .and_then(|rest| rest.strip_prefix("://"))
+            .and_then(|host| host.strip_suffix(domain))
+            .is_some_and(|subdomain| subdomain.len() > 1 && subdomain.ends_with('.')),
+    }
+}
+
 fn require_str(key: &str) -> String {
     let v = std::env::var(key)
         .unwrap_or_else(|_| panic!("{key} is required"))
@@ -162,4 +183,37 @@ fn require_csv(key: &str) -> Vec<String> {
     }
 
     v
+}
+
+#[cfg(test)]
+mod tests {
+    use super::origin_matches;
+
+    #[test]
+    fn exact_origins_match_exactly() {
+        assert!(origin_matches("https://example.com", "https://example.com"));
+        assert!(!origin_matches("https://example.com", "http://example.com"));
+        assert!(!origin_matches(
+            "https://example.com",
+            "https://app.example.com"
+        ));
+    }
+
+    #[test]
+    fn wildcards_match_subdomains_at_any_depth() {
+        let allowed = "https://*.flowboat.lol";
+
+        assert!(origin_matches(allowed, "https://pr-1.flowboat.lol"));
+        assert!(origin_matches(allowed, "https://pr-1.preview.flowboat.lol"));
+    }
+
+    #[test]
+    fn wildcards_refuse_everything_else() {
+        let allowed = "https://*.flowboat.lol";
+
+        assert!(!origin_matches(allowed, "https://flowboat.lol"));
+        assert!(!origin_matches(allowed, "https://evilflowboat.lol"));
+        assert!(!origin_matches(allowed, "https://flowboat.lol.evil.com"));
+        assert!(!origin_matches(allowed, "http://pr-1.flowboat.lol"));
+    }
 }

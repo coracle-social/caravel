@@ -42,13 +42,10 @@ async fn main() -> Result<()> {
     let billing = Billing::new(robot.clone());
     let api = Api::new(billing.clone(), stripe, robot);
 
-    let parsed = env::get()
-        .server_allow_origins
-        .iter()
-        .filter_map(|o| o.parse::<axum::http::HeaderValue>().ok())
-        .collect::<Vec<_>>();
     let cors = CorsLayer::new()
-        .allow_origin(AllowOrigin::list(parsed))
+        .allow_origin(AllowOrigin::predicate(|origin, _| {
+            origin.to_str().is_ok_and(|o| env::get().allows_origin(o))
+        }))
         .allow_methods(Any)
         .allow_headers(Any);
 

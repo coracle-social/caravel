@@ -45,7 +45,7 @@ All configuration is read from the environment by `Env::load()` at startup. **Ev
 | `SERVER_URL`           | Public API base URL; the value the NIP-98 `u` tag must equal exactly |
 | `SERVER_PORT`          | API bind port; the server binds `0.0.0.0` (all interfaces)             |
 | `SERVER_ADMIN_PUBKEYS` | Comma-separated admin pubkeys (hex)                                 |
-| `SERVER_ALLOW_ORIGINS` | Comma-separated allowed CORS origins                                |
+| `SERVER_ALLOW_ORIGINS` | Comma-separated allowed CORS origins; an entry may be a wildcard like `https://*.example.com`, matching any subdomain but not the bare domain |
 | `DATABASE_URL`         | SQLite URL; relative `sqlite://` paths resolve under the compile-time crate dir (`backend/` in dev, `/app` in the Docker image) |
 
 **Robot identity**

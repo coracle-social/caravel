@@ -27,7 +27,7 @@ Source: `env.rs:22-82`, `.env.template:1-38`.
 - `SERVER_URL` is the NIP-98 host-affinity value — the `u` tag must equal it exactly or every authenticated request 401s.
 - `SERVER_PORT` binds `127.0.0.1` only (localhost, not `0.0.0.0`).
 - `SERVER_ADMIN_PUBKEYS` is checked by membership for `is_admin`.
-- `SERVER_ALLOW_ORIGINS` is parsed into `CorsLayer` `HeaderValue`s, with unparseable origins **silently dropped** via `filter_map(...ok())` — a typo won't error at startup, it just won't allow that origin and surfaces later as a browser CORS block.
+- `SERVER_ALLOW_ORIGINS` entries are matched against the request's `Origin` header by `Env::allows_origin`, as either an exact origin or a `https://*.example.com` wildcard covering subdomains at any depth but never the bare domain. Nothing validates an entry at startup, so a typo doesn't error — it just never matches, and surfaces later as a browser CORS block.
 - No var is trailing-slash-trimmed at load (`zooid_api_url` is trimmed at use). There is no frontend base URL in the env at all — each tenant carries its own `return_url`, supplied when the tenant is created, and DM links are built against that.
 
 Source: `api.rs:104,158-202`, `main.rs:44-65`, `env.rs:62`.

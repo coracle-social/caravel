@@ -7,6 +7,7 @@ import PaymentSetup from "@/components/PaymentSetup"
 import RelayForm, { type RelayFormValues } from "@/components/RelayForm"
 import { createRelayForActiveTenant, resolvePostPaidFlow } from "@/lib/hooks"
 import type { Invoice } from "@/lib/api"
+import { FREE } from "@/lib/plans"
 import { refetchBilling, setBillingFlowActive } from "@/lib/state"
 
 export default function RelayNew() {
@@ -29,7 +30,7 @@ export default function RelayNew() {
     // before refetchBilling surfaces it so the banner stays suppressed across the
     // whole async gap, not just once a modal opens. The finally releases it on
     // every exit (error, free plan, or after a modal has taken over suppression).
-    const paid = values.plan_id !== "free"
+    const paid = values.plan_id !== FREE
     if (paid) setCreatingPaid(true)
     try {
       const relay = await createRelayForActiveTenant(values)

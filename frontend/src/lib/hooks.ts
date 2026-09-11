@@ -6,6 +6,7 @@ import { getProfilePicture, type ProfileContent } from "applesauce-core/helpers/
 import { createOutboxMap, selectOptimalRelays, setFallbackRelays } from "applesauce-core/helpers/relay-selection"
 import { includeMailboxes } from "applesauce-core/observable"
 import { map, of } from "rxjs"
+import { FREE } from "@/lib/plans"
 import {
   createRelay,
   deactivateRelay,
@@ -182,8 +183,8 @@ export const createRelayForActiveTenant = (input: Omit<CreateRelayInput, "zooid_
   const overrides = {
     tenant_pubkey: account()!.pubkey,
     zooid_domain: RELAY_DOMAIN,
-    blossom_enabled: input.plan_id === "free" ? 0 : 1,
-    livekit_enabled: input.plan_id === "free" ? 0 : 1,
+    blossom_enabled: input.plan_id === FREE ? 0 : 1,
+    livekit_enabled: input.plan_id === FREE ? 0 : 1,
   }
 
   return createRelay({...defaults, ...input, ...overrides})

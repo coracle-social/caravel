@@ -12,6 +12,7 @@ import { setToastMessage } from "@/lib/state"
 import { useProfileMetadata } from "@/lib/hooks"
 import useMinLoading from "@/lib/useMinLoading"
 import { flagToBool } from "@/lib/relayFlags"
+import { FREE } from "@/lib/plans"
 import { plans } from "@/lib/state"
 import useCustomDomain from "@/lib/useCustomDomain"
 
@@ -83,7 +84,7 @@ export default function RelayDetailCard(props: RelayDetailCardProps) {
     if (!p) return "?"
     return p.members === null ? "∞" : String(p.members)
   }
-  const planLimited = () => (props.enforcePlanLimits ?? true) && r().plan_id === "free"
+  const planLimited = () => (props.enforcePlanLimits ?? true) && r().plan_id === FREE
   const showPlanActions = () => props.showPlanActions ?? true
   const actionBusy = () => pendingAction() === "deactivate" ? !!props.deactivating : pendingAction() === "reactivate" ? !!props.reactivating : pendingAction() === "purge" ? !!props.purging : false
   const relayLabel = () => r().info_name || r().subdomain

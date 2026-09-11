@@ -1,5 +1,6 @@
 import { For } from "solid-js"
 import type { PlanId } from "@/lib/api"
+import { BASIC } from "@/lib/plans"
 import { plans } from "@/lib/state"
 
 function CheckIcon() {
@@ -30,6 +31,12 @@ function memberLabel(members: number | null) {
   return `Up to ${members} members`
 }
 
+// Paid tiers sell an allowance, not a cap, so the rate past it belongs next to it.
+function rateLabel(rate: number, unit: string) {
+  if (rate === 0) return ""
+  return `, then $${(rate / 100).toFixed(2)}/${unit}`
+}
+
 type PricingTableProps = {
   selectable?: boolean
   selectedPlanId?: PlanId
@@ -57,7 +64,7 @@ export default function PricingTable(props: PricingTableProps) {
     <div class={`grid grid-cols-1 gap-6 items-start ${gridCols[cardCount()] ?? "lg:grid-cols-4"}`}>
       <For each={visiblePlans()}>
         {(plan) => {
-          const isPopular = plan.id === "basic"
+          const isPopular = plan.id === BASIC
           const isSelected = () => props.selectable && props.selectedPlanId === plan.id
 
           const card = (
@@ -76,11 +83,15 @@ export default function PricingTable(props: PricingTableProps) {
                 <li class="flex items-start gap-2"><CheckIcon />{memberLabel(plan.members)}</li>
                 <li class={`flex items-start gap-2 ${plan.blossom ? "" : "text-gray-300"}`}>
                   {plan.blossom ? <CheckIcon /> : <XIcon />}
-                  Blossom storage
+                  {plan.blossom
+                    ? <span>{plan.storage_gb} GB Blossom storage{rateLabel(plan.storage_overage, "GB")}</span>
+                    : <span>Blossom storage</span>}
                 </li>
                 <li class={`flex items-start gap-2 ${plan.livekit ? "" : "text-gray-300"}`}>
                   {plan.livekit ? <CheckIcon /> : <XIcon />}
-                  LiveKit video
+                  {plan.livekit
+                    ? <span>{plan.av_hours} A/V participant hours{rateLabel(plan.av_overage, "hr")}</span>
+                    : <span>A/V calls</span>}
                 </li>
               </ul>
               {!props.selectable && (

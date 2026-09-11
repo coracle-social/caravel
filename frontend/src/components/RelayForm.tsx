@@ -1,6 +1,7 @@
 import { createEffect, createMemo, createSignal, For, Show } from "solid-js"
 import type { Relay } from "@/lib/hooks"
 import { slugify } from "@/lib/slugify"
+import { FREE } from "@/lib/plans"
 import { RELAY_DOMAIN, validateSubdomainLabel } from "@/lib/subdomain"
 import { setToastMessage } from "@/lib/state"
 import { plans } from "@/lib/state"
@@ -25,7 +26,7 @@ type RelayFormProps = {
 export default function RelayForm(props: RelayFormProps) {
   const showPlanSelector = () => props.showPlanSelector ?? true
   const zooidDomain = () => props.zooidDomain ?? RELAY_DOMAIN
-  const defaultPlanId = createMemo(() => props.initialValues?.plan_id ?? plans()[0]?.id ?? "free")
+  const defaultPlanId = createMemo(() => props.initialValues?.plan_id ?? plans()[0]?.id ?? FREE)
   const [planId, setPlanId] = createSignal(defaultPlanId())
   const [name, setName] = createSignal(props.initialValues?.info_name ?? "")
   const [subdomain, setSubdomain] = createSignal(props.initialValues?.subdomain ?? "")
@@ -132,6 +133,11 @@ export default function RelayForm(props: RelayFormProps) {
                   <div class="text-xs text-gray-500 mt-2">
                     {p.members === null ? "Unlimited members" : `Up to ${p.members} members`}
                   </div>
+                  <Show when={p.blossom}>
+                    <div class="text-xs text-gray-500 mt-1">
+                      {p.storage_gb} GB storage, {p.av_hours} A/V hrs
+                    </div>
+                  </Show>
                 </button>
               )}
             </For>

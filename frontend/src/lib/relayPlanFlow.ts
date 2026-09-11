@@ -7,6 +7,7 @@
 // that RelayNew and handleUpdatePlan previously inlined separately.
 
 import { flagToBool, boolToFlag } from "@/lib/relayFlags"
+import { FREE } from "@/lib/plans"
 import type { Invoice, PlanId, Relay, UpdateRelayInput } from "@/lib/api"
 
 // CRITICAL: the returned object is the JSON request payload sent to PUT /relays.
@@ -14,7 +15,7 @@ import type { Invoice, PlanId, Relay, UpdateRelayInput } from "@/lib/api"
 // previous inline payload: `{ plan_id }` for paid plans, plus blossom/livekit
 // disable flags for free.
 export function planUpdatePayload(plan_id: PlanId): UpdateRelayInput {
-  if (plan_id === "free") {
+  if (plan_id === FREE) {
     return { plan_id, blossom_enabled: 0, livekit_enabled: 0 }
   }
   return { plan_id }
@@ -24,7 +25,7 @@ export function planUpdatePayload(plan_id: PlanId): UpdateRelayInput {
 // payload's effect on the relay row. Free downgrades also clear the paid feature
 // flags so the optimistic view matches what the server will persist.
 export function applyPlanToRelay(relay: Relay, plan_id: PlanId): Relay {
-  if (plan_id === "free") {
+  if (plan_id === FREE) {
     return { ...relay, plan_id, blossom_enabled: 0, livekit_enabled: 0 }
   }
   return { ...relay, plan_id }

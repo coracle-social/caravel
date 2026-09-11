@@ -45,6 +45,10 @@ export type Plan = {
   members: number | null
   blossom: boolean
   livekit: boolean
+  storage_gb: number
+  storage_overage: number
+  av_hours: number
+  av_overage: number
 }
 
 export type PlanId = string

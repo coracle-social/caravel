@@ -4,8 +4,10 @@ use std::time::Duration;
 use crate::bitcoin;
 use crate::command;
 use crate::env;
+use crate::infra;
 use crate::models::{
-    Activity, Bolt11, Checkout, Invoice, InvoiceItem, RELAY_STATUS_ACTIVE, Snapshot, Tenant,
+    Activity, Bolt11, Checkout, GB, Invoice, InvoiceItem, RELAY_STATUS_ACTIVE, SECONDS_PER_HOUR,
+    Snapshot, Tenant, UsageSample,
 };
 use crate::query;
 use crate::robot::Robot;
@@ -56,6 +58,10 @@ impl Billing {
     }
 
     async fn reconcile_subscriptions(&self) -> Result<()> {
+        // Sample first, so a period closing on this tick is rolled up against a
+        // reading taken now rather than one an hour stale.
+        self.sample_usage().await;
+
         let tenants = query::list_tenants().await?;
 
         tracing::info!(
@@ -124,6 +130,10 @@ impl Billing {
         // comped: their invoices are still cut, so the ledger stays complete and
         // their usage is visible, but they're issued paid rather than collected.
         if let Some(period) = BillingPeriod::current(&tenant) {
+            // Settle the previous period's metered usage before renewing, so the
+            // arrears and the month ahead land on one invoice.
+            self.reconcile_overage(&tenant, &period).await?;
+
             if tenant.renewed_at.is_none_or(|at| at < period.start) {
                 self.reconcile_renewal(&tenant, &period).await?;
             }
@@ -331,6 +341,149 @@ impl Billing {
         // Inserts the items and advances `renewed_at` to `period.start` in one
         // transaction (idempotent via an in-tx guard), so a re-tick is a no-op.
         command::insert_invoice_items_for_renewal(&line_items, period).await
+    }
+
+    // --- Metered usage ---
+
+    /// Poll zooid for every metered relay's usage and record a sample. Metering
+    /// only applies to a paid relay with a metered feature switched on; a relay
+    /// zooid can't answer for is logged and skipped, leaving a gap in its samples
+    /// that the period's rollup tolerates.
+    async fn sample_usage(&self) {
+        let relays = match query::list_relays().await {
+            Ok(relays) => relays,
+            Err(error) => {
+                tracing::error!(error = %error, "failed to list relays for usage sampling");
+                return;
+            }
+        };
+
+        let now = chrono::Utc::now().timestamp();
+        for relay in relays {
+            if relay.purged_at.is_some() || relay.status != RELAY_STATUS_ACTIVE {
+                continue;
+            }
+            if relay.blossom_enabled == 0 && relay.livekit_enabled == 0 {
+                continue;
+            }
+            let Ok(plan) = query::get_plan(&relay.plan_id) else {
+                continue;
+            };
+            if plan.amount <= 0 {
+                continue;
+            }
+
+            let usage = match infra::get_relay_usage(&relay.id).await {
+                Ok(usage) => usage,
+                Err(error) => {
+                    tracing::warn!(relay = %relay.id, error = %error, "failed to sample relay usage");
+                    continue;
+                }
+            };
+
+            let sample = UsageSample {
+                id: uuid::Uuid::new_v4().to_string(),
+                relay_id: relay.id.clone(),
+                tenant_pubkey: relay.tenant_pubkey.clone(),
+                storage_bytes: usage.storage_bytes,
+                participant_seconds: usage.participant_seconds,
+                created_at: now,
+            };
+
+            if let Err(error) = command::insert_usage_sample(&sample).await {
+                tracing::error!(relay = %relay.id, error = %error, "failed to record usage sample");
+            }
+        }
+    }
+
+    /// Bill the metered usage of the period that closed before `period`, in
+    /// arrears — usage can only be priced once the period that measured it is
+    /// over. Each relay's overage is priced from the plan its last activity before
+    /// the close recorded, not the plan it sits on now, so a tenant who upgrades
+    /// in the new period still settles the old one at the old tier's rates.
+    /// Idempotent per period via the tenant's `overage_billed_at` marker.
+    async fn reconcile_overage(&self, tenant: &Tenant, period: &BillingPeriod) -> Result<()> {
+        let Some(previous) = BillingPeriod::at(tenant, period.start - 1) else {
+            return Ok(());
+        };
+
+        // The tenant's first period has nothing behind it to settle.
+        if previous.start >= period.start {
+            return Ok(());
+        }
+
+        if tenant
+            .overage_billed_at
+            .is_some_and(|at| at >= previous.start)
+        {
+            return Ok(());
+        }
+
+        let totals =
+            query::get_usage_totals_for_tenant(&tenant.pubkey, previous.start, previous.end)
+                .await?;
+
+        let mut line_items = Vec::new();
+        for total in totals {
+            let Some(activity) =
+                query::get_latest_relay_activity_before(&total.relay_id, previous.end).await?
+            else {
+                continue;
+            };
+            let Snapshot::Relay { plan: plan_id, .. } = &*activity.snapshot;
+            let plan = query::get_plan(plan_id)?;
+            if plan.amount <= 0 {
+                continue;
+            }
+
+            // Round each meter up to a whole billable unit before subtracting the
+            // allowance, so an allowance used exactly to its limit is free.
+            let used_gb = (total.peak_storage_bytes.max(0) as u64).div_ceil(GB as u64) as i64;
+            let used_hours =
+                (total.participant_seconds.max(0) as u64).div_ceil(SECONDS_PER_HOUR as u64) as i64;
+
+            let metered = [
+                (
+                    "Storage",
+                    "GB",
+                    used_gb,
+                    plan.storage_gb,
+                    plan.storage_overage,
+                ),
+                (
+                    "A/V call",
+                    "participant hours",
+                    used_hours,
+                    plan.av_hours,
+                    plan.av_overage,
+                ),
+            ];
+
+            for (label, unit, used, included, rate) in metered {
+                let over = (used - included).max(0);
+                let amount = over * rate;
+                if amount <= 0 {
+                    continue;
+                }
+
+                line_items.push(InvoiceItem {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    invoice_id: None,
+                    activity_id: None,
+                    tenant_pubkey: tenant.pubkey.clone(),
+                    relay_id: total.relay_id.clone(),
+                    plan_id: plan.id.clone(),
+                    amount,
+                    description: format!(
+                        "{label} overage ({over} {unit} past the {included} included)"
+                    ),
+                    created_at: previous.end,
+                    voided_at: None,
+                });
+            }
+        }
+
+        command::insert_invoice_items_for_overage(&tenant.pubkey, &line_items, &previous).await
     }
 
     // --- Auto-churn ---

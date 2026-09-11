@@ -2,6 +2,7 @@ import { A } from "@solidjs/router"
 import { Show } from "solid-js"
 import { getProfilePicture, type ProfileContent } from "applesauce-core/helpers/profile"
 import { relayStatus, type Relay } from "@/lib/api"
+import { FREE } from "@/lib/plans"
 import ActionsMenu, { ActionsMenuItem } from "@/components/ActionsMenu"
 import CopyNpub from "@/components/CopyNpub"
 
@@ -25,7 +26,7 @@ export function StatusBadge(props: { status: string }) {
 }
 
 export function PlanBadge(props: { planId: string }) {
-  const styles = () => props.planId === "free"
+  const styles = () => props.planId === FREE
     ? "bg-gray-100 text-gray-500 border-gray-200"
     : "bg-blue-50 text-blue-700 border-blue-200"
   return (

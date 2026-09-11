@@ -6,7 +6,7 @@ use crate::billing::BillingPeriod;
 use crate::db::{pool, publish, with_tx};
 use crate::models::{
     Activity, Bolt11, Checkout, Intent, Invoice, InvoiceItem, RELAY_STATUS_ACTIVE,
-    RELAY_STATUS_DELINQUENT, RELAY_STATUS_INACTIVE, Relay, Snapshot, Tenant,
+    RELAY_STATUS_DELINQUENT, RELAY_STATUS_INACTIVE, Relay, Snapshot, Tenant, UsageSample,
 };
 
 // --- Tenants ---
@@ -437,6 +437,62 @@ pub async fn insert_invoice_items_for_renewal(
         }
 
         sqlx::query("UPDATE tenant SET renewed_at = ? WHERE pubkey = ?")
+            .bind(period.start)
+            .bind(tenant_pubkey)
+            .execute(&mut **tx)
+            .await?;
+
+        Ok(())
+    })
+    .await
+}
+
+/// Record one usage reading for a relay.
+pub async fn insert_usage_sample(sample: &UsageSample) -> Result<()> {
+    sqlx::query(
+        "INSERT INTO usage_sample
+            (id, relay_id, tenant_pubkey, storage_bytes, participant_seconds, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)",
+    )
+    .bind(&sample.id)
+    .bind(&sample.relay_id)
+    .bind(&sample.tenant_pubkey)
+    .bind(sample.storage_bytes)
+    .bind(sample.participant_seconds)
+    .bind(sample.created_at)
+    .execute(pool())
+    .await?;
+    Ok(())
+}
+
+/// Insert a closed period's overage items and mark that period settled in one
+/// transaction, so a re-tick can't bill the same usage twice. Unlike renewal this
+/// advances the marker even with nothing to bill: a period that ran inside its
+/// allowance is still a period we're done with.
+pub async fn insert_invoice_items_for_overage(
+    tenant_pubkey: &str,
+    items: &[InvoiceItem],
+    period: &BillingPeriod,
+) -> Result<()> {
+    with_tx(async |tx| {
+        // Re-read the marker inside the transaction so the guard and the writes
+        // commit together — this ensures idempotency so we don't double-invoice.
+        let overage_billed_at = sqlx::query_scalar::<_, Option<i64>>(
+            "SELECT overage_billed_at FROM tenant WHERE pubkey = ?",
+        )
+        .bind(tenant_pubkey)
+        .fetch_one(&mut **tx)
+        .await?;
+
+        if overage_billed_at.is_some_and(|at| at >= period.start) {
+            return Ok(());
+        }
+
+        for item in items {
+            insert_invoice_item_tx(tx, item).await?;
+        }
+
+        sqlx::query("UPDATE tenant SET overage_billed_at = ? WHERE pubkey = ?")
             .bind(period.start)
             .bind(tenant_pubkey)
             .execute(&mut **tx)

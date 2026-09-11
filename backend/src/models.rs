@@ -5,6 +5,19 @@ pub const RELAY_STATUS_ACTIVE: &str = "active";
 pub const RELAY_STATUS_INACTIVE: &str = "inactive";
 pub const RELAY_STATUS_DELINQUENT: &str = "delinquent";
 
+// Plan ids are permanent billing keys: past charges are priced by resolving the id
+// recorded on them, so an id is never reused or repriced. Mirrored in the
+// frontend's plans.ts.
+pub const PLAN_FREE: &str = "free";
+pub const PLAN_BASIC: &str = "basic";
+pub const PLAN_GROWTH: &str = "growth";
+
+/// One gigabyte, decimal — the unit storage is sold in.
+pub const GB: i64 = 1_000_000_000;
+
+/// Seconds in the participant-hour, the unit A/V call time is sold in.
+pub const SECONDS_PER_HOUR: i64 = 60 * 60;
+
 /// Per-resource_type snapshot of a resource's state captured on each activity,
 /// stored as JSON in `activity.snapshot`. Tagged on `resource_type` so the JSON
 /// is self-describing and the variant matches the activity row's column. Add a
@@ -32,6 +45,17 @@ pub struct Plan {
     pub members: Option<i64>,
     pub blossom: bool,
     pub livekit: bool,
+    /// Blossom storage `amount` covers, in GB. A period bills the whole GB its
+    /// peak usage stood above this, at `storage_overage` each.
+    pub storage_gb: i64,
+    /// Minor units per GB per period for storage past `storage_gb`.
+    pub storage_overage: i64,
+    /// A/V participant hours `amount` covers per period, counted per participant — four
+    /// people on a half-hour call spend two. A period bills the whole hours it ran
+    /// above this, at `av_overage` each.
+    pub av_hours: i64,
+    /// Minor units per A/V call hour past `av_hours`.
+    pub av_overage: i64,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -59,6 +83,11 @@ pub struct Tenant {
     /// `period_start` of the most recent period this tenant was renewed for, or
     /// `None` if never renewed. The per-period renewal idempotency marker.
     pub renewed_at: Option<i64>,
+    /// `period_start` of the most recent *closed* period whose metered overage was
+    /// billed, or `None` if none has been. Renewal bills a period forward at its
+    /// start; overage can only be billed once the period it measured is over, so
+    /// it trails `renewed_at` by one period and needs its own marker.
+    pub overage_billed_at: Option<i64>,
     /// When the tenant was churned because an invoice went unpaid past the grace
     /// period; its relays are delinquent while this is set. Cleared when billing
     /// is re-activated (the tenant has new billable activity), at which point the
@@ -217,6 +246,31 @@ pub struct InvoiceItem {
     /// is never billed or carried into a later invoice; `None` while live. Applies
     /// whether or not the item has been claimed onto an invoice.
     pub voided_at: Option<i64>,
+}
+
+/// One reading of a relay's metered usage, polled from zooid on the billing tick.
+/// The two figures are different kinds of number: `storage_bytes` is a level (what
+/// the relay holds at that instant), so a period bills the high-water mark across
+/// its samples; `participant_seconds` is zooid's lifetime clock, summed from the
+/// LiveKit join/leave webhooks, so a period bills the time it advanced — which
+/// stays right across ticks we missed.
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct UsageSample {
+    pub id: String,
+    pub relay_id: String,
+    pub tenant_pubkey: String,
+    pub storage_bytes: i64,
+    pub participant_seconds: i64,
+    pub created_at: i64,
+}
+
+/// One relay's metered usage across a single closed billing period, rolled up from
+/// its samples: storage at its peak, A/V calls as the time their clock advanced.
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct RelayUsageTotals {
+    pub relay_id: String,
+    pub peak_storage_bytes: i64,
+    pub participant_seconds: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]

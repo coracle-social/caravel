@@ -1,7 +1,10 @@
 use anyhow::{Result, anyhow};
 
 use crate::db::pool;
-use crate::models::{Activity, Bolt11, Checkout, Invoice, InvoiceItem, Plan, Relay, Tenant};
+use crate::models::{
+    Activity, Bolt11, Checkout, Invoice, InvoiceItem, PLAN_BASIC, PLAN_FREE, PLAN_GROWTH, Plan,
+    Relay, RelayUsageTotals, Tenant,
+};
 
 fn select_tenant(tail: &str) -> String {
     format!("SELECT * FROM tenant {tail}")
@@ -17,34 +20,51 @@ fn select_activity(tail: &str) -> String {
 
 // --- Plans ---
 
+/// The plan catalog. Paid tiers sell an allowance of storage and A/V participant hours
+/// rather than a cap: usage past it bills per whole unit at the tier's rate, priced
+/// so a relay
+/// that outgrows Basic reaches Growth's price around the point Growth becomes the
+/// cheaper home for it.
 pub fn list_plans() -> Vec<Plan> {
     vec![
         Plan {
-            id: "free".to_string(),
+            id: PLAN_FREE.to_string(),
             name: "Free".to_string(),
             amount: 0,
             hidden: false,
             members: Some(10),
             blossom: false,
             livekit: false,
+            storage_gb: 0,
+            storage_overage: 0,
+            av_hours: 0,
+            av_overage: 0,
         },
         Plan {
-            id: "basic".to_string(),
+            id: PLAN_BASIC.to_string(),
             name: "Basic".to_string(),
             amount: 500,
             hidden: false,
             members: Some(100),
             blossom: true,
             livekit: true,
+            storage_gb: 1,
+            storage_overage: 200,
+            av_hours: 30,
+            av_overage: 10,
         },
         Plan {
-            id: "growth".to_string(),
+            id: PLAN_GROWTH.to_string(),
             name: "Growth".to_string(),
             amount: 2500,
             hidden: false,
             members: None,
             blossom: true,
             livekit: true,
+            storage_gb: 10,
+            storage_overage: 75,
+            av_hours: 300,
+            av_overage: 4,
         },
     ]
 }
@@ -325,5 +345,40 @@ pub async fn get_latest_activity_for_resource_and_type(
     .bind(resource_id)
     .bind(activity_type)
     .fetch_optional(pool())
+    .await?)
+}
+
+// --- Usage ---
+
+/// Every metered relay's usage across one closed period for a tenant. Storage is
+/// the peak of the period's samples; A/V call time is measured from the last sample
+/// *before* the period, so calls between the boundary and the period's first
+/// sample aren't lost — falling back to the period's own floor when the relay has
+/// no earlier reading. Clamped at zero so a clock that restarted (a redeployed
+/// zooid) reads as no usage rather than as a credit.
+pub async fn get_usage_totals_for_tenant(
+    tenant_pubkey: &str,
+    start: i64,
+    end: i64,
+) -> Result<Vec<RelayUsageTotals>> {
+    Ok(sqlx::query_as::<_, RelayUsageTotals>(
+        "SELECT
+           s.relay_id AS relay_id,
+           MAX(s.storage_bytes) AS peak_storage_bytes,
+           MAX(0, MAX(s.participant_seconds) - COALESCE(
+             (SELECT p.participant_seconds FROM usage_sample p
+               WHERE p.relay_id = s.relay_id AND p.created_at < ?
+               ORDER BY p.created_at DESC LIMIT 1),
+             MIN(s.participant_seconds)
+           )) AS participant_seconds
+         FROM usage_sample s
+         WHERE s.tenant_pubkey = ? AND s.created_at >= ? AND s.created_at < ?
+         GROUP BY s.relay_id",
+    )
+    .bind(start)
+    .bind(tenant_pubkey)
+    .bind(start)
+    .bind(end)
+    .fetch_all(pool())
     .await?)
 }

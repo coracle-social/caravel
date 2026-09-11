@@ -433,6 +433,29 @@ pub async fn list_relay_members(relay_id: &str) -> Result<Vec<String>> {
     Ok(parsed.members)
 }
 
+/// One relay's metered usage as zooid reports it. `storage_bytes` is what the
+/// relay's blobs occupy at the moment of the call; `participant_seconds` is a
+/// lifetime clock of time spent in LiveKit rooms, summed across participants from
+/// the join/leave webhooks zooid already receives, so callers bill the time it
+/// advanced over a period rather than its value.
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct RelayUsage {
+    pub storage_bytes: i64,
+    pub participant_seconds: i64,
+}
+
+/// Read a relay's current usage from the zooid API.
+pub async fn get_relay_usage(relay_id: &str) -> Result<RelayUsage> {
+    let response = request(
+        reqwest::Method::GET,
+        &format!("relay/{relay_id}/usage"),
+        None,
+    )
+    .await?;
+
+    Ok(response.json().await?)
+}
+
 /// One reviewable item from a relay: a published event or an uploaded blob,
 /// tagged with the relay (zooid tenant schema, which is our relay id) it came
 /// from. `data` is the raw nostr event for `"event"` items and a blob

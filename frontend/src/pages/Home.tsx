@@ -10,6 +10,7 @@ import PaymentSetup from "@/components/PaymentSetup"
 import Login from "@/views/Login"
 import { createRelayForActiveTenant, resolvePostPaidFlow } from "@/lib/hooks"
 import type { Invoice } from "@/lib/api"
+import { FREE } from "@/lib/plans"
 import { account, PLATFORM_LOGO, PLATFORM_NAME, refetchBilling, setToastMessage } from "@/lib/state"
 import FlotillaLogo from "@/assets/flotilla-logo.svg"
 import NostordLogo from "@/assets/nostord-logo.svg"
@@ -20,12 +21,12 @@ export default function Home() {
   const [showRelayModal, setShowRelayModal] = createSignal(false)
   const [showLoginModal, setShowLoginModal] = createSignal(false)
   const [draftRelay, setDraftRelay] = createSignal<RelayFormValues>()
-  const [initialPlanId, setInitialPlanId] = createSignal<RelayFormValues["plan_id"]>("free")
+  const [initialPlanId, setInitialPlanId] = createSignal<RelayFormValues["plan_id"]>(FREE)
   const [pendingInvoice, setPendingInvoice] = createSignal<Invoice | undefined>()
   const [paymentSetupOpen, setPaymentSetupOpen] = createSignal(false)
   let createdRelayId = ""
 
-  function openRelayModal(planId: RelayFormValues["plan_id"] = "free") {
+  function openRelayModal(planId: RelayFormValues["plan_id"] = FREE) {
     setInitialPlanId(planId)
     setShowRelayModal(true)
   }
@@ -50,7 +51,7 @@ export default function Home() {
     // has no payment method yet, so open the payment dialog here instead of
     // dropping them on the relay page with no prompt (the shared dashboard banner
     // only catches up once they navigate and its billing reads refetch).
-    if (values.plan_id !== "free") {
+    if (values.plan_id !== FREE) {
       void refetchBilling()
       const decision = await resolvePostPaidFlow()
       if (decision.kind === "pay_invoice") {

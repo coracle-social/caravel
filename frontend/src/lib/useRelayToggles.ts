@@ -2,6 +2,7 @@ import { createSignal } from "solid-js"
 import { updateRelayById, deactivateRelayById, purgeRelayById, reactivateRelayById, resolvePostPaidFlow, type Relay } from "@/lib/hooks"
 import { setToastMessage } from "@/lib/state"
 import { applyPlanToRelay, planUpdatePayload, toggleField } from "@/lib/relayPlanFlow"
+import { FREE } from "@/lib/plans"
 import type { Invoice, PlanId } from "@/lib/api"
 
 type RelayResource = {
@@ -97,7 +98,7 @@ export default function useRelayToggles(
       throw e
     }
 
-    if (plan_id === "free") return
+    if (plan_id === FREE) return
 
     // Paid upgrades materialize an open invoice; resolvePostPaidFlow reconciles
     // and decides whether to prompt the tenant to pay it, set up a payment method,
@@ -124,9 +125,9 @@ export default function useRelayToggles(
     onToggleGroups: () => toggle("groups_enabled", true),
     onToggleManagement: () => toggle("management_enabled", true),
     onToggleMembersCanInvite: () => toggle("members_can_invite", true),
-    onToggleMediaStorage: () => toggle("blossom_enabled", relay()?.plan_id !== "free"),
+    onToggleMediaStorage: () => toggle("blossom_enabled", relay()?.plan_id !== FREE),
     onTogglePushNotifications: () => toggle("push_enabled", true),
-    onToggleLivekitSupport: () => toggle("livekit_enabled", relay()?.plan_id !== "free"),
+    onToggleLivekitSupport: () => toggle("livekit_enabled", relay()?.plan_id !== FREE),
   }
 
   return { busy, handleDeactivate, handleReactivate, handlePurge, handleUpdatePlan, pendingInvoice, clearPendingInvoice: () => setPendingInvoice(undefined), pendingPaymentSetup, clearPendingPaymentSetup: () => setPendingPaymentSetup(false), toggles }

@@ -260,6 +260,19 @@ export type ModerationPage = {
   truncated: boolean
 }
 
+// One line of an imported JSONL file the relay could not store.
+export type ImportProblem = {
+  line: number
+  event_id: string
+  message: string
+}
+
+export type ImportResult = {
+  imported: number
+  invalid: number
+  problems?: ImportProblem[]
+}
+
 let authCache: AuthCache | undefined
 
 export async function makeAuth(): Promise<string | undefined> {
@@ -433,6 +446,51 @@ export async function fetchModerationBlob(relayId: string, sha256: string): Prom
   }
 
   return URL.createObjectURL(await response.blob())
+}
+
+// A relay's whole event store as JSONL. Fetched rather than linked because the
+// NIP-98 auth header can't ride on an <a href>; the caller owns the blob.
+export async function exportRelayData(id: string): Promise<Blob> {
+  const auth = await makeAuth()
+  const url = new URL(`/relays/${id}/export`, API_URL).toString()
+
+  const response = await fetch(url, {headers: auth ? {Authorization: auth} : {}})
+
+  if (!response.ok) {
+    throw new ApiError(`Failed to export relay data (${response.status})`, response.status)
+  }
+
+  return response.blob()
+}
+
+// Add the events in a JSONL file to a relay. Each event carries its own
+// signature, so the relay validates them itself and reports what it refused.
+export async function importRelayData(id: string, file: Blob): Promise<ImportResult> {
+  const auth = await makeAuth()
+  const url = new URL(`/relays/${id}/import`, API_URL).toString()
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      ...(auth ? {Authorization: auth} : {}),
+      "Content-Type": "application/x-ndjson",
+    },
+    body: file,
+  })
+
+  if (!response.ok) {
+    let message = `Failed to import relay data (${response.status})`
+    try {
+      const payload = await response.json() as { error?: string }
+      if (payload.error) message = payload.error
+    } catch {
+      // ignore invalid/non-json body
+    }
+    throw new ApiError(message, response.status)
+  }
+
+  const payload = await response.json() as ApiOk<ImportResult>
+  return payload.data
 }
 
 export function reactivateRelay(id: string) {

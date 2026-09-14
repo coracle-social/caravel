@@ -3,7 +3,10 @@ use std::sync::{Arc, LazyLock};
 use anyhow::Result;
 use axum::{
     Json,
+    body::Body,
     extract::{Path, State},
+    http::header,
+    response::IntoResponse,
 };
 use regex::Regex;
 use serde::Deserialize;
@@ -13,8 +16,8 @@ use crate::domains;
 use crate::env;
 use crate::models::{RELAY_STATUS_ACTIVE, RELAY_STATUS_DELINQUENT, RELAY_STATUS_INACTIVE, Relay};
 use crate::web::{
-    ApiError, ApiResult, bad_request, created, internal, map_unique_error, ok, parse_bool_default,
-    unprocessable,
+    ApiError, ApiResult, bad_request, created, internal, map_unique_error, not_found, ok,
+    parse_bool_default, unprocessable,
 };
 use crate::{command, infra, query};
 
@@ -344,6 +347,67 @@ pub async fn purge_relay(
     command::purge_relay(&relay).await.map_err(internal)?;
 
     ok(())
+}
+
+/// Stream the relay's stored events out as a JSONL download. Proxied through
+/// zooid's management API rather than read off the relay itself, which serves
+/// only what a member may see.
+pub async fn export_relay_data(
+    State(api): State<Arc<Api>>,
+    AuthedPubkey(auth): AuthedPubkey,
+    Path(id): Path<String>,
+) -> ApiResult {
+    let relay = api.get_relay_or_404(&id).await?;
+    api.require_admin_or_tenant(&auth, &relay.tenant_pubkey)?;
+
+    if relay.purged_at.is_some() {
+        return Err(bad_request("relay-is-purged", "relay has been purged"));
+    }
+
+    let Some(body) = infra::export_relay_events(&relay.id)
+        .await
+        .map_err(internal)?
+    else {
+        return Err(not_found("relay is not provisioned on the hosting backend"));
+    };
+
+    Ok((
+        [
+            (header::CONTENT_TYPE, "application/x-ndjson".to_string()),
+            (
+                header::CONTENT_DISPOSITION,
+                format!("attachment; filename=\"{}.jsonl\"", relay.subdomain),
+            ),
+        ],
+        body,
+    )
+        .into_response())
+}
+
+/// Store a JSONL dump of events into the relay. The body streams straight
+/// through to zooid, which validates each event and reports the lines it could
+/// not take.
+pub async fn import_relay_data(
+    State(api): State<Arc<Api>>,
+    AuthedPubkey(auth): AuthedPubkey,
+    Path(id): Path<String>,
+    body: Body,
+) -> ApiResult {
+    let relay = api.get_relay_or_404(&id).await?;
+    api.require_admin_or_tenant(&auth, &relay.tenant_pubkey)?;
+
+    if relay.purged_at.is_some() {
+        return Err(bad_request("relay-is-purged", "relay has been purged"));
+    }
+
+    let Some(result) = infra::import_relay_events(&relay.id, body)
+        .await
+        .map_err(internal)?
+    else {
+        return Err(not_found("relay is not provisioned on the hosting backend"));
+    };
+
+    ok(result)
 }
 
 // --- helpers ----------------------------------------------------------------

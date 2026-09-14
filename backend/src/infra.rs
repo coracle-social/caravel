@@ -526,6 +526,70 @@ pub async fn get_relay_blob(relay_id: &str, sha256: &str) -> Result<Option<(Stri
     Ok(Some((content_type, response.bytes().await?.to_vec())))
 }
 
+/// One line of an import stream zooid could not store, as it reports it.
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct ImportProblem {
+    #[serde(default)]
+    pub line: i64,
+    #[serde(default)]
+    pub event_id: String,
+    pub message: String,
+}
+
+/// What an import did. Storing is idempotent on zooid's side, so an event the
+/// relay already held counts as imported and changes nothing.
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct ImportResult {
+    pub imported: i64,
+    pub invalid: i64,
+    #[serde(default)]
+    pub problems: Vec<ImportProblem>,
+}
+
+/// Stream a relay's stored events out of zooid as JSONL. The body is handed
+/// back unread so neither process holds a whole relay in memory; zooid is the
+/// authority on whether it hosts the relay, so a 404 there comes back as
+/// `None`.
+pub async fn export_relay_events(relay_id: &str) -> Result<Option<axum::body::Body>> {
+    let path = format!("relay/{relay_id}/export");
+    let response = send_untimed(&reqwest::Method::GET, &path, None).await?;
+
+    if response.status() == reqwest::StatusCode::NOT_FOUND {
+        return Ok(None);
+    }
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let text = response.text().await.unwrap_or_default();
+        anyhow::bail!("zooid GET {path} returned {status}: {text}");
+    }
+
+    Ok(Some(axum::body::Body::from_stream(response.bytes_stream())))
+}
+
+/// Stream JSONL events into a relay's store on zooid, which validates each line
+/// and reports the ones it could not take.
+pub async fn import_relay_events(
+    relay_id: &str,
+    body: axum::body::Body,
+) -> Result<Option<ImportResult>> {
+    let path = format!("relay/{relay_id}/import");
+    let stream = reqwest::Body::wrap_stream(body.into_data_stream());
+    let response = send_untimed(&reqwest::Method::POST, &path, Some(stream)).await?;
+
+    if response.status() == reqwest::StatusCode::NOT_FOUND {
+        return Ok(None);
+    }
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let text = response.text().await.unwrap_or_default();
+        anyhow::bail!("zooid POST {path} returned {status}: {text}");
+    }
+
+    Ok(Some(response.json().await?))
+}
+
 /// Sends an authenticated request to the zooid API at `path` (relative to
 /// `env.zooid_api_url`). Returns the response on 2xx; bails with the body
 /// text otherwise.
@@ -555,6 +619,45 @@ async fn send(
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(5))
         .build()?;
+
+    let mut req = authed(client, method, path).await?;
+    if let Some(body) = body {
+        req = req.json(body);
+    }
+
+    Ok(req.send().await?)
+}
+
+/// The same call with no overall deadline, for the JSONL import and export
+/// streams: a whole relay's events take as long as they take, and the 5s budget
+/// every other zooid call gets would cut the body off partway through. A read
+/// timeout still bounds a stalled connection.
+async fn send_untimed(
+    method: &reqwest::Method,
+    path: &str,
+    body: Option<reqwest::Body>,
+) -> Result<reqwest::Response> {
+    let client = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(5))
+        .read_timeout(Duration::from_secs(60))
+        .build()?;
+
+    let mut req = authed(client, method, path).await?;
+    if let Some(body) = body {
+        req = req
+            .header("Content-Type", "application/x-ndjson")
+            .body(body);
+    }
+
+    Ok(req.send().await?)
+}
+
+/// Builds a request against the zooid API carrying the NIP-98 header it expects.
+async fn authed(
+    client: reqwest::Client,
+    method: &reqwest::Method,
+    path: &str,
+) -> Result<reqwest::RequestBuilder> {
     let base = env::get().zooid_api_url.trim_end_matches('/');
     let path = path.trim_start_matches('/');
     let url = format!("{base}/{path}");
@@ -563,12 +666,7 @@ async fn send(
     let auth_url = url.split('?').next().unwrap_or(&url);
     let auth = env::get().make_auth(auth_url, method.as_str()).await?;
 
-    let mut req = client
+    Ok(client
         .request(method.clone(), &url)
-        .header("Authorization", auth);
-    if let Some(body) = body {
-        req = req.json(body);
-    }
-
-    Ok(req.send().await?)
+        .header("Authorization", auth))
 }

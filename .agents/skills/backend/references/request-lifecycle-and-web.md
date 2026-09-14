@@ -25,6 +25,8 @@ The check binds signer identity and host affinity only. It does **not** verify t
 - **Success:** `DataResponse { data: T, code: "ok" }`, serialized as `{ "data": ..., "code": "ok" }`. The field is `data`, and `code` is a `&'static str`.
 - **Error:** `ErrorResponse { error: String, code: String }`, serialized as `{ "error": ..., "code": ... }`. The field is `error`, and `code` is an owned `String`.
 
+Three routes opt out of the success envelope entirely, because what they return isn't JSON: `GET /moderation/blob/:relay_id/:sha256` (a blob, under the content type its descriptor recorded) and `GET /relays/:id/export` (a relay's events as `application/x-ndjson`, with a `Content-Disposition` filename so a browser saves it). `POST /relays/:id/import` is the mirror image — its *request* body is JSONL rather than JSON, so it takes an axum `Body` instead of a `Json<T>` extractor and therefore no body-size limit applies to it.
+
 Note the top-level keys differ — `data` on success, `error` on failure — so a client must branch on success-vs-error rather than reading one fixed key. The only HTTP statuses the success builders emit are 200 (`ok`) and 201 (`created`); there is no 204/no-content builder in this file. Source: `web.rs:33-43`.
 
 Success builders return `ApiResult` (= `Result<Response, ApiError>`) already wrapped in `Ok`, so they sit at the tail of a handler with no `Ok(..)`: `res(status, data)`, `ok(data)` (= `res(OK, ..)`), `created(data)` (= `res(CREATED, ..)`). `ApiError` is a boxed `Response` with the status baked in at construction — it carries no separate status field. Source: `web.rs:17-57`.

@@ -53,6 +53,7 @@ type RelayCardHeaderProps = {
   onRequestDeactivate?: () => void
   onRequestReactivate?: () => void
   onRequestManageCustomDomain?: () => void
+  onRequestTransferData?: () => void
   onRequestPurge?: () => void
 }
 
@@ -63,7 +64,7 @@ export default function RelayCardHeader(props: RelayCardHeaderProps) {
   const showMenu = () =>
     r().purged_at == null &&
     (props.editHref || props.onRequestDeactivate || props.onRequestReactivate ||
-      props.onRequestManageCustomDomain || props.onRequestPurge)
+      props.onRequestManageCustomDomain || props.onRequestTransferData || props.onRequestPurge)
 
   return (
     <>
@@ -132,6 +133,16 @@ export default function RelayCardHeader(props: RelayCardHeaderProps) {
                     }}
                   >
                     Manage custom domain
+                  </ActionsMenuItem>
+                </Show>
+                <Show when={props.onRequestTransferData}>
+                  <ActionsMenuItem
+                    onClick={() => {
+                      close()
+                      props.onRequestTransferData?.()
+                    }}
+                  >
+                    Import / export data
                   </ActionsMenuItem>
                 </Show>
                 <Show when={r().status === "active" && props.onRequestDeactivate}>

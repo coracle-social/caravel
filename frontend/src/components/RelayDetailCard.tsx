@@ -2,6 +2,7 @@ import { Show, createSignal } from "solid-js"
 import type { Relay, PlanId } from "@/lib/api"
 import ConfirmDialog from "@/components/ConfirmDialog"
 import CustomDomainModal from "@/components/relay/CustomDomainModal"
+import DataTransferModal from "@/components/relay/DataTransferModal"
 import Field from "@/components/Field"
 import PricingTable from "@/components/PricingTable"
 import ToggleButton from "@/components/ToggleButton"
@@ -70,6 +71,7 @@ export default function RelayDetailCard(props: RelayDetailCardProps) {
   const [planId, setPlanId] = createSignal<PlanId>(props.relay.plan_id)
   const [pendingAction, setPendingAction] = createSignal<"deactivate" | "reactivate" | "purge" | null>(null)
   const [customDomainModalOpen, setCustomDomainModalOpen] = createSignal(false)
+  const [dataTransferModalOpen, setDataTransferModalOpen] = createSignal(false)
   const { saving: cdSaving, verifying: cdVerifying, error: cdError, saveDomain, verifyDomain } =
     useCustomDomain(() => props.relay.id, props.mutateRelay ?? (() => {}))
   const cdVerifyingVisible = useMinLoading(cdVerifying)
@@ -161,6 +163,7 @@ export default function RelayDetailCard(props: RelayDetailCardProps) {
         onRequestDeactivate={props.onDeactivate ? () => openActionDialog("deactivate") : undefined}
         onRequestReactivate={props.onReactivate ? () => openActionDialog("reactivate") : undefined}
         onRequestManageCustomDomain={() => setCustomDomainModalOpen(true)}
+        onRequestTransferData={() => setDataTransferModalOpen(true)}
         onRequestPurge={props.onPurge ? () => openActionDialog("purge") : undefined}
       />
 
@@ -225,6 +228,12 @@ export default function RelayDetailCard(props: RelayDetailCardProps) {
         saving={cdSaving}
         error={cdError}
         onSave={saveDomain}
+      />
+
+      <DataTransferModal
+        open={dataTransferModalOpen()}
+        onClose={() => setDataTransferModalOpen(false)}
+        relay={r}
       />
 
       <hr class="border-gray-200" />

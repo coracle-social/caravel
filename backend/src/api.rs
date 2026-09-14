@@ -40,8 +40,9 @@ use crate::routes::invoices::{
 use crate::routes::moderation::{get_moderation_blob, list_moderation};
 use crate::routes::plans::{get_plan, list_plans};
 use crate::routes::relays::{
-    create_relay, deactivate_relay, get_relay, list_relay_activity, list_relay_members,
-    list_relays, purge_relay, reactivate_relay, update_relay,
+    create_relay, deactivate_relay, export_relay_data, get_relay, import_relay_data,
+    list_relay_activity, list_relay_members, list_relays, purge_relay, reactivate_relay,
+    update_relay,
 };
 use crate::routes::tenants::{
     ban_tenant, create_stripe_session, create_tenant, get_draft_invoice, get_tenant,
@@ -97,6 +98,8 @@ impl Api {
             .route("/relays/:id/deactivate", post(deactivate_relay))
             .route("/relays/:id/reactivate", post(reactivate_relay))
             .route("/relays/:id/purge", post(purge_relay))
+            .route("/relays/:id/export", get(export_relay_data))
+            .route("/relays/:id/import", post(import_relay_data))
             .route("/moderation", get(list_moderation))
             .route(
                 "/moderation/blob/:relay_id/:sha256",

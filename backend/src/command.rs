@@ -3,6 +3,7 @@ use sqlx::types::Json;
 use sqlx::{Sqlite, Transaction};
 
 use crate::billing::BillingPeriod;
+use crate::clock;
 use crate::db::{pool, publish, with_tx};
 use crate::models::{
     Activity, Bolt11, Checkout, Intent, Invoice, InvoiceItem, RELAY_STATUS_ACTIVE,
@@ -151,7 +152,7 @@ pub async fn reactivate_tenant(tenant_pubkey: &str, relays: &[Relay]) -> Result<
 /// like any other credit if the tenant is ever unbanned). The relay purges are
 /// published after commit so the infra reactor deletes them from zooid.
 pub async fn ban_tenant(tenant_pubkey: &str, relays: &[Relay]) -> Result<()> {
-    let now = chrono::Utc::now().timestamp();
+    let now = clock::now();
 
     let activities = with_tx(async |tx| {
         sqlx::query("UPDATE tenant SET banned_at = ? WHERE pubkey = ?")
@@ -202,7 +203,7 @@ pub async fn unban_tenant(tenant_pubkey: &str) -> Result<()> {
 // --- Relays ---
 
 pub async fn create_relay(relay: &Relay) -> Result<()> {
-    let created_at = chrono::Utc::now().timestamp();
+    let created_at = clock::now();
     let activity = with_tx(async |tx| {
         sqlx::query(
             "INSERT INTO relay (
@@ -393,7 +394,7 @@ pub async fn insert_invoice_item_for_activity(
     invoice_item: &InvoiceItem,
     activity_id: &str,
 ) -> Result<()> {
-    let now = chrono::Utc::now().timestamp();
+    let now = clock::now();
 
     with_tx(async |tx| {
         // Claim the activity first. If a concurrent reconcile pass already billed
@@ -506,7 +507,7 @@ pub async fn insert_invoice_items_for_overage(
 /// Mark an activity billed without a line item — for activities that produce no
 /// charge (e.g. free-plan changes), so a recovery pass doesn't re-scan them.
 pub async fn mark_activity_billed(activity_id: &str) -> Result<()> {
-    let now = chrono::Utc::now().timestamp();
+    let now = clock::now();
 
     with_tx(async |tx| {
         mark_activity_billed_tx(tx, activity_id, now).await?;
@@ -625,7 +626,7 @@ pub async fn settle_invoice_via_checkout(
 /// Stamp an invoice with the time its manual-payment reminder DM was sent, so
 /// dunning sends that DM once instead of on every hourly poll.
 pub async fn mark_invoice_notified(invoice_id: &str) -> Result<()> {
-    let notified_at = chrono::Utc::now().timestamp();
+    let notified_at = clock::now();
 
     sqlx::query("UPDATE invoice SET notified_at = ? WHERE id = ?")
         .bind(notified_at)
@@ -644,7 +645,7 @@ pub async fn insert_bolt11(
     expires_at: i64,
 ) -> Result<Option<Bolt11>> {
     let id = uuid::Uuid::new_v4().to_string();
-    let created_at = chrono::Utc::now().timestamp();
+    let created_at = clock::now();
 
     Ok(sqlx::query_as::<_, Bolt11>(
         "INSERT INTO bolt11 (id, invoice_id, lnbc, msats, created_at, expires_at)
@@ -672,7 +673,7 @@ pub async fn insert_checkout(
     expires_at: i64,
 ) -> Result<Option<Checkout>> {
     let id = uuid::Uuid::new_v4().to_string();
-    let created_at = chrono::Utc::now().timestamp();
+    let created_at = clock::now();
 
     Ok(sqlx::query_as::<_, Checkout>(
         "INSERT INTO checkout (id, invoice_id, session_id, url, created_at, expires_at)
@@ -709,7 +710,7 @@ async fn insert_activity_tx(
     };
 
     let id = uuid::Uuid::new_v4().to_string();
-    let created_at = chrono::Utc::now().timestamp();
+    let created_at = clock::now();
     let snapshot = Json(snapshot);
 
     sqlx::query(
@@ -817,7 +818,7 @@ async fn set_relay_status_tx(
 /// Mark a relay purged inside an enclosing transaction, returning the
 /// `purge_relay` activity for the caller to publish after commit.
 async fn purge_relay_tx(tx: &mut Transaction<'_, Sqlite>, relay: &Relay) -> Result<Activity> {
-    let now = chrono::Utc::now().timestamp();
+    let now = clock::now();
 
     sqlx::query("UPDATE relay SET purged_at = ?, synced = 0, sync_error = '' WHERE id = ?")
         .bind(now)
@@ -840,7 +841,7 @@ async fn insert_invoice_tx(
     amount: i64,
     comped: bool,
 ) -> Result<Invoice> {
-    let now = chrono::Utc::now().timestamp();
+    let now = clock::now();
     let invoice_id = uuid::Uuid::new_v4().to_string();
     let (paid_at, method) = if comped {
         (Some(now), Some("comp"))
@@ -897,7 +898,7 @@ async fn mark_invoice_paid_tx(
     invoice_id: &str,
     method: &str,
 ) -> Result<()> {
-    let paid_at = chrono::Utc::now().timestamp();
+    let paid_at = clock::now();
 
     sqlx::query(
         "UPDATE invoice SET method = ?, paid_at = ?
@@ -921,7 +922,7 @@ async fn void_open_invoices_tx(
     tx: &mut Transaction<'_, Sqlite>,
     tenant_pubkey: &str,
 ) -> Result<()> {
-    let voided_at = chrono::Utc::now().timestamp();
+    let voided_at = clock::now();
 
     sqlx::query(
         "UPDATE invoice SET voided_at = ?
@@ -952,7 +953,7 @@ async fn void_open_invoices_tx(
 
 /// Stamp a bolt11 as settled but don't overwrite an existing settled_at.
 async fn mark_bolt11_settled_tx(tx: &mut Transaction<'_, Sqlite>, bolt11_id: &str) -> Result<()> {
-    let settled_at = chrono::Utc::now().timestamp();
+    let settled_at = clock::now();
 
     sqlx::query("UPDATE bolt11 SET settled_at = ? WHERE id = ? AND settled_at IS NULL")
         .bind(settled_at)
@@ -970,7 +971,7 @@ async fn mark_checkout_settled_tx(
     tx: &mut Transaction<'_, Sqlite>,
     checkout_id: &str,
 ) -> Result<()> {
-    let settled_at = chrono::Utc::now().timestamp();
+    let settled_at = clock::now();
 
     sqlx::query("UPDATE checkout SET settled_at = ? WHERE id = ? AND settled_at IS NULL")
         .bind(settled_at)
@@ -994,7 +995,7 @@ async fn mark_checkout_settled_tx(
 /// concurrent reconciles converge on one intent instead of two.
 pub async fn ensure_pending_intent(invoice_id: &str, payment_method_id: &str) -> Result<Intent> {
     let id = uuid::Uuid::new_v4().to_string();
-    let created_at = chrono::Utc::now().timestamp();
+    let created_at = clock::now();
 
     Ok(sqlx::query_as::<_, Intent>(
         "INSERT INTO intent (id, invoice_id, payment_method_id, created_at)
@@ -1019,7 +1020,7 @@ async fn mark_intent_settled_tx(
     intent_id: &str,
     payment_intent_id: &str,
 ) -> Result<()> {
-    let settled_at = chrono::Utc::now().timestamp();
+    let settled_at = clock::now();
 
     sqlx::query(
         "UPDATE intent SET settled_at = ?, payment_intent_id = ?

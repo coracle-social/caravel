@@ -9,6 +9,7 @@ Everything lives flat under `backend/src`, one job per module. `backend` is a du
 - **`api`** — the router, the `Api` service container, the authorization helpers (`require_*`, `get_*_or_404`, `is_admin`), and the `AuthedPubkey` NIP-98 extractor.
 - **`billing`** — the orchestrator: it composes the integration leaves against the DB to reconcile activity into invoice items, renew subscriptions, and collect payment.
 - **`bitcoin`** — the Coinbase fiat↔msats conversion leaf.
+- **`clock`** — the source of the current time for every timestamp the backend writes; tests pin it.
 - **`command`** — all writes, as free async fns: single-statement writes run directly on `db::pool()`, while multi-step writes run inside `db::with_tx`.
 - **`db`** — the global `SqlitePool`, the activity broadcast channel, and `with_tx`.
 - **`env`** — the config singleton.
@@ -31,7 +32,7 @@ The order is strict, and each service is built from the ones before it:
 2. tracing setup
 3. `env::init()` — loads and validates all config, panicking on any missing var
 4. `db::init().await` — normalizes the sqlite URL, opens the pool, sets WAL, runs migrations, and installs the broadcast channel
-5. `Robot::new().await` — builds the Nostr identity (and publishes it; see the integrations reference)
+5. `Robot::new()`, then `robot.publish_identity().await` to announce the robot's Nostr identity (see the integrations reference)
 6. `Stripe::new()`
 7. `Billing::new(robot.clone())`
 8. `Api::new(billing, stripe, robot)`
@@ -55,7 +56,7 @@ Two concrete traces:
 
 ## The test-target note
 
-`lib.rs` re-exports every module `pub` solely for an integration-test target that does not exist yet — there is no `backend/tests` dir — so nothing currently consumes those re-exports. If you add an integration-test crate, this is the surface it reads (`lib.rs:1-14`).
+`lib.rs` re-exports every module `pub` for the integration tests under `backend/tests`, its only consumer. Because `main.rs` declares its own private copy of each module, a `pub` fn that only tests call is unused in the binary build and trips `dead_code`; `clock::pin` and `clock::release` carry `#[allow(dead_code)]` for this (`lib.rs`, `clock.rs`).
 
 ## Sources
 
@@ -63,4 +64,4 @@ Two concrete traces:
 - `main()` bootstrap and spawn order — `backend/src/main.rs:27-67`
 - layering traces — `backend/src/routes/tenants.rs:76-109`, `backend/src/routes/invoices.rs:35-60`
 - router assembly — `backend/src/api.rs:66-99`
-- test-target note — `backend/src/lib.rs:1-14`
+- test-target note — `backend/src/lib.rs`, `backend/src/clock.rs`, `backend/tests/common/mod.rs`

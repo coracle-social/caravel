@@ -4,14 +4,13 @@ use axum::{
     Json,
     extract::{Path, Query, State},
 };
-use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
 use crate::api::{Api, AuthedPubkey};
 use crate::billing::BillingPeriod;
 use crate::models::{Invoice, Tenant};
 use crate::web::{ApiResult, bad_request, internal, map_unique_error, ok};
-use crate::{command, env, query};
+use crate::{clock, command, env, query};
 
 #[derive(Serialize)]
 pub struct TenantResponse {
@@ -117,7 +116,7 @@ pub async fn create_tenant(
     let tenant = Tenant {
         pubkey: pubkey.clone(),
         return_url,
-        created_at: Utc::now().timestamp(),
+        created_at: clock::now(),
         stripe_customer_id,
         ..Default::default()
     };
@@ -290,7 +289,7 @@ pub async fn get_draft_invoice(
                     tenant_pubkey: tenant.pubkey,
                     period_start: period.start,
                     period_end: period.end,
-                    created_at: Utc::now().timestamp(),
+                    created_at: clock::now(),
                     paid_at: None,
                     voided_at: None,
                     notified_at: None,

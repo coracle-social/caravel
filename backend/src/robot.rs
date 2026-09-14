@@ -10,7 +10,7 @@ use crate::env;
 /// The service's Nostr identity: it publishes the robot's profile and relay
 /// lists and sends encrypted direct messages to tenants, caching recipients'
 /// relay lists between sends.
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct Robot {
     outbox_cache: std::sync::Arc<Mutex<HashMap<String, CacheEntry>>>,
     dm_cache: std::sync::Arc<Mutex<HashMap<String, CacheEntry>>>,
@@ -23,15 +23,10 @@ struct CacheEntry {
 }
 
 impl Robot {
-    /// Build the robot and publish its Nostr identity (profile and relay lists).
-    pub async fn new() -> Result<Self> {
-        let robot = Self {
-            outbox_cache: std::sync::Arc::new(Mutex::new(HashMap::new())),
-            dm_cache: std::sync::Arc::new(Mutex::new(HashMap::new())),
-        };
-
-        robot.publish_identity().await?;
-        Ok(robot)
+    /// Build the robot. Does no I/O; call [`Robot::publish_identity`] to announce
+    /// it on Nostr before relying on it to send DMs.
+    pub fn new() -> Self {
+        Self::default()
     }
 
     async fn make_client(&self, relays: &[String]) -> Result<Client> {
@@ -43,7 +38,9 @@ impl Robot {
         Ok(client)
     }
 
-    async fn publish_identity(&self) -> Result<()> {
+    /// Publish the robot's profile, outbox relays, and messaging relays, so
+    /// tenants' clients can find and trust the DMs it sends.
+    pub async fn publish_identity(&self) -> Result<()> {
         let mut metadata = Metadata::new();
         if !env::get().robot_name.is_empty() {
             metadata = metadata.name(&env::get().robot_name);

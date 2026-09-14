@@ -4,7 +4,7 @@ A multi-tenant platform for hosting Nostr community relays, built on top of [zoo
 
 ## Deployment
 
-Caravel ships as a single Docker image, built from the repository-root [`Dockerfile`](./Dockerfile) and published by [`.gitea/workflows/docker-publish.yml`](./.gitea/workflows/docker-publish.yml) as `gitea.coracle.social/coracle/caravel`. One container runs both services: the backend API on port `2892` and the frontend on port `3000`.
+Caravel ships as a single Docker image, built from the repository-root [`Dockerfile`](./Dockerfile) and published as `gitea.coracle.social/coracle/caravel` by [`.gitea/workflows/ci.yml`](./.gitea/workflows/ci.yml) on each push to `master` that passes CI. One container runs both services: the backend API on port `2892` and the frontend on port `3000`.
 
 Both the backend and the frontend are compiled into the image at build time. The frontend is built with placeholder config that the entrypoint replaces with the real values when the container starts, so one image can be deployed with any configuration — no rebuild required.
 

@@ -22,7 +22,7 @@ Internalize the actual shape before reaching for defaults, because the wrong def
 
 ## The module map and where new code goes
 
-The module map is flat under `backend/src` — one job per module: `api`, `billing`, `bitcoin`, `command`, `db`, `env`, `infra`, `models`, `query`, `robot`, `routes`, `stripe`, `wallet`, `web`. `backend` is a dual library+binary crate, so this same set of modules is declared in two roots: `lib.rs` declares them as `pub mod` (the library root, the public/canonical declaration) and `main.rs` re-declares them as private `mod` for the binary entry point (`lib.rs:1-14`, `main.rs:1-14`).
+The module map is flat under `backend/src` — one job per module: `api`, `billing`, `bitcoin`, `clock`, `command`, `db`, `env`, `infra`, `models`, `query`, `robot`, `routes`, `stripe`, `wallet`, `web`. `backend` is a dual library+binary crate, so this same set of modules is declared in two roots: `lib.rs` declares them as `pub mod` (the library root, the public/canonical declaration) and `main.rs` re-declares them as private `mod` for the binary entry point (`lib.rs:1-14`, `main.rs:1-14`).
 
 The layering, so you know the call direction: a route handler performs authorization via `Api` helpers (`require_admin` / `require_admin_or_tenant` / `require_tenant`) when needed, then calls `query` (reads) / `command` (writes) / `billing` (orchestration), which call `db`. The integration leaves (`stripe`/`wallet`/`bitcoin`/`robot`) are composed in two places: `billing.rs` holds its own `stripe`/`wallet`/`robot` for the reconciliation loop, while `Api` holds `stripe` and `robot` that route handlers invoke *directly* (e.g. `create_tenant` calls `api.robot.fetch_nostr_name` and `api.stripe.create_customer`; `create_stripe_session` calls `api.stripe.create_portal_session`) — so the leaves are not composed exclusively by billing (`routes/tenants.rs:76-94,263-280`, `billing.rs:25-33`).
 
@@ -65,7 +65,9 @@ The core idiom is the **activity log plus commit-then-publish**: a mutation reco
 
 Billing-lifecycle entities model state as **nullable timestamp markers, not status enums**: an invoice is open while `paid_at` and `voided_at` are both null, a tenant is churned once `churned_at` is set, a bolt11 is settled once `settled_at` is set. Filter on the timestamps; these billing tables have no status column. Relay status is the one exception — a free-form `TEXT` column (active/inactive/delinquent) with no `CHECK` and no Rust enum, guarded only by the `RELAY_STATUS_*` consts and filtered/branched on throughout the relay code (`models.rs:4-6,54-60,120-142`, `migrations/0001_init.sql:32,48-60`).
 
-Two cross-cutting gotchas worth stating inline: boolean-ish columns are stored and typed as `i64` 0/1 (`policy_public_join`, the `*_enabled` flags, `synced`), not Rust `bool` — compare against 0/1; and plans are **not** a DB table (`list_plans`/`get_plan` are hardcoded, synchronous in-memory data), so adding a plan is a code edit, not a migration (`models.rs:86-94`, `query.rs:20-54`).
+**Read the time through `clock::now()`, never the wall clock.** Every timestamp the backend writes goes through it, and the e2e tests pin it. A direct `chrono::Utc::now()` escapes the pinned clock without any error (`clock.rs`).
+
+Two more cross-cutting gotchas: boolean-ish columns are stored and typed as `i64` 0/1 (`policy_public_join`, the `*_enabled` flags, `synced`), not Rust `bool` — compare against 0/1; and plans are **not** a DB table (`list_plans`/`get_plan` are hardcoded, synchronous in-memory data), so adding a plan is a code edit, not a migration (`models.rs:86-94`, `query.rs:20-54`).
 
 The per-table read helpers, the `Snapshot` enum, the strict-`<` historical lookups, the schema-squash migration rule, and the FK naming convention are in [references/data-layer-and-schema.md](references/data-layer-and-schema.md).
 
@@ -112,13 +114,21 @@ The full variable surface, the `DATABASE_URL`/`CARGO_MANIFEST_DIR` rewrite, and 
 
 ## Building and verifying a change
 
-The `justfile` is the canonical task runner; backend recipes `cd` into `backend/` and run one cargo command. The minimal diff-safe gate for a backend edit is `just build-backend` (`cargo build`) plus `just lint-backend` (`cargo clippy -- -D warnings`, where every warning is a hard error), plus `just test-backend` if the touched area has tests (`justfile:17-30`).
+The `justfile` is the canonical task runner; backend recipes `cd` into `backend/` and run one cargo command. The minimal diff-safe gate for a backend edit is `just build-backend` (`cargo build`) plus `just lint-backend` (`cargo clippy --all-targets -- -D warnings`, where every warning is a hard error), plus `just test-backend` if the touched area has tests (`justfile:17-30`). Fix warnings in code you touch rather than churning unrelated code to silence them.
 
-**For a backend-only change prefer the backend-scoped recipes (`just fmt-backend lint-backend build-backend test-backend`) over a full `just check`.** `just check` also runs against the frontend — `build` is `build-backend build-frontend` — so it compiles the frontend even for a backend-only edit. The backend crate is currently both fmt-clean (`cargo fmt --check` exits 0) and clippy-clean (`cargo clippy -- -D warnings` exits 0), so running fmt is fine; verify fmt state with `cargo fmt --check` rather than assuming drift (`justfile:39,43`).
+**For a backend-only change prefer the backend-scoped recipes (`just fmt-backend lint-backend build-backend test-backend`) over a full `just check`.** `just check` also runs against the frontend — `build` is `build-backend build-frontend` — so it compiles the frontend even for a backend-only edit (`justfile:39,43`).
 
-There are currently **zero tests** in the backend — no `#[cfg(test)]`/`#[tokio::test]` under `backend/src`, no `tests/` dir — so `cargo test` and `cargo test api::tests::` both pass trivially with 0 tests run. A green `cargo test` does *not* mean your change is exercised. The scaffolding exists (the `tower`/`util` dev-dep for `ServiceExt::oneshot`, the `api` module path the `test-backend-api` filter expects), so new behavior should add tests under `api::tests::` and drive the `Router` via tower's `oneshot` (`justfile:26-27`, `Cargo.toml:29-30`).
+CI (`.gitea/workflows/ci.yml`) runs `cargo fmt --check`, the same clippy command as `just lint-backend`, and `cargo test --locked` on every pull request and push to `master`. It pins Rust 1.94, the toolchain the Dockerfile builds production with. Your local toolchain may be newer, so code that uses a newer API compiles locally and fails in CI. It also builds the frontend, and a separate job publishes the Docker image only for a push to `master` after the backend and frontend checks pass.
 
-`lint-backend` runs `cargo clippy -- -D warnings`, where every warning is a hard error; the crate currently lints clean, so keep your additions warning-free rather than churning unrelated code to silence nits (`justfile:20-21`).
+The backend's tests are end-to-end billing scenarios in `backend/tests/billing.rs`. Each one replays a tenant across several billing periods against a real, migrated SQLite database, with the clock pinned. The only other tests are unit tests for `SERVER_ALLOW_ORIGINS` matching in `env.rs`, and there are no route-level tests.
+
+The scenarios call `command` and `billing` directly because `POST /tenants`, which every scenario would start with, calls Stripe. Route-level behavior (auth, validation, the response envelope) belongs in tests under `api::tests`, which `just test-backend-api` runs. Those tests drive the `Router` through tower's `oneshot`, using the `tower`/`util` dev-dependency.
+
+Scenarios use the harness in `backend/tests/common/mod.rs`, and follow three rules:
+
+- **Wrap each test in `run(...)`, not `#[tokio::test]`.** The database pool is a process-wide global that sqlx binds to the runtime that opened it, so every test shares one runtime. Tests run one at a time, because the pinned clock is global too.
+- **Pay the invoices.** An open invoice churns its tenant seven days later, which pauses their relays and voids their credits. Use `reconcile_and_pay`, and plain `reconcile` only in scenarios about not paying.
+- **Write expected amounts out with their derivation** rather than recomputing them through the proration code, so that a change to that code fails a test.
 
 ## House style (brief)
 

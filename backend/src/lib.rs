@@ -1,6 +1,7 @@
 pub mod api;
 pub mod billing;
 pub mod bitcoin;
+pub mod clock;
 pub mod command;
 pub mod db;
 pub mod domains;

@@ -2,6 +2,7 @@ use anyhow::{Result, anyhow};
 use std::time::Duration;
 
 use crate::bitcoin;
+use crate::clock;
 use crate::command;
 use crate::env;
 use crate::infra;
@@ -358,7 +359,7 @@ impl Billing {
             }
         };
 
-        let now = chrono::Utc::now().timestamp();
+        let now = clock::now();
         for relay in relays {
             if relay.purged_at.is_some() || relay.status != RELAY_STATUS_ACTIVE {
                 continue;
@@ -496,7 +497,7 @@ impl Billing {
             return Ok(false);
         };
 
-        let now = chrono::Utc::now().timestamp();
+        let now = clock::now();
         if now - oldest.created_at < GRACE_PERIOD_SECS {
             return Ok(false);
         }
@@ -667,7 +668,7 @@ impl Billing {
     }
 
     async fn attempt_payment_using_dm(&self, tenant: &Tenant, invoice: &Invoice) -> Result<()> {
-        let now = chrono::Utc::now().timestamp();
+        let now = clock::now();
 
         // If the invoice was just generated, give the user a chance to check the dashboard before nagging them.
         if now - invoice.created_at < FRESH_INVOICE_DM_GRACE_SECS {
@@ -722,7 +723,7 @@ impl Billing {
     // --- Bolt11 utils ---
 
     pub async fn ensure_bolt11_for_invoice(&self, invoice: &Invoice) -> Result<Bolt11> {
-        let now = chrono::Utc::now().timestamp();
+        let now = clock::now();
 
         // A resolved (paid or voided) invoice must never mint a new payable
         // bolt11; return the existing one if present, otherwise refuse.
@@ -766,7 +767,7 @@ impl Billing {
         invoice: &Invoice,
         return_url: &str,
     ) -> Result<Checkout> {
-        let now = chrono::Utc::now().timestamp();
+        let now = clock::now();
 
         // Never open a Checkout for an invoice that's already resolved.
         if invoice.paid_at.is_some() || invoice.voided_at.is_some() {
@@ -845,10 +846,10 @@ pub struct BillingPeriod {
 }
 
 impl BillingPeriod {
-    /// The period containing `chrono::Utc::now()` for `tenant`. `None` when the
+    /// The period containing [`clock::now`] for `tenant`. `None` when the
     /// tenant has no `billing_anchor` yet — i.e. no billable activity has been seen.
     pub fn current(tenant: &Tenant) -> Option<Self> {
-        Self::at(tenant, chrono::Utc::now().timestamp())
+        Self::at(tenant, clock::now())
     }
 
     /// The period containing `at` for `tenant`. `None` when the tenant has no

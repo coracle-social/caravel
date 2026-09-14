@@ -1,6 +1,7 @@
 mod api;
 mod billing;
 mod bitcoin;
+mod clock;
 mod command;
 mod db;
 mod domains;
@@ -37,7 +38,8 @@ async fn main() -> Result<()> {
 
     db::init().await?;
 
-    let robot = Robot::new().await?;
+    let robot = Robot::new();
+    robot.publish_identity().await?;
     let stripe = Stripe::new();
     let billing = Billing::new(robot.clone());
     let api = Api::new(billing.clone(), stripe, robot);

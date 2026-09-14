@@ -18,7 +18,7 @@ fmt-backend:
   cd backend && cargo fmt
 
 lint-backend:
-  cd backend && cargo clippy -- -D warnings
+  cd backend && cargo clippy --all-targets -- -D warnings
 
 test-backend:
   cd backend && cargo test

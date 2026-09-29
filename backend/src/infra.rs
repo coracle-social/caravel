@@ -458,13 +458,14 @@ pub async fn get_relay_usage(relay_id: &str) -> Result<RelayUsage> {
 
 /// One reviewable item from a relay: a published event or an uploaded blob,
 /// tagged with the relay (zooid tenant schema, which is our relay id) it came
-/// from. `data` is the raw nostr event for `"event"` items and a blob
-/// descriptor for `"upload"` items.
+/// from and `seen_at`, when that relay first stored it. `data` is the raw nostr
+/// event for `"event"` items and a blob descriptor for `"upload"` items.
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct ModerationItem {
     #[serde(rename = "type")]
     pub item_type: String,
     pub tenant: String,
+    pub seen_at: i64,
     pub data: serde_json::Value,
 }
 
@@ -476,8 +477,9 @@ pub struct ModerationPage {
     pub truncated: bool,
 }
 
-/// Fetch the newest events and uploads across every relay within a window from
-/// the zooid API. Both bounds are optional inclusive unix timestamps.
+/// Fetch the most recently seen events and uploads across every relay within a
+/// window of `seen_at` from the zooid API. Both bounds are optional inclusive
+/// unix timestamps.
 pub async fn list_moderation(since: Option<i64>, until: Option<i64>) -> Result<ModerationPage> {
     let bounds: Vec<String> = [("since", since), ("until", until)]
         .into_iter()

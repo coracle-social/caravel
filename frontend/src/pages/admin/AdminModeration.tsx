@@ -80,12 +80,12 @@ export default function AdminModeration() {
     try {
       const loaded = items()
       const oldest = loaded[loaded.length - 1]
-      const page = await listModeration({since: since(), until: oldest?.data.created_at})
+      const page = await listModeration({since: since(), until: oldest?.seen_at})
 
       if (current !== generation) return
 
-      // `until` is inclusive and created_at only has second resolution, so a
-      // page boundary repeats every item sharing that second.
+      // `until` is inclusive and seen_at only has second resolution, so a page
+      // boundary repeats every item sharing that second.
       const seen = new Set(loaded.map(itemKey))
       const fresh = page.items.filter(item => !seen.has(itemKey(item)))
 

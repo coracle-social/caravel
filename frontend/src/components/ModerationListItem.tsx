@@ -134,7 +134,7 @@ export default function ModerationListItem(props: ModerationListItemProps) {
           <span class="inline-flex items-center rounded-full border border-gray-200 bg-gray-50 px-2.5 py-0.5 text-xs font-medium text-gray-700">
             {label()}
           </span>
-          <span class="text-xs text-gray-500">{formatTimeAgo(props.item.data.created_at)}</span>
+          <span class="text-xs text-gray-500">{formatTimeAgo(props.item.seen_at)}</span>
         </div>
       </div>
 

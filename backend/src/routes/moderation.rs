@@ -15,10 +15,10 @@ pub struct ListModerationQuery {
     pub until: Option<i64>,
 }
 
-/// The newest events and uploads across every relay within a window, newest
-/// first. Page backwards inside the window by moving `until` down to the
-/// `created_at` of the last item; items sharing a second can repeat across
-/// pages, so callers dedupe.
+/// The most recently seen events and uploads across every relay within a window
+/// of `seen_at`, newest first. Page backwards inside the window by moving
+/// `until` down to the `seen_at` of the last item; items sharing a second can
+/// repeat across pages, so callers dedupe.
 pub async fn list_moderation(
     State(api): State<Arc<Api>>,
     AuthedPubkey(auth): AuthedPubkey,

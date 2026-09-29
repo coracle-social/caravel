@@ -250,10 +250,11 @@ export type Upload = {
 }
 
 // One reviewable item from a relay. `tenant` is the relay id it was published
-// to, so it links straight to that relay's admin page.
+// to, so it links straight to that relay's admin page, and `seen_at` is when
+// that relay first stored it.
 export type ModerationItem =
-  | { type: "event"; tenant: string; data: NostrEvent }
-  | { type: "upload"; tenant: string; data: Upload }
+  | { type: "event"; tenant: string; seen_at: number; data: NostrEvent }
+  | { type: "upload"; tenant: string; seen_at: number; data: Upload }
 
 export type ModerationPage = {
   items: ModerationItem[]
@@ -417,10 +418,10 @@ export function listRelayActivity(id: string) {
   return callApi<undefined, { activity: Activity[] }>("GET", `/relays/${id}/activity`)
 }
 
-// A page of the newest events and uploads across every relay within a window,
-// newest first. Page backwards inside a window by moving `until` down to the
-// created_at of the last item received; `truncated` reports whether the window
-// still holds more than what came back.
+// A page of the most recently seen events and uploads across every relay within
+// a window of seen_at, newest first. Page backwards inside a window by moving
+// `until` down to the seen_at of the last item received; `truncated` reports
+// whether the window still holds more than what came back.
 export function listModeration(params: { since?: number; until?: number } = {}) {
   const query = new URLSearchParams()
   if (params.since !== undefined) query.set("since", String(params.since))

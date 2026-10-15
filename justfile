@@ -2,6 +2,10 @@
 pg:
   podman start caravel-pg 2>/dev/null || podman run -d --name caravel-pg -e POSTGRES_USER=caravel -e POSTGRES_PASSWORD=caravel -e POSTGRES_DB=caravel -p 127.0.0.1:55433:5432 docker.io/library/postgres:17-alpine
 
+# Recreate the local database, which a change to the squashed schema requires.
+reset-db:
+  podman exec caravel-pg psql -U caravel -d postgres -c 'DROP DATABASE IF EXISTS caravel WITH (FORCE)' -c 'CREATE DATABASE caravel'
+
 dev:
   #!/usr/bin/env sh
   trap 'kill 0' EXIT

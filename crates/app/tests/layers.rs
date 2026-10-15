@@ -8,10 +8,11 @@ use std::process::Command;
 use serde_json::Value;
 
 /// Each workspace crate and the workspace crates it may depend on.
-const LAYERS: [(&str, &[&str]); 5] = [
+const LAYERS: [(&str, &[&str]); 6] = [
     ("caravel-db", &[]),
     ("caravel-adapters", &[]),
     ("caravel-core", &["caravel-db", "caravel-adapters"]),
+    ("caravel-relay", &["caravel-core"]),
     ("caravel-api", &["caravel-core"]),
     (
         "caravel-app",
@@ -19,18 +20,20 @@ const LAYERS: [(&str, &[&str]); 5] = [
             "caravel-db",
             "caravel-adapters",
             "caravel-core",
+            "caravel-relay",
             "caravel-api",
         ],
     ),
 ];
 
 /// Third-party crates and the only workspace crates that may depend on them.
-const CONFINED: [(&str, &[&str]); 5] = [
+const CONFINED: [(&str, &[&str]); 6] = [
     ("nostr-sdk", &["caravel-adapters"]),
     ("nwc", &["caravel-adapters"]),
     ("reqwest", &["caravel-adapters"]),
-    ("axum", &["caravel-api", "caravel-app"]),
+    ("axum", &["caravel-relay", "caravel-api", "caravel-app"]),
     ("tower-http", &["caravel-app"]),
+    ("coracle-lib", &["caravel-core", "caravel-relay"]),
 ];
 
 /// Each workspace crate's normal (not dev or build) dependencies.

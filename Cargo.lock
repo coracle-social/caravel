@@ -311,10 +311,12 @@ dependencies = [
  "caravel-api",
  "caravel-core",
  "caravel-db",
+ "caravel-relay",
  "dotenvy",
  "serde_json",
  "tokio",
  "tokio-util",
+ "tower",
  "tower-http",
  "tracing",
  "tracing-subscriber",
@@ -352,6 +354,26 @@ version = "0.1.0"
 dependencies = [
  "sqlx",
  "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "caravel-relay"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "caravel-core",
+ "coracle-lib",
+ "futures-util",
+ "hex",
+ "rand 0.8.5",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-tungstenite 0.29.0",
+ "tokio-util",
+ "tower",
  "tracing",
 ]
 

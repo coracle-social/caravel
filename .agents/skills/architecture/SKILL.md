@@ -1,6 +1,6 @@
 ---
 name: architecture
-description: How Caravel's Rust workspace is put together — the layered crates (db, adapters, core, api, app) and what belongs in each, the Core handle every operation runs against, how persistence and transactions work on Postgres, the change bus, session-token authentication and load-then-authorize, background workers, configuration, and how the tests run. Use it whenever adding or changing backend code — a route, a query, a model, a migration, a worker, an integration or a config variable — to know where the code goes and which conventions it follows.
+description: How Caravel's Rust workspace is put together — the layered crates (db, adapters, core, relay, api, app) and what belongs in each, the Core handle every operation runs against, how persistence and transactions work on Postgres, the change bus, session-token authentication and load-then-authorize, background workers, configuration, and how the tests run. Use it whenever adding or changing backend code — a route, a query, a model, a migration, a worker, an integration or a config variable — to know where the code goes and which conventions it follows.
 ---
 
 # Architecture
@@ -15,9 +15,11 @@ Caravel's backend is one binary built from a Cargo workspace. The crates form la
 
 **core** is the domain, partitioned by concern: plans, tenants, relays and their activity log, billing (the ledger, periods, reconciliation and collection), usage metering, custom domains, sessions, and hosting, which orchestrates operations that span several concerns such as creating a relay or banning a tenant. Each concern owns its models, documented where they are defined, and the SQL that reads and writes them. The core uses coracle-lib for Nostr types and cryptography.
 
+**relay** serves the virtual relays: the websocket protocol, each relay's information document, and resolving a host to its relay. The `relay` skill covers it.
+
 **api** is the JSON API. Handlers load what the request names through the core, check the caller against it with the core's rules, and call the core. Routes are grouped by who may call them: public, tenant, and admin. The API reference is the crate's README.
 
-**app** builds the `caravel` binary. It reads and checks the environment, connects two pools (one for requests, one for background work, so workers can't starve requests), builds the core, schedules the background workers, serves the API and shuts down gracefully.
+**app** builds the `caravel` binary. It reads and checks the environment, connects two pools (one for requests, one for background work, so workers can't starve requests), builds the core, schedules the background workers, and serves each request by its host: a relay's hosts get that relay, and every other host gets the API. On shutdown it closes every relay connection with code 1001 and gives workers ten seconds to stop.
 
 ## The core handle
 
@@ -43,7 +45,7 @@ An authenticated request runs as an actor: a pubkey, and whether it is an admin.
 
 ## Background work
 
-Workers are scheduled in the app and implemented in the core: hourly billing (which samples usage first), custom domain verification every thirty seconds and re-verification every three hours, a daily sweep of expired sessions, the zooid sync on every relay change and every minute for whatever is pending, and publishing the robot's identity, retried until it succeeds. Each runs on the background pool and stops on shutdown.
+Workers are scheduled in the app and implemented in the core: hourly billing (which samples usage first), custom domain verification every thirty seconds and re-verification every three hours, a daily sweep of expired sessions, a sweep of expired events every minute, the zooid sync on every relay change and every minute for whatever is pending, and publishing the robot's identity, retried until it succeeds. Each runs on the background pool and stops on shutdown.
 
 ## Tests
 

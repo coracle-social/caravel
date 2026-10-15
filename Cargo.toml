@@ -13,6 +13,7 @@ caravel-db = { path = "crates/db" }
 caravel-adapters = { path = "crates/adapters" }
 caravel-core = { path = "crates/core" }
 caravel-api = { path = "crates/api" }
+caravel-relay = { path = "crates/relay" }
 
 anyhow = "1.0"
 async-trait = "0.1"

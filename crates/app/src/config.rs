@@ -4,6 +4,7 @@ use anyhow::{Context, Result, bail};
 use caravel_adapters::robot::RobotProfile;
 use caravel_core::config::{Config, LivekitConfig, S3Config};
 use caravel_core::crypto::PlatformKey;
+use caravel_relay::RelaysConfig;
 
 /// Everything the app is configured with: the core's config, plus what the app
 /// needs to connect the database and build the adapters.
@@ -16,6 +17,7 @@ pub struct Settings {
     pub robot_wallet: String,
     pub stripe_secret_key: String,
     pub zooid_api_url: String,
+    pub relays: RelaysConfig,
 }
 
 pub fn load() -> Result<Settings> {
@@ -67,6 +69,15 @@ pub fn load() -> Result<Settings> {
         robot_wallet: required("ROBOT_WALLET")?,
         stripe_secret_key: required("STRIPE_SECRET_KEY")?,
         zooid_api_url,
+        relays: RelaysConfig {
+            forwarded_header: optional("FORWARDED_HEADER"),
+            connections_per_minute: optional("CONNECTIONS_PER_MINUTE").map_or(Ok(0), |value| {
+                value
+                    .parse()
+                    .context("CONNECTIONS_PER_MINUTE is not a number")
+            })?,
+            ..Default::default()
+        },
     })
 }
 

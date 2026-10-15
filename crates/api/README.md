@@ -57,4 +57,4 @@ Admins:
 - `GET /moderation?since=&until=` — events and uploads every relay saw in a window, newest first
 - `GET /moderation/blob/{relay_id}/{sha256}` — a blob's bytes
 
-Relay settings are `subdomain`, `zooid_domain`, `plan_id`, `info_name`, `info_icon`, `info_description`, `policy_public_read`, `policy_public_write`, `policy_public_join`, `policy_strip_signatures`, `groups_enabled`, `management_enabled`, `members_can_invite`, `blossom_enabled`, `livekit_enabled`, `push_enabled` and `custom_domain`.
+Relay settings are `subdomain`, `zooid_domain`, `plan_id`, `info_name`, `info_icon`, `info_description`, `policy_public_read`, `policy_anonymous_read`, `policy_public_write`, `policy_public_join`, `policy_strip_signatures`, `groups_enabled`, `management_enabled`, `members_can_invite`, `blossom_enabled`, `livekit_enabled`, `push_enabled` and `custom_domain`.

@@ -76,6 +76,7 @@ fn zooid_config(core: &Core, relay: &Relay) -> anyhow::Result<serde_json::Value>
         },
         "policy": {
             "public_read": relay.policy_public_read,
+            "anonymous_read": relay.policy_anonymous_read,
             "public_write": relay.policy_public_write,
             "public_join": relay.policy_public_join,
             "strip_signatures": relay.policy_strip_signatures,

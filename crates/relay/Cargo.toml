@@ -1,0 +1,25 @@
+[package]
+name = "caravel-relay"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+axum.workspace = true
+caravel-core.workspace = true
+coracle-lib.workspace = true
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+hex.workspace = true
+rand.workspace = true
+serde.workspace = true
+serde_json = { version = "1.0", features = ["raw_value"] }
+tokio.workspace = true
+tokio-util.workspace = true
+tower.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+anyhow.workspace = true
+caravel-core = { workspace = true, features = ["testing"] }
+tokio-tungstenite = "0.29"

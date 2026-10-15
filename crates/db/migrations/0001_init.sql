@@ -27,6 +27,7 @@ CREATE TABLE relay (
   info_icon TEXT NOT NULL DEFAULT '',
   info_description TEXT NOT NULL DEFAULT '',
   policy_public_read BOOLEAN NOT NULL DEFAULT false,
+  policy_anonymous_read BOOLEAN NOT NULL DEFAULT false,
   policy_public_write BOOLEAN NOT NULL DEFAULT false,
   policy_public_join BOOLEAN NOT NULL DEFAULT false,
   policy_strip_signatures BOOLEAN NOT NULL DEFAULT false,
@@ -197,3 +198,45 @@ CREATE INDEX session_pubkey_idx ON session (pubkey);
 
 -- Sweeping expired sessions.
 CREATE INDEX session_expires_idx ON session (expires_at);
+
+CREATE TABLE event (
+  relay_id TEXT NOT NULL REFERENCES relay (id),
+  id BYTEA NOT NULL,
+  seq BIGINT GENERATED ALWAYS AS IDENTITY,
+  created_at BIGINT NOT NULL,
+  kind INTEGER NOT NULL,
+  pubkey BYTEA NOT NULL,
+  content TEXT NOT NULL,
+  tags TEXT NOT NULL,
+  sig BYTEA NOT NULL,
+  tag_values TEXT[] NOT NULL,
+  d TEXT,
+  expires_at BIGINT,
+  seen_at BIGINT NOT NULL,
+  search TSVECTOR GENERATED ALWAYS AS (to_tsvector('simple', content)) STORED,
+  PRIMARY KEY (relay_id, id)
+);
+
+-- A relay's events newest first, the order every client query reads in.
+CREATE INDEX event_relay_created_idx ON event (relay_id, created_at DESC, id);
+
+-- Queries by kind, by author, and by both.
+CREATE INDEX event_relay_kind_created_idx ON event (relay_id, kind, created_at DESC, id);
+CREATE INDEX event_relay_pubkey_created_idx ON event (relay_id, pubkey, created_at DESC, id);
+CREATE INDEX event_relay_kind_pubkey_created_idx ON event (relay_id, kind, pubkey, created_at DESC, id);
+
+-- Queries by single-letter tag, and the deletion tombstones checked on every write.
+CREATE INDEX event_tag_values_idx ON event USING gin (tag_values);
+
+-- NIP-50 full-text search.
+CREATE INDEX event_search_idx ON event USING gin (search);
+
+-- The moderation feed, which reads every relay's events by when they arrived.
+CREATE INDEX event_seen_idx ON event (seen_at DESC, seq DESC);
+
+-- One event per replaceable or addressable slot, which a newer version overwrites
+-- in place.
+CREATE UNIQUE INDEX event_slot_key ON event (relay_id, kind, pubkey, d) WHERE d IS NOT NULL;
+
+-- The NIP-40 sweep of expired events.
+CREATE INDEX event_expires_idx ON event (expires_at) WHERE expires_at IS NOT NULL;

@@ -44,6 +44,10 @@ pub struct Relay {
     /// Anyone may read, without being a member.
     #[serde(with = "flag")]
     pub policy_public_read: bool,
+    /// Anyone may read without authenticating. Implies nothing about who may
+    /// read once authenticated, which `policy_public_read` decides.
+    #[serde(with = "flag")]
+    pub policy_anonymous_read: bool,
     /// Anyone may publish, without being a member.
     #[serde(with = "flag")]
     pub policy_public_write: bool,
@@ -189,9 +193,9 @@ pub async fn insert_relay(conn: &mut PgConnection, relay: &Relay) -> Result<()> 
             info_name, info_icon, info_description,
             policy_public_read, policy_public_write, policy_public_join, policy_strip_signatures,
             groups_enabled, management_enabled, members_can_invite, blossom_enabled,
-            livekit_enabled, push_enabled, custom_domain, created_at
+            livekit_enabled, push_enabled, custom_domain, created_at, policy_anonymous_read
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17,
-            $18, $19, $20, $21, $22, $23)",
+            $18, $19, $20, $21, $22, $23, $24)",
     )
     .bind(&relay.id)
     .bind(&relay.tenant_pubkey)
@@ -216,6 +220,7 @@ pub async fn insert_relay(conn: &mut PgConnection, relay: &Relay) -> Result<()> 
     .bind(relay.push_enabled)
     .bind(&relay.custom_domain)
     .bind(relay.created_at)
+    .bind(relay.policy_anonymous_read)
     .execute(conn)
     .await?;
     Ok(())
@@ -238,6 +243,7 @@ pub async fn update_relay(conn: &mut PgConnection, relay: &Relay) -> Result<()> 
             custom_domain = $18,
             custom_domain_verified = custom_domain_verified AND custom_domain = $18 AND domain = $3
                 AND subdomain = $2,
+            policy_anonymous_read = $19,
             synced = false
          WHERE id = $1",
     )
@@ -259,6 +265,7 @@ pub async fn update_relay(conn: &mut PgConnection, relay: &Relay) -> Result<()> 
     .bind(relay.livekit_enabled)
     .bind(relay.push_enabled)
     .bind(&relay.custom_domain)
+    .bind(relay.policy_anonymous_read)
     .execute(conn)
     .await?;
     Ok(())

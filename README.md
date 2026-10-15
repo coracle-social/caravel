@@ -1,6 +1,6 @@
 # Caravel
 
-A multi-tenant platform for hosting Nostr community relays. Tenants create relays, choose their plans and settings, and pay for them; the platform bills them monthly and keeps each relay's configuration on [zooid](https://github.com/coracle-social/zooid), which serves the relays.
+A multi-tenant platform for hosting Nostr community relays. Tenants create relays, choose their plans and settings, and pay for them, and the platform bills them monthly. One process serves every relay, each on its own hosts, while [zooid](https://github.com/coracle-social/zooid) still carries the media, push and calls that haven't moved in yet.
 
 ## Layout
 
@@ -9,8 +9,9 @@ The backend is a Rust workspace whose crates are layered, each depending only on
 - `crates/db` — the Postgres pool, migrations and transactions
 - `crates/adapters` — clients for Stripe, Nostr Wallet Connect, the robot's Nostr identity, DNS and zooid
 - `crates/core` — the domain: tenants, relays, billing, usage, custom domains, sessions
+- `crates/relay` — the virtual relays: websockets, NIP-11 documents, and resolving hosts to relays
 - `crates/api` — the JSON API, documented in [crates/api/README.md](./crates/api/README.md)
-- `crates/app` — the `caravel` binary, which reads the environment, serves the API and runs the background workers
+- `crates/app` — the `caravel` binary, which reads the environment, serves each request by its host and runs the background workers
 
 The dashboard is a SolidJS app in `frontend/`.
 
@@ -35,8 +36,10 @@ The binary reads these from the environment, or from a `.env` file in its workin
 | `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` | The LiveKit server relays with calls enabled use |
 | `BLOSSOM_S3_ENDPOINT`, `BLOSSOM_S3_REGION`, `BLOSSOM_S3_BUCKET`, `BLOSSOM_S3_ACCESS_KEY`, `BLOSSOM_S3_SECRET_KEY` | The bucket relays with Blossom enabled store media in |
 | `STRIPE_SECRET_KEY` | The Stripe account tenants pay |
+| `FORWARDED_HEADER` | The header a trusted proxy reports a client's address in, such as `X-Forwarded-For` |
+| `CONNECTIONS_PER_MINUTE` | New relay connections allowed per minute from one address, `0` (unlimited) by default |
 
-Every variable without a default is required, except `ADMIN_PUBKEYS` and the robot's profile.
+Every variable without a default is required, except `ADMIN_PUBKEYS`, the robot's profile and `FORWARDED_HEADER`.
 
 ## Deployment
 
@@ -73,6 +76,6 @@ cd frontend && bun install && cd ..
 just dev
 ```
 
-`just pg` starts Postgres on `127.0.0.1:55433`. `just dev` runs the API on `http://127.0.0.1:2892` and the dashboard on `http://127.0.0.1:5173`, restarting the API when a crate changes.
+`just pg` starts Postgres on `127.0.0.1:55433`, and `just reset-db` recreates its database, which a change to the schema needs until the first release. `just dev` runs the API on `http://127.0.0.1:2892` and the dashboard on `http://127.0.0.1:5173`, restarting the API when a crate changes.
 
 `just check` formats, lints, builds and tests everything, as CI does. Tests create one database per test binary on the server `TEST_DATABASE_URL` names, `just pg`'s by default.

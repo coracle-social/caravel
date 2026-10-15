@@ -2,6 +2,7 @@
 //! background work.
 
 mod config;
+mod dispatch;
 mod workers;
 
 use std::sync::Arc;
@@ -11,6 +12,7 @@ use anyhow::{Context, Result, bail};
 use caravel_adapters::{robot::Robot, stripe::Stripe, wallet::Wallet, zooid::Zooid};
 use caravel_core::Core;
 use caravel_db::Db;
+use caravel_relay::Relays;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 use tower_http::cors::{Any, CorsLayer};
@@ -66,18 +68,27 @@ async fn serve() -> Result<()> {
     let tracker = TaskTracker::new();
     workers::spawn(&tracker, &shutdown, &background);
 
+    let relays = Relays::load(core.clone(), settings.relays, shutdown.child_token()).await?;
+    tracker.spawn({
+        let (relays, shutdown) = (relays.clone(), shutdown.clone());
+        async move { relays.watch(shutdown).await }
+    });
+
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods(Any)
         .allow_headers(Any);
-    let app = caravel_api::router(core).layer(cors);
+    let app = dispatch::router(caravel_api::router(core).layer(cors), relays);
 
     let listener = tokio::net::TcpListener::bind(("0.0.0.0", settings.port)).await?;
     tracing::info!(port = settings.port, "serving");
 
-    axum::serve(listener, app)
-        .with_graceful_shutdown(signal(shutdown.clone()))
-        .await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(signal(shutdown.clone()))
+    .await?;
 
     shutdown.cancel();
     tracker.close();

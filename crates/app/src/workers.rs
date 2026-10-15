@@ -5,7 +5,7 @@ use std::future::Future;
 use std::time::Duration;
 
 use caravel_core::bus::Change;
-use caravel_core::{Core, Result, auth, billing, domains, provisioning};
+use caravel_core::{Core, Result, auth, billing, domains, events, provisioning};
 use tokio::sync::broadcast::error::RecvError;
 use tokio::time::{Instant, interval_at};
 use tokio_util::sync::CancellationToken;
@@ -60,6 +60,15 @@ pub fn spawn(tracker: &TaskTracker, shutdown: &CancellationToken, core: &Core) {
         tracker,
         shutdown,
         core,
+        "expiration sweep",
+        MINUTE,
+        MINUTE,
+        |core| async move { sweep_expired_events(&core).await },
+    );
+    every(
+        tracker,
+        shutdown,
+        core,
         "relay sync",
         Duration::ZERO,
         MINUTE,
@@ -101,6 +110,23 @@ fn every<F, Fut>(
             }
         }
     });
+}
+
+/// Delete events whose NIP-40 expiration passed, a batch at a time so other
+/// writers get between them.
+async fn sweep_expired_events(core: &Core) -> Result<()> {
+    const BATCH: i64 = 1000;
+
+    loop {
+        let removed =
+            events::delete_expired_events(core.db.pool(), core.clock.now(), BATCH).await?;
+        if removed > 0 {
+            tracing::info!(removed, "swept expired events");
+        }
+        if removed < BATCH as u64 {
+            return Ok(());
+        }
+    }
 }
 
 /// Give zooid a relay's config whenever the relay changes, and catch up on

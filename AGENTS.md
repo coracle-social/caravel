@@ -41,7 +41,7 @@ Don't add re-export shims to preserve old import paths. When something moves, im
 
 ## Architecture
 
-The backend is one Cargo workspace under `crates/`, layered so each crate depends only on the ones below it: `db` and `adapters` at the bottom, then `core`, then `api`, then `app`, which builds the `caravel` binary. `crates/app/tests/layers.rs` enforces the layering. The `architecture` skill describes each layer and where new code goes.
+The backend is one Cargo workspace under `crates/`, layered so each crate depends only on the ones below it: `db` and `adapters` at the bottom, then `core`, then `relay` and `api`, then `app`, which builds the `caravel` binary. `crates/app/tests/layers.rs` enforces the layering. The `architecture` skill describes each layer and where new code goes.
 
 Read configuration from the environment only in `crates/app/src/config.rs`, and the time only through the core's `Clock`; clippy enforces both.
 

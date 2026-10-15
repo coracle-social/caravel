@@ -36,6 +36,7 @@ pub struct RelaySettings {
     pub info_icon: Option<String>,
     pub info_description: Option<String>,
     pub policy_public_read: Option<Flag>,
+    pub policy_anonymous_read: Option<Flag>,
     pub policy_public_write: Option<Flag>,
     pub policy_public_join: Option<Flag>,
     pub policy_strip_signatures: Option<Flag>,
@@ -431,6 +432,10 @@ fn apply_settings(core: &Core, mut relay: Relay, settings: RelaySettings) -> Res
         relay.info_description = description;
     }
     flag(&mut relay.policy_public_read, settings.policy_public_read);
+    flag(
+        &mut relay.policy_anonymous_read,
+        settings.policy_anonymous_read,
+    );
     flag(&mut relay.policy_public_write, settings.policy_public_write);
     flag(&mut relay.policy_public_join, settings.policy_public_join);
     flag(

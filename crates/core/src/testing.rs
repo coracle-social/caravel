@@ -58,3 +58,64 @@ pub async fn core(admin_pubkey: &str) -> Core {
         zooid: Zooid::new("http://127.0.0.1:1", &robot_secret).expect("invalid zooid key"),
     }
 }
+
+/// A signed event.
+pub fn sign_event(
+    secret: &coracle_lib::keys::SecretKey,
+    kind: u16,
+    content: &str,
+    tags: &[&[&str]],
+    created_at: i64,
+) -> coracle_lib::events::Event {
+    let tags: coracle_lib::tags::Tags = tags
+        .iter()
+        .map(|tag| coracle_lib::tags::Tag(tag.iter().map(|value| value.to_string()).collect()))
+        .collect();
+    let hashed = coracle_lib::events::EventContent::new()
+        .with_content(content)
+        .with_tags(tags)
+        .with_kind(kind)
+        .with_created_at(created_at)
+        .with_pubkey(secret.public_key())
+        .with_id();
+    let sig = secret.sign(hashed.id.as_bytes());
+    hashed.with_sig(sig)
+}
+
+/// A tenant and a relay of theirs on the free plan, without reaching Stripe.
+/// Returns the relay and the tenant's secret key.
+pub async fn create_relay(core: &Core) -> (crate::relays::Relay, coracle_lib::keys::SecretKey) {
+    let secret = coracle_lib::keys::SecretKey::generate();
+    let pubkey = secret.public_key().to_hex();
+
+    crate::tenants::insert_tenant(
+        core.db.pool(),
+        &crate::tenants::Tenant {
+            pubkey: pubkey.clone(),
+            return_url: "http://localhost/account".to_string(),
+            created_at: core.clock.now(),
+            stripe_customer_id: format!("cus_{}", &pubkey[..12]),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("failed to insert tenant");
+
+    let relay = crate::hosting::create_relay(
+        core,
+        &pubkey,
+        crate::hosting::RelaySettings {
+            subdomain: Some(format!(
+                "r{}",
+                &uuid::Uuid::new_v4().simple().to_string()[..12]
+            )),
+            domain: Some(RELAY_DOMAIN.to_string()),
+            plan_id: Some("free".to_string()),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("failed to create relay");
+
+    (relay, secret)
+}

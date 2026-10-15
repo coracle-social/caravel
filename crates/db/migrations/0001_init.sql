@@ -240,3 +240,98 @@ CREATE UNIQUE INDEX event_slot_key ON event (relay_id, kind, pubkey, d) WHERE d 
 
 -- The NIP-40 sweep of expired events.
 CREATE INDEX event_expires_idx ON event (expires_at) WHERE expires_at IS NOT NULL;
+
+CREATE TABLE relay_member (
+  relay_id TEXT NOT NULL REFERENCES relay (id),
+  pubkey TEXT NOT NULL,
+  source TEXT NOT NULL CHECK (source IN ('owner', 'manual', 'claim', 'public_join', 'payment', 'migrated')),
+  roles TEXT[] NOT NULL DEFAULT '{}',
+  created_at BIGINT NOT NULL,
+  PRIMARY KEY (relay_id, pubkey)
+);
+
+-- The relays a pubkey belongs to.
+CREATE INDEX relay_member_pubkey_idx ON relay_member (pubkey);
+
+CREATE TABLE role (
+  relay_id TEXT NOT NULL REFERENCES relay (id),
+  id TEXT NOT NULL,
+  label TEXT NOT NULL DEFAULT '',
+  description TEXT NOT NULL DEFAULT '',
+  hue INTEGER NOT NULL DEFAULT 0,
+  position INTEGER NOT NULL DEFAULT 0,
+  created_at BIGINT NOT NULL,
+  PRIMARY KEY (relay_id, id)
+);
+
+CREATE TABLE method_grant (
+  relay_id TEXT NOT NULL,
+  pubkey TEXT NOT NULL,
+  method TEXT NOT NULL,
+  created_at BIGINT NOT NULL,
+  PRIMARY KEY (relay_id, pubkey, method),
+  FOREIGN KEY (relay_id, pubkey) REFERENCES relay_member (relay_id, pubkey) ON DELETE CASCADE
+);
+
+CREATE TABLE banned_pubkey (
+  relay_id TEXT NOT NULL REFERENCES relay (id),
+  pubkey TEXT NOT NULL,
+  reason TEXT NOT NULL DEFAULT '',
+  created_at BIGINT NOT NULL,
+  PRIMARY KEY (relay_id, pubkey)
+);
+
+CREATE TABLE banned_event (
+  relay_id TEXT NOT NULL REFERENCES relay (id),
+  event_id TEXT NOT NULL,
+  reason TEXT NOT NULL DEFAULT '',
+  created_at BIGINT NOT NULL,
+  PRIMARY KEY (relay_id, event_id)
+);
+
+CREATE TABLE claim (
+  relay_id TEXT NOT NULL REFERENCES relay (id),
+  code TEXT NOT NULL,
+  created_at BIGINT NOT NULL,
+  revoked_at BIGINT,
+  PRIMARY KEY (relay_id, code)
+);
+
+CREATE TABLE claim_use (
+  relay_id TEXT NOT NULL,
+  claim_code TEXT NOT NULL,
+  pubkey TEXT NOT NULL,
+  created_at BIGINT NOT NULL,
+  FOREIGN KEY (relay_id, claim_code) REFERENCES claim (relay_id, code)
+);
+
+-- A claim's log of joins, oldest first.
+CREATE INDEX claim_use_claim_idx ON claim_use (relay_id, claim_code, created_at);
+
+CREATE TABLE room (
+  relay_id TEXT NOT NULL REFERENCES relay (id),
+  id TEXT NOT NULL,
+  tags JSONB NOT NULL DEFAULT '[]',
+  pins JSONB NOT NULL DEFAULT '[]',
+  created_at BIGINT NOT NULL,
+  PRIMARY KEY (relay_id, id)
+);
+
+CREATE TABLE room_member (
+  relay_id TEXT NOT NULL,
+  room_id TEXT NOT NULL,
+  pubkey TEXT NOT NULL,
+  roles TEXT[] NOT NULL DEFAULT '{}',
+  created_at BIGINT NOT NULL,
+  PRIMARY KEY (relay_id, room_id, pubkey),
+  FOREIGN KEY (relay_id, room_id) REFERENCES room (relay_id, id) ON DELETE CASCADE
+);
+
+CREATE TABLE room_invite (
+  relay_id TEXT NOT NULL,
+  room_id TEXT NOT NULL,
+  code TEXT NOT NULL,
+  created_at BIGINT NOT NULL,
+  PRIMARY KEY (relay_id, room_id, code),
+  FOREIGN KEY (relay_id, room_id) REFERENCES room (relay_id, id) ON DELETE CASCADE
+);

@@ -147,15 +147,25 @@ pub async fn save_event(
     event: &Event,
     now: i64,
 ) -> Result<Saved> {
-    let slot = slot(event);
-
     if event.kind != DELETION
         && event.kind != VANISH
-        && is_tombstoned(&mut *conn, relay_id, event, slot.as_deref()).await?
+        && is_tombstoned(&mut *conn, relay_id, event, slot(event).as_deref()).await?
     {
         return Ok(Saved::Deleted);
     }
 
+    save_relay_event(conn, relay_id, event, now).await
+}
+
+/// Store an event the relay signed to publish its own state, which no tombstone
+/// refuses: the state it describes is the authority.
+pub async fn save_relay_event(
+    conn: &mut PgConnection,
+    relay_id: &str,
+    event: &Event,
+    now: i64,
+) -> Result<Saved> {
+    let slot = slot(event);
     let stored = StoredEvent::from_event(event);
     let mut query = QueryBuilder::<Postgres>::new(
         "INSERT INTO event (relay_id, id, created_at, kind, pubkey, content, tags, sig, tag_values, d, expires_at, seen_at) ",

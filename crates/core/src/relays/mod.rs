@@ -271,6 +271,29 @@ pub async fn update_relay(conn: &mut PgConnection, relay: &Relay) -> Result<()> 
     Ok(())
 }
 
+/// Change the name, description or icon the relay publishes, leaving `None`s as
+/// they are.
+pub async fn set_relay_info(
+    db: impl PgExecutor<'_>,
+    relay_id: &str,
+    name: Option<&str>,
+    description: Option<&str>,
+    icon: Option<&str>,
+) -> Result<()> {
+    sqlx::query(
+        "UPDATE relay SET info_name = COALESCE($2, info_name), info_description = COALESCE($3, info_description),
+            info_icon = COALESCE($4, info_icon), synced = false
+         WHERE id = $1",
+    )
+    .bind(relay_id)
+    .bind(name)
+    .bind(description)
+    .bind(icon)
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
 pub async fn set_relay_status(
     db: impl PgExecutor<'_>,
     relay_id: &str,

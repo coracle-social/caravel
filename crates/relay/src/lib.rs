@@ -9,6 +9,7 @@ pub mod instance;
 pub mod limits;
 pub mod message;
 pub mod nip11;
+pub mod nip86;
 pub mod session;
 
 use std::collections::HashMap;
@@ -21,9 +22,9 @@ use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::get;
 use caravel_core::bus::Change;
-use caravel_core::relay_policy::RelaySnapshot;
 use caravel_core::relays::{self, Relay, RelayStatus};
 use caravel_core::{Core, Result};
+use coracle_lib::events::Event;
 use tokio::sync::broadcast::error::RecvError;
 use tokio_util::sync::CancellationToken;
 use tower::ServiceExt;
@@ -133,7 +134,7 @@ impl Relays {
     pub async fn serve(&self, route: Route, mut request: Request) -> Response {
         let router = self.inner.router.get_or_init(|| {
             Router::new()
-                .route("/", get(root).options(preflight))
+                .route("/", get(root).post(management).options(preflight))
                 .fallback(|| async { StatusCode::NOT_FOUND })
                 .with_state(self.clone())
         });
@@ -158,6 +159,13 @@ impl Relays {
 
             let result = match change {
                 Ok(Change::RelayChanged { relay_id }) => self.reload(&relay_id).await,
+                Ok(Change::AccessChanged {
+                    relay_id,
+                    published,
+                }) => {
+                    self.deliver_access_change(&relay_id, &published).await;
+                    Ok(())
+                }
                 Err(RecvError::Lagged(missed)) => {
                     tracing::warn!(missed, "relay reloads lagged");
                     self.reload_all().await
@@ -175,10 +183,29 @@ impl Relays {
     /// serving it otherwise.
     pub async fn reload(&self, relay_id: &str) -> Result<()> {
         match relays::get_relay(self.inner.core.db.pool(), relay_id).await? {
-            Some(relay) if is_served(&relay) => self.install(relay),
+            Some(relay) if is_served(&relay) => self.install(relay).await?,
             _ => self.remove(relay_id),
         }
         Ok(())
+    }
+
+    /// Reload a relay's access lists and rooms after a change made outside it, then
+    /// deliver what the relay published about the change.
+    async fn deliver_access_change(&self, relay_id: &str, published: &[Event]) {
+        let instance = self
+            .inner
+            .instances
+            .read()
+            .unwrap_or_else(|error| error.into_inner())
+            .get(relay_id)
+            .cloned();
+
+        if let Some(instance) = instance {
+            instance.refresh().await;
+            for event in published {
+                instance.fanout(event);
+            }
+        }
     }
 
     async fn reload_all(&self) -> Result<()> {
@@ -204,34 +231,39 @@ impl Relays {
             self.remove(&relay_id);
         }
         for relay in live {
-            self.install(relay);
+            if let Err(error) = self.install(relay.clone()).await {
+                tracing::error!(relay = %relay.id, error = %error, "failed to load relay");
+            }
         }
         Ok(())
     }
 
-    fn install(&self, relay: Relay) {
-        let state = InstanceState {
-            snapshot: RelaySnapshot::of(&relay),
-            relay: relay.clone(),
-        };
+    /// Serve a relay: reload it if it is served already, and build it otherwise.
+    async fn install(&self, relay: Relay) -> Result<()> {
+        let existing = self
+            .inner
+            .instances
+            .read()
+            .unwrap_or_else(|error| error.into_inner())
+            .get(&relay.id)
+            .cloned();
 
-        {
-            let mut instances = self
-                .inner
-                .instances
-                .write()
-                .unwrap_or_else(|error| error.into_inner());
-            match instances.get(&relay.id) {
-                Some(instance) => instance.replace(state),
-                None => {
-                    let instance = RelayInstance::new(
-                        self.inner.core.clone(),
-                        self.inner.config.limits,
-                        state,
-                        self.inner.shutdown.child_token(),
-                    );
-                    instances.insert(relay.id.clone(), Arc::new(instance));
-                }
+        match existing {
+            Some(instance) => instance.reload(relay.clone()).await?,
+            None => {
+                let state = InstanceState::load(&self.inner.core, relay.clone()).await?;
+                let instance = RelayInstance::new(
+                    self.inner.core.clone(),
+                    self.inner.config.limits,
+                    state,
+                    self.inner.shutdown.child_token(),
+                );
+                self.inner
+                    .instances
+                    .write()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .entry(relay.id.clone())
+                    .or_insert_with(|| Arc::new(instance));
             }
         }
 
@@ -249,6 +281,8 @@ impl Relays {
         {
             hosts.insert(host.clone(), (relay.id.clone(), primary.clone()));
         }
+
+        Ok(())
     }
 
     fn remove(&self, relay_id: &str) {
@@ -342,6 +376,15 @@ async fn root(
         .on_upgrade(move |socket| {
             session::run(socket, addr, route.host, route.instance, transport, closed)
         })
+}
+
+/// NIP-86: management calls arrive as `POST`s to the relay's url.
+async fn management(
+    Extension(route): Extension<Route>,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> Response {
+    nip86::handle(&route, &headers, &body).await
 }
 
 /// Browsers preflight the information document, since they won't ask for

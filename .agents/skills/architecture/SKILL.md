@@ -13,7 +13,7 @@ Caravel's backend is one binary built from a Cargo workspace. The crates form la
 
 **adapters** are clients for everything outside the database: Stripe, Nostr Wallet Connect wallets, the robot's Nostr identity (profile publishing and NIP-17 DMs), DNS over HTTPS, the Bitcoin price, and zooid's management API. Each speaks one protocol and returns plain values. Nothing in an adapter knows what a tenant or a relay is, and only adapters may use rust-nostr or make HTTP requests.
 
-**core** is the domain, partitioned by concern: plans, tenants, relays and their activity log, billing (the ledger, periods, reconciliation and collection), usage metering, custom domains, sessions, and hosting, which orchestrates operations that span several concerns such as creating a relay or banning a tenant. Each concern owns its models, documented where they are defined, and the SQL that reads and writes them. The core uses coracle-lib for Nostr types and cryptography.
+**core** is the domain, partitioned by concern: plans, tenants, relays and their activity log, the event store and the relay policy, relay access (members, roles, method grants, bans, claims), rooms, management (NIP-86 calls across access and rooms), billing (the ledger, periods, reconciliation and collection), usage metering, custom domains, sessions, and hosting, which orchestrates operations that span several concerns such as creating a relay or banning a tenant. Each concern owns its models, documented where they are defined, and the SQL that reads and writes them. The core uses coracle-lib for Nostr types and cryptography.
 
 **relay** serves the virtual relays: the websocket protocol, each relay's information document, and resolving a host to its relay. The `relay` skill covers it.
 
@@ -35,7 +35,7 @@ A unique constraint a caller can violate (a taken subdomain or custom domain) is
 
 ## The change bus
 
-After a write commits, the core publishes a change, such as a relay changing, on an in-process bus. Subscribers treat a change as a hint to re-read the database; one that falls behind re-reads everything it watches. Until the relay runtime moves into this binary, the bus drives keeping zooid in step with each relay's row.
+After a write commits, the core publishes a change on an in-process bus: a relay's row changed, or its access or rooms changed along with the events it published about them. Subscribers treat a change as a hint to re-read the database; one that falls behind re-reads everything it watches. Until the relay runtime moves into this binary, the bus drives keeping zooid in step with each relay's row.
 
 ## Authentication and authorization
 

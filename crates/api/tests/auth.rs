@@ -166,6 +166,8 @@ async fn every_route_has_an_auth_class() {
         ("GET", format!("/relays/{id}")),
         ("PUT", format!("/relays/{id}")),
         ("GET", format!("/relays/{id}/members")),
+        ("PUT", format!("/relays/{id}/members/{tenant_pubkey}")),
+        ("DELETE", format!("/relays/{id}/members/{tenant_pubkey}")),
         ("GET", format!("/relays/{id}/activity")),
         ("POST", format!("/relays/{id}/deactivate")),
         ("POST", format!("/relays/{id}/reactivate")),

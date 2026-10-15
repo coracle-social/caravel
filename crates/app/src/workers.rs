@@ -144,6 +144,7 @@ async fn sync_changed_relays(core: Core, shutdown: CancellationToken) {
             Ok(Change::RelayChanged { relay_id }) => {
                 provisioning::sync_relay(&core, &relay_id).await
             }
+            Ok(Change::AccessChanged { .. }) => Ok(()),
             Err(RecvError::Lagged(missed)) => {
                 tracing::warn!(missed, "relay sync lagged");
                 provisioning::sync_pending_relays(&core).await

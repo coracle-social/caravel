@@ -41,6 +41,14 @@ fn fixture() -> Fixture {
     }
 }
 
+fn facts(kind: u16, pubkey: &str) -> EventFacts<'_> {
+    EventFacts {
+        kind,
+        pubkey,
+        room: None,
+    }
+}
+
 fn hex(secret: &SecretKey) -> String {
     secret.public_key().to_hex()
 }
@@ -227,7 +235,7 @@ fn reading_needs_authentication_unless_anonymous_reads_are_on() {
         ..f.snapshot.clone()
     };
     assert_eq!(admit_req(&anonymous, &[]), Ok(()));
-    let note = EventFacts::of(1, &f.snapshot.owner);
+    let note = facts(1, &f.snapshot.owner);
     assert!(can_receive(&anonymous, None, note));
     assert!(!can_receive(&f.snapshot, None, note));
 }
@@ -265,20 +273,20 @@ fn credentials_and_requests_are_never_served() {
 
     for kind in [
         kinds::RELAY_INVITE,
-        kinds::GROUP_CREATE_INVITE,
+        caravel_core::rooms::kinds::CREATE_INVITE,
         kinds::RELAY_JOIN,
         kinds::RELAY_LEAVE,
         kinds::BLOB_DESCRIPTOR,
     ] {
         assert!(
-            !can_receive(&f.snapshot, Some(&owner), EventFacts::of(kind, &owner)),
+            !can_receive(&f.snapshot, Some(&owner), facts(kind, &owner)),
             "kind {kind}"
         );
     }
 
     // A push subscription comes back to its author and nobody else.
     let member = hex(&f.member);
-    let subscription = EventFacts::of(kinds::PUSH_SUBSCRIPTION, &member);
+    let subscription = facts(kinds::PUSH_SUBSCRIPTION, &member);
     assert!(can_receive(&f.snapshot, Some(&member), subscription));
     assert!(!can_receive(&f.snapshot, Some(&owner), subscription));
 }

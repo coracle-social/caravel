@@ -1,6 +1,7 @@
 //! The platform's domain logic and persistence, partitioned by concern. Every
 //! operation takes a [`Core`], which carries the database and the adapters.
 
+pub mod access;
 pub mod auth;
 pub mod billing;
 pub mod bus;
@@ -12,10 +13,12 @@ pub mod error;
 pub mod events;
 pub mod flag;
 pub mod hosting;
+pub mod management;
 pub mod plans;
 pub mod provisioning;
 pub mod relay_policy;
 pub mod relays;
+pub mod rooms;
 pub mod tenants;
 pub mod usage;
 

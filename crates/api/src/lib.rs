@@ -9,7 +9,7 @@ pub mod response;
 pub mod tenant;
 
 use axum::Router;
-use axum::routing::{delete, get, post};
+use axum::routing::{delete, get, post, put};
 use caravel_core::Core;
 
 /// Every API route, served at the root of whatever path the app mounts it on.
@@ -64,6 +64,10 @@ pub fn router(core: Core) -> Router {
             get(tenant::get_relay).put(tenant::update_relay),
         )
         .route("/relays/{id}/members", get(tenant::list_relay_members))
+        .route(
+            "/relays/{id}/members/{pubkey}",
+            put(tenant::add_relay_member).delete(tenant::remove_relay_member),
+        )
         .route("/relays/{id}/activity", get(tenant::list_relay_activity))
         .route("/relays/{id}/deactivate", post(tenant::deactivate_relay))
         .route("/relays/{id}/reactivate", post(tenant::reactivate_relay))

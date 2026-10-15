@@ -21,8 +21,12 @@ pub const API_URL: &str = "http://api.test";
 const DEAD_RELAY: &str = "ws://127.0.0.1:1";
 
 /// A core on this test binary's database, administered by `admin_pubkey`.
+/// The platform key every test core shares, so any test's relays decrypt in any
+/// other test's core on the same database.
+const PLATFORM_SECRET: &str = "7f1d9a1c3c3f0e2b5a8d4c6e9f0a1b2c3d4e5f60718293a4b5c6d7e8f9011223";
+
 pub async fn core(admin_pubkey: &str) -> Core {
-    let (_, robot_secret) = generate_keypair();
+    let robot_secret = PLATFORM_SECRET.to_string();
     let (wallet_pubkey, wallet_secret) = generate_keypair();
     let platform_key = PlatformKey::from_hex(&robot_secret).expect("invalid generated key");
 

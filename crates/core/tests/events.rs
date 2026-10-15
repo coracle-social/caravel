@@ -48,8 +48,19 @@ async fn save(core: &Core, relay_id: &str, event: &Event) -> Result<Saved> {
     Ok(saved)
 }
 
+/// A relay's events matching a filter, leaving out the ones the relay signed about
+/// its own members.
 async fn query(core: &Core, relay_id: &str, filter: Filter) -> Result<Vec<StoredEvent>> {
-    Ok(events::query_events(core.db.pool(), relay_id, &filter, 1000, NOW).await?)
+    let relay = caravel_core::relays::get_relay(core.db.pool(), relay_id)
+        .await?
+        .expect("no relay");
+    Ok(
+        events::query_events(core.db.pool(), relay_id, &filter, 1000, NOW)
+            .await?
+            .into_iter()
+            .filter(|event| event.head.pubkey_hex() != relay.pubkey)
+            .collect(),
+    )
 }
 
 async fn ids(core: &Core, relay_id: &str, filter: Filter) -> Result<Vec<[u8; 32]>> {
@@ -492,7 +503,7 @@ async fn expired_events_are_hidden_then_swept() -> Result<()> {
     assert_eq!(ids(&core, &relay.id, Filter::new()).await?.len(), 1);
 
     let later =
-        events::query_events(core.db.pool(), &relay.id, &Filter::new(), 1000, NOW + 60).await?;
+        events::query_events(core.db.pool(), &relay.id, &kinds(&[1]), 1000, NOW + 60).await?;
     assert!(later.is_empty());
 
     events::delete_expired_events(core.db.pool(), NOW + 60, 1000).await?;
@@ -547,10 +558,9 @@ async fn negentropy_heads_refuse_sets_over_the_cap() -> Result<()> {
         .await?;
     }
 
-    let heads =
-        events::query_event_heads(core.db.pool(), &relay.id, &Filter::new(), 3, NOW).await?;
+    let heads = events::query_event_heads(core.db.pool(), &relay.id, &kinds(&[1]), 3, NOW).await?;
     assert_eq!(heads.map(|heads| heads.len()), Some(3));
-    let over = events::query_event_heads(core.db.pool(), &relay.id, &Filter::new(), 2, NOW).await?;
+    let over = events::query_event_heads(core.db.pool(), &relay.id, &kinds(&[1]), 2, NOW).await?;
     assert!(over.is_none());
     Ok(())
 }

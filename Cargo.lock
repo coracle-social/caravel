@@ -363,6 +363,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
+ "base64",
  "caravel-core",
  "coracle-lib",
  "futures-util",
@@ -370,6 +371,7 @@ dependencies = [
  "rand 0.8.5",
  "serde",
  "serde_json",
+ "sha2",
  "tokio",
  "tokio-tungstenite 0.29.0",
  "tokio-util",

@@ -10,7 +10,7 @@ use caravel_core::billing::{self, ledger};
 use caravel_core::hosting::{self, RelaySettings};
 use caravel_core::relays::{self, Relay, activity};
 use caravel_core::tenants::{self, Tenant};
-use caravel_core::{Core, Error};
+use caravel_core::{Core, Error, access};
 use serde::{Deserialize, Serialize};
 
 use crate::auth::Authed;
@@ -243,8 +243,48 @@ pub async fn list_relay_members(
 ) -> ApiResult {
     let relay = load_relay(&core, &id).await?;
     actor.require_pubkey_or_admin(&relay.tenant_pubkey)?;
-    let members = hosting::list_relay_members(&core, &relay).await?;
+    let members: Vec<String> = access::list_members(core.db.pool(), &relay.id)
+        .await?
+        .into_iter()
+        .map(|member| member.pubkey)
+        .collect();
     ok(serde_json::json!({ "members": members }))
+}
+
+/// Make a pubkey a member of the relay.
+pub async fn add_relay_member(
+    State(core): State<Core>,
+    Authed(actor): Authed,
+    Path((id, pubkey)): Path<(String, String)>,
+) -> ApiResult {
+    let relay = load_relay(&core, &id).await?;
+    actor.require_pubkey_or_admin(&relay.tenant_pubkey)?;
+    require_pubkey(&pubkey)?;
+    hosting::add_member(&core, &relay, &pubkey).await?;
+    ok(())
+}
+
+/// Remove a member from the relay. Its owner can't be removed.
+pub async fn remove_relay_member(
+    State(core): State<Core>,
+    Authed(actor): Authed,
+    Path((id, pubkey)): Path<(String, String)>,
+) -> ApiResult {
+    let relay = load_relay(&core, &id).await?;
+    actor.require_pubkey_or_admin(&relay.tenant_pubkey)?;
+    hosting::remove_member(&core, &relay, &pubkey).await?;
+    ok(())
+}
+
+fn require_pubkey(pubkey: &str) -> Result<(), Error> {
+    if pubkey.len() == 64 && pubkey.chars().all(|c| c.is_ascii_hexdigit()) {
+        Ok(())
+    } else {
+        Err(Error::invalid(
+            "invalid-pubkey",
+            "pubkey must be 64 hex characters",
+        ))
+    }
 }
 
 pub async fn list_relay_activity(

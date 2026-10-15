@@ -44,6 +44,11 @@ impl Server {
         .await
         .expect("failed to load relays");
 
+        tokio::spawn({
+            let (relays, shutdown) = (relays.clone(), shutdown.clone());
+            async move { relays.watch(shutdown).await }
+        });
+
         let app = Router::new().fallback(dispatch).with_state(relays.clone());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
@@ -118,6 +123,56 @@ impl Server {
 
     pub fn now(&self) -> i64 {
         self.core.clock.now()
+    }
+
+    /// Make a NIP-86 call on a relay's host as `signer`, returning the response body.
+    pub async fn manage(
+        &self,
+        host: &str,
+        signer: &SecretKey,
+        method: &str,
+        params: Value,
+    ) -> Value {
+        let body = json!({ "method": method, "params": params }).to_string();
+        let payload = hex::encode(<sha2::Sha256 as sha2::Digest>::digest(body.as_bytes()));
+        let auth = testing::sign_event(
+            signer,
+            27235,
+            "",
+            &[
+                &["u", &format!("https://{host}/")],
+                &["method", "POST"],
+                &["payload", &payload],
+            ],
+            self.now(),
+        );
+        self.manage_with(host, &auth, body).await
+    }
+
+    pub async fn manage_with(&self, host: &str, auth: &Event, body: String) -> Value {
+        use base64::Engine;
+
+        let route = self.relays.resolve(host).expect("relay not served");
+        let request = axum::http::Request::builder()
+            .method("POST")
+            .uri("/")
+            .header("Host", host)
+            .header("Content-Type", "application/nostr+json+rpc")
+            .header(
+                "Authorization",
+                format!(
+                    "Nostr {}",
+                    base64::engine::general_purpose::STANDARD
+                        .encode(serde_json::to_string(auth).unwrap())
+                ),
+            )
+            .body(axum::body::Body::from(body))
+            .unwrap();
+        let response = self.relays.serve(route, request).await;
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        serde_json::from_slice(&bytes).unwrap()
     }
 }
 

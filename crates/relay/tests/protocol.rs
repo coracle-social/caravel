@@ -153,7 +153,7 @@ async fn relays_are_walled_off_from_each_other() {
     writer.auth(&owner, server.now()).await;
     let mut other = server.connect(&second.canonical_host()).await;
     other.auth(&second_owner, server.now()).await;
-    other.req("everything", json!({})).await;
+    other.req("everything", json!({"kinds": [1]})).await;
 
     let event = sign_event(&owner, 1, "only here", &[], server.now());
     assert!(writer.publish(&event).await.0);
@@ -162,7 +162,7 @@ async fn relays_are_walled_off_from_each_other() {
         other.is_quiet().await,
         "an event never crosses to another relay live"
     );
-    let (stored, _) = other.req("again", json!({})).await;
+    let (stored, _) = other.req("again", json!({"kinds": [1]})).await;
     assert!(stored.is_empty(), "or stored");
 }
 
@@ -185,10 +185,10 @@ async fn a_public_relay_strips_signatures_for_everyone_but_its_managers() {
 
     let mut stranger = server.connect(&host).await;
     stranger.auth(&SecretKey::generate(), server.now()).await;
-    let (stored, _) = stranger.req("sub", json!({})).await;
+    let (stored, _) = stranger.req("sub", json!({"kinds": [1]})).await;
     assert_eq!(stored[0]["sig"], "0".repeat(128));
 
-    let (stored, _) = writer.req("sub", json!({})).await;
+    let (stored, _) = writer.req("sub", json!({"kinds": [1]})).await;
     assert_eq!(stored[0]["sig"], hex::encode(event.sig));
 }
 
@@ -207,7 +207,7 @@ async fn an_anonymous_relay_serves_readers_who_never_authenticate() {
     assert!(writer.publish(&event).await.0);
 
     let mut anonymous = server.connect(&host).await;
-    let (stored, eose) = anonymous.req("sub", json!({})).await;
+    let (stored, eose) = anonymous.req("sub", json!({"kinds": [1]})).await;
     assert_eq!(eose[0], "EOSE");
     assert_eq!(stored.len(), 1);
 }

@@ -123,7 +123,7 @@ async fn a_relay_reads_back_in_the_shape_clients_expect() {
     let members = api
         .request("GET", &format!("/relays/{id}/members"), Some(&bearer), None)
         .await;
-    assert_eq!(members.body["data"], json!({ "members": [] }));
+    assert_eq!(members.body["data"], json!({ "members": [tenant_pubkey] }));
 }
 
 #[tokio::test]

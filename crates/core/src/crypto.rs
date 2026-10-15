@@ -2,7 +2,9 @@
 //! encrypts its stored secrets to itself with.
 
 use anyhow::{Result, anyhow};
+use coracle_lib::events::{Event, EventContent};
 use coracle_lib::keys::{PublicKey, SecretKey};
+use coracle_lib::tags::{Tag, Tags};
 use sha2::{Digest, Sha256};
 
 #[derive(Clone)]
@@ -61,4 +63,37 @@ pub fn random_token() -> String {
 
 pub fn sha256_hex(input: &[u8]) -> String {
     hex::encode(Sha256::digest(input))
+}
+
+/// A relay's own key, which signs the events the relay publishes about itself.
+#[derive(Clone)]
+pub struct RelayKey {
+    secret: SecretKey,
+}
+
+impl RelayKey {
+    /// The key a relay's stored secret decrypts to.
+    pub fn decrypt(platform_key: &PlatformKey, encrypted_secret: &str) -> Result<Self> {
+        let secret = SecretKey::from_hex(&platform_key.decrypt(encrypted_secret)?)
+            .map_err(|e| anyhow!("invalid relay secret: {e}"))?;
+        Ok(Self { secret })
+    }
+
+    pub fn pubkey(&self) -> String {
+        self.secret.public_key().to_hex()
+    }
+
+    /// A signed event from the relay.
+    pub fn sign(&self, kind: u16, tags: Vec<Vec<String>>, content: &str, created_at: i64) -> Event {
+        let tags: Tags = tags.into_iter().map(Tag).collect();
+        let hashed = EventContent::new()
+            .with_content(content)
+            .with_tags(tags)
+            .with_kind(kind)
+            .with_created_at(created_at)
+            .with_pubkey(self.secret.public_key())
+            .with_id();
+        let sig = self.secret.sign(hashed.id.as_bytes());
+        hashed.with_sig(sig)
+    }
 }

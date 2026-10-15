@@ -40,7 +40,9 @@ Tenants:
 - `GET /tenants/{pubkey}/stripe/session?return_url=` — a Stripe billing portal url (the tenant only)
 - `POST /relays` — `{tenant_pubkey, subdomain, zooid_domain, plan_id, ...settings}`
 - `GET`, `PUT /relays/{id}` — `PUT` takes any of the settings
-- `GET /relays/{id}/members`, `GET /relays/{id}/activity`
+- `GET /relays/{id}/members` — `{members}`, the member pubkeys, the owner among them
+- `PUT /relays/{id}/members/{pubkey}`, `DELETE /relays/{id}/members/{pubkey}` — add or remove a member; the owner can't be removed
+- `GET /relays/{id}/activity`
 - `POST /relays/{id}/deactivate`, `/reactivate`, `/purge`
 - `GET /relays/{id}/export` — the relay's events as JSONL
 - `POST /relays/{id}/import` — a JSONL body of events, returning `{imported, invalid, problems}`

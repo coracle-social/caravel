@@ -1,0 +1,479 @@
+//! Relay access, ported from zooid's management tests: members, bans, roles,
+//! method grants and claims, and the events the relay publishes about them.
+
+use anyhow::Result;
+use caravel_core::access::{self, MANAGED_METHODS, MemberSource, Role};
+use caravel_core::crypto::RelayKey;
+use caravel_core::events;
+use caravel_core::management::{self, Call};
+use caravel_core::relay_policy::{self, kinds};
+use caravel_core::relays::Relay;
+use caravel_core::testing::{self, create_relay, sign_event};
+use caravel_core::{Core, Error};
+use coracle_lib::events::Event;
+use coracle_lib::filters::Filter;
+use coracle_lib::keys::SecretKey;
+use serde_json::json;
+
+struct Fixture {
+    core: Core,
+    relay: Relay,
+    key: RelayKey,
+    owner: String,
+}
+
+async fn fixture() -> Fixture {
+    let core = testing::core(&SecretKey::generate().public_key().to_hex()).await;
+    let (relay, owner) = create_relay(&core).await;
+    let key = RelayKey::decrypt(&core.config.platform_key, &relay.secret).unwrap();
+    Fixture {
+        core,
+        relay,
+        key,
+        owner: owner.public_key().to_hex(),
+    }
+}
+
+fn pubkey() -> String {
+    SecretKey::generate().public_key().to_hex()
+}
+
+impl Fixture {
+    async fn call(&self, call: Call) -> Result<serde_json::Value> {
+        Ok(management::call(&self.core, &self.relay, call)
+            .await?
+            .result)
+    }
+
+    async fn members(&self) -> Result<Vec<String>> {
+        Ok(access::list_members(self.core.db.pool(), &self.relay.id)
+            .await?
+            .into_iter()
+            .map(|member| member.pubkey)
+            .collect())
+    }
+
+    /// The latest event the relay published of a kind.
+    async fn published(&self, kind: u16) -> Result<Option<Event>> {
+        let filter = Filter::new()
+            .add_kind(kind)
+            .add_author(self.key.pubkey().parse()?);
+        let found = events::query_events(
+            self.core.db.pool(),
+            &self.relay.id,
+            &filter,
+            1,
+            self.core.clock.now(),
+        )
+        .await?;
+        Ok(found
+            .first()
+            .map(|stored| serde_json::from_str(&stored.to_json(false)).unwrap()))
+    }
+
+    /// The `member` tags of the relay's member list.
+    async fn member_tags(&self) -> Result<Vec<Vec<String>>> {
+        let list = self
+            .published(kinds::RELAY_MEMBERS)
+            .await?
+            .expect("no member list");
+        Ok(list
+            .tags
+            .find_all("member")
+            .map(|tag| tag.as_slice().to_vec())
+            .collect())
+    }
+}
+
+#[tokio::test]
+async fn the_owner_is_a_member_from_the_start() -> Result<()> {
+    let f = fixture().await;
+    assert_eq!(f.members().await?, vec![f.owner.clone()]);
+    assert_eq!(
+        f.member_tags().await?,
+        vec![vec!["member".to_string(), f.owner.clone()]]
+    );
+
+    let member = access::get_member(f.core.db.pool(), &f.relay.id, &f.owner)
+        .await?
+        .unwrap();
+    assert_eq!(member.source, MemberSource::Owner);
+    Ok(())
+}
+
+#[tokio::test]
+async fn membership_changes_are_idempotent_and_published() -> Result<()> {
+    let f = fixture().await;
+    let alice = pubkey();
+    let now = f.core.clock.now();
+
+    let added = f
+        .core
+        .db
+        .with_tx(async |conn| {
+            access::admit(conn, &f.key, &f.relay.id, &alice, MemberSource::Manual, now).await
+        })
+        .await?;
+    assert_eq!(
+        added.iter().map(|event| event.kind).collect::<Vec<_>>(),
+        vec![8000, 13534]
+    );
+    assert!(
+        added
+            .iter()
+            .all(|event| event.verify().is_ok() && event.tags.has("-"))
+    );
+
+    let again = f
+        .core
+        .db
+        .with_tx(async |conn| {
+            access::admit(conn, &f.key, &f.relay.id, &alice, MemberSource::Claim, now).await
+        })
+        .await?;
+    assert!(again.is_empty());
+    assert_eq!(f.members().await?.len(), 2);
+
+    f.call(Call::UnallowPubkey(alice.clone())).await?;
+    f.call(Call::UnallowPubkey(alice.clone())).await?;
+    assert_eq!(f.members().await?, vec![f.owner.clone()]);
+    assert!(f.published(kinds::RELAY_REMOVE_MEMBER).await?.is_some());
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_owner_can_be_neither_removed_nor_banned() -> Result<()> {
+    let f = fixture().await;
+    let refused = f.call(Call::UnallowPubkey(f.owner.clone())).await;
+    assert!(refused.is_err());
+    let refused = f.call(Call::BanPubkey(f.owner.clone(), "no".into())).await;
+    assert!(refused.is_err());
+    assert_eq!(f.members().await?, vec![f.owner.clone()]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn banning_a_pubkey_removes_it_and_everything_it_wrote() -> Result<()> {
+    let f = fixture().await;
+    let spammer = SecretKey::generate();
+    let spammer_hex = spammer.public_key().to_hex();
+    f.call(Call::AllowPubkey(spammer_hex.clone())).await?;
+
+    let now = f.core.clock.now();
+    let spam = sign_event(&spammer, 1, "spam", &[], now);
+    f.core
+        .db
+        .with_tx(async |conn| events::save_event(conn, &f.relay.id, &spam, now).await)
+        .await?;
+
+    f.call(Call::BanPubkey(spammer_hex.clone(), "spam".into()))
+        .await?;
+
+    assert!(!f.members().await?.contains(&spammer_hex));
+    assert_eq!(
+        f.call(Call::ListBannedPubkeys).await?,
+        json!([{"pubkey": spammer_hex, "reason": "spam"}])
+    );
+    let written = events::query_events(
+        f.core.db.pool(),
+        &f.relay.id,
+        &Filter::new().add_author(spammer.public_key()),
+        10,
+        now,
+    )
+    .await?;
+    assert!(written.is_empty());
+
+    // Allowing lets them back in and lifts the ban.
+    f.call(Call::AllowPubkey(spammer_hex.clone())).await?;
+    assert!(f.members().await?.contains(&spammer_hex));
+    assert_eq!(f.call(Call::ListBannedPubkeys).await?, json!([]));
+    Ok(())
+}
+
+#[tokio::test]
+async fn unbanning_lifts_the_ban_without_admitting() -> Result<()> {
+    let f = fixture().await;
+    let target = pubkey();
+    f.call(Call::BanPubkey(target.clone(), String::new()))
+        .await?;
+    f.call(Call::UnbanPubkey(target.clone())).await?;
+
+    assert_eq!(f.call(Call::ListBannedPubkeys).await?, json!([]));
+    assert!(!f.members().await?.contains(&target));
+    Ok(())
+}
+
+#[tokio::test]
+async fn banning_an_event_deletes_it_until_it_is_allowed() -> Result<()> {
+    let f = fixture().await;
+    let author = SecretKey::generate();
+    let now = f.core.clock.now();
+    let event = sign_event(&author, 1, "bad", &[], now);
+    f.core
+        .db
+        .with_tx(async |conn| events::save_event(conn, &f.relay.id, &event, now).await)
+        .await?;
+
+    let id = event.id.to_hex();
+    f.call(Call::BanEvent(id.clone(), "bad".into())).await?;
+    assert_eq!(
+        f.call(Call::ListBannedEvents).await?,
+        json!([{"id": id, "reason": "bad"}])
+    );
+    assert!(
+        events::get_events(f.core.db.pool(), &f.relay.id, &[event.id.to_bytes()])
+            .await?
+            .is_empty()
+    );
+
+    f.call(Call::AllowEvent(id)).await?;
+    assert_eq!(f.call(Call::ListBannedEvents).await?, json!([]));
+    Ok(())
+}
+
+#[tokio::test]
+async fn roles_are_defined_published_and_assigned() -> Result<()> {
+    let f = fixture().await;
+    let role = Role {
+        id: "mod".into(),
+        label: "Moderator".into(),
+        description: String::new(),
+        hue: 0,
+        position: 2,
+    };
+    f.call(Call::CreateRole(role.clone())).await?;
+
+    // Empty and zero fields are left for the client to default.
+    let published = f
+        .published(kinds::RELAY_ROLE)
+        .await?
+        .expect("no role event");
+    let names: Vec<&str> = published.tags.iter().map(|tag| tag.name()).collect();
+    assert_eq!(names, ["-", "d", "label", "order"]);
+
+    let duplicate = f.call(Call::CreateRole(role.clone())).await;
+    assert!(matches!(
+        duplicate.unwrap_err().downcast::<Error>()?,
+        Error::Conflict { .. }
+    ));
+
+    let bad_hue = Role {
+        hue: 400,
+        ..role.clone()
+    };
+    assert!(f.call(Call::EditRole(bad_hue)).await.is_err());
+
+    f.call(Call::EditRole(Role {
+        label: "Mod".into(),
+        hue: 120,
+        ..role.clone()
+    }))
+    .await?;
+    let edited = f.published(kinds::RELAY_ROLE).await?.unwrap();
+    assert_eq!(edited.tags.value("label"), Some("Mod"));
+    assert_eq!(edited.tags.value("color"), Some("120"));
+
+    let alice = pubkey();
+    f.call(Call::AssignRole(alice.clone(), "mod".into()))
+        .await?;
+    assert!(
+        f.members().await?.contains(&alice),
+        "a role makes its holder a member"
+    );
+    assert!(
+        f.member_tags()
+            .await?
+            .contains(&vec!["member".into(), alice.clone(), "mod".into()])
+    );
+
+    assert!(
+        f.call(Call::AssignRole(alice.clone(), "missing".into()))
+            .await
+            .is_err()
+    );
+
+    f.call(Call::UnassignRole(alice.clone(), "mod".into()))
+        .await?;
+    assert!(
+        f.member_tags()
+            .await?
+            .contains(&vec!["member".into(), alice.clone()])
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn deleting_a_role_takes_it_from_its_holders_and_publishes_a_deletion() -> Result<()> {
+    let f = fixture().await;
+    let role = Role {
+        id: "temp".into(),
+        ..Default::default()
+    };
+    f.call(Call::CreateRole(role.clone())).await?;
+    let alice = pubkey();
+    f.call(Call::AssignRole(alice.clone(), "temp".into()))
+        .await?;
+
+    let outcome = management::call(&f.core, &f.relay, Call::DeleteRole("temp".into())).await?;
+    let deletion = outcome
+        .published
+        .iter()
+        .find(|event| event.kind == 5)
+        .expect("no deletion");
+    assert_eq!(
+        deletion.tags.value("a"),
+        Some(format!("{}:{}:temp", kinds::RELAY_ROLE, f.key.pubkey()).as_str())
+    );
+    assert!(f.published(kinds::RELAY_ROLE).await?.is_none());
+    assert!(
+        f.member_tags()
+            .await?
+            .contains(&vec!["member".into(), alice])
+    );
+
+    // The same id can be defined again straight away.
+    f.call(Call::CreateRole(role)).await?;
+    assert!(f.published(kinds::RELAY_ROLE).await?.is_some());
+    Ok(())
+}
+
+#[tokio::test]
+async fn methods_are_granted_individually_and_to_members_of_inviting_relays() -> Result<()> {
+    let f = fixture().await;
+    let alice = pubkey();
+
+    f.call(Call::AssignMethod(alice.clone(), "banpubkey".into()))
+        .await?;
+    assert!(
+        f.members().await?.contains(&alice),
+        "a method makes its holder a member"
+    );
+
+    let snapshot = relay_policy::load_snapshot(f.core.db.pool(), &f.relay).await?;
+    let mut methods = snapshot.methods_for(&alice);
+    methods.sort();
+    // Members of a relay whose members may invite also hold the invite methods.
+    assert_eq!(methods, ["banpubkey", "createclaim", "listclaims"]);
+    assert!(snapshot.may_call(&alice, "supportedmethods"));
+    assert!(!snapshot.may_call(&alice, "banevent"));
+    assert_eq!(snapshot.methods_for(&f.owner).len(), MANAGED_METHODS.len());
+
+    let assignees = f.call(Call::ListMethodAssignees).await?;
+    let alice_entry = assignees
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["pubkey"] == alice)
+        .unwrap();
+    assert_eq!(alice_entry["methods"], json!(["banpubkey"]));
+
+    f.call(Call::UnassignMethod(alice.clone(), "banpubkey".into()))
+        .await?;
+    let snapshot = relay_policy::load_snapshot(f.core.db.pool(), &f.relay).await?;
+    assert!(
+        !snapshot
+            .methods_for(&alice)
+            .contains(&"banpubkey".to_string())
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn method_grants_are_checked() -> Result<()> {
+    let f = fixture().await;
+    assert!(
+        f.call(Call::AssignMethod(pubkey(), "launchrockets".into()))
+            .await
+            .is_err()
+    );
+    assert!(
+        f.call(Call::AssignMethod(f.owner.clone(), "banpubkey".into()))
+            .await
+            .is_err()
+    );
+    assert!(
+        f.call(Call::AssignMethod(f.key.pubkey(), "banpubkey".into()))
+            .await
+            .is_err()
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn removing_a_member_takes_their_methods() -> Result<()> {
+    let f = fixture().await;
+    let alice = pubkey();
+    f.call(Call::AssignMethod(alice.clone(), "banevent".into()))
+        .await?;
+    f.call(Call::UnallowPubkey(alice.clone())).await?;
+
+    assert!(
+        access::list_method_grants(f.core.db.pool(), &f.relay.id)
+            .await?
+            .is_empty()
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn claims_are_created_listed_revoked_and_logged() -> Result<()> {
+    let f = fixture().await;
+    let pool = f.core.db.pool();
+
+    assert!(f.call(Call::CreateClaim(String::new())).await.is_err());
+    f.call(Call::CreateClaim("alpha".into())).await?;
+    f.call(Call::CreateClaim("alpha".into())).await?;
+    f.call(Call::CreateClaim("beta".into())).await?;
+    assert_eq!(f.call(Call::ListClaims).await?, json!(["alpha", "beta"]));
+    assert!(access::is_live_claim(pool, &f.relay.id, "alpha").await?);
+
+    let joiner = pubkey();
+    let now = f.core.clock.now();
+    access::record_claim_use(pool, &f.relay.id, "alpha", &joiner, now).await?;
+    access::record_claim_use(pool, &f.relay.id, "unknown", &joiner, now).await?;
+
+    f.call(Call::DeleteClaim("alpha".into())).await?;
+    assert_eq!(f.call(Call::ListClaims).await?, json!(["beta"]));
+    assert!(!access::is_live_claim(pool, &f.relay.id, "alpha").await?);
+
+    // The log outlives the claim.
+    let log = access::get_claim_log(pool, &f.relay.id, "alpha")
+        .await?
+        .expect("no log");
+    assert!(log.revoked_at.is_some());
+    assert_eq!(log.uses.len(), 1);
+    assert_eq!(log.uses[0].pubkey, joiner);
+    assert!(
+        access::get_claim_log(pool, &f.relay.id, "unknown")
+            .await?
+            .is_none()
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn calls_decode_from_their_wire_params() {
+    let pk = "a".repeat(64);
+    assert_eq!(
+        Call::decode("banpubkey", &[json!(pk), json!("why")]).unwrap(),
+        Call::BanPubkey(pk.clone(), "why".into())
+    );
+    assert_eq!(
+        Call::decode(
+            "createrole",
+            &[json!("r"), json!("R"), json!(""), json!(10), json!(1)]
+        )
+        .unwrap(),
+        Call::CreateRole(Role {
+            id: "r".into(),
+            label: "R".into(),
+            description: String::new(),
+            hue: 10,
+            position: 1,
+        })
+    );
+    assert!(Call::decode("banpubkey", &[json!("nope")]).is_err());
+    assert!(Call::decode("createrole", &[json!("r")]).is_err());
+    assert!(Call::decode("listeventsneedingmoderation", &[]).is_err());
+}

@@ -2,12 +2,19 @@
 //! transaction commits, so a subscriber only ever sees durable state; a message is
 //! a hint to re-read, and a subscriber that lags re-reads everything it watches.
 
+use coracle_lib::events::Event;
 use tokio::sync::broadcast;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Change {
     /// A relay's row, hosts or status changed.
     RelayChanged { relay_id: String },
+    /// A relay's members, roles, grants, bans or rooms changed, and it published
+    /// these events about it.
+    AccessChanged {
+        relay_id: String,
+        published: Vec<Event>,
+    },
 }
 
 #[derive(Clone, Debug)]

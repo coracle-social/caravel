@@ -5,9 +5,12 @@
 use std::collections::HashSet;
 use std::sync::{Arc, RwLock};
 
+use caravel_core::access::{self, MemberSource};
+use caravel_core::crypto::RelayKey;
 use caravel_core::events::{self, DELETION, Saved, StoredEvent, VANISH};
-use caravel_core::relay_policy::{self, EventFacts, Refusal, RelaySnapshot};
+use caravel_core::relay_policy::{self, EventFacts, Join, Refusal, RelaySnapshot, kinds};
 use caravel_core::relays::Relay;
+use caravel_core::rooms;
 use caravel_core::{Core, Error};
 use coracle_lib::events::{Event, EventId};
 use coracle_lib::filters::Filter;
@@ -27,17 +30,31 @@ use crate::session::Session;
 /// into a fingerprint and carries on next round.
 const SYNC_FRAME_BYTES: usize = 60_000;
 
-/// A relay's row and the snapshot its rules read, replaced together on reload.
-#[derive(Debug)]
+/// A relay's row, its key, and the snapshot its rules read, replaced together
+/// on reload.
 pub struct InstanceState {
     pub relay: Relay,
+    pub key: RelayKey,
     pub snapshot: RelaySnapshot,
+}
+
+impl InstanceState {
+    pub async fn load(core: &Core, relay: Relay) -> caravel_core::Result<Self> {
+        Ok(Self {
+            key: RelayKey::decrypt(&core.config.platform_key, &relay.secret)?,
+            snapshot: relay_policy::load_snapshot(core.db.pool(), &relay).await?,
+            relay,
+        })
+    }
 }
 
 pub struct RelayInstance {
     core: Core,
     limits: RelayLimits,
     state: RwLock<Arc<InstanceState>>,
+    /// Held while a reload reads the database, so a slower reload can't replace a
+    /// newer state with an older one.
+    reloading: tokio::sync::Mutex<()>,
     connections: Connections,
     /// Cancelled when the relay stops being served, closing its connections.
     closed: CancellationToken,
@@ -54,9 +71,14 @@ impl RelayInstance {
             core,
             limits,
             state: RwLock::new(Arc::new(state)),
+            reloading: tokio::sync::Mutex::new(()),
             connections: Connections::default(),
             closed,
         }
+    }
+
+    pub fn core(&self) -> &Core {
+        &self.core
     }
 
     pub fn relay_id(&self) -> String {
@@ -70,11 +92,22 @@ impl RelayInstance {
             .clone()
     }
 
-    pub fn replace(&self, state: InstanceState) {
+    /// Reload the relay's state from its row, keeping its connections open.
+    pub async fn reload(&self, relay: Relay) -> caravel_core::Result<()> {
+        let _reloading = self.reloading.lock().await;
+        let state = InstanceState::load(&self.core, relay).await?;
         *self
             .state
             .write()
             .unwrap_or_else(|error| error.into_inner()) = Arc::new(state);
+        Ok(())
+    }
+
+    /// Reload the relay's access lists and rooms after a change to them.
+    pub async fn refresh(&self) {
+        if let Err(error) = self.reload(self.state().relay.clone()).await {
+            tracing::error!(relay = %self.relay_id(), error = %error, "failed to refresh relay");
+        }
     }
 
     pub fn limits(&self) -> &RelayLimits {
@@ -110,18 +143,23 @@ impl RelayInstance {
 
     pub async fn on_event(&self, session: &Session, event: Event) {
         match self.ingest(session, &event).await {
-            Ok(()) => {
+            Ok(published) => {
                 session.send(RelayMessage::accepted(event.id)).await;
                 self.fanout(&event);
+                for event in &published {
+                    self.fanout(event);
+                }
             }
             Err(refusal) => self.refuse_event(session, event.id, refusal).await,
         }
     }
 
-    /// Take an event from a client: admit it, then keep it, or only pass it on if
-    /// it is ephemeral. A deletion or request to vanish is applied in the same
-    /// transaction that stores it. `Ok` is an event to fan out.
-    async fn ingest(&self, session: &Session, event: &Event) -> Result<(), Refusal> {
+    /// Take an event from a client: admit it, then act on it, keep it, or only pass
+    /// it on if it is ephemeral. Whatever the event changes is applied in the
+    /// transaction that stores it, and the relay's snapshot is reloaded before the
+    /// client hears back, so its next message meets the new state. Returns the
+    /// events the relay published about the change.
+    async fn ingest(&self, session: &Session, event: &Event) -> Result<Vec<Event>, Refusal> {
         let state = self.state();
         let authed = self.connections.pubkeys(session);
         let now = self.core.clock.now();
@@ -132,10 +170,109 @@ impl RelayInstance {
             return Err(Refusal::invalid("event contains a NUL character"));
         }
 
-        if !relay_policy::is_stored(event.kind) {
-            return Ok(());
+        let published = match event.kind {
+            kinds::RELAY_JOIN => self.join(&state, event, now).await?,
+            kinds::RELAY_LEAVE => self.leave(&state, event, now).await,
+            kind if !relay_policy::is_stored(kind) => Vec::new(),
+            _ => self.store(&state, event, now).await?,
+        };
+
+        if !published.is_empty() || rooms::is_moderation_kind(event.kind) {
+            self.refresh().await;
         }
 
+        Ok(published)
+    }
+
+    /// Admit a NIP-43 join request: a member already, anyone on an open relay, or
+    /// the holder of a live claim, within the plan's member limit. A join is logged
+    /// against any claim it presents.
+    async fn join(
+        &self,
+        state: &InstanceState,
+        event: &Event,
+        now: i64,
+    ) -> Result<Vec<Event>, Refusal> {
+        let relay_id = state.relay.id.as_str();
+        let pubkey = event.pubkey.to_hex();
+
+        let source = match relay_policy::admit_join(&state.snapshot, event)? {
+            Join::AlreadyMember => None,
+            Join::Open => Some(MemberSource::PublicJoin),
+            Join::Claim(code) => {
+                let live = access::is_live_claim(self.core.db.pool(), relay_id, &code)
+                    .await
+                    .map_err(|_| Refusal::Error("the invite code could not be checked"))?;
+                if !live {
+                    return Err(Refusal::restricted("failed to validate invite code"));
+                }
+                Some(MemberSource::Claim)
+            }
+        };
+
+        let presented = event.tags.value("claim");
+        let limit = state.snapshot.member_limit;
+        let result = self
+            .core
+            .db
+            .with_tx(async |conn| {
+                let published = match source {
+                    Some(source) => {
+                        access::admit_within_limit(
+                            &mut *conn, &state.key, relay_id, &pubkey, source, limit, now,
+                        )
+                        .await?
+                    }
+                    None => Vec::new(),
+                };
+                if let Some(code) = presented {
+                    access::record_claim_use(conn, relay_id, code, &pubkey, now).await?;
+                }
+                Ok::<_, Error>(published)
+            })
+            .await;
+
+        match result {
+            Ok(published) => Ok(published),
+            Err(Error::Conflict { message, .. }) => Err(Refusal::restricted(message)),
+            Err(error) => {
+                tracing::warn!(relay = relay_id, error = %error, "failed to admit a member");
+                Err(Refusal::Error("the join could not be applied"))
+            }
+        }
+    }
+
+    /// Act on a NIP-43 leave request. The owner can't leave, which is no error.
+    async fn leave(&self, state: &InstanceState, event: &Event, now: i64) -> Vec<Event> {
+        let relay = &state.relay;
+        let pubkey = event.pubkey.to_hex();
+        let result = self
+            .core
+            .db
+            .with_tx(async |conn| {
+                access::remove(
+                    conn,
+                    &state.key,
+                    &relay.id,
+                    &relay.tenant_pubkey,
+                    &pubkey,
+                    now,
+                )
+                .await
+            })
+            .await;
+
+        result.unwrap_or_default()
+    }
+
+    /// Keep an event, applying a deletion, a request to vanish, or a change to a
+    /// room in the same transaction.
+    async fn store(
+        &self,
+        state: &InstanceState,
+        event: &Event,
+        now: i64,
+    ) -> Result<Vec<Event>, Refusal> {
         if event.kind == VANISH && !self.is_addressed(&state.relay, event) {
             return Err(Refusal::invalid(
                 "this request to vanish names another relay",
@@ -143,11 +280,13 @@ impl RelayInstance {
         }
 
         let relay_id = state.relay.id.as_str();
-        let saved = self
+        let rooms_enabled = state.snapshot.groups_enabled;
+        let (saved, published) = self
             .core
             .db
             .with_tx(async |conn| {
                 let saved = events::save_event(&mut *conn, relay_id, event, now).await?;
+                let mut published = Vec::new();
                 if saved == Saved::New {
                     match event.kind {
                         DELETION => {
@@ -162,10 +301,16 @@ impl RelayInstance {
                             )
                             .await?;
                         }
+                        kind if rooms_enabled
+                            && rooms::is_room_event(kind, rooms::room_id(event)) =>
+                        {
+                            published =
+                                rooms::apply_event(conn, &state.key, relay_id, event, now).await?;
+                        }
                         _ => {}
                     }
                 }
-                Ok::<_, Error>(saved)
+                Ok::<_, Error>((saved, published))
             })
             .await
             .map_err(|error| {
@@ -174,7 +319,7 @@ impl RelayInstance {
             })?;
 
         match saved {
-            Saved::New => Ok(()),
+            Saved::New => Ok(published),
             Saved::Duplicate => Err(Refusal::Duplicate),
             Saved::Deleted => Err(Refusal::blocked("this event was deleted")),
         }
@@ -194,7 +339,7 @@ impl RelayInstance {
     pub fn fanout(&self, event: &Event) {
         let state = self.state();
         let author = event.pubkey.to_hex();
-        let facts = EventFacts::of(event.kind, &author);
+        let facts = EventFacts::of(event, &author);
         let stored = StoredEvent::from_event(event);
         let mut rendered: [Option<RawEvent>; 2] = [None, None];
 
@@ -297,7 +442,7 @@ impl RelayInstance {
                     || !relay_policy::can_any_receive(
                         &state.snapshot,
                         &authed,
-                        EventFacts::of(stored.head.kind, &author),
+                        EventFacts::of_head(&stored.head, &author),
                     )
                 {
                     continue;
@@ -460,7 +605,7 @@ impl RelayInstance {
                 relay_policy::can_any_receive(
                     &state.snapshot,
                     &authed,
-                    EventFacts::of(head.kind, &author),
+                    EventFacts::of_head(head, &author),
                 )
             })
             .map(|head| Item {

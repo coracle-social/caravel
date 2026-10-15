@@ -42,7 +42,7 @@ Every test in zooid's suite, and the caravel test that covers the same behavior 
 - `TestConfig_IsSelf` — `crates/core/tests/relay_policy.rs` writing_needs_authentication_as_the_author
 - `TestValidatePayments` — Pending: ported in P4.
 - `TestValidateBlossomFileStorage` — Obsolete: storage is platform configuration, not per relay.
-- `TestValidateMemberMethods` — Pending: ported in P2.
+- `TestValidateMemberMethods` — Obsolete: member methods follow the relay's members-can-invite flag.
 - `TestValidateAnonymousRead` — Obsolete: anonymous reads are a relay setting the API takes as a flag.
 - `TestValidateRedirect` — Obsolete: there are no config files.
 - `TestValidateRedirectFrom` — Obsolete: redirects are `host_redirect` rows written by the core.
@@ -81,19 +81,19 @@ Every test in zooid's suite, and the caravel test that covers the same behavior 
 
 ## groups_test.go
 
-- `TestGetGroupIDFromEvent` — Pending: ported in P2.
-- `TestGroupStore_UpdatePins` — Pending: ported in P2.
-- `TestGroupStore_AddMember_IsIdempotent` — Pending: ported in P2.
-- `TestGroupStore_RemoveMember_SkipsNonMember` — Pending: ported in P2.
-- `TestGroupStore_CheckWrite_PutPins` — Pending: ported in P2.
-- `TestGroupStore_DeleteGroup_RemovesPins` — Pending: ported in P2.
-- `TestGroupStore_DeleteEvents` — Pending: ported in P2.
-- `TestGroupStore_DeleteEvents_SkipsAnotherGroup` — Pending: ported in P2.
-- `TestGroupStore_DeleteEvents_SkipsGroupState` — Pending: ported in P2.
-- `TestGroupStore_CheckWrite_DeleteEvent` — Pending: ported in P2.
-- `TestGroupStore_IsInvited` — Pending: ported in P2.
-- `TestGroupStore_CheckWrite_HiddenGroupJoinWithInvite` — Pending: ported in P2.
-- `TestGroupStore_CacheInvalidation` — Pending: ported in P2.
+- `TestGetGroupIDFromEvent` — `crates/core/tests/rooms.rs` an_event_names_its_room_by_d_for_room_state_and_h_otherwise
+- `TestGroupStore_UpdatePins` — `crates/core/tests/rooms.rs` only_moderators_change_a_room_and_nobody_writes_its_state_directly
+- `TestGroupStore_AddMember_IsIdempotent` — `crates/core/tests/rooms.rs` joining_and_leaving_a_room_is_published_by_the_relay
+- `TestGroupStore_RemoveMember_SkipsNonMember` — `crates/core/tests/rooms.rs` joining_and_leaving_a_room_is_published_by_the_relay
+- `TestGroupStore_CheckWrite_PutPins` — `crates/core/tests/rooms.rs` only_moderators_change_a_room_and_nobody_writes_its_state_directly
+- `TestGroupStore_DeleteGroup_RemovesPins` — `crates/core/tests/rooms.rs` deleting_a_room_removes_it_and_everything_in_it
+- `TestGroupStore_DeleteEvents` — `crates/core/tests/rooms.rs` deleting_events_stays_within_the_room_and_spares_its_state
+- `TestGroupStore_DeleteEvents_SkipsAnotherGroup` — `crates/core/tests/rooms.rs` deleting_events_stays_within_the_room_and_spares_its_state
+- `TestGroupStore_DeleteEvents_SkipsGroupState` — `crates/core/tests/rooms.rs` deleting_events_stays_within_the_room_and_spares_its_state
+- `TestGroupStore_CheckWrite_DeleteEvent` — `crates/core/tests/rooms.rs` a_relay_method_holder_may_not_moderate_rooms_but_a_room_admin_may
+- `TestGroupStore_IsInvited` — `crates/core/tests/rooms.rs` a_closed_room_takes_joins_only_with_an_invite_and_a_hidden_one_hides
+- `TestGroupStore_CheckWrite_HiddenGroupJoinWithInvite` — `crates/core/tests/rooms.rs` a_closed_room_takes_joins_only_with_an_invite_and_a_hidden_one_hides
+- `TestGroupStore_CacheInvalidation` — `crates/relay/tests/access.rs` a_private_room_is_read_only_by_its_members_stored_and_live (the snapshot reloads after every room change)
 
 ## instance_test.go
 
@@ -101,16 +101,16 @@ Every test in zooid's suite, and the caravel test that covers the same behavior 
 - `TestMakeInstance_NoPayments` — Pending: ported in P4.
 - `TestMakeInstance_Redirect` — Obsolete: redirect-only configs became `host_redirect` rows, covered with the hosts in `crates/relay/tests/protocol.rs`.
 - `TestInstance_AllowRecipientEvent` — `crates/core/tests/relay_policy.rs` a_gift_wrap_or_zap_for_a_member_needs_no_authentication
-- `TestInstance_PreventBroadcast_PrivateGroup` — Pending: ported in P2.
+- `TestInstance_PreventBroadcast_PrivateGroup` — `crates/relay/tests/access.rs` a_private_room_is_read_only_by_its_members_stored_and_live
 - `TestInstance_OnRequest_Anonymous` — `crates/core/tests/relay_policy.rs` reading_needs_authentication_unless_anonymous_reads_are_on
 - `TestInstance_QueryStored_Anonymous` — `crates/relay/tests/protocol.rs` an_anonymous_relay_serves_readers_who_never_authenticate
 - `TestInstance_IsInternalEvent` — `crates/core/tests/relay_policy.rs` kinds_the_relay_writes_itself_are_refused
-- `TestInstance_OnEventSaved_ClosedGroupJoinWithInvite` — Pending: ported in P2.
-- `TestInstance_CachesSeeClientWrites` — Pending: ported in P2.
-- `TestInstance_BanEventInvalidatesCaches` — Pending: ported in P2.
+- `TestInstance_OnEventSaved_ClosedGroupJoinWithInvite` — `crates/core/tests/rooms.rs` a_closed_room_takes_joins_only_with_an_invite_and_a_hidden_one_hides
+- `TestInstance_CachesSeeClientWrites` — `crates/relay/tests/access.rs` a_private_room_is_read_only_by_its_members_stored_and_live
+- `TestInstance_BanEventInvalidatesCaches` — `crates/core/tests/access.rs` banning_an_event_deletes_it_until_it_is_allowed
 - `TestInstance_OnEvent_CreatedAtUpperLimit` — `crates/core/tests/relay_policy.rs` events_dated_too_far_ahead_are_refused
 - `TestMakeInstance_CreatedAtUpperLimit` — `crates/relay/tests/protocol.rs` the_information_document_describes_the_relay
-- `TestInstance_JoinIsLoggedAgainstItsClaim` — Pending: ported in P2.
+- `TestInstance_JoinIsLoggedAgainstItsClaim` — `crates/relay/tests/access.rs` a_claim_lets_a_stranger_join_and_read
 
 ## lib_test.go
 
@@ -131,46 +131,46 @@ Every test in zooid's suite, and the caravel test that covers the same behavior 
 
 - `TestValidateJoinRequest_PaidRelay` — Pending: ported in P2.
 - `TestValidateJoinRequest_PaidRelayTakesAnInvite` — Pending: ported in P2.
-- `TestManagementStore_MembershipChangesAreIdempotent` — Pending: ported in P2.
-- `TestManagementStore_BanPubkey` — Pending: ported in P2.
-- `TestManagementStore_AllowPubkey` — Pending: ported in P2.
-- `TestManagementStore_UnbanPubkey` — Pending: ported in P2.
-- `TestManagementStore_UnallowPubkey` — Pending: ported in P2.
-- `TestManagementStore_BanEvent` — Pending: ported in P2.
-- `TestManagementStore_AllowEvent` — Pending: ported in P2.
-- `TestManagementStore_BanCacheInvalidation` — Pending: ported in P2.
-- `TestManagementStore_CreateRole` — Pending: ported in P2.
-- `TestManagementStore_CreateRole_Duplicate` — Pending: ported in P2.
-- `TestManagementStore_CreateRole_OmitsEmptyAndZero` — Pending: ported in P2.
-- `TestManagementStore_CreateRole_InvalidColor` — Pending: ported in P2.
-- `TestManagementStore_EditRole` — Pending: ported in P2.
-- `TestManagementStore_AssignAndUnassignRole` — Pending: ported in P2.
-- `TestManagementStore_AssignRole_UnknownRole` — Pending: ported in P2.
-- `TestManagementStore_AssignAndUnassignMethod` — Pending: ported in P2.
-- `TestManagementStore_GetMethodAssigneeItems` — Pending: ported in P2.
-- `TestManagementStore_MemberMethods` — Pending: ported in P2.
-- `TestManagementStore_RemoveMember_RemovesAssignedMethods` — Pending: ported in P2.
-- `TestManagementStore_AssignMethod_UnknownMethod` — Pending: ported in P2.
-- `TestManagementStore_MethodAssignments_OwnerAndSelf` — Pending: ported in P2.
-- `TestManagementStore_AccessChecks` — Pending: ported in P2.
-- `TestManagementStore_MethodCacheInvalidation` — Pending: ported in P2.
-- `TestManagementStore_MemberCacheInvalidation` — Pending: ported in P2.
-- `TestManagementStore_DeleteRole` — Pending: ported in P2.
-- `TestManagementStore_DeleteRole_BroadcastsDeletion` — Pending: ported in P2.
-- `TestManagementStore_PubkeyIsBanned_NotBanned` — Pending: ported in P2.
-- `TestManagementStore_EventIsBanned_NotBanned` — Pending: ported in P2.
-- `TestManagementStore_CreateClaim` — Pending: ported in P2.
-- `TestManagementStore_CreateClaim_Idempotent` — Pending: ported in P2.
-- `TestManagementStore_CreateClaim_Empty` — Pending: ported in P2.
-- `TestManagementStore_GetClaims_ReturnsAll` — Pending: ported in P2.
-- `TestManagementStore_DeleteClaim` — Pending: ported in P2.
-- `TestManagementStore_DeleteClaim_RemovesAllMatching` — Pending: ported in P2.
-- `TestManagementStore_CreateClaim_ValidatesJoinRequest` — Pending: ported in P2.
-- `TestManagementStore_Enable_WiresListBannedEvents` — Pending: ported in P2.
-- `TestManagementStore_Enable_PerMethodAuthorization` — Pending: ported in P2.
-- `TestManagementStore_Enable_SupportedMethodsPerPubkey` — Pending: ported in P2.
-- `TestManagementStore_ClaimLog` — Pending: ported in P2.
-- `TestManagementStore_ClaimLog_PredatesLogging` — Pending: ported in P2.
+- `TestManagementStore_MembershipChangesAreIdempotent` — `crates/core/tests/access.rs` membership_changes_are_idempotent_and_published
+- `TestManagementStore_BanPubkey` — `crates/core/tests/access.rs` banning_a_pubkey_removes_it_and_everything_it_wrote
+- `TestManagementStore_AllowPubkey` — `crates/core/tests/access.rs` banning_a_pubkey_removes_it_and_everything_it_wrote
+- `TestManagementStore_UnbanPubkey` — `crates/core/tests/access.rs` unbanning_lifts_the_ban_without_admitting
+- `TestManagementStore_UnallowPubkey` — `crates/core/tests/access.rs` membership_changes_are_idempotent_and_published
+- `TestManagementStore_BanEvent` — `crates/core/tests/access.rs` banning_an_event_deletes_it_until_it_is_allowed
+- `TestManagementStore_AllowEvent` — `crates/core/tests/access.rs` banning_an_event_deletes_it_until_it_is_allowed
+- `TestManagementStore_BanCacheInvalidation` — `crates/relay/tests/access.rs` a_banned_member_stops_receiving_at_once
+- `TestManagementStore_CreateRole` — `crates/core/tests/access.rs` roles_are_defined_published_and_assigned
+- `TestManagementStore_CreateRole_Duplicate` — `crates/core/tests/access.rs` roles_are_defined_published_and_assigned
+- `TestManagementStore_CreateRole_OmitsEmptyAndZero` — `crates/core/tests/access.rs` roles_are_defined_published_and_assigned
+- `TestManagementStore_CreateRole_InvalidColor` — `crates/core/tests/access.rs` roles_are_defined_published_and_assigned
+- `TestManagementStore_EditRole` — `crates/core/tests/access.rs` roles_are_defined_published_and_assigned
+- `TestManagementStore_AssignAndUnassignRole` — `crates/core/tests/access.rs` roles_are_defined_published_and_assigned
+- `TestManagementStore_AssignRole_UnknownRole` — `crates/core/tests/access.rs` roles_are_defined_published_and_assigned
+- `TestManagementStore_AssignAndUnassignMethod` — `crates/core/tests/access.rs` methods_are_granted_individually_and_to_members_of_inviting_relays
+- `TestManagementStore_GetMethodAssigneeItems` — `crates/core/tests/access.rs` methods_are_granted_individually_and_to_members_of_inviting_relays
+- `TestManagementStore_MemberMethods` — `crates/relay/tests/access.rs` members_of_an_inviting_relay_may_create_claims
+- `TestManagementStore_RemoveMember_RemovesAssignedMethods` — `crates/core/tests/access.rs` removing_a_member_takes_their_methods
+- `TestManagementStore_AssignMethod_UnknownMethod` — `crates/core/tests/access.rs` method_grants_are_checked
+- `TestManagementStore_MethodAssignments_OwnerAndSelf` — `crates/core/tests/access.rs` method_grants_are_checked
+- `TestManagementStore_AccessChecks` — `crates/core/tests/relay_policy.rs` members_and_managers_may_write_and_strangers_may_not
+- `TestManagementStore_MethodCacheInvalidation` — `crates/relay/tests/access.rs` management_calls_are_authorized_per_method
+- `TestManagementStore_MemberCacheInvalidation` — `crates/relay/tests/access.rs` a_member_added_through_the_api_can_read_straight_away
+- `TestManagementStore_DeleteRole` — `crates/core/tests/access.rs` deleting_a_role_takes_it_from_its_holders_and_publishes_a_deletion
+- `TestManagementStore_DeleteRole_BroadcastsDeletion` — `crates/core/tests/access.rs` deleting_a_role_takes_it_from_its_holders_and_publishes_a_deletion
+- `TestManagementStore_PubkeyIsBanned_NotBanned` — `crates/core/tests/relay_policy.rs` banned_authors_and_events_are_blocked
+- `TestManagementStore_EventIsBanned_NotBanned` — `crates/core/tests/relay_policy.rs` banned_authors_and_events_are_blocked
+- `TestManagementStore_CreateClaim` — `crates/core/tests/access.rs` claims_are_created_listed_revoked_and_logged
+- `TestManagementStore_CreateClaim_Idempotent` — `crates/core/tests/access.rs` claims_are_created_listed_revoked_and_logged
+- `TestManagementStore_CreateClaim_Empty` — `crates/core/tests/access.rs` claims_are_created_listed_revoked_and_logged
+- `TestManagementStore_GetClaims_ReturnsAll` — `crates/core/tests/access.rs` claims_are_created_listed_revoked_and_logged
+- `TestManagementStore_DeleteClaim` — `crates/core/tests/access.rs` claims_are_created_listed_revoked_and_logged
+- `TestManagementStore_DeleteClaim_RemovesAllMatching` — Obsolete: a claim is one row, so there is never more than one to remove.
+- `TestManagementStore_CreateClaim_ValidatesJoinRequest` — `crates/relay/tests/access.rs` a_claim_lets_a_stranger_join_and_read
+- `TestManagementStore_Enable_WiresListBannedEvents` — `crates/core/tests/access.rs` banning_an_event_deletes_it_until_it_is_allowed
+- `TestManagementStore_Enable_PerMethodAuthorization` — `crates/relay/tests/access.rs` management_calls_are_authorized_per_method
+- `TestManagementStore_Enable_SupportedMethodsPerPubkey` — `crates/relay/tests/access.rs` management_calls_are_authorized_per_method
+- `TestManagementStore_ClaimLog` — `crates/core/tests/access.rs` claims_are_created_listed_revoked_and_logged
+- `TestManagementStore_ClaimLog_PredatesLogging` — Obsolete: every claim has had a log since it was created.
 
 ## migrations_test.go
 

@@ -8,9 +8,10 @@ use regex::Regex;
 use serde::Deserialize;
 
 use crate::Core;
+use crate::access::{self, MemberSource};
 use crate::billing::ledger;
 use crate::bus::Change;
-use crate::crypto::generate_keypair;
+use crate::crypto::{RelayKey, generate_keypair};
 use crate::domains::normalize_custom_domain;
 use crate::error::{Error, Result};
 use crate::flag::Flag;
@@ -194,6 +195,7 @@ pub async fn create_relay(
         ..Default::default()
     };
     let relay = validate_relay(core, apply_settings(core, relay, settings)?)?;
+    let key = RelayKey::decrypt(&core.config.platform_key, &relay.secret)?;
 
     core.db
         .with_tx(async |conn| {
@@ -203,10 +205,19 @@ pub async fn create_relay(
                 status: relay.status,
             };
             activity::insert_relay_activity(
-                conn,
+                &mut *conn,
                 ActivityType::CreateRelay,
                 &relay.id,
                 snapshot,
+                now,
+            )
+            .await?;
+            access::admit(
+                conn,
+                &key,
+                &relay.id,
+                tenant_pubkey,
+                MemberSource::Owner,
                 now,
             )
             .await
@@ -240,7 +251,7 @@ pub async fn update_relay(core: &Core, relay: Relay, settings: RelaySettings) ->
             plans::get_plan(&relay.plan_id).and_then(|plan| plan.members.map(|limit| (plan, limit)))
     {
         let (plan, limit) = limit;
-        let members = list_relay_members(core, &relay).await?.len() as i64;
+        let members = access::count_members(core.db.pool(), &relay.id).await?;
         if members > limit {
             return Err(Error::invalid(
                 "member-limit-exceeded",
@@ -360,12 +371,43 @@ pub async fn purge_relay(core: &Core, relay: &Relay) -> Result<()> {
 }
 
 /// The pubkeys that are members of a relay.
-pub async fn list_relay_members(core: &Core, relay: &Relay) -> Result<Vec<String>> {
-    if !relay.synced {
-        return Ok(Vec::new());
-    }
+/// Make a pubkey a member of a relay by hand.
+pub async fn add_member(core: &Core, relay: &Relay, pubkey: &str) -> Result<()> {
+    let key = RelayKey::decrypt(&core.config.platform_key, &relay.secret)?;
+    let now = core.clock.now();
+    let published = core
+        .db
+        .with_tx(async |conn| {
+            access::admit(conn, &key, &relay.id, pubkey, MemberSource::Manual, now).await
+        })
+        .await?;
 
-    Ok(core.zooid.list_members(&relay.id).await?)
+    publish_access_change(core, relay, published);
+    Ok(())
+}
+
+/// Remove a member from a relay. Its owner can't be removed.
+pub async fn remove_member(core: &Core, relay: &Relay, pubkey: &str) -> Result<()> {
+    let key = RelayKey::decrypt(&core.config.platform_key, &relay.secret)?;
+    let now = core.clock.now();
+    let published = core
+        .db
+        .with_tx(async |conn| {
+            access::remove(conn, &key, &relay.id, &relay.tenant_pubkey, pubkey, now).await
+        })
+        .await?;
+
+    publish_access_change(core, relay, published);
+    Ok(())
+}
+
+fn publish_access_change(core: &Core, relay: &Relay, published: Vec<coracle_lib::events::Event>) {
+    if !published.is_empty() {
+        core.bus.publish(Change::AccessChanged {
+            relay_id: relay.id.clone(),
+            published,
+        });
+    }
 }
 
 async fn change_relay_status(

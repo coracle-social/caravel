@@ -8,3 +8,4 @@ data
 **/.env
 .playwright-cli
 .agents/settings.local.json
+.local

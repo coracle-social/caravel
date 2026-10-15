@@ -10,13 +10,13 @@ Responses are unwrapped from an `ApiOk<T> = { data: T; code: string }` envelope:
 
 On a non-2xx response it throws `new ApiError(message, response.status)`. `ApiError extends Error` and carries a numeric `status`. The message comes from the JSON body's `error` field when present, otherwise `Request failed (<status>)`.
 
-`listPlans()` deliberately bypasses `callApi`: it does its own raw `fetch` with no auth and unwraps `{ data: Plan[] }` directly. It is the only wrapper that bypasses `callApi`, but not the only public/unauthed endpoint — `/plans` and `/plans/:id` are both public (their backend handlers omit the `AuthedPubkey` extractor); `getPlan` reaches its public route through `callApi`, which omits the `Authorization` header when logged out.
+`listPlans()` deliberately bypasses `callApi`: it does its own raw `fetch` with no auth and unwraps `{ data: Plan[] }` directly. It is the only wrapper that bypasses `callApi`, but not the only public endpoint — `/plans` and `/plans/:id` are both public; `getPlan` reaches its public route through `callApi`, which omits the `Authorization` header when logged out.
 
-## NIP-98 auth and the 10-minute cache
+## Sessions
 
-`makeAuth()` builds a session-style NIP-98 header. It reads the active account via the injected getter (see the DI seam below), and if none is logged in it returns `undefined` — so `callApi` silently sends an *unauthenticated* request rather than failing fast, and authed endpoints then 401 from the backend.
+`makeAuth()` returns a bearer header for the active account's session. It reads the active account via the injected getter (see the DI seam below), and if none is logged in it returns `undefined` — so `callApi` silently sends an *unauthenticated* request rather than failing fast, and authed endpoints then 401 from the backend.
 
-When an account is present it signs a **kind-27235** event with empty content and a single `["u", API_URL]` tag, base64-encodes the JSON, and returns `Nostr <base64>`. The result is cached per-pubkey for **10 minutes** (`expiresAt = now + 10 * 60 * 1000`). Switching accounts invalidates the cache via the pubkey check. Within the cache window the event's `created_at` is fixed at sign time, so freshness relies on the backend's own NIP-98 window.
+Sessions are kept per pubkey in `localStorage` under `caravel.sessions`. When the account has no live session, `makeAuth()` signs one **kind-27235** event for exactly `POST <API_URL>/session` (a `u` tag and a `method` tag) and exchanges it for a token that lasts thirty days, so the signer is asked once rather than per request; concurrent callers share one pending sign-in. A request that comes back `401` forgets the session and retries once with a fresh one. Logging out calls `signOut()`, which ends the session on the server too.
 
 ## The api.ts ↔ state.ts circular-import seam
 

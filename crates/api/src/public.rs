@@ -1,0 +1,81 @@
+//! Routes anyone may call, and the session routes that turn a signature into a
+//! bearer token.
+
+use std::collections::HashMap;
+
+use axum::extract::{Path, Query, State};
+use axum::http::{HeaderMap, StatusCode};
+use axum::response::IntoResponse;
+use caravel_core::auth::{self, Actor};
+use caravel_core::{Core, Error, domains, plans};
+use serde::Serialize;
+
+use crate::auth::{Authed, authorization};
+use crate::response::{ApiResult, created, ok};
+
+pub async fn list_plans() -> ApiResult {
+    ok(plans::list_plans())
+}
+
+pub async fn get_plan(Path(id): Path<String>) -> ApiResult {
+    ok(plans::get_plan(&id).ok_or(Error::NotFound("plan not found"))?)
+}
+
+/// On-demand TLS's ask: 200 if the platform serves `?domain=`, 404 if not.
+pub async fn check_domain(
+    State(core): State<Core>,
+    Query(params): Query<HashMap<String, String>>,
+) -> impl IntoResponse {
+    let Some(domain) = params.get("domain") else {
+        return StatusCode::BAD_REQUEST;
+    };
+
+    match domains::is_served_host(&core, domain).await {
+        Ok(true) => StatusCode::OK,
+        Ok(false) => StatusCode::NOT_FOUND,
+        Err(error) => {
+            tracing::warn!(domain = %domain, error = %error, "domain check failed");
+            StatusCode::NOT_FOUND
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct SessionResponse {
+    pubkey: String,
+    token: String,
+    expires_at: i64,
+}
+
+/// Exchange a NIP-98 signature over exactly this request for a bearer token.
+pub async fn create_session(State(core): State<Core>, headers: HeaderMap) -> ApiResult {
+    let now = core.clock.now();
+    let url = format!("{}/session", core.config.api_url.trim_end_matches('/'));
+    let pubkey = auth::verify_request_auth(authorization(&headers)?, &url, "POST", now)?;
+    let (token, session) = auth::create_session(core.db.pool(), &pubkey, now).await?;
+
+    created(SessionResponse {
+        pubkey,
+        token,
+        expires_at: session.expires_at,
+    })
+}
+
+/// End the session whose bearer token authenticates this request.
+pub async fn delete_session(State(core): State<Core>, headers: HeaderMap) -> ApiResult {
+    let token = authorization(&headers)?
+        .strip_prefix("Bearer ")
+        .ok_or_else(|| Error::Unauthorized("a session token is required".into()))?;
+    auth::delete_session(core.db.pool(), token.trim()).await?;
+    ok(())
+}
+
+#[derive(Serialize)]
+struct Identity {
+    pubkey: String,
+    is_admin: bool,
+}
+
+pub async fn get_identity(Authed(Actor { pubkey, is_admin }): Authed) -> ApiResult {
+    ok(Identity { pubkey, is_admin })
+}

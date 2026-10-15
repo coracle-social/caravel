@@ -1,0 +1,6 @@
+disallowed-methods = [
+  { path = "std::env::var", reason = "configuration is read once, in crates/app/src/config.rs" },
+  { path = "std::env::var_os", reason = "configuration is read once, in crates/app/src/config.rs" },
+  { path = "chrono::Utc::now", reason = "read the time from caravel_core::clock::Clock" },
+  { path = "std::time::SystemTime::now", reason = "read the time from caravel_core::clock::Clock" },
+]

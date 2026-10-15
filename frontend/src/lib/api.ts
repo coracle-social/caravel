@@ -21,12 +21,6 @@ type UpdateTenantInput = {
   nwc_url?: string
 }
 
-type AuthCache = {
-  pubkey: string
-  value: string
-  expiresAt: number
-}
-
 export class ApiError extends Error {
   status: number
 
@@ -274,31 +268,101 @@ export type ImportResult = {
   problems?: ImportProblem[]
 }
 
-let authCache: AuthCache | undefined
+type Signer = { signEvent: (e: unknown) => Promise<{ pubkey: string; sig: string; [k: string]: unknown }> }
 
-export async function makeAuth(): Promise<string | undefined> {
-  const current = getAccount() as { pubkey: string; signer: { signEvent: (e: unknown) => Promise<{ pubkey: string; sig: string; [k: string]: unknown }> } } | undefined
-  if (!current) return undefined
+type Session = {
+  token: string
+  expiresAt: number
+}
 
-  const now = Date.now()
-  if (authCache && authCache.pubkey === current.pubkey && authCache.expiresAt > now) {
-    return authCache.value
+const SESSIONS_KEY = "caravel.sessions"
+
+const sessionUrl = () => `${API_URL.replace(/\/$/, "")}/session`
+
+function readSessions(): Record<string, Session> {
+  try {
+    return JSON.parse(localStorage.getItem(SESSIONS_KEY) || "{}") as Record<string, Session>
+  } catch {
+    return {}
   }
+}
 
-  const event = await current.signer.signEvent({
+function writeSession(pubkey: string, session: Session | undefined) {
+  const sessions = readSessions()
+  if (session) {
+    sessions[pubkey] = session
+  } else {
+    delete sessions[pubkey]
+  }
+  localStorage.setItem(SESSIONS_KEY, JSON.stringify(sessions))
+}
+
+const pendingSessions = new Map<string, Promise<Session>>()
+
+// Sign one NIP-98 request for exactly POST /session, which buys a bearer token
+// every later request carries instead of a signature.
+async function createSession(pubkey: string, signer: Signer): Promise<Session> {
+  const url = sessionUrl()
+  const event = await signer.signEvent({
     kind: 27235,
     content: "",
-    created_at: Math.floor(now / 1000),
-    tags: [["u", API_URL]],
+    created_at: Math.floor(Date.now() / 1000),
+    tags: [["u", url], ["method", "POST"]],
   })
 
-  const value = `Nostr ${btoa(JSON.stringify(event))}`
-  authCache = {
-    pubkey: current.pubkey,
-    value,
-    expiresAt: now + 10 * 60 * 1000,
+  const response = await fetch(url, { method: "POST", headers: { Authorization: `Nostr ${btoa(JSON.stringify(event))}` } })
+  if (!response.ok) throw new ApiError(`Failed to sign in (${response.status})`, response.status)
+
+  const payload = await response.json() as ApiOk<{ token: string; expires_at: number }>
+  const session = { token: payload.data.token, expiresAt: payload.data.expires_at * 1000 }
+  writeSession(pubkey, session)
+  return session
+}
+
+export async function makeAuth(): Promise<string | undefined> {
+  const current = getAccount() as { pubkey: string; signer: Signer } | undefined
+  if (!current) return undefined
+
+  const cached = readSessions()[current.pubkey]
+  if (cached && cached.expiresAt > Date.now()) return `Bearer ${cached.token}`
+
+  let pending = pendingSessions.get(current.pubkey)
+  if (!pending) {
+    pending = createSession(current.pubkey, current.signer).finally(() => pendingSessions.delete(current.pubkey))
+    pendingSessions.set(current.pubkey, pending)
   }
-  return value
+
+  return `Bearer ${(await pending).token}`
+}
+
+// Forget the current account's session, so the next request signs in again.
+function forgetSession() {
+  const current = getAccount() as { pubkey: string } | undefined
+  if (current) writeSession(current.pubkey, undefined)
+}
+
+// End the current account's session on the server and here.
+export async function signOut() {
+  const current = getAccount() as { pubkey: string } | undefined
+  const session = current && readSessions()[current.pubkey]
+  if (session) {
+    await fetch(sessionUrl(), { method: "DELETE", headers: { Authorization: `Bearer ${session.token}` } }).catch(() => undefined)
+  }
+  forgetSession()
+}
+
+// Send an authenticated request, signing in again once if the session was revoked or expired.
+async function authedFetch(url: string, init: RequestInit = {}): Promise<Response> {
+  const send = async () => {
+    const auth = await makeAuth()
+    return fetch(url, { ...init, headers: { ...init.headers, ...(auth ? { Authorization: auth } : {}) } })
+  }
+
+  const response = await send()
+  if (response.status !== 401 || !getAccount()) return response
+
+  forgetSession()
+  return send()
 }
 
 export async function callApi<TRequest = unknown, TResponse = unknown>(
@@ -306,15 +370,11 @@ export async function callApi<TRequest = unknown, TResponse = unknown>(
   path: string,
   body?: TRequest,
 ): Promise<TResponse> {
-  const auth = await makeAuth()
   const url = new URL(path, API_URL).toString()
 
-  const response = await fetch(url, {
+  const response = await authedFetch(url, {
     method,
-    headers: {
-      ...(auth ? { Authorization: auth } : {}),
-      "Content-Type": "application/json",
-    },
+    headers: { "Content-Type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
   })
 
@@ -437,10 +497,9 @@ export function listModeration(params: { since?: number; until?: number } = {}) 
 // people's relays is. Since <img> can't carry the NIP-98 auth header, fetch the
 // bytes here and hand back an object URL; the caller owns revoking it.
 export async function fetchModerationBlob(relayId: string, sha256: string): Promise<string> {
-  const auth = await makeAuth()
   const url = new URL(`/moderation/blob/${relayId}/${sha256}`, API_URL).toString()
 
-  const response = await fetch(url, {headers: auth ? {Authorization: auth} : {}})
+  const response = await authedFetch(url)
 
   if (!response.ok) {
     throw new ApiError(`Failed to load blob (${response.status})`, response.status)
@@ -452,10 +511,9 @@ export async function fetchModerationBlob(relayId: string, sha256: string): Prom
 // A relay's whole event store as JSONL. Fetched rather than linked because the
 // NIP-98 auth header can't ride on an <a href>; the caller owns the blob.
 export async function exportRelayData(id: string): Promise<Blob> {
-  const auth = await makeAuth()
   const url = new URL(`/relays/${id}/export`, API_URL).toString()
 
-  const response = await fetch(url, {headers: auth ? {Authorization: auth} : {}})
+  const response = await authedFetch(url)
 
   if (!response.ok) {
     throw new ApiError(`Failed to export relay data (${response.status})`, response.status)
@@ -467,15 +525,11 @@ export async function exportRelayData(id: string): Promise<Blob> {
 // Add the events in a JSONL file to a relay. Each event carries its own
 // signature, so the relay validates them itself and reports what it refused.
 export async function importRelayData(id: string, file: Blob): Promise<ImportResult> {
-  const auth = await makeAuth()
   const url = new URL(`/relays/${id}/import`, API_URL).toString()
 
-  const response = await fetch(url, {
+  const response = await authedFetch(url, {
     method: "POST",
-    headers: {
-      ...(auth ? {Authorization: auth} : {}),
-      "Content-Type": "application/x-ndjson",
-    },
+    headers: {"Content-Type": "application/x-ndjson"},
     body: file,
   })
 

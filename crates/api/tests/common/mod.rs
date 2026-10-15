@@ -1,0 +1,143 @@
+//! A test API: the router over a test core, and helpers to sign requests and
+//! read responses.
+
+#![allow(dead_code)]
+
+use axum::Router;
+use axum::body::Body;
+use axum::http::{Request, StatusCode};
+use base64::Engine;
+use caravel_core::Core;
+use caravel_core::tenants::{self, Tenant};
+use caravel_core::testing::{self, API_URL};
+use coracle_lib::events::EventContent;
+use coracle_lib::keys::SecretKey;
+use coracle_lib::tags::Tags;
+use http_body_util::BodyExt;
+use serde_json::Value;
+use tower::ServiceExt;
+
+pub struct TestApi {
+    pub core: Core,
+    pub admin: SecretKey,
+    router: Router,
+}
+
+pub struct Response {
+    pub status: StatusCode,
+    pub body: Value,
+}
+
+impl TestApi {
+    pub async fn new() -> Self {
+        let admin = SecretKey::generate();
+        let core = testing::core(&admin.public_key().to_hex()).await;
+        let router = caravel_api::router(core.clone());
+        Self {
+            core,
+            admin,
+            router,
+        }
+    }
+
+    pub async fn request(
+        &self,
+        method: &str,
+        path: &str,
+        authorization: Option<&str>,
+        body: Option<Value>,
+    ) -> Response {
+        let mut request = Request::builder().method(method).uri(path);
+        if let Some(authorization) = authorization {
+            request = request.header("Authorization", authorization);
+        }
+        let body = match body {
+            Some(body) => {
+                request = request.header("Content-Type", "application/json");
+                Body::from(body.to_string())
+            }
+            None => Body::empty(),
+        };
+
+        let response = self
+            .router
+            .clone()
+            .oneshot(request.body(body).expect("invalid request"))
+            .await
+            .expect("router failed");
+        let status = response.status();
+        let bytes = response
+            .into_body()
+            .collect()
+            .await
+            .expect("unreadable body")
+            .to_bytes();
+        let body = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+
+        Response { status, body }
+    }
+
+    /// A bearer authorization for a fresh session of `secret`'s pubkey.
+    pub async fn bearer(&self, secret: &SecretKey) -> String {
+        let auth = sign_http_auth(
+            secret,
+            &format!("{API_URL}/session"),
+            "POST",
+            self.core.clock.now(),
+        );
+        let response = self.request("POST", "/session", Some(&auth), None).await;
+        assert_eq!(response.status, StatusCode::CREATED, "{:?}", response.body);
+        format!(
+            "Bearer {}",
+            response.body["data"]["token"].as_str().expect("no token")
+        )
+    }
+
+    /// Make `secret`'s pubkey a tenant without reaching Stripe.
+    pub async fn create_tenant(&self, secret: &SecretKey) -> String {
+        let pubkey = secret.public_key().to_hex();
+        tenants::insert_tenant(
+            self.core.db.pool(),
+            &Tenant {
+                pubkey: pubkey.clone(),
+                return_url: "http://localhost/account".to_string(),
+                created_at: self.core.clock.now(),
+                stripe_customer_id: format!("cus_{}", &pubkey[..12]),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("failed to insert tenant");
+        pubkey
+    }
+}
+
+/// A NIP-98 `Authorization` header signed by `secret`.
+pub fn sign_http_auth(secret: &SecretKey, url: &str, method: &str, created_at: i64) -> String {
+    let hashed = EventContent::new()
+        .with_tags(Tags::new().add("u", [url]).add("method", [method]))
+        .with_kind(27235)
+        .with_created_at(created_at)
+        .with_pubkey(secret.public_key())
+        .with_id();
+    let sig = secret.sign(hashed.id.as_bytes());
+    let event = hashed.with_sig(sig);
+
+    format!(
+        "Nostr {}",
+        base64::engine::general_purpose::STANDARD
+            .encode(serde_json::to_string(&event).expect("unserializable event"))
+    )
+}
+
+/// The keys of a JSON object, sorted.
+pub fn keys(value: &Value) -> Vec<String> {
+    let mut keys: Vec<String> = value
+        .as_object()
+        .expect("not an object")
+        .keys()
+        .cloned()
+        .collect();
+    keys.sort();
+    keys
+}

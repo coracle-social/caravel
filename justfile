@@ -1,12 +1,16 @@
+# Start the local Postgres the app and tests use.
+pg:
+  podman start caravel-pg 2>/dev/null || podman run -d --name caravel-pg -e POSTGRES_USER=caravel -e POSTGRES_PASSWORD=caravel -e POSTGRES_DB=caravel -p 127.0.0.1:55433:5432 docker.io/library/postgres:17-alpine
+
 dev:
   #!/usr/bin/env sh
   trap 'kill 0' EXIT
-  cd backend && onchange src -ik -- bash -c 'RUST_LOG=backend=info cargo run' &
+  onchange crates -ik -- bash -c 'RUST_LOG=caravel=info,caravel_core=info,caravel_api=info cargo run -p caravel-app' &
   cd frontend && bun dev &
   wait
 
 dev-backend:
-  cd backend && onchange src -ik -- bash -c 'RUST_LOG=backend=info cargo run'
+  onchange crates -ik -- bash -c 'RUST_LOG=caravel=info,caravel_core=info,caravel_api=info cargo run -p caravel-app'
 
 dev-frontend:
   cd frontend && bun run dev
@@ -15,19 +19,16 @@ preview-frontend:
   cd frontend && bun run preview
 
 fmt-backend:
-  cd backend && cargo fmt
+  cargo fmt --all
 
 lint-backend:
-  cd backend && cargo clippy --all-targets -- -D warnings
+  cargo clippy --workspace --all-targets -- -D warnings
 
 test-backend:
-  cd backend && cargo test
-
-test-backend-api:
-  cd backend && cargo test api::tests::
+  cargo test --workspace
 
 build-backend:
-  cd backend && cargo build
+  cargo build --workspace
 
 build-frontend:
   cd frontend && bun i && bun run build

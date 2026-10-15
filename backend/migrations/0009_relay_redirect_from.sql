@@ -1,1 +1,0 @@
-ALTER TABLE relay ADD COLUMN redirect_from TEXT NOT NULL DEFAULT '[]';

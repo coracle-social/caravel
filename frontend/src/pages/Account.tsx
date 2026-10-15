@@ -7,7 +7,7 @@ import { useInvoicePdf } from "@/lib/useInvoicePdf"
 import PaymentSetupNWC from "@/components/PaymentSetupNWC"
 import PaymentSetupCard from "@/components/PaymentSetupCard"
 import { useBillingStatus, accountStatus, type AccountStatus } from "@/lib/billing"
-import { invoiceStatus, listDraftInvoiceItems, type Invoice } from "@/lib/api"
+import { invoiceStatus, listDraftInvoiceItems, signOut, type Invoice } from "@/lib/api"
 import { cardState, methodLabel, nwcState, type PaymentMethodState } from "@/lib/paymentMethod"
 import { account } from "@/lib/state"
 import { formatPeriod } from "@/lib/format"
@@ -80,7 +80,8 @@ export default function Account() {
     return cardState(t)
   })
 
-  function logout() {
+  async function logout() {
+    await signOut()
     localStorage.clear()
     window.location.href = "/"
   }

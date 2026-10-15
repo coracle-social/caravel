@@ -1,0 +1,22 @@
+[package]
+name = "caravel-api"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+axum.workspace = true
+caravel-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+anyhow.workspace = true
+base64.workspace = true
+caravel-core = { workspace = true, features = ["testing"] }
+coracle-lib.workspace = true
+http-body-util = "0.1"
+tokio.workspace = true
+tower.workspace = true

@@ -1,0 +1,199 @@
+CREATE TABLE tenant (
+  pubkey TEXT PRIMARY KEY,
+  return_url TEXT NOT NULL DEFAULT '',
+  nwc_url TEXT NOT NULL DEFAULT '',
+  nwc_error TEXT,
+  stripe_error TEXT,
+  created_at BIGINT NOT NULL,
+  billing_anchor BIGINT,
+  stripe_customer_id TEXT NOT NULL,
+  stripe_payment_method_id TEXT,
+  renewed_at BIGINT,
+  overage_billed_at BIGINT,
+  churned_at BIGINT,
+  banned_at BIGINT
+);
+
+CREATE TABLE relay (
+  id TEXT PRIMARY KEY,
+  tenant_pubkey TEXT NOT NULL REFERENCES tenant (pubkey),
+  subdomain TEXT NOT NULL,
+  domain TEXT NOT NULL,
+  plan_id TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('active', 'inactive', 'delinquent')),
+  pubkey TEXT NOT NULL,
+  secret TEXT NOT NULL,
+  info_name TEXT NOT NULL DEFAULT '',
+  info_icon TEXT NOT NULL DEFAULT '',
+  info_description TEXT NOT NULL DEFAULT '',
+  policy_public_read BOOLEAN NOT NULL DEFAULT false,
+  policy_public_write BOOLEAN NOT NULL DEFAULT false,
+  policy_public_join BOOLEAN NOT NULL DEFAULT false,
+  policy_strip_signatures BOOLEAN NOT NULL DEFAULT false,
+  groups_enabled BOOLEAN NOT NULL DEFAULT true,
+  management_enabled BOOLEAN NOT NULL DEFAULT true,
+  members_can_invite BOOLEAN NOT NULL DEFAULT true,
+  blossom_enabled BOOLEAN NOT NULL DEFAULT false,
+  livekit_enabled BOOLEAN NOT NULL DEFAULT false,
+  push_enabled BOOLEAN NOT NULL DEFAULT true,
+  custom_domain TEXT NOT NULL DEFAULT '',
+  custom_domain_verified BOOLEAN NOT NULL DEFAULT false,
+  synced BOOLEAN NOT NULL DEFAULT false,
+  sync_error TEXT NOT NULL DEFAULT '',
+  purged_at BIGINT,
+  created_at BIGINT NOT NULL,
+  CONSTRAINT relay_subdomain_key UNIQUE (subdomain),
+  CONSTRAINT relay_pubkey_key UNIQUE (pubkey)
+);
+
+-- A tenant's relays, newest first, for its dashboard and for billing.
+CREATE INDEX relay_tenant_created_idx ON relay (tenant_pubkey, created_at);
+
+-- Resolves a request's host to the relay whose verified custom domain it is, and
+-- keeps two live relays from claiming one domain.
+CREATE UNIQUE INDEX relay_custom_domain_key ON relay (custom_domain)
+  WHERE custom_domain <> '' AND custom_domain_verified AND purged_at IS NULL;
+
+-- The domain verification poller's queue of custom domains still to verify.
+CREATE INDEX relay_unverified_custom_domain_idx ON relay (id)
+  WHERE custom_domain <> '' AND NOT custom_domain_verified AND purged_at IS NULL;
+
+CREATE TABLE host_redirect (
+  host TEXT PRIMARY KEY,
+  relay_id TEXT NOT NULL REFERENCES relay (id),
+  created_at BIGINT NOT NULL
+);
+
+-- The hosts that redirect to one relay.
+CREATE INDEX host_redirect_relay_idx ON host_redirect (relay_id);
+
+CREATE TABLE activity (
+  id TEXT PRIMARY KEY,
+  seq BIGINT GENERATED ALWAYS AS IDENTITY,
+  tenant_pubkey TEXT NOT NULL REFERENCES tenant (pubkey),
+  created_at BIGINT NOT NULL,
+  activity_type TEXT NOT NULL,
+  resource_type TEXT NOT NULL,
+  resource_id TEXT NOT NULL,
+  billed_at BIGINT,
+  snapshot JSONB NOT NULL
+);
+
+-- A resource's history in order, for its activity feed and for billing's reads of
+-- its state at a period boundary.
+CREATE INDEX activity_resource_created_idx ON activity (resource_id, created_at, seq);
+
+-- A tenant's activity that billing has not reconciled yet.
+CREATE INDEX activity_unbilled_idx ON activity (tenant_pubkey, created_at, seq) WHERE billed_at IS NULL;
+
+CREATE TABLE invoice (
+  id TEXT PRIMARY KEY,
+  seq BIGINT GENERATED ALWAYS AS IDENTITY,
+  tenant_pubkey TEXT NOT NULL REFERENCES tenant (pubkey),
+  method TEXT CHECK (method IS NULL OR method IN ('nwc', 'stripe', 'oob', 'comp')),
+  amount BIGINT NOT NULL,
+  period_start BIGINT NOT NULL,
+  period_end BIGINT NOT NULL,
+  created_at BIGINT NOT NULL,
+  paid_at BIGINT,
+  voided_at BIGINT,
+  notified_at BIGINT
+);
+
+-- A tenant's invoices, newest first.
+CREATE INDEX invoice_tenant_created_idx ON invoice (tenant_pubkey, created_at, seq);
+
+-- Dunning scans a tenant's still-open invoices oldest-first to retry payment.
+CREATE INDEX invoice_open_idx ON invoice (tenant_pubkey, created_at, seq) WHERE paid_at IS NULL AND voided_at IS NULL;
+
+CREATE TABLE invoice_item (
+  id TEXT PRIMARY KEY,
+  seq BIGINT GENERATED ALWAYS AS IDENTITY,
+  invoice_id TEXT REFERENCES invoice (id),
+  activity_id TEXT REFERENCES activity (id),
+  tenant_pubkey TEXT NOT NULL REFERENCES tenant (pubkey),
+  relay_id TEXT NOT NULL REFERENCES relay (id),
+  plan_id TEXT NOT NULL,
+  amount BIGINT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  created_at BIGINT NOT NULL,
+  voided_at BIGINT
+);
+
+-- The items billed on one invoice.
+CREATE INDEX invoice_item_invoice_idx ON invoice_item (invoice_id);
+
+-- A tenant's outstanding items, which the next invoice claims.
+CREATE INDEX invoice_item_outstanding_idx ON invoice_item (tenant_pubkey) WHERE invoice_id IS NULL AND voided_at IS NULL;
+
+-- At most one line item per billable activity, so an activity is never billed twice.
+CREATE UNIQUE INDEX invoice_item_activity_key ON invoice_item (activity_id);
+
+CREATE TABLE bolt11 (
+  id TEXT PRIMARY KEY,
+  invoice_id TEXT NOT NULL REFERENCES invoice (id),
+  lnbc TEXT NOT NULL,
+  msats BIGINT NOT NULL,
+  created_at BIGINT NOT NULL,
+  expires_at BIGINT NOT NULL,
+  settled_at BIGINT
+);
+
+-- An invoice's most recent Lightning invoice.
+CREATE INDEX bolt11_invoice_created_idx ON bolt11 (invoice_id, created_at);
+
+CREATE TABLE intent (
+  id TEXT PRIMARY KEY,
+  invoice_id TEXT NOT NULL REFERENCES invoice (id),
+  payment_method_id TEXT NOT NULL,
+  payment_intent_id TEXT,
+  created_at BIGINT NOT NULL,
+  settled_at BIGINT
+);
+
+-- At most one unsettled write-ahead intent per invoice, which is also the conflict
+-- target of the get-or-create in `ensure_pending_intent`.
+CREATE UNIQUE INDEX intent_unsettled_key ON intent (invoice_id) WHERE settled_at IS NULL;
+
+CREATE TABLE checkout (
+  id TEXT PRIMARY KEY,
+  invoice_id TEXT NOT NULL REFERENCES invoice (id),
+  session_id TEXT NOT NULL,
+  url TEXT NOT NULL,
+  created_at BIGINT NOT NULL,
+  expires_at BIGINT NOT NULL,
+  settled_at BIGINT
+);
+
+-- An invoice's most recent Checkout session, and its unsettled ones.
+CREATE INDEX checkout_invoice_created_idx ON checkout (invoice_id, created_at);
+
+CREATE TABLE usage_sample (
+  id TEXT PRIMARY KEY,
+  relay_id TEXT NOT NULL REFERENCES relay (id),
+  tenant_pubkey TEXT NOT NULL REFERENCES tenant (pubkey),
+  storage_bytes BIGINT NOT NULL,
+  participant_seconds BIGINT NOT NULL,
+  created_at BIGINT NOT NULL
+);
+
+-- Closing a period rolls up every sample one tenant took inside it.
+CREATE INDEX usage_sample_tenant_created_idx ON usage_sample (tenant_pubkey, created_at);
+
+-- That rollup also reaches back for each relay's last sample before the period, to
+-- use as the baseline the period's participant clock is measured against.
+CREATE INDEX usage_sample_relay_created_idx ON usage_sample (relay_id, created_at);
+
+CREATE TABLE session (
+  token_hash TEXT PRIMARY KEY,
+  pubkey TEXT NOT NULL,
+  created_at BIGINT NOT NULL,
+  expires_at BIGINT NOT NULL,
+  last_used_at BIGINT NOT NULL
+);
+
+-- Revoking every session a pubkey holds.
+CREATE INDEX session_pubkey_idx ON session (pubkey);
+
+-- Sweeping expired sessions.
+CREATE INDEX session_expires_idx ON session (expires_at);

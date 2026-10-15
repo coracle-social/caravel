@@ -12,16 +12,27 @@ concurrency:
 jobs:
   backend:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: backend
+
+    # Tests create one database per test binary on this server.
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: caravel
+          POSTGRES_PASSWORD: caravel
+          POSTGRES_DB: caravel
+        options: >-
+          --health-cmd "pg_isready -U caravel"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      TEST_DATABASE_URL: postgres://caravel:caravel@postgres:5432/postgres
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-
-      - name: Install OpenSSL headers
-        run: apt-get update && apt-get install -y --no-install-recommends pkg-config libssl-dev
 
       # Pinned to the toolchain the Dockerfile builds production with. Fully
       # qualified so it resolves from GitHub whatever this instance's
@@ -38,21 +49,18 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            backend/target
-          key: cargo-${{ runner.os }}-1.94-${{ hashFiles('backend/Cargo.lock') }}
+            target
+          key: cargo-${{ runner.os }}-1.94-${{ hashFiles('Cargo.lock') }}
           restore-keys: cargo-${{ runner.os }}-1.94-
 
       - name: Check formatting
-        run: cargo fmt --check
+        run: cargo fmt --all --check
 
       - name: Lint
-        run: cargo clippy --all-targets --locked -- -D warnings
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
-      # Builds the library, the binary, and the end-to-end billing suite. The
-      # suite needs no services, because it runs against its own SQLite file with
-      # a pinned clock.
       - name: Test
-        run: cargo test --locked
+        run: cargo test --workspace --locked
 
   frontend:
     runs-on: ubuntu-latest

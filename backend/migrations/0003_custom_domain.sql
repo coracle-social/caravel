@@ -1,2 +1,0 @@
-ALTER TABLE relay ADD COLUMN custom_domain TEXT NOT NULL DEFAULT '';
-ALTER TABLE relay ADD COLUMN custom_domain_verified INTEGER NOT NULL DEFAULT 0;

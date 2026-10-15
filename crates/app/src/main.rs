@@ -1,0 +1,112 @@
+//! The `caravel` binary: one process serving the API and running the platform's
+//! background work.
+
+mod config;
+mod workers;
+
+use std::sync::Arc;
+use std::time::Duration;
+
+use anyhow::{Context, Result, bail};
+use caravel_adapters::{robot::Robot, stripe::Stripe, wallet::Wallet, zooid::Zooid};
+use caravel_core::Core;
+use caravel_db::Db;
+use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
+use tower_http::cors::{Any, CorsLayer};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+
+const USAGE: &str = "usage: caravel [serve]";
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    dotenvy::dotenv().ok();
+
+    tracing_subscriber::registry()
+        .with(tracing_subscriber::EnvFilter::from_default_env())
+        .with(tracing_subscriber::fmt::layer())
+        .init();
+
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    match args
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .as_slice()
+    {
+        [] | ["serve"] => serve().await,
+        _ => bail!(USAGE),
+    }
+}
+
+async fn serve() -> Result<()> {
+    let settings = config::load()?;
+
+    let db = Db::connect(&settings.database_url, 20)
+        .await
+        .context("failed to connect to the database")?;
+    db.migrate()
+        .await
+        .context("failed to migrate the database")?;
+
+    let core = Core {
+        db,
+        config: Arc::new(settings.config),
+        clock: Default::default(),
+        bus: Default::default(),
+        stripe: Stripe::new(&settings.stripe_secret_key),
+        robot: Robot::new(&settings.robot_secret, settings.robot_profile)?,
+        wallet: Wallet::from_url(&settings.robot_wallet)
+            .context("ROBOT_WALLET is not an NWC url")?,
+        zooid: Zooid::new(&settings.zooid_api_url, &settings.robot_secret)?,
+    };
+    let background = core.with_db(Db::connect(&settings.database_url, 5).await?);
+
+    let shutdown = CancellationToken::new();
+    let tracker = TaskTracker::new();
+    workers::spawn(&tracker, &shutdown, &background);
+
+    let cors = CorsLayer::new()
+        .allow_origin(Any)
+        .allow_methods(Any)
+        .allow_headers(Any);
+    let app = caravel_api::router(core).layer(cors);
+
+    let listener = tokio::net::TcpListener::bind(("0.0.0.0", settings.port)).await?;
+    tracing::info!(port = settings.port, "serving");
+
+    axum::serve(listener, app)
+        .with_graceful_shutdown(signal(shutdown.clone()))
+        .await?;
+
+    shutdown.cancel();
+    tracker.close();
+    if tokio::time::timeout(Duration::from_secs(10), tracker.wait())
+        .await
+        .is_err()
+    {
+        tracing::warn!("workers did not stop within ten seconds");
+    }
+
+    Ok(())
+}
+
+/// Resolves on SIGINT or SIGTERM, or when something else asks for shutdown.
+async fn signal(shutdown: CancellationToken) {
+    let terminate = async {
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut terminate) => {
+                terminate.recv().await;
+            }
+            Err(_) => std::future::pending().await,
+        }
+    };
+
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {}
+        _ = terminate => {}
+        _ = shutdown.cancelled() => {}
+    }
+
+    shutdown.cancel();
+}

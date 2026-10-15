@@ -1,0 +1,14 @@
+[package]
+name = "caravel-db"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[features]
+testing = []
+
+[dependencies]
+sqlx.workspace = true
+tokio.workspace = true
+tracing.workspace = true

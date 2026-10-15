@@ -5,9 +5,9 @@
 set -euo pipefail
 
 # Map the provided runtime variables onto the frontend's VITE_* placeholders.
-VITE_API_URL="${SERVER_URL:-}"
-# The frontend is built for a single domain, so it gets the first of ZOOID_DOMAINS.
-VITE_RELAY_DOMAIN="${ZOOID_DOMAINS:-}"
+VITE_API_URL="${API_URL:-}"
+# The frontend is built for a single domain, so it gets the first of RELAY_DOMAINS.
+VITE_RELAY_DOMAIN="${RELAY_DOMAINS:-}"
 VITE_RELAY_DOMAIN="${VITE_RELAY_DOMAIN%%,*}"
 VITE_PLATFORM_NAME="${PLATFORM_NAME:-}"
 VITE_PLATFORM_LOGO="${PLATFORM_LOGO:-/caravel.png}"
@@ -26,7 +26,7 @@ while IFS= read -r -d '' f; do
 done < <(find /app/dist -type f \( -name '*.js' -o -name '*.html' \) -print0)
 
 echo "Starting backend (:2892) and frontend (:3000)..."
-/app/backend &
+/app/caravel &
 backend_pid=$!
 serve -L -s /app/dist -l 3000 &
 serve_pid=$!

@@ -1,3 +1,0 @@
-ALTER TABLE tenant ADD COLUMN banned_at INTEGER;
-
-ALTER TABLE relay ADD COLUMN purged_at INTEGER;

@@ -3,35 +3,29 @@
 # ---------- Build the Rust backend ----------
 # cargo-chef caches the compiled dependency graph in its own layer, so a
 # source-only change recompiles just our crate instead of every dependency from
-# scratch. The recipe is derived solely from Cargo.toml/Cargo.lock, so the
-# expensive `cook` layer is reused until the dependency set changes.
+# scratch. The recipe is derived solely from the manifests and Cargo.lock, so
+# the expensive `cook` layer is reused until the dependency set changes.
 # https://github.com/LukeMathWalker/cargo-chef
 FROM rust:1.94-bookworm AS chef
 WORKDIR /app
-RUN apt-get update \
-  && apt-get install -y --no-install-recommends \
-    pkg-config \
-    libsqlite3-dev \
-  && rm -rf /var/lib/apt/lists/* \
-  && cargo install --locked cargo-chef
+RUN cargo install --locked cargo-chef
 
 # Distill the dependency recipe. Cheap, and re-runs on any source change, but
 # yields a stable recipe.json as long as dependencies are unchanged — which is
 # what keeps the cook layer below cached.
 FROM chef AS planner
-COPY backend/Cargo.toml backend/Cargo.lock ./
-COPY backend/src ./src
+COPY Cargo.toml Cargo.lock ./
+COPY crates ./crates
 RUN cargo chef prepare --recipe-path recipe.json
 
 # Build (and cache) dependencies from the recipe, then compile the application.
 # Must share the chef stage's Rust version for the cached layer to apply.
 FROM chef AS backend-build
 COPY --from=planner /app/recipe.json recipe.json
-RUN cargo chef cook --release --recipe-path recipe.json
-COPY backend/Cargo.toml backend/Cargo.lock ./
-COPY backend/src ./src
-COPY backend/migrations ./migrations
-RUN cargo build --release
+RUN cargo chef cook --release --recipe-path recipe.json --bin caravel
+COPY Cargo.toml Cargo.lock ./
+COPY crates ./crates
+RUN cargo build --release --bin caravel
 
 # ---------- Build the frontend with placeholder config ----------
 # The frontend is compiled once, here, with sentinel VITE_* values. The runtime
@@ -63,22 +57,20 @@ FROM node:20-slim
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
     ca-certificates \
-    libsqlite3-0 \
   && rm -rf /var/lib/apt/lists/* \
   && npm install -g serve
 
 WORKDIR /app
 
-COPY --from=backend-build /app/target/release/backend /app/backend
+COPY --from=backend-build /app/target/release/caravel /app/caravel
 COPY --from=frontend-build /app/frontend/dist /app/dist
 COPY --chmod=0755 entrypoint.sh /app/entrypoint.sh
 
-RUN mkdir -p /app/data && chown -R node:node /app/dist /app/data
+RUN chown -R node:node /app/dist
 
 USER node:node
 
-ENV SERVER_PORT=2892 \
-    DATABASE_URL=sqlite:///app/data/caravel.db
+ENV PORT=2892
 
 EXPOSE 2892 3000
 

@@ -8,7 +8,7 @@ There is one right place to document any given information:
 
 - Functions should have a doc comment explaining the purpose of the function, not its implementation.
 - Only very strange behavior should be documented using non-doc comments.
-- Models and their fields are documented in models.rs, not in migrations, implementations, or anywhere on the frontend.
+- Models and their fields are documented where the model is defined, in the core module that owns it (e.g. `Relay` in `crates/core/src/relays/mod.rs`), not in migrations, implementations, or anywhere on the frontend.
 - Database indexes are documented in migrations.
 
 ## Data Modeling
@@ -21,7 +21,7 @@ When referring to a tenant's pubkey, always name it `tenant_pubkey`, not `tenant
 
 Pre-release: squash schema changes into `0001_init.sql` rather than adding new migration files. Once released, migrations become append-only.
 
-Document indexes (what use cases they support), but not tables (those are documented in `models.rs`).
+Document indexes (what use cases they support), but not tables (those are documented on their model in the core).
 
 ## Markdown
 
@@ -39,11 +39,17 @@ Don't be overly DRY. Deep call trees are harder to read; factoring functions int
 
 Don't add re-export shims to preserve old import paths. When something moves, import it from its new canonical location at every call site and update all the imports. Each symbol has exactly one place it's exported from.
 
+## Architecture
+
+The backend is one Cargo workspace under `crates/`, layered so each crate depends only on the ones below it: `db` and `adapters` at the bottom, then `core`, then `api`, then `app`, which builds the `caravel` binary. `crates/app/tests/layers.rs` enforces the layering. The `architecture` skill describes each layer and where new code goes.
+
+Read configuration from the environment only in `crates/app/src/config.rs`, and the time only through the core's `Clock`; clippy enforces both.
+
 ## Verification
 
-Check justfile and frontend/package.json for common commands for linting/building.
+Check justfile and frontend/package.json for common commands for linting/building. Tests need Postgres: `just pg` starts one with podman, and each test binary creates its own database on it.
 
-Pull requests run `.gitea/workflows/ci.yml`, which is the backend's fmt/clippy/test plus the frontend build. Keep it in step with the justfile.
+Pull requests run `.gitea/workflows/ci.yml`, which is the workspace's fmt/clippy/test against a Postgres service plus the frontend build. Keep it in step with the justfile.
 
 ## Skills
 

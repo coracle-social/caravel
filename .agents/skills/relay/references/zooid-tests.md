@@ -4,37 +4,37 @@ Every test in zooid's suite, and the caravel test that covers the same behavior 
 
 ## api_test.go
 
-- `TestAPIHandler_Authentication` — Pending: ported in P2–P4.
-- `TestAPIHandler_CreateRelay` — Pending: ported in P2–P4.
-- `TestAPIHandler_UpdateRelay` — Pending: ported in P2–P4.
-- `TestAPIHandler_PatchRelay` — Pending: ported in P2–P4.
-- `TestAPIHandler_DeleteRelay` — Pending: ported in P2–P4.
-- `TestAPIHandler_ListRelayMembers` — Pending: ported in P2–P4.
-- `TestAPIHandler_GetRelayBlob` — Pending: ported in P2–P4.
-- `TestAPIHandler_ListModeration` — Pending: ported in P2–P4.
-- `TestAPIHandler_ListModeration_Truncated` — Pending: ported in P2–P4.
-- `TestCollectModerationItems_OrdersBySeenAt` — Pending: ported in P2–P4.
-- `TestAPIHandler_ListModeration_RedirectInstance` — Pending: ported in P2–P4.
-- `TestAPIHandler_ListModeration_Unmoderated` — Pending: ported in P2–P4.
-- `TestAPIHandler_MethodNotAllowed` — Pending: ported in P2–P4.
-- `TestAPIHandler_InvalidPath` — Pending: ported in P2–P4.
-- `TestAPIHandler_ConfigValidation` — Pending: ported in P2–P4.
-- `TestAPIHandler_RelayMemberWrites` — Pending: ported in P2–P4.
-- `TestAPIHandler_RelayNotifications` — Pending: ported in P2–P4.
-- `TestAPIHandler_RelayClaims` — Pending: ported in P2–P4.
-- `TestNewAPIHandler` — Pending: ported in P2–P4.
-- `TestAPIHandler_GetRelayUsage` — Pending: ported in P2–P4.
-- `TestAPIHandler_LivekitWebhook` — Pending: ported in P2–P4.
-- `TestAPIHandler_ImportExportRelay` — Pending: ported in P2–P4.
+- `TestAPIHandler_Authentication` — Obsolete: zooid's REST API is gone; the API's own authentication is `crates/api/tests/auth.rs`.
+- `TestAPIHandler_CreateRelay` — Obsolete: a relay's config is its caravel row; `crates/api/tests/wire.rs` a_relay_reads_back_in_the_shape_clients_expect
+- `TestAPIHandler_UpdateRelay` — Obsolete: a relay's config is its caravel row, updated through `PUT /relays/{id}`.
+- `TestAPIHandler_PatchRelay` — Obsolete: a relay's config is its caravel row, updated through `PUT /relays/{id}`.
+- `TestAPIHandler_DeleteRelay` — `crates/core/tests/media.rs` erasing_a_purged_relay_removes_what_it_held
+- `TestAPIHandler_ListRelayMembers` — `crates/api/tests/wire.rs` a_relay_reads_back_in_the_shape_clients_expect
+- `TestAPIHandler_GetRelayBlob` — `crates/api/tests/relay_data.rs` admins_review_the_feed_and_its_blobs
+- `TestAPIHandler_ListModeration` — `crates/core/tests/moderation.rs` the_feed_holds_moderated_events_and_uploads_newest_first
+- `TestAPIHandler_ListModeration_Truncated` — `crates/core/tests/moderation.rs` a_full_page_says_it_was_truncated
+- `TestCollectModerationItems_OrdersBySeenAt` — `crates/core/tests/moderation.rs` the_feed_window_is_inclusive_at_both_ends
+- `TestAPIHandler_ListModeration_RedirectInstance` — Obsolete: redirect hosts are `host_redirect` rows, not instances with events of their own.
+- `TestAPIHandler_ListModeration_Unmoderated` — `crates/core/tests/moderation.rs` the_feed_holds_moderated_events_and_uploads_newest_first
+- `TestAPIHandler_MethodNotAllowed` — Obsolete: zooid's REST API is gone.
+- `TestAPIHandler_InvalidPath` — Obsolete: zooid's REST API is gone.
+- `TestAPIHandler_ConfigValidation` — Obsolete: settings are validated by the core's hosting module; `crates/api/tests/wire.rs` validation_failures_carry_a_code
+- `TestAPIHandler_RelayMemberWrites` — `crates/relay/tests/access.rs` a_member_added_through_the_api_can_read_straight_away
+- `TestAPIHandler_RelayNotifications` — `crates/core/tests/notifications.rs` a_message_is_kept_and_announced
+- `TestAPIHandler_RelayClaims` — Pending: ported in P4, where paid memberships create claims.
+- `TestNewAPIHandler` — Obsolete: zooid's REST API is gone.
+- `TestAPIHandler_GetRelayUsage` — Obsolete: usage is read in process; `crates/core/tests/metering.rs` overage_is_billed_from_measured_media_and_calls
+- `TestAPIHandler_LivekitWebhook` — `crates/relay/tests/livekit.rs` a_webhook_must_be_signed_and_name_a_known_call
+- `TestAPIHandler_ImportExportRelay` — `crates/api/tests/relay_data.rs` an_owner_exports_one_relay_and_imports_into_another
 
 ## blossom_test.go
 
-- `TestBlossomStore_Enable_DeleteWithoutAuthHeaderDoesNotPanic` — Pending: ported in P3.
-- `TestBlossomStore_Enable_DeleteWithMalformedAuthHeaderDoesNotPanic` — Pending: ported in P3.
-- `TestBlossomStore_Enable_ServesUnrenderableBlobsAsDownloads` — Pending: ported in P3.
-- `TestBlossomStore_Enable_ExposesRefusalReason` — Pending: ported in P3.
-- `TestIsInlineBlobType` — Pending: ported in P3.
-- `TestBlossomStore_StorageBytes` — Pending: ported in P3.
+- `TestBlossomStore_Enable_DeleteWithoutAuthHeaderDoesNotPanic` — `crates/relay/tests/blossom.rs` a_delete_without_a_valid_authorization_is_refused
+- `TestBlossomStore_Enable_DeleteWithMalformedAuthHeaderDoesNotPanic` — `crates/relay/tests/blossom.rs` a_delete_without_a_valid_authorization_is_refused
+- `TestBlossomStore_Enable_ServesUnrenderableBlobsAsDownloads` — `crates/relay/tests/blossom.rs` unrenderable_blobs_are_served_as_downloads
+- `TestBlossomStore_Enable_ExposesRefusalReason` — `crates/relay/tests/blossom.rs` outsiders_are_refused_with_a_reason
+- `TestIsInlineBlobType` — `crates/relay/tests/blossom.rs` a_member_uploads_and_anyone_downloads
+- `TestBlossomStore_StorageBytes` — `crates/core/tests/media.rs` storage_counts_each_blob_once
 
 ## config_test.go
 
@@ -119,9 +119,9 @@ Every test in zooid's suite, and the caravel test that covers the same behavior 
 
 ## livekit_test.go
 
-- `TestLivekitStore_ParticipantSeconds` — Pending: ported in P3.
-- `TestLivekitStore_TokenHandler` — Pending: ported in P3.
-- `TestLivekitStore_WebhookHandler` — Pending: ported in P3.
+- `TestLivekitStore_ParticipantSeconds` — `crates/core/tests/media.rs` the_call_clock_sums_each_session_once
+- `TestLivekitStore_TokenHandler` — `crates/relay/tests/livekit.rs` tokens_are_refused_to_those_who_may_not_join
+- `TestLivekitStore_WebhookHandler` — `crates/relay/tests/livekit.rs` a_departure_is_metered_once_and_the_call_published
 
 ## main_test.go
 
@@ -129,8 +129,8 @@ Every test in zooid's suite, and the caravel test that covers the same behavior 
 
 ## management_test.go
 
-- `TestValidateJoinRequest_PaidRelay` — Pending: ported in P2.
-- `TestValidateJoinRequest_PaidRelayTakesAnInvite` — Pending: ported in P2.
+- `TestValidateJoinRequest_PaidRelay` — Pending: ported in P4 with paid memberships.
+- `TestValidateJoinRequest_PaidRelayTakesAnInvite` — Pending: ported in P4 with paid memberships.
 - `TestManagementStore_MembershipChangesAreIdempotent` — `crates/core/tests/access.rs` membership_changes_are_idempotent_and_published
 - `TestManagementStore_BanPubkey` — `crates/core/tests/access.rs` banning_a_pubkey_removes_it_and_everything_it_wrote
 - `TestManagementStore_AllowPubkey` — `crates/core/tests/access.rs` banning_a_pubkey_removes_it_and_everything_it_wrote
@@ -184,22 +184,22 @@ Every test in zooid's suite, and the caravel test that covers the same behavior 
 
 ## notify_test.go
 
-- `TestNotifyStore_Set` — Pending: ported in P3.
-- `TestNotifyStore_SetReplaces` — Pending: ported in P3.
-- `TestNotifyStore_SetRequiresAMessage` — Pending: ported in P3.
-- `TestNotifyStore_GetIsPerPubkey` — Pending: ported in P3.
-- `TestNotifyStore_GetSkipsAnExpiredMessage` — Pending: ported in P3.
-- `TestNotifyStore_GetKeepsAnUnexpiredMessage` — Pending: ported in P3.
-- `TestNotifyStore_Clear` — Pending: ported in P3.
-- `TestNotifyStore_ClearIsIdempotent` — Pending: ported in P3.
-- `TestNotifyStore_NotificationsAreNotServed` — Pending: ported in P3.
+- `TestNotifyStore_Set` — `crates/core/tests/notifications.rs` a_message_is_kept_and_announced
+- `TestNotifyStore_SetReplaces` — `crates/core/tests/notifications.rs` a_new_message_replaces_the_old
+- `TestNotifyStore_SetRequiresAMessage` — `crates/core/tests/notifications.rs` a_message_is_required
+- `TestNotifyStore_GetIsPerPubkey` — `crates/core/tests/notifications.rs` messages_belong_to_one_pubkey_on_one_relay
+- `TestNotifyStore_GetSkipsAnExpiredMessage` — `crates/core/tests/notifications.rs` a_message_stops_at_its_expiry
+- `TestNotifyStore_GetKeepsAnUnexpiredMessage` — `crates/core/tests/notifications.rs` a_message_stops_at_its_expiry
+- `TestNotifyStore_Clear` — `crates/core/tests/notifications.rs` clearing_a_message_is_idempotent
+- `TestNotifyStore_ClearIsIdempotent` — `crates/core/tests/notifications.rs` clearing_a_message_is_idempotent
+- `TestNotifyStore_NotificationsAreNotServed` — Obsolete: notifications are a table, not events a relay could serve.
 
 ## push_test.go
 
-- `TestPushManager_ValidatePushSubscription_RejectsLocalCallback` — Pending: ported in P3.
-- `TestPushManager_ValidatePushSubscription_AcceptsPublicCallback` — Pending: ported in P3.
-- `TestPushManager_ValidatePushSubscription_RelayTagNormalization` — Pending: ported in P3.
-- `TestPushManager_Enable_ClientRefusesToDialLoopback` — Pending: ported in P3.
+- `TestPushManager_ValidatePushSubscription_RejectsLocalCallback` — `crates/relay/tests/push.rs` a_local_callback_is_refused
+- `TestPushManager_ValidatePushSubscription_AcceptsPublicCallback` — `crates/relay/tests/push.rs` a_local_callback_is_refused
+- `TestPushManager_ValidatePushSubscription_RelayTagNormalization` — `crates/relay/tests/push.rs` the_relay_tag_must_name_this_relay
+- `TestPushManager_Enable_ClientRefusesToDialLoopback` — `crates/adapters/src/outbound.rs` a_name_resolving_to_loopback_is_never_dialed
 
 ## tenancy_test.go
 
@@ -211,16 +211,16 @@ Every test in zooid's suite, and the caravel test that covers the same behavior 
 
 ## transfer_test.go
 
-- `TestExportImportRoundTrip` — Pending: ported in P3.
-- `TestImportEventsIsIdempotent` — Pending: ported in P3.
-- `TestImportEventsSkipsBadLines` — Pending: ported in P3.
-- `TestValidateImportEvent` — Pending: ported in P3.
-- `TestImportEventsRebuildsGroupState` — Pending: ported in P3.
-- `TestImportEventsAdmitsJoinRequests` — Pending: ported in P3.
-- `TestImportEventsAddsToAnExistingGroup` — Pending: ported in P3.
-- `TestImportEventsLeavesUncreatedGroupAlone` — Pending: ported in P3.
-- `TestImportEventsDeletesDeletedGroup` — Pending: ported in P3.
-- `TestImportEventsKeepsGroupRecreatedAfterDelete` — Pending: ported in P3.
+- `TestExportImportRoundTrip` — `crates/core/tests/transfer.rs` an_export_imports_into_another_relay
+- `TestImportEventsIsIdempotent` — `crates/core/tests/transfer.rs` importing_a_dump_twice_is_harmless
+- `TestImportEventsSkipsBadLines` — `crates/core/tests/transfer.rs` an_import_skips_bad_lines_and_says_which
+- `TestValidateImportEvent` — `crates/core/tests/transfer.rs` an_import_skips_bad_lines_and_says_which
+- `TestImportEventsRebuildsGroupState` — `crates/core/tests/transfer.rs` an_import_rebuilds_room_state
+- `TestImportEventsAdmitsJoinRequests` — `crates/core/tests/transfer.rs` an_import_admits_join_requests
+- `TestImportEventsAddsToAnExistingGroup` — `crates/core/tests/transfer.rs` an_import_adds_to_an_existing_room
+- `TestImportEventsLeavesUncreatedGroupAlone` — `crates/core/tests/transfer.rs` an_import_leaves_an_uncreated_room_alone
+- `TestImportEventsDeletesDeletedGroup` — `crates/core/tests/transfer.rs` an_import_ending_in_a_deletion_leaves_no_room
+- `TestImportEventsKeepsGroupRecreatedAfterDelete` — `crates/core/tests/transfer.rs` an_import_keeps_a_room_created_again_after_its_deletion
 
 ## util_test.go
 

@@ -367,6 +367,16 @@ pub async fn get_events(
     Ok(rows.iter().filter_map(stored_event).collect())
 }
 
+/// Delete one of a relay's events.
+pub async fn delete_event(db: impl PgExecutor<'_>, relay_id: &str, id: &[u8; 32]) -> Result<()> {
+    sqlx::query("DELETE FROM event WHERE relay_id = $1 AND id = $2")
+        .bind(relay_id)
+        .bind(id.to_vec())
+        .execute(db)
+        .await?;
+    Ok(())
+}
+
 /// Delete up to `batch` events whose NIP-40 expiration has passed, across every
 /// relay, returning how many went.
 pub async fn delete_expired_events(db: impl PgExecutor<'_>, now: i64, batch: i64) -> Result<u64> {

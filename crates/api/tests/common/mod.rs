@@ -77,6 +77,31 @@ impl TestApi {
         Response { status, body }
     }
 
+    /// A request with a raw body, returning the raw response.
+    pub async fn raw(
+        &self,
+        method: &str,
+        path: &str,
+        authorization: &str,
+        body: Vec<u8>,
+    ) -> (StatusCode, axum::http::HeaderMap, axum::body::Bytes) {
+        let request = Request::builder()
+            .method(method)
+            .uri(path)
+            .header("Authorization", authorization)
+            .body(Body::from(body))
+            .expect("invalid request");
+        let response = self
+            .router
+            .clone()
+            .oneshot(request)
+            .await
+            .expect("router failed");
+        let (parts, body) = response.into_parts();
+        let bytes = body.collect().await.expect("unreadable body").to_bytes();
+        (parts.status, parts.headers, bytes)
+    }
+
     /// A bearer authorization for a fresh session of `secret`'s pubkey.
     pub async fn bearer(&self, secret: &SecretKey) -> String {
         let auth = sign_http_auth(

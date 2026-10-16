@@ -10,8 +10,8 @@ use caravel_core::crypto::RelayKey;
 use caravel_core::events::{self, DELETION, Saved, StoredEvent, VANISH};
 use caravel_core::relay_policy::{self, EventFacts, Join, Refusal, RelaySnapshot, kinds};
 use caravel_core::relays::Relay;
-use caravel_core::rooms;
 use caravel_core::{Core, Error};
+use caravel_core::{notifications, rooms};
 use coracle_lib::events::{Event, EventId};
 use coracle_lib::filters::Filter;
 use coracle_lib::sync::{FrameBudget, Item, Message as SyncMessage, SyncSet, reconcile_responder};
@@ -24,6 +24,7 @@ use crate::message::{
     RawEvent, RelayMessage, SubscriptionId, refused_event, refused_reconciliation,
     refused_subscription,
 };
+use crate::push::{self, Pusher};
 use crate::session::Session;
 
 /// The size a reconciliation round is held to. Negentropy folds what doesn't fit
@@ -36,13 +37,22 @@ pub struct InstanceState {
     pub relay: Relay,
     pub key: RelayKey,
     pub snapshot: RelaySnapshot,
+    /// Its push subscriptions, when push is on.
+    pub push: Vec<push::Subscription>,
 }
 
 impl InstanceState {
     pub async fn load(core: &Core, relay: Relay) -> caravel_core::Result<Self> {
+        let push = if relay.push_enabled {
+            push::load_subscriptions(core, &relay.id).await?
+        } else {
+            Vec::new()
+        };
+
         Ok(Self {
             key: RelayKey::decrypt(&core.config.platform_key, &relay.secret)?,
             snapshot: relay_policy::load_snapshot(core.db.pool(), &relay).await?,
+            push,
             relay,
         })
     }
@@ -56,6 +66,7 @@ pub struct RelayInstance {
     /// newer state with an older one.
     reloading: tokio::sync::Mutex<()>,
     connections: Connections,
+    pusher: Pusher,
     /// Cancelled when the relay stops being served, closing its connections.
     closed: CancellationToken,
 }
@@ -65,6 +76,7 @@ impl RelayInstance {
         core: Core,
         limits: RelayLimits,
         state: InstanceState,
+        pusher: Pusher,
         closed: CancellationToken,
     ) -> Self {
         Self {
@@ -73,6 +85,7 @@ impl RelayInstance {
             state: RwLock::new(Arc::new(state)),
             reloading: tokio::sync::Mutex::new(()),
             connections: Connections::default(),
+            pusher,
             closed,
         }
     }
@@ -149,6 +162,12 @@ impl RelayInstance {
                 for event in &published {
                     self.fanout(event);
                 }
+
+                let state = self.state();
+                if state.relay.push_enabled {
+                    self.pusher
+                        .push(&state.snapshot, &state.push, &state.relay.host(), &event);
+                }
             }
             Err(refusal) => self.refuse_event(session, event.id, refusal).await,
         }
@@ -170,6 +189,23 @@ impl RelayInstance {
             return Err(Refusal::invalid("event contains a NUL character"));
         }
 
+        if event.kind == kinds::PUSH_SUBSCRIPTION {
+            let hosts = [state.relay.canonical_host(), state.relay.host()];
+            relay_policy::check_push_subscription(
+                event,
+                &hosts,
+                push::held_by(&state.push, event),
+            )?;
+            // A callback naming a local address outright is refused now for a clear
+            // answer; delivery refuses every local address however it is named.
+            let callback = event.tags.value("callback").unwrap_or_default();
+            if self.core.outbound.check(callback).is_err() {
+                return Err(Refusal::invalid(
+                    "callback must not point to a local or internal address",
+                ));
+            }
+        }
+
         let published = match event.kind {
             kinds::RELAY_JOIN => self.join(&state, event, now).await?,
             kinds::RELAY_LEAVE => self.leave(&state, event, now).await,
@@ -177,7 +213,9 @@ impl RelayInstance {
             _ => self.store(&state, event, now).await?,
         };
 
-        if !published.is_empty() || rooms::is_moderation_kind(event.kind) {
+        let changes_push = state.relay.push_enabled
+            && matches!(event.kind, kinds::PUSH_SUBSCRIPTION | DELETION | VANISH);
+        if !published.is_empty() || rooms::is_moderation_kind(event.kind) || changes_push {
             self.refresh().await;
         }
 
@@ -499,7 +537,7 @@ impl RelayInstance {
 
         if let Err(error) =
             self.connections
-                .authenticate(session, pubkey, self.limits.max_identities)
+                .authenticate(session, pubkey.clone(), self.limits.max_identities)
         {
             let refusal = registration_refusal(
                 error,
@@ -513,6 +551,34 @@ impl RelayInstance {
         }
 
         session.send(RelayMessage::accepted(event.id)).await;
+
+        // A message written while the pubkey was away reaches it as it returns.
+        let relay_id = self.relay_id();
+        match notifications::get_notification(
+            self.core.db.pool(),
+            &relay_id,
+            &pubkey,
+            self.core.clock.now(),
+        )
+        .await
+        {
+            Ok(Some(notification)) => {
+                session
+                    .send(RelayMessage::Notify(notification.message))
+                    .await;
+            }
+            Ok(None) => {}
+            Err(error) => {
+                tracing::warn!(relay = %relay_id, error = %error, "failed to read a notification")
+            }
+        }
+    }
+
+    /// Send a message to every connection authenticated as a pubkey.
+    pub fn deliver_notification(&self, pubkey: &str, message: &str) {
+        for session in self.connections.sessions_for(pubkey) {
+            session.try_send(RelayMessage::Notify(message.to_string()));
+        }
     }
 
     pub async fn on_neg_open(

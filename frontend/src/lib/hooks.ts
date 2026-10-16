@@ -164,7 +164,7 @@ export const useAdminTenantInvoices = (pubkey: () => string) => createResource(p
 
 // This client is built for a single zooid domain, so it supplies its own
 // VITE_RELAY_DOMAIN as the relay's zooid_domain; the backend validates it
-// against the platform's ZOOID_DOMAINS.
+// against the platform's RELAY_DOMAINS.
 export const createRelayForActiveTenant = (input: Omit<CreateRelayInput, "zooid_domain">) => {
   const defaults = {
     info_name: "",

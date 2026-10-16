@@ -39,9 +39,9 @@ CREATE TABLE relay (
   push_enabled BOOLEAN NOT NULL DEFAULT true,
   custom_domain TEXT NOT NULL DEFAULT '',
   custom_domain_verified BOOLEAN NOT NULL DEFAULT false,
-  synced BOOLEAN NOT NULL DEFAULT false,
-  sync_error TEXT NOT NULL DEFAULT '',
+  blossom_authenticated_read BOOLEAN NOT NULL DEFAULT false,
   purged_at BIGINT,
+  erased_at BIGINT,
   created_at BIGINT NOT NULL,
   CONSTRAINT relay_subdomain_key UNIQUE (subdomain),
   CONSTRAINT relay_pubkey_key UNIQUE (pubkey)
@@ -54,6 +54,9 @@ CREATE INDEX relay_tenant_created_idx ON relay (tenant_pubkey, created_at);
 -- keeps two live relays from claiming one domain.
 CREATE UNIQUE INDEX relay_custom_domain_key ON relay (custom_domain)
   WHERE custom_domain <> '' AND custom_domain_verified AND purged_at IS NULL;
+
+-- Purged relays whose data is still to be erased.
+CREATE INDEX relay_unerased_idx ON relay (id) WHERE purged_at IS NOT NULL AND erased_at IS NULL;
 
 -- The domain verification poller's queue of custom domains still to verify.
 CREATE INDEX relay_unverified_custom_domain_idx ON relay (id)
@@ -334,4 +337,46 @@ CREATE TABLE room_invite (
   created_at BIGINT NOT NULL,
   PRIMARY KEY (relay_id, room_id, code),
   FOREIGN KEY (relay_id, room_id) REFERENCES room (relay_id, id) ON DELETE CASCADE
+);
+
+CREATE TABLE blob (
+  relay_id TEXT NOT NULL REFERENCES relay (id),
+  sha256 TEXT NOT NULL,
+  type TEXT NOT NULL,
+  size BIGINT NOT NULL,
+  created_at BIGINT NOT NULL,
+  PRIMARY KEY (relay_id, sha256)
+);
+
+CREATE TABLE blob_owner (
+  relay_id TEXT NOT NULL,
+  blob_sha256 TEXT NOT NULL,
+  pubkey TEXT NOT NULL,
+  created_at BIGINT NOT NULL,
+  PRIMARY KEY (relay_id, blob_sha256, pubkey),
+  FOREIGN KEY (relay_id, blob_sha256) REFERENCES blob (relay_id, sha256) ON DELETE CASCADE
+);
+
+-- A pubkey's uploads on a relay, for BUD-02 lists.
+CREATE INDEX blob_owner_pubkey_idx ON blob_owner (relay_id, pubkey, created_at);
+
+-- The moderation feed, which reads every relay's uploads by when they arrived.
+CREATE INDEX blob_owner_created_idx ON blob_owner (created_at DESC);
+
+CREATE TABLE livekit_session (
+  relay_id TEXT NOT NULL REFERENCES relay (id),
+  sid TEXT NOT NULL,
+  room_id TEXT NOT NULL,
+  seconds BIGINT NOT NULL,
+  ended_at BIGINT NOT NULL,
+  PRIMARY KEY (relay_id, sid)
+);
+
+CREATE TABLE notification (
+  relay_id TEXT NOT NULL REFERENCES relay (id),
+  pubkey TEXT NOT NULL,
+  message TEXT NOT NULL,
+  created_at BIGINT NOT NULL,
+  expires_at BIGINT,
+  PRIMARY KEY (relay_id, pubkey)
 );

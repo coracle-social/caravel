@@ -71,6 +71,10 @@ pub struct RoomSnapshot {
     pub private: bool,
     /// Only its members and the relay's managers may post, and joining needs an invite.
     pub closed: bool,
+    /// The room has calls.
+    pub livekit: bool,
+    /// Only its members and the relay's managers may join its calls.
+    pub restricted: bool,
     pub members: HashSet<String>,
     /// Members holding the room's admin role, who may moderate it.
     pub admins: HashSet<String>,
@@ -247,7 +251,7 @@ impl RelaySnapshot {
                 .is_some_and(|room| room.admins.contains(pubkey))
     }
 
-    fn has_room_access(&self, room: &RoomSnapshot, pubkey: &str) -> bool {
+    pub fn has_room_access(&self, room: &RoomSnapshot, pubkey: &str) -> bool {
         self.can_manage(pubkey) || room.members.contains(pubkey)
     }
 }
@@ -305,6 +309,8 @@ pub async fn load_snapshot(db: impl PgExecutor<'_> + Copy, relay: &Relay) -> Res
             hidden: room.has_flag("hidden"),
             private: room.has_flag("private"),
             closed: room.has_flag("closed"),
+            livekit: room.has_flag("livekit"),
+            restricted: room.has_flag("restricted"),
             ..Default::default()
         };
         snapshot.rooms.insert(room.id, room_snapshot);
@@ -645,4 +651,71 @@ pub fn strips_signature(snapshot: &RelaySnapshot, authed: &[String]) -> bool {
 /// Whether the relay keeps an event or only passes it on.
 pub fn is_stored(kind: u16) -> bool {
     !is_ephemeral(kind)
+}
+
+/// The most push subscriptions one pubkey may hold on a relay.
+pub const MAX_PUSH_SUBSCRIPTIONS: usize = 10;
+
+/// Whether a push subscription is well formed, addressed to this relay by one of
+/// its `hosts`, and within the limit given the author's `held` other subscriptions.
+/// Whether its callback may be reached is the outbound client's to say.
+pub fn check_push_subscription(
+    event: &Event,
+    hosts: &[String],
+    held: usize,
+) -> Result<(), Refusal> {
+    if event.tags.value("d").is_none_or(str::is_empty) {
+        return Err(Refusal::invalid("missing or empty d tag"));
+    }
+
+    let relay = event
+        .tags
+        .value("relay")
+        .ok_or_else(|| Refusal::invalid("missing relay tag"))?;
+    let relay_host = relay
+        .split_once("://")
+        .map_or(relay, |(_, rest)| rest)
+        .trim_end_matches('/')
+        .to_lowercase();
+    if !hosts.contains(&relay_host) {
+        return Err(Refusal::invalid(
+            "relay tag does not match this relay's URL",
+        ));
+    }
+
+    let filters: Vec<&str> = event.tags.values("filter").collect();
+    if filters.is_empty() {
+        return Err(Refusal::invalid("at least one filter tag is required"));
+    }
+    for filter in filters
+        .iter()
+        .chain(event.tags.values("ignore").collect::<Vec<_>>().iter())
+    {
+        serde_json::from_str::<coracle_lib::filters::Filter>(filter).map_err(|error| {
+            Refusal::invalid(format!("filter tag contains invalid JSON: {error}"))
+        })?;
+    }
+
+    let callbacks: Vec<&str> = event.tags.values("callback").collect();
+    let callback = match callbacks.as_slice() {
+        [] => return Err(Refusal::invalid("missing callback tag")),
+        [callback] if !callback.is_empty() => *callback,
+        [_] => return Err(Refusal::invalid("empty callback tag")),
+        _ => return Err(Refusal::invalid("too many callback tags")),
+    };
+
+    let url: url::Url = callback
+        .parse()
+        .map_err(|_| Refusal::invalid("callback must be a valid HTTP or HTTPS URL"))?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return Err(Refusal::invalid(
+            "callback must be a valid HTTP or HTTPS URL",
+        ));
+    }
+
+    if held >= MAX_PUSH_SUBSCRIPTIONS {
+        return Err(Refusal::invalid("too many subscriptions registered"));
+    }
+
+    Ok(())
 }

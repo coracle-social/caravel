@@ -46,10 +46,6 @@ pub fn normalize_custom_domain(config: &Config, domain: &str) -> Result<String> 
 pub async fn is_served_host(core: &Core, host: &str) -> Result<bool> {
     let host = host.trim().trim_end_matches('.').to_lowercase();
 
-    if host == core.config.zooid_api_host {
-        return Ok(true);
-    }
-
     Ok(relays::get_relay_by_host(core.db.pool(), &host)
         .await?
         .is_some())

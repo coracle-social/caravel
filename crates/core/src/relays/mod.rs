@@ -66,6 +66,9 @@ pub struct Relay {
     pub members_can_invite: bool,
     #[serde(with = "flag")]
     pub blossom_enabled: bool,
+    /// Only members may download the relay's media.
+    #[serde(with = "flag")]
+    pub blossom_authenticated_read: bool,
     #[serde(with = "flag")]
     pub livekit_enabled: bool,
     #[serde(with = "flag")]
@@ -78,15 +81,12 @@ pub struct Relay {
     /// Hosts that redirect to the relay's current host, collected when a verified
     /// custom domain is replaced so its old links keep working.
     pub redirect_from: Vec<String>,
-    /// Whether zooid holds the relay's current config.
-    #[serde(with = "flag")]
-    pub synced: bool,
-    /// Why the last attempt to give zooid the relay's config failed, or empty.
-    pub sync_error: String,
     /// When the relay was purged: its data deleted and its hosts released. The row
     /// stays as a record. Purging an active relay credits the tenant like a
     /// deactivation.
     pub purged_at: Option<i64>,
+    /// When a purged relay's events, access lists, rooms and media were erased.
+    pub erased_at: Option<i64>,
     pub created_at: i64,
 }
 
@@ -176,16 +176,6 @@ pub async fn list_relays_with_custom_domain(
     .await?)
 }
 
-/// Relays zooid doesn't hold the current state of, including purged relays it
-/// hasn't deleted yet.
-pub async fn list_relays_pending_sync(db: impl PgExecutor<'_>) -> Result<Vec<Relay>> {
-    Ok(
-        sqlx::query_as::<_, Relay>(&format!("{SELECT_RELAY} WHERE NOT synced"))
-            .fetch_all(db)
-            .await?,
-    )
-}
-
 pub async fn insert_relay(conn: &mut PgConnection, relay: &Relay) -> Result<()> {
     sqlx::query(
         "INSERT INTO relay (
@@ -193,9 +183,10 @@ pub async fn insert_relay(conn: &mut PgConnection, relay: &Relay) -> Result<()> 
             info_name, info_icon, info_description,
             policy_public_read, policy_public_write, policy_public_join, policy_strip_signatures,
             groups_enabled, management_enabled, members_can_invite, blossom_enabled,
-            livekit_enabled, push_enabled, custom_domain, created_at, policy_anonymous_read
+            livekit_enabled, push_enabled, custom_domain, created_at, policy_anonymous_read,
+            blossom_authenticated_read
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17,
-            $18, $19, $20, $21, $22, $23, $24)",
+            $18, $19, $20, $21, $22, $23, $24, $25)",
     )
     .bind(&relay.id)
     .bind(&relay.tenant_pubkey)
@@ -221,13 +212,14 @@ pub async fn insert_relay(conn: &mut PgConnection, relay: &Relay) -> Result<()> 
     .bind(&relay.custom_domain)
     .bind(relay.created_at)
     .bind(relay.policy_anonymous_read)
+    .bind(relay.blossom_authenticated_read)
     .execute(conn)
     .await?;
     Ok(())
 }
 
-/// Write a relay's settings and mark it for re-sync. Its redirect hosts, status,
-/// keys and purge marker have writers of their own. Verification of its custom
+/// Write a relay's settings. Its redirect hosts, status, keys and purge marker
+/// have writers of their own. Verification of its custom
 /// domain is kept unless the custom domain or the domain it must point under
 /// changed, comparing against the stored row so a verification that landed since
 /// the relay was read survives.
@@ -244,7 +236,7 @@ pub async fn update_relay(conn: &mut PgConnection, relay: &Relay) -> Result<()> 
             custom_domain_verified = custom_domain_verified AND custom_domain = $18 AND domain = $3
                 AND subdomain = $2,
             policy_anonymous_read = $19,
-            synced = false
+            blossom_authenticated_read = $20
          WHERE id = $1",
     )
     .bind(&relay.id)
@@ -266,6 +258,7 @@ pub async fn update_relay(conn: &mut PgConnection, relay: &Relay) -> Result<()> 
     .bind(relay.push_enabled)
     .bind(&relay.custom_domain)
     .bind(relay.policy_anonymous_read)
+    .bind(relay.blossom_authenticated_read)
     .execute(conn)
     .await?;
     Ok(())
@@ -282,7 +275,7 @@ pub async fn set_relay_info(
 ) -> Result<()> {
     sqlx::query(
         "UPDATE relay SET info_name = COALESCE($2, info_name), info_description = COALESCE($3, info_description),
-            info_icon = COALESCE($4, info_icon), synced = false
+            info_icon = COALESCE($4, info_icon)
          WHERE id = $1",
     )
     .bind(relay_id)
@@ -299,7 +292,7 @@ pub async fn set_relay_status(
     relay_id: &str,
     status: RelayStatus,
 ) -> Result<()> {
-    sqlx::query("UPDATE relay SET status = $1, synced = false WHERE id = $2")
+    sqlx::query("UPDATE relay SET status = $1 WHERE id = $2")
         .bind(status)
         .bind(relay_id)
         .execute(db)
@@ -308,7 +301,7 @@ pub async fn set_relay_status(
 }
 
 pub async fn set_relay_purged_at(db: impl PgExecutor<'_>, relay_id: &str, at: i64) -> Result<()> {
-    sqlx::query("UPDATE relay SET purged_at = $1, synced = false, sync_error = '' WHERE id = $2")
+    sqlx::query("UPDATE relay SET purged_at = $1 WHERE id = $2")
         .bind(at)
         .bind(relay_id)
         .execute(db)
@@ -325,7 +318,7 @@ pub async fn set_custom_domain_verified(
     verified: bool,
 ) -> Result<bool> {
     let result = sqlx::query(
-        "UPDATE relay SET custom_domain_verified = $1, synced = false
+        "UPDATE relay SET custom_domain_verified = $1
          WHERE id = $2 AND custom_domain = $3 AND purged_at IS NULL",
     )
     .bind(verified)
@@ -364,19 +357,11 @@ pub async fn remove_host_redirects(db: impl PgExecutor<'_>, hosts: &[String]) ->
     Ok(())
 }
 
-pub async fn complete_relay_sync(db: impl PgExecutor<'_>, relay_id: &str) -> Result<()> {
-    sqlx::query("UPDATE relay SET synced = true, sync_error = '' WHERE id = $1")
-        .bind(relay_id)
-        .execute(db)
-        .await?;
-    Ok(())
-}
-
-pub async fn fail_relay_sync(db: impl PgExecutor<'_>, relay_id: &str, error: &str) -> Result<()> {
-    sqlx::query("UPDATE relay SET synced = false, sync_error = $1 WHERE id = $2")
-        .bind(error)
-        .bind(relay_id)
-        .execute(db)
-        .await?;
-    Ok(())
+/// Purged relays whose data is still to be erased.
+pub async fn list_unerased_relays(db: impl PgExecutor<'_>) -> Result<Vec<Relay>> {
+    Ok(sqlx::query_as::<_, Relay>(&format!(
+        "{SELECT_RELAY} WHERE purged_at IS NOT NULL AND erased_at IS NULL"
+    ))
+    .fetch_all(db)
+    .await?)
 }

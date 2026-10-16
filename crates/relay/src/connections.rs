@@ -184,6 +184,15 @@ impl Connections {
         matched
     }
 
+    /// Every connection authenticated as a pubkey.
+    pub fn sessions_for(&self, pubkey: &str) -> Vec<Session> {
+        self.read()
+            .values()
+            .filter(|connection| connection.pubkeys.contains(pubkey))
+            .map(|connection| connection.session.clone())
+            .collect()
+    }
+
     fn read(&self) -> RwLockReadGuard<'_, HashMap<u64, Connection>> {
         self.inner.read().unwrap_or_else(|error| error.into_inner())
     }

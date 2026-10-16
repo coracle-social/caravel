@@ -3,9 +3,10 @@
 
 use std::sync::Arc;
 
-use caravel_adapters::{
-    robot::Robot, robot::RobotProfile, stripe::Stripe, wallet::Wallet, zooid::Zooid,
-};
+use caravel_adapters::blobs::Blobs;
+use caravel_adapters::livekit::Livekit;
+use caravel_adapters::outbound::Outbound;
+use caravel_adapters::{robot::Robot, robot::RobotProfile, stripe::Stripe, wallet::Wallet};
 
 use crate::Core;
 use crate::clock::Clock;
@@ -19,6 +20,9 @@ pub const RELAY_DOMAIN: &str = "relay.test";
 pub const API_URL: &str = "http://api.test";
 
 const DEAD_RELAY: &str = "ws://127.0.0.1:1";
+
+/// The LiveKit server test cores call, which isn't there.
+pub const LIVEKIT_URL: &str = "ws://127.0.0.1:1";
 
 /// A core on this test binary's database, administered by `admin_pubkey`.
 /// The platform key every test core shares, so any test's relays decrypt in any
@@ -35,9 +39,6 @@ pub async fn core(admin_pubkey: &str) -> Core {
         admin_pubkeys: vec![admin_pubkey.to_string()],
         relay_domains: vec![RELAY_DOMAIN.to_string()],
         platform_key,
-        blossom_s3: Default::default(),
-        livekit: Default::default(),
-        zooid_api_host: "zooid.test".to_string(),
     };
 
     let profile = RobotProfile {
@@ -59,7 +60,12 @@ pub async fn core(admin_pubkey: &str) -> Core {
             "nostr+walletconnect://{wallet_pubkey}?relay={DEAD_RELAY}&secret={wallet_secret}"
         ))
         .expect("invalid wallet url"),
-        zooid: Zooid::new("http://127.0.0.1:1", &robot_secret).expect("invalid zooid key"),
+        blobs: Blobs::memory(),
+        livekit: Some(
+            Livekit::new(LIVEKIT_URL, "test-key", "test-secret").expect("invalid livekit"),
+        ),
+        outbound: Outbound::new(std::time::Duration::from_secs(5), true)
+            .expect("invalid outbound client"),
     }
 }
 

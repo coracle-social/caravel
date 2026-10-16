@@ -23,5 +23,6 @@ tracing.workspace = true
 
 [dev-dependencies]
 anyhow.workspace = true
+caravel-adapters.workspace = true
 caravel-core = { workspace = true, features = ["testing"] }
 tokio-tungstenite = "0.29"

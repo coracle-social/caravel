@@ -1,10 +1,11 @@
 //! Routes only platform admins may call.
 
+use axum::body::Body;
 use axum::extract::{Path, Query, State};
 use axum::http::header;
 use axum::response::IntoResponse;
 use caravel_core::billing::ledger;
-use caravel_core::{Core, Error, auth, hosting, relays, tenants};
+use caravel_core::{Core, Error, auth, hosting, media, moderation, relays, tenants};
 use serde::Deserialize;
 
 use crate::auth::Admin;
@@ -72,16 +73,11 @@ pub async fn list_moderation(
     _: Admin,
     Query(window): Query<ModerationWindow>,
 ) -> ApiResult {
-    let page = core
-        .zooid
-        .list_moderation(window.since, window.until)
-        .await
-        .map_err(Error::from)?;
-    ok(page)
+    ok(moderation::list_moderation(&core, window.since, window.until).await?)
 }
 
-/// One of a relay's blobs, raw rather than in the envelope. Relays serve blobs to
-/// their members only, so admins reviewing them read through here.
+/// One of a relay's blobs, raw rather than in the envelope, for admins reviewing
+/// relays that keep their media to members.
 pub async fn get_moderation_blob(
     State(core): State<Core>,
     _: Admin,
@@ -99,22 +95,30 @@ pub async fn get_moderation_blob(
         return Err(Error::conflict("invalid-sha256", "sha256 is invalid").into());
     }
 
-    let (content_type, bytes) = core
-        .zooid
-        .get_blob(&relay_id, &sha256)
+    let blob = media::get_blob(core.db.pool(), &relay_id, &sha256)
+        .await?
+        .ok_or(Error::NotFound("blob not found"))?;
+    let read = core
+        .blobs
+        .get(&media::blob_key(&relay_id, &sha256), None)
         .await
         .map_err(Error::from)?
         .ok_or(Error::NotFound("blob not found"))?;
 
     Ok((
         [
-            (header::CONTENT_TYPE, content_type),
+            (header::CONTENT_TYPE, blob.content_type),
             (
                 header::CACHE_CONTROL,
                 "private, max-age=86400, immutable".to_string(),
             ),
+            (header::X_CONTENT_TYPE_OPTIONS, "nosniff".to_string()),
+            (
+                header::CONTENT_SECURITY_POLICY,
+                "default-src 'none'; sandbox".to_string(),
+            ),
         ],
-        bytes,
+        Body::from_stream(read.stream),
     )
         .into_response())
 }

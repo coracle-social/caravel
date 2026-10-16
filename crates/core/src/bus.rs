@@ -15,6 +15,12 @@ pub enum Change {
         relay_id: String,
         published: Vec<Event>,
     },
+    /// A pubkey's notification on a relay was replaced with this message.
+    Notified {
+        relay_id: String,
+        pubkey: String,
+        message: String,
+    },
 }
 
 #[derive(Clone, Debug)]

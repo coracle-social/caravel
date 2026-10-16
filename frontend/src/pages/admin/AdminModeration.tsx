@@ -36,7 +36,7 @@ const startOfRange = (range: RangeValue) => {
 // Uploads have no event id, so key them on the blob hash instead. Scoped by
 // relay because the same content can legitimately exist on several of them.
 const itemKey = (item: ModerationItem) =>
-  item.type === "upload" ? `${item.tenant}:${item.data.sha256}` : `${item.tenant}:${item.data.id}`
+  item.type === "upload" ? `${item.relay_id}:${item.data.sha256}` : `${item.relay_id}:${item.data.id}`
 
 // Relay machinery rather than user content: role/permission events (8000/8001),
 // relay lists (10002), group lists (10009), and 13534. NIP-29's group management
@@ -131,7 +131,7 @@ export default function AdminModeration() {
       item,
       pubkey: item.data.pubkey,
       author: metadata()[item.data.pubkey]?.name ?? metadata()[item.data.pubkey]?.display_name ?? "",
-      relay: relaysById().get(item.tenant)?.info_name ?? item.tenant,
+      relay: relaysById().get(item.relay_id)?.info_name ?? item.relay_id,
       content: item.type === "event" ? item.data.content : `${item.data.type} ${item.data.sha256}`,
     }))
 
@@ -191,7 +191,7 @@ export default function AdminModeration() {
               {(item) => (
                 <ModerationListItem
                   item={item}
-                  relay={relaysById().get(item.tenant)}
+                  relay={relaysById().get(item.relay_id)}
                   metadata={metadata()[item.data.pubkey]}
                 />
               )}

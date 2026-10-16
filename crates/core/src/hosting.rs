@@ -45,6 +45,7 @@ pub struct RelaySettings {
     pub management_enabled: Option<Flag>,
     pub members_can_invite: Option<Flag>,
     pub blossom_enabled: Option<Flag>,
+    pub blossom_authenticated_read: Option<Flag>,
     pub livekit_enabled: Option<Flag>,
     pub push_enabled: Option<Flag>,
     pub custom_domain: Option<String>,
@@ -488,6 +489,10 @@ fn apply_settings(core: &Core, mut relay: Relay, settings: RelaySettings) -> Res
     flag(&mut relay.management_enabled, settings.management_enabled);
     flag(&mut relay.members_can_invite, settings.members_can_invite);
     flag(&mut relay.blossom_enabled, settings.blossom_enabled);
+    flag(
+        &mut relay.blossom_authenticated_read,
+        settings.blossom_authenticated_read,
+    );
     flag(&mut relay.livekit_enabled, settings.livekit_enabled);
     flag(&mut relay.push_enabled, settings.push_enabled);
     if let Some(custom_domain) = settings.custom_domain {
@@ -548,4 +553,45 @@ fn map_relay_write_error(error: Error) -> Error {
         }
         _ => error,
     }
+}
+
+/// Erase what purged relays held: their events, access lists, rooms, claims,
+/// notifications and media. Billing's records of them stay.
+pub async fn erase_purged_relays(core: &Core) -> Result<()> {
+    for relay in relays::list_unerased_relays(core.db.pool()).await? {
+        core.blobs.delete_prefix(&relay.id).await?;
+
+        let now = core.clock.now();
+        core.db
+            .with_tx(async |conn| {
+                for table in [
+                    "event",
+                    "room",
+                    "relay_member",
+                    "role",
+                    "banned_pubkey",
+                    "banned_event",
+                    "claim_use",
+                    "claim",
+                    "blob",
+                    "notification",
+                    "host_redirect",
+                ] {
+                    sqlx::query(&format!("DELETE FROM {table} WHERE relay_id = $1"))
+                        .bind(&relay.id)
+                        .execute(&mut *conn)
+                        .await?;
+                }
+                sqlx::query("UPDATE relay SET erased_at = $2 WHERE id = $1")
+                    .bind(&relay.id)
+                    .bind(now)
+                    .execute(&mut *conn)
+                    .await?;
+                Ok::<_, Error>(())
+            })
+            .await?;
+
+        tracing::info!(relay = %relay.id, "erased a purged relay");
+    }
+    Ok(())
 }

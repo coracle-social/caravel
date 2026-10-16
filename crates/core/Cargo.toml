@@ -11,10 +11,12 @@ testing = ["caravel-db/testing"]
 [dependencies]
 anyhow.workspace = true
 base64.workspace = true
+bytes.workspace = true
 caravel-adapters.workspace = true
 caravel-db.workspace = true
 chrono.workspace = true
 coracle-lib.workspace = true
+futures-util.workspace = true
 hex.workspace = true
 rand.workspace = true
 regex.workspace = true
@@ -25,8 +27,8 @@ sqlx.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+url.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
 caravel-core = { path = ".", features = ["testing"] }
-futures-util = "0.3"

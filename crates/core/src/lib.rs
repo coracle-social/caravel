@@ -5,6 +5,7 @@ pub mod access;
 pub mod auth;
 pub mod billing;
 pub mod bus;
+pub mod calls;
 pub mod clock;
 pub mod config;
 pub mod crypto;
@@ -14,12 +15,15 @@ pub mod events;
 pub mod flag;
 pub mod hosting;
 pub mod management;
+pub mod media;
+pub mod moderation;
+pub mod notifications;
 pub mod plans;
-pub mod provisioning;
 pub mod relay_policy;
 pub mod relays;
 pub mod rooms;
 pub mod tenants;
+pub mod transfer;
 pub mod usage;
 
 #[cfg(feature = "testing")]
@@ -27,7 +31,10 @@ pub mod testing;
 
 use std::sync::Arc;
 
-use caravel_adapters::{robot::Robot, stripe::Stripe, wallet::Wallet, zooid::Zooid};
+use caravel_adapters::blobs::Blobs;
+use caravel_adapters::livekit::Livekit;
+use caravel_adapters::outbound::Outbound;
+use caravel_adapters::{robot::Robot, stripe::Stripe, wallet::Wallet};
 use caravel_db::Db;
 
 pub use error::{Error, Result};
@@ -43,7 +50,12 @@ pub struct Core {
     pub robot: Robot,
     /// The platform's wallet, which issues the Lightning invoices tenants pay.
     pub wallet: Wallet,
-    pub zooid: Zooid,
+    /// Where relays' media is stored.
+    pub blobs: Blobs,
+    /// The LiveKit server, when calls are set up.
+    pub livekit: Option<Livekit>,
+    /// Requests to urls other people chose: push callbacks and mirrored media.
+    pub outbound: Outbound,
 }
 
 impl Core {

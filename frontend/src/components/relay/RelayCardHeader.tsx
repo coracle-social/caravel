@@ -37,7 +37,7 @@ export function PlanBadge(props: { planId: string }) {
 }
 
 // Presentational header for RelayDetailCard: icon/title/status, the WSS link, the
-// optional tenant profile link, the sync_error banner, and the actions dropdown.
+// optional tenant profile link, and the actions dropdown.
 // All relay mutations are surfaced as callbacks. Props are reactive only when
 // read lazily, so access props.* (and accessor props like props.relay()) inside
 // JSX, never destructure at the top. A purged relay is terminal, so its actions
@@ -186,13 +186,6 @@ export default function RelayCardHeader(props: RelayCardHeaderProps) {
           </ActionsMenu>
         </Show>
       </div>
-
-      <Show when={r().sync_error}>
-        <div class="rounded-lg border border-red-200 bg-red-50 px-4 py-3">
-          <p class="text-sm font-semibold text-red-800">Provisioning error</p>
-          <p class="mt-1 text-sm text-red-700 font-mono break-all">{r().sync_error}</p>
-        </div>
-      </Show>
     </>
   )
 }

@@ -4,9 +4,7 @@
 use std::future::Future;
 use std::time::Duration;
 
-use caravel_core::bus::Change;
-use caravel_core::{Core, Result, auth, billing, domains, events, provisioning};
-use tokio::sync::broadcast::error::RecvError;
+use caravel_core::{Core, Result, auth, billing, domains, events, hosting};
 use tokio::time::{Instant, interval_at};
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
@@ -69,13 +67,12 @@ pub fn spawn(tracker: &TaskTracker, shutdown: &CancellationToken, core: &Core) {
         tracker,
         shutdown,
         core,
-        "relay sync",
-        Duration::ZERO,
+        "erasure",
         MINUTE,
-        |core| async move { provisioning::sync_pending_relays(&core).await },
+        10 * MINUTE,
+        |core| async move { hosting::erase_purged_relays(&core).await },
     );
 
-    tracker.spawn(sync_changed_relays(core.clone(), shutdown.clone()));
     tracker.spawn(publish_robot_identity(core.clone(), shutdown.clone()));
 }
 
@@ -125,35 +122,6 @@ async fn sweep_expired_events(core: &Core) -> Result<()> {
         }
         if removed < BATCH as u64 {
             return Ok(());
-        }
-    }
-}
-
-/// Give zooid a relay's config whenever the relay changes, and catch up on
-/// everything pending when changes were missed.
-async fn sync_changed_relays(core: Core, shutdown: CancellationToken) {
-    let mut changes = core.bus.subscribe();
-
-    loop {
-        let change = tokio::select! {
-            _ = shutdown.cancelled() => break,
-            change = changes.recv() => change,
-        };
-
-        let result = match change {
-            Ok(Change::RelayChanged { relay_id }) => {
-                provisioning::sync_relay(&core, &relay_id).await
-            }
-            Ok(Change::AccessChanged { .. }) => Ok(()),
-            Err(RecvError::Lagged(missed)) => {
-                tracing::warn!(missed, "relay sync lagged");
-                provisioning::sync_pending_relays(&core).await
-            }
-            Err(RecvError::Closed) => break,
-        };
-
-        if let Err(error) = result {
-            tracing::error!(error = ?error, "relay sync failed");
         }
     }
 }

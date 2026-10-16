@@ -54,8 +54,6 @@ export type Relay = {
   zooid_domain: string
   plan_id: PlanId
   status: string
-  sync_error: string
-  synced: number
   custom_domain: string
   custom_domain_verified: number
   redirect_from: string[]
@@ -72,7 +70,12 @@ export type Relay = {
   blossom_enabled: number
   livekit_enabled: number
   push_enabled: number
+  blossom_authenticated_read: number
+  policy_anonymous_read: number
+  pubkey: string
+  created_at: number
   purged_at: number | null
+  erased_at: number | null
 }
 
 // The backend keeps a purged relay's original status, so derive the display
@@ -86,7 +89,7 @@ export function relayStatus(relay: Pick<Relay, "status" | "purged_at">): string 
 export type CreateRelayInput = {
   tenant_pubkey?: string
   subdomain: string
-  // Which of the platform's ZOOID_DOMAINS the relay's canonical host sits under.
+  // Which of the platform's RELAY_DOMAINS the relay's canonical host sits under.
   // The backend rejects anything it doesn't serve.
   zooid_domain: string
   plan_id: string
@@ -243,12 +246,10 @@ export type Upload = {
   created_at: number
 }
 
-// One reviewable item from a relay. `tenant` is the relay id it was published
-// to, so it links straight to that relay's admin page, and `seen_at` is when
-// that relay first stored it.
+// One reviewable item from a relay, and when that relay first stored it.
 export type ModerationItem =
-  | { type: "event"; tenant: string; seen_at: number; data: NostrEvent }
-  | { type: "upload"; tenant: string; seen_at: number; data: Upload }
+  | { type: "event"; relay_id: string; seen_at: number; data: NostrEvent }
+  | { type: "upload"; relay_id: string; seen_at: number; data: Upload }
 
 export type ModerationPage = {
   items: ModerationItem[]
@@ -265,6 +266,8 @@ export type ImportProblem = {
 export type ImportResult = {
   imported: number
   invalid: number
+  skipped?: number
+  rooms_rebuilt?: number
   problems?: ImportProblem[]
 }
 

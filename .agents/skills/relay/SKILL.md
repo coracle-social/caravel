@@ -1,6 +1,6 @@
 ---
 name: relay
-description: How caravel serves its virtual relays — many Nostr relays in one process, each on its own hosts, all storing into one Postgres event table partitioned by relay. Covers host resolution and reloads, the websocket session and NIP-01/42/77 conversation, the relay policy chain (who may write, subscribe, and see which event, and who gets signatures), relay membership and NIP-43 joins with claims, NIP-86 management and its per-method grants, NIP-29 rooms, the events a relay publishes about its own state, the event store's replaceable slots, deletion and vanish tombstones and expiration, fan-out, limits, and the history from zooid (the Go relay engine this replaces) that shaped the design. Use it whenever working on crates/relay, the core's events or relay_policy modules, or anything that changes what a relay accepts or serves.
+description: How caravel serves its virtual relays — many Nostr relays in one process, each on its own hosts, all storing into one Postgres event table partitioned by relay. Covers host resolution and reloads, the websocket session and NIP-01/42/77 conversation, the relay policy chain (who may write, subscribe, and see which event, and who gets signatures), relay membership and NIP-43 joins with claims, NIP-86 management and its per-method grants, NIP-29 rooms, the events a relay publishes about its own state, Blossom media, NIP-9a push, LiveKit calls and their meter, NOTIFY messages, JSONL export and import, the event store's replaceable slots, deletion and vanish tombstones and expiration, fan-out, limits, and the history from zooid (the Go relay engine this replaces) that shaped the design. Use it whenever working on crates/relay, the core's events, relay_policy, media, calls, notifications or transfer modules, or anything that changes what a relay accepts or serves.
 ---
 
 # Relays
@@ -50,6 +50,32 @@ A room nobody created shows only its deletion. A hidden room shows nothing to ou
 
 The relay signs events describing its own state with its own key: its member list (13534), each member's addition and removal (8000, 8001), its role definitions (33534), and each room's metadata, admins, members and pins (39000, 39001, 39002, 39005), with a put-user or remove-user event (9000, 9001) for each join and leave. They are written from the tables in the transaction that changes them, so they never disagree with the state they describe, and no client tombstone refuses them. Rewriting them all from the tables (`rebuild_derived`) reproduces them exactly, which a test checks. After a change, the relay reloads its snapshot before answering, then delivers the change and these events to subscribers.
 
+## Media
+
+A relay with media on runs a Blossom server on its own hosts (BUD-01, 02, 04, 06 and 11). Members upload, mirror, list and delete with a kind 24242 authorization naming the verb, an expiration, and the hashes it covers; anyone downloads, unless the relay keeps its media to members, in which case a download needs a member's authorization too. A blob is at most 10 MiB.
+
+A blob is stored once per relay however many members upload it, and each uploader owns it until they delete it; the last owner's deletion removes its bytes. The bytes live in the platform's blob store under `<relay id>/<sha256>`, in a directory or an S3 bucket. Storage is billed by the blobs a relay holds, each counted once.
+
+A blob's content type is its uploader's choice and it is served on the relay's own origin, so every blob response forbids sniffing and runs under a sandboxing content security policy, and any type a browser could run is served as a download. Refusals carry their reason in `X-Reason`, which browsers may read. Mirroring fetches through the outbound client, which won't reach local or internal addresses.
+
+## Push
+
+A member registers a NIP-9a push subscription as a kind 30390 event naming this relay, one or more filters, optional ignore filters, and one http(s) callback; a pubkey holds at most ten. Subscriptions are stored as events and indexed with the relay's state, which reloads when one is stored or deleted. Each new event, stored or ephemeral, is pushed to every subscription it matches whose author may read it, except the event's own author: the callback receives the event's id and the relay's url, and the event itself (without its signature, where the relay strips them) if the subscription asks. Deliveries run on a bounded pool. A callback answering 404 drops its subscription at once, and ten failures in a row drop it too.
+
+## Calls
+
+A room tagged `livekit` has calls, on the platform's LiveKit server, for relays with calls on. A member of the relay asks for a token at `/.well-known/nip29/livekit/<room>` with a NIP-98 signature for exactly that url; a room also tagged `restricted` gives tokens only to its own members and the relay's managers. LiveKit room names lead with the relay's id, so one webhook URL, on any relay host, serves every relay's calls. Each departure the webhook reports credits that participant's time to the relay's call clock, once per LiveKit session, before anything that could fail; then the relay publishes who is in the call (39004), from LiveKit's own list. Call time is billed by how far the clock moves in a period.
+
+## Notifications
+
+The platform can leave one message per pubkey on a relay. The relay sends it as `["NOTIFY", message]` to every connection authenticated as that pubkey, at once and whenever the pubkey authenticates again, until it is replaced, cleared or expires.
+
+## Moving events
+
+A relay's events export as JSONL, one event per line, streamed a page at a time. An import stores each validly signed line and reports the ones it refused by line number. It skips the events the source relay published about its own members, roles, media and rooms, then rebuilds each room the dump creates or changes by replaying that room's moderation events, joins and leaves, oldest first; a room the relay doesn't hold is created only by a create event in the dump, and a deletion is replayed only if nothing follows it. Importing the same dump twice changes nothing.
+
+A purged relay keeps its row, but a worker erases its events, access lists, rooms, notifications and media.
+
 ## The event store
 
 All relays share one `event` table, and every query is scoped to one relay. Ids, pubkeys and signatures are stored as bytes, tags as the JSON they were signed with, and single-letter tags again as `name:value` strings for indexed matching.
@@ -65,3 +91,5 @@ The design keeps the lessons of zooid, the Go relay engine on khatru that served
 - zooid tore an instance down before rebuilding it on reload, so a failed rebuild left the relay unserved. Here a relay's new state is built first and swapped in.
 - zooid kept its own state (members, bans, roles, claims, notifications) as replaceable app-data events, guarded by advisory locks and two tie-break orders. That state is now in tables, so there is one order for events.
 - zooid accepted NIP-98 headers without a freshness window until an audit added one; caravel's API checks freshness on every signature it takes.
+- zooid pushed every matching event to every subscription, so anyone could subscribe to a members-only relay's events. Here a subscription receives only what its author may read, without signatures where the relay strips them.
+- zooid counted push failures per callback url rather than per subscription. Here each subscription keeps its own count.

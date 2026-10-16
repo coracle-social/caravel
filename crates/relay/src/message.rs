@@ -342,6 +342,9 @@ pub enum RelayMessage {
         subscription_id: SubscriptionId,
         message: String,
     },
+    /// `["NOTIFY", <message>]` — a message for the account the connection is
+    /// authenticated as, rather than about the connection.
+    Notify(String),
     /// `["NEG-ERR", <id>, <reason>]` — the reconciliation is over.
     ///
     /// The reason carries a machine-readable prefix as an `OK` message
@@ -402,6 +405,7 @@ impl RelayMessage {
             RelayMessage::Auth { .. } => "AUTH",
             RelayMessage::NegMsg { .. } => "NEG-MSG",
             RelayMessage::NegErr { .. } => "NEG-ERR",
+            RelayMessage::Notify(_) => "NOTIFY",
         }
     }
 }
@@ -500,6 +504,12 @@ impl Serialize for RelayMessage {
                 seq.serialize_element(reason)?;
                 seq.end()
             }
+            RelayMessage::Notify(message) => {
+                let mut seq = serializer.serialize_seq(Some(2))?;
+                seq.serialize_element("NOTIFY")?;
+                seq.serialize_element(message)?;
+                seq.end()
+            }
         }
     }
 }
@@ -541,6 +551,7 @@ impl<'de> Visitor<'de> for RelayMessageVisitor {
                 message: required(&mut seq, 2)?,
             },
             "NOTICE" => RelayMessage::Notice(required(&mut seq, 1)?),
+            "NOTIFY" => RelayMessage::Notify(required(&mut seq, 1)?),
             "COUNT" => {
                 let subscription_id = required(&mut seq, 1)?;
                 let body: CountBody = required(&mut seq, 2)?;

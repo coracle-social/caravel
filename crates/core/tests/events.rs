@@ -227,7 +227,8 @@ async fn limits_cap_results_and_ties_break_on_id() -> Result<()> {
     }
     tied.sort_by_key(|event| event.id.to_bytes());
 
-    let limited = Filter::new().add_limit(2);
+    // The relay's own events share the second, so only the author's are asked for.
+    let limited = kinds(&[1]).add_limit(2);
     assert_eq!(
         ids(&core, &relay.id, limited).await?,
         tied[..2]

@@ -15,6 +15,7 @@ tracing.workspace = true
 [dev-dependencies]
 anyhow.workspace = true
 base64.workspace = true
+bytes.workspace = true
 caravel-core = { workspace = true, features = ["testing"] }
 coracle-lib.workspace = true
 http-body-util = "0.1"

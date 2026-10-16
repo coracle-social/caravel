@@ -43,9 +43,9 @@ Tenants:
 - `GET /relays/{id}/members` — `{members}`, the member pubkeys, the owner among them
 - `PUT /relays/{id}/members/{pubkey}`, `DELETE /relays/{id}/members/{pubkey}` — add or remove a member; the owner can't be removed
 - `GET /relays/{id}/activity`
-- `POST /relays/{id}/deactivate`, `/reactivate`, `/purge`
+- `POST /relays/{id}/deactivate`, `/reactivate`, `/purge` — a purged relay's data is erased soon after
 - `GET /relays/{id}/export` — the relay's events as JSONL
-- `POST /relays/{id}/import` — a JSONL body of events, returning `{imported, invalid, problems}`
+- `POST /relays/{id}/import` — a JSONL body of events, returning `{imported, invalid, skipped, rooms_rebuilt, problems}`
 - `GET /invoices/{id}`, `GET /invoices/{id}/items`
 - `POST /invoices/{id}/reconcile` — collect an open invoice now
 - `POST /invoices/{id}/bolt11` — a payable Lightning invoice
@@ -56,7 +56,7 @@ Admins:
 - `GET /tenants`, `GET /relays`, `GET /invoices`
 - `POST /tenants/{pubkey}/ban`, `POST /tenants/{pubkey}/unban`
 - `DELETE /sessions/{pubkey}` — end every session a pubkey holds
-- `GET /moderation?since=&until=` — events and uploads every relay saw in a window, newest first
+- `GET /moderation?since=&until=` — `{items, truncated}`: up to a thousand events and uploads every relay not owned by an admin saw in an inclusive window of `seen_at`, newest first, each as `{type, relay_id, seen_at, data}`
 - `GET /moderation/blob/{relay_id}/{sha256}` — a blob's bytes
 
-Relay settings are `subdomain`, `zooid_domain`, `plan_id`, `info_name`, `info_icon`, `info_description`, `policy_public_read`, `policy_anonymous_read`, `policy_public_write`, `policy_public_join`, `policy_strip_signatures`, `groups_enabled`, `management_enabled`, `members_can_invite`, `blossom_enabled`, `livekit_enabled`, `push_enabled` and `custom_domain`.
+Relay settings are `subdomain`, `zooid_domain`, `plan_id`, `info_name`, `info_icon`, `info_description`, `policy_public_read`, `policy_anonymous_read`, `policy_public_write`, `policy_public_join`, `policy_strip_signatures`, `groups_enabled`, `management_enabled`, `members_can_invite`, `blossom_enabled`, `blossom_authenticated_read`, `livekit_enabled`, `push_enabled` and `custom_domain`.

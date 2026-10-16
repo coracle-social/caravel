@@ -10,7 +10,28 @@ use crate::instance::InstanceState;
 use crate::session::Transport;
 
 /// The NIPs every relay supports.
-const SUPPORTED_NIPS: [u16; 9] = [1, 9, 11, 40, 42, 50, 62, 70, 77];
+const SUPPORTED_NIPS: [u16; 10] = [1, 9, 11, 40, 42, 43, 50, 62, 70, 77];
+
+/// What a relay supports: every relay's NIPs, and those of the features it has on.
+/// Names that aren't numbers are given as strings.
+fn supported_nips(relay: &caravel_core::relays::Relay) -> Vec<Value> {
+    let mut nips: Vec<Value> = SUPPORTED_NIPS.iter().map(|nip| json!(nip)).collect();
+    if relay.groups_enabled {
+        nips.push(json!(29));
+    }
+    if relay.management_enabled {
+        nips.push(json!(86));
+    }
+    if relay.push_enabled {
+        nips.push(json!("9a"));
+    }
+    if relay.blossom_enabled {
+        for bud in ["BUD-00", "BUD-01", "BUD-02", "BUD-04", "BUD-06", "BUD-11"] {
+            nips.push(json!(bud));
+        }
+    }
+    nips
+}
 
 /// A relay's information document: its name and pubkeys, and the rules a client
 /// meets there.
@@ -25,7 +46,7 @@ pub fn document(state: &InstanceState, limits: &RelayLimits, transport: &Transpo
         "self": relay.pubkey,
         "software": "https://gitea.coracle.social/coracle/caravel",
         "version": env!("CARGO_PKG_VERSION"),
-        "supported_nips": SUPPORTED_NIPS,
+        "supported_nips": supported_nips(relay),
         "limitation": {
             "auth_required": !relay.policy_anonymous_read,
             "restricted_writes": !relay.policy_public_write,

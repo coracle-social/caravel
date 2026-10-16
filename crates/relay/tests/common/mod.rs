@@ -34,7 +34,11 @@ pub struct Server {
 
 impl Server {
     pub async fn start() -> Server {
-        let core = testing::core(&SecretKey::generate().public_key().to_hex()).await;
+        Self::start_with(testing::core(&SecretKey::generate().public_key().to_hex()).await).await
+    }
+
+    /// A server for a core the test set up itself.
+    pub async fn start_with(core: Core) -> Server {
         let shutdown = CancellationToken::new();
         let relays = Relays::load(
             core.clone(),
@@ -123,6 +127,19 @@ impl Server {
 
     pub fn now(&self) -> i64 {
         self.core.clock.now()
+    }
+
+    /// Send an HTTP request to a relay's host, returning its status, headers and body.
+    pub async fn http(&self, request: axum::http::Request<axum::body::Body>) -> HttpResponse {
+        let host = request.headers()["host"].to_str().unwrap().to_string();
+        let route = self.relays.resolve(&host).expect("relay not served");
+        let response = self.relays.serve(route, request).await;
+        let (parts, body) = response.into_parts();
+        HttpResponse {
+            status: parts.status,
+            headers: parts.headers,
+            body: axum::body::to_bytes(body, usize::MAX).await.unwrap(),
+        }
     }
 
     /// Make a NIP-86 call on a relay's host as `signer`, returning the response body.
@@ -286,4 +303,39 @@ impl Client {
             }
         }
     }
+}
+
+pub struct HttpResponse {
+    pub status: StatusCode,
+    pub headers: axum::http::HeaderMap,
+    pub body: axum::body::Bytes,
+}
+
+impl HttpResponse {
+    pub fn json(&self) -> Value {
+        serde_json::from_slice(&self.body).unwrap_or(Value::Null)
+    }
+
+    pub fn header(&self, name: &str) -> Option<&str> {
+        self.headers.get(name).and_then(|value| value.to_str().ok())
+    }
+}
+
+/// An `Authorization` header carrying a signed event.
+pub fn nostr_authorization(event: &Event) -> String {
+    use base64::Engine;
+    format!(
+        "Nostr {}",
+        base64::engine::general_purpose::STANDARD.encode(serde_json::to_string(event).unwrap())
+    )
+}
+
+/// Serve a router on a local port, for the servers a relay calls out to.
+pub async fn serve_local(router: Router) -> SocketAddr {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("failed to bind");
+    let addr = listener.local_addr().expect("no local address");
+    tokio::spawn(async move { axum::serve(listener, router).await });
+    addr
 }

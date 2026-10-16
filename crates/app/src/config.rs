@@ -1,8 +1,9 @@
 //! Reading and checking the environment, the only place configuration comes from.
 
 use anyhow::{Context, Result, bail};
+use caravel_adapters::blobs::S3Config;
 use caravel_adapters::robot::RobotProfile;
-use caravel_core::config::{Config, LivekitConfig, S3Config};
+use caravel_core::config::Config;
 use caravel_core::crypto::PlatformKey;
 use caravel_relay::RelaysConfig;
 
@@ -16,20 +17,28 @@ pub struct Settings {
     pub robot_profile: RobotProfile,
     pub robot_wallet: String,
     pub stripe_secret_key: String,
-    pub zooid_api_url: String,
+    pub media: Media,
+    pub livekit: Option<Livekit>,
     pub relays: RelaysConfig,
+}
+
+/// Where relays' media is kept.
+pub enum Media {
+    Local(String),
+    S3(S3Config),
+}
+
+/// The LiveKit server calls run on.
+pub struct Livekit {
+    pub url: String,
+    pub api_key: String,
+    pub api_secret: String,
 }
 
 pub fn load() -> Result<Settings> {
     let robot_secret = required("ROBOT_SECRET")?;
     let platform_key =
         PlatformKey::from_hex(&robot_secret).context("ROBOT_SECRET is not a nostr secret key")?;
-
-    let zooid_api_url = required("ZOOID_API_URL")?;
-    let zooid_api_host = url::Url::parse(&zooid_api_url)
-        .ok()
-        .and_then(|url| url.host_str().map(str::to_lowercase))
-        .context("ZOOID_API_URL is not a url with a host")?;
 
     let api_url = required("API_URL")?.trim_end_matches('/').to_string();
     url::Url::parse(&api_url).context("API_URL is not a url")?;
@@ -43,19 +52,6 @@ pub fn load() -> Result<Settings> {
             admin_pubkeys: list("ADMIN_PUBKEYS"),
             relay_domains: required_list("RELAY_DOMAINS")?,
             platform_key,
-            blossom_s3: S3Config {
-                endpoint: required("BLOSSOM_S3_ENDPOINT")?,
-                region: required("BLOSSOM_S3_REGION")?,
-                bucket: required("BLOSSOM_S3_BUCKET")?,
-                access_key: required("BLOSSOM_S3_ACCESS_KEY")?,
-                secret_key: required("BLOSSOM_S3_SECRET_KEY")?,
-            },
-            livekit: LivekitConfig {
-                url: required("LIVEKIT_URL")?,
-                api_key: required("LIVEKIT_API_KEY")?,
-                api_secret: required("LIVEKIT_API_SECRET")?,
-            },
-            zooid_api_host,
         },
         robot_secret,
         robot_profile: RobotProfile {
@@ -68,7 +64,24 @@ pub fn load() -> Result<Settings> {
         },
         robot_wallet: required("ROBOT_WALLET")?,
         stripe_secret_key: required("STRIPE_SECRET_KEY")?,
-        zooid_api_url,
+        media: match optional("MEDIA_S3_BUCKET") {
+            Some(bucket) => Media::S3(S3Config {
+                endpoint: optional("MEDIA_S3_ENDPOINT").unwrap_or_default(),
+                region: required("MEDIA_S3_REGION")?,
+                bucket,
+                access_key: required("MEDIA_S3_ACCESS_KEY")?,
+                secret_key: required("MEDIA_S3_SECRET_KEY")?,
+            }),
+            None => Media::Local(optional("MEDIA_DIR").unwrap_or_else(|| "data/media".to_string())),
+        },
+        livekit: match optional("LIVEKIT_URL") {
+            Some(url) => Some(Livekit {
+                url,
+                api_key: required("LIVEKIT_API_KEY")?,
+                api_secret: required("LIVEKIT_API_SECRET")?,
+            }),
+            None => None,
+        },
         relays: RelaysConfig {
             forwarded_header: optional("FORWARDED_HEADER"),
             connections_per_minute: optional("CONNECTIONS_PER_MINUTE").map_or(Ok(0), |value| {

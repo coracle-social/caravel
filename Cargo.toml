@@ -16,6 +16,8 @@ caravel-api = { path = "crates/api" }
 caravel-relay = { path = "crates/relay" }
 
 anyhow = "1.0"
+bytes = "1"
+futures-util = "0.3"
 async-trait = "0.1"
 axum = { version = "0.8", features = ["ws"] }
 base64 = "0.22"
@@ -24,8 +26,10 @@ coracle-lib = "0.1.0"
 dotenvy = "0.15.7"
 hex = "0.4"
 hmac = "0.12"
+jsonwebtoken = "9"
 nostr-sdk = { version = "0.44", features = ["nip59", "nip98"] }
 nwc = "0.44"
+object_store = { version = "0.12", features = ["aws"] }
 rand = "0.8"
 regex = "1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }

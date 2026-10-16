@@ -33,7 +33,7 @@ function FileIcon() {
 // Renders the blob itself so uploads can be judged on sight. Blobs frequently
 // carry no recorded mimetype, so attempt an image unless the type rules it out;
 // anything else, or a blob that won't load, falls back to a file tile.
-function UploadPreview(props: { upload: Upload; tenant: string }) {
+function UploadPreview(props: { upload: Upload; relayId: string }) {
   const [src, setSrc] = createSignal<string>()
   const [failed, setFailed] = createSignal(false)
   const couldBeImage = !props.upload.type || props.upload.type.startsWith("image/")
@@ -59,7 +59,7 @@ function UploadPreview(props: { upload: Upload; tenant: string }) {
 
         observer.disconnect()
 
-        fetchModerationBlob(props.tenant, props.upload.sha256)
+        fetchModerationBlob(props.relayId, props.upload.sha256)
           .then((url) => {
             // Revoke rather than leak if the row went away mid-flight.
             if (disposed) return URL.revokeObjectURL(url)
@@ -163,7 +163,7 @@ export default function ModerationListItem(props: ModerationListItemProps) {
       <Show when={props.item.type === "upload" ? props.item.data : undefined}>
         {(upload) => (
           <div class="mt-3 flex items-start gap-3">
-            <UploadPreview upload={upload()} tenant={props.item.tenant} />
+            <UploadPreview upload={upload()} relayId={props.item.relay_id} />
             <div class="min-w-0 text-sm">
               <a href={upload().url} target="_blank" rel="noreferrer" class="block truncate text-blue-600 hover:underline">
                 {upload().sha256}
@@ -177,8 +177,8 @@ export default function ModerationListItem(props: ModerationListItemProps) {
       </Show>
 
       <div class="mt-3 border-t border-gray-100 pt-3">
-        <A href={`/admin/relays/${props.item.tenant}`} class="text-xs text-gray-500 hover:text-gray-900 hover:underline">
-          <Show when={props.relay} fallback={props.item.tenant}>
+        <A href={`/admin/relays/${props.item.relay_id}`} class="text-xs text-gray-500 hover:text-gray-900 hover:underline">
+          <Show when={props.relay} fallback={props.item.relay_id}>
             {(relay) => <>{relay().info_name || relay().subdomain} · {relay().subdomain}.{relay().zooid_domain}</>}
           </Show>
         </A>

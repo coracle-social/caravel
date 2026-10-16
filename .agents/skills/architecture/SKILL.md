@@ -11,11 +11,11 @@ Caravel's backend is one binary built from a Cargo workspace. The crates form la
 
 **db** owns Postgres: connecting a pool, running the migrations, and running a transaction. A transaction that Postgres aborts over a conflict with another one (a deadlock or serialization failure) runs again from the start, so the work inside one must touch only the database. Pre-release, the schema is a single squashed migration.
 
-**adapters** are clients for everything outside the database: Stripe, Nostr Wallet Connect wallets, the robot's Nostr identity (profile publishing and NIP-17 DMs), DNS over HTTPS, the Bitcoin price, and zooid's management API. Each speaks one protocol and returns plain values. Nothing in an adapter knows what a tenant or a relay is, and only adapters may use rust-nostr or make HTTP requests.
+**adapters** are clients for everything outside the database: Stripe, Nostr Wallet Connect wallets, the robot's Nostr identity (profile publishing and NIP-17 DMs), DNS over HTTPS, the Bitcoin price, blob storage (a directory, S3, or memory in tests), LiveKit (participant tokens, its room service, and checking its webhooks), and an outbound HTTP client for urls other people chose, which refuses to reach local or internal addresses however they are named. Each speaks one protocol and returns plain values. Nothing in an adapter knows what a tenant or a relay is, and only adapters may use rust-nostr or make HTTP requests.
 
-**core** is the domain, partitioned by concern: plans, tenants, relays and their activity log, the event store and the relay policy, relay access (members, roles, method grants, bans, claims), rooms, management (NIP-86 calls across access and rooms), billing (the ledger, periods, reconciliation and collection), usage metering, custom domains, sessions, and hosting, which orchestrates operations that span several concerns such as creating a relay or banning a tenant. Each concern owns its models, documented where they are defined, and the SQL that reads and writes them. The core uses coracle-lib for Nostr types and cryptography.
+**core** is the domain, partitioned by concern: plans, tenants, relays and their activity log, the event store and the relay policy, relay access (members, roles, method grants, bans, claims), rooms, management (NIP-86 calls across access and rooms), media (the blobs members upload), calls (LiveKit rooms and their meter), notifications, the moderation feed, moving events in and out (transfer), billing (the ledger, periods, reconciliation and collection), usage metering, custom domains, sessions, and hosting, which orchestrates operations that span several concerns such as creating a relay, banning a tenant, or erasing a purged relay. Each concern owns its models, documented where they are defined, and the SQL that reads and writes them. The core uses coracle-lib for Nostr types and cryptography.
 
-**relay** serves the virtual relays: the websocket protocol, each relay's information document, and resolving a host to its relay. The `relay` skill covers it.
+**relay** serves the virtual relays: the websocket protocol, each relay's information document and NIP-86 management, Blossom media, push delivery, LiveKit tokens and webhooks, and resolving a host to its relay. The `relay` skill covers it.
 
 **api** is the JSON API. Handlers load what the request names through the core, check the caller against it with the core's rules, and call the core. Routes are grouped by who may call them: public, tenant, and admin. The API reference is the crate's README.
 
@@ -35,7 +35,7 @@ A unique constraint a caller can violate (a taken subdomain or custom domain) is
 
 ## The change bus
 
-After a write commits, the core publishes a change on an in-process bus: a relay's row changed, or its access or rooms changed along with the events it published about them. Subscribers treat a change as a hint to re-read the database; one that falls behind re-reads everything it watches. Until the relay runtime moves into this binary, the bus drives keeping zooid in step with each relay's row.
+After a write commits, the core publishes a change on an in-process bus: a relay's row changed, its access or rooms changed along with the events it published about them, or a pubkey's notification on a relay was replaced. Subscribers treat a change as a hint to re-read the database; one that falls behind re-reads everything it watches. The relay runtime is the bus's subscriber, reloading relays and delivering what they published.
 
 ## Authentication and authorization
 
@@ -45,8 +45,8 @@ An authenticated request runs as an actor: a pubkey, and whether it is an admin.
 
 ## Background work
 
-Workers are scheduled in the app and implemented in the core: hourly billing (which samples usage first), custom domain verification every thirty seconds and re-verification every three hours, a daily sweep of expired sessions, a sweep of expired events every minute, the zooid sync on every relay change and every minute for whatever is pending, and publishing the robot's identity, retried until it succeeds. Each runs on the background pool and stops on shutdown.
+Workers are scheduled in the app and implemented in the core: hourly billing (which first samples each paid relay's stored media and call clock), custom domain verification every thirty seconds and re-verification every three hours, a daily sweep of expired sessions, a sweep of expired events every minute, erasing purged relays' events, access lists, rooms and media every ten minutes, and publishing the robot's identity, retried until it succeeds. Each runs on the background pool and stops on shutdown. Push deliveries run on a pool of their own in the relay runtime.
 
 ## Tests
 
-Tests run against Postgres: each test binary creates its own database from `TEST_DATABASE_URL` on first use (`just pg` provides one), and each test gets its own core and pinned clock, so tests in a binary run in parallel on separate tenants. Adapters in tests point at closed ports, so nothing leaves the machine. The billing tests replay months by moving the clock; the API tests drive the router in process and pin the wire shapes clients depend on.
+Tests run against Postgres: each test binary creates its own database from `TEST_DATABASE_URL` on first use (`just pg` provides one), and each test gets its own core and pinned clock, so tests in a binary run in parallel on separate tenants. Adapters in tests point at closed ports or keep blobs in memory, so nothing leaves the machine; tests that need LiveKit or a push callback serve a fake on a local port. The billing tests replay months by moving the clock; the API tests drive the router in process and pin the wire shapes clients depend on.

@@ -4,12 +4,15 @@
 //! request's host to its relay touches the database.
 
 pub mod auth;
+pub mod blossom;
 pub mod connections;
 pub mod instance;
 pub mod limits;
+pub mod livekit;
 pub mod message;
 pub mod nip11;
 pub mod nip86;
+pub mod push;
 pub mod session;
 
 use std::collections::HashMap;
@@ -20,7 +23,7 @@ use axum::Router;
 use axum::extract::{ConnectInfo, Extension, FromRequestParts, Request, State, WebSocketUpgrade};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Redirect, Response};
-use axum::routing::get;
+use axum::routing::{get, post, put};
 use caravel_core::bus::Change;
 use caravel_core::relays::{self, Relay, RelayStatus};
 use caravel_core::{Core, Result};
@@ -31,6 +34,7 @@ use tower::ServiceExt;
 
 use crate::instance::{InstanceState, RelayInstance};
 use crate::limits::Limiter;
+use crate::push::Pusher;
 use crate::session::Transport;
 
 /// How much any one connection may ask of a relay.
@@ -89,6 +93,7 @@ struct Inner {
     core: Core,
     config: RelaysConfig,
     connecting: Limiter,
+    pusher: Pusher,
     shutdown: CancellationToken,
     instances: RwLock<HashMap<String, Arc<RelayInstance>>>,
     hosts: RwLock<HashMap<String, (String, String)>>,
@@ -105,6 +110,7 @@ impl Relays {
         let relays = Self {
             inner: Arc::new(Inner {
                 connecting: Limiter::new(config.connections_per_minute),
+                pusher: Pusher::start(core.clone(), shutdown.clone()),
                 core,
                 config,
                 shutdown,
@@ -135,6 +141,32 @@ impl Relays {
         let router = self.inner.router.get_or_init(|| {
             Router::new()
                 .route("/", get(root).post(management).options(preflight))
+                .route(
+                    "/upload",
+                    put(blossom::upload)
+                        .head(blossom::check_upload)
+                        .options(blossom::preflight),
+                )
+                .route("/mirror", put(blossom::mirror).options(blossom::preflight))
+                .route(
+                    "/list/{pubkey}",
+                    get(blossom::list).options(blossom::preflight),
+                )
+                .route(
+                    "/{name}",
+                    get(blossom::download)
+                        .delete(blossom::delete)
+                        .options(blossom::preflight),
+                )
+                .route(
+                    "/.well-known/nip29/livekit",
+                    get(livekit::support).options(livekit::preflight),
+                )
+                .route(
+                    "/.well-known/nip29/livekit/{room_id}",
+                    get(livekit::token).options(livekit::preflight),
+                )
+                .route("/.well-known/nip29/livekit/webhook", post(livekit::webhook))
                 .fallback(|| async { StatusCode::NOT_FOUND })
                 .with_state(self.clone())
         });
@@ -166,6 +198,16 @@ impl Relays {
                     self.deliver_access_change(&relay_id, &published).await;
                     Ok(())
                 }
+                Ok(Change::Notified {
+                    relay_id,
+                    pubkey,
+                    message,
+                }) => {
+                    if let Some(instance) = self.instance(&relay_id) {
+                        instance.deliver_notification(&pubkey, &message);
+                    }
+                    Ok(())
+                }
                 Err(RecvError::Lagged(missed)) => {
                     tracing::warn!(missed, "relay reloads lagged");
                     self.reload_all().await
@@ -189,18 +231,20 @@ impl Relays {
         Ok(())
     }
 
-    /// Reload a relay's access lists and rooms after a change made outside it, then
-    /// deliver what the relay published about the change.
-    async fn deliver_access_change(&self, relay_id: &str, published: &[Event]) {
-        let instance = self
-            .inner
+    /// The relay served under an id.
+    pub fn instance(&self, relay_id: &str) -> Option<Arc<RelayInstance>> {
+        self.inner
             .instances
             .read()
             .unwrap_or_else(|error| error.into_inner())
             .get(relay_id)
-            .cloned();
+            .cloned()
+    }
 
-        if let Some(instance) = instance {
+    /// Reload a relay's access lists and rooms after a change made outside it, then
+    /// deliver what the relay published about the change.
+    async fn deliver_access_change(&self, relay_id: &str, published: &[Event]) {
+        if let Some(instance) = self.instance(relay_id) {
             instance.refresh().await;
             for event in published {
                 instance.fanout(event);
@@ -256,6 +300,7 @@ impl Relays {
                     self.inner.core.clone(),
                     self.inner.config.limits,
                     state,
+                    self.inner.pusher.clone(),
                     self.inner.shutdown.child_token(),
                 );
                 self.inner

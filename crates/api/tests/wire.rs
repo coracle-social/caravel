@@ -11,10 +11,12 @@ use coracle_lib::keys::SecretKey;
 use serde_json::json;
 
 const RELAY_FIELDS: [&str; 28] = [
+    "blossom_authenticated_read",
     "blossom_enabled",
     "created_at",
     "custom_domain",
     "custom_domain_verified",
+    "erased_at",
     "groups_enabled",
     "id",
     "info_description",
@@ -35,8 +37,6 @@ const RELAY_FIELDS: [&str; 28] = [
     "redirect_from",
     "status",
     "subdomain",
-    "sync_error",
-    "synced",
     "tenant_pubkey",
     "zooid_domain",
 ];

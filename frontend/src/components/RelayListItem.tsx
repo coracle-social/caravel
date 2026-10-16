@@ -47,17 +47,7 @@ export default function RelayListItem(props: RelayListItemProps) {
             </Show>
           </div>
           <div class="flex items-center gap-2 shrink-0">
-            <Show
-              when={props.relay.sync_error}
-              fallback={<StatusBadge status={relayStatus(props.relay)} />}
-            >
-              <span
-                class="inline-flex items-center rounded-full border border-red-200 bg-red-50 px-2.5 py-0.5 text-xs font-medium text-red-700 max-w-56 truncate"
-                title={props.relay.sync_error}
-              >
-                Failed to sync
-              </span>
-            </Show>
+            <StatusBadge status={relayStatus(props.relay)} />
             <PlanBadge planId={props.relay.plan_id} />
           </div>
         </div>

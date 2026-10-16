@@ -1,15 +1,15 @@
 # Caravel
 
-A multi-tenant platform for hosting Nostr community relays. Tenants create relays, choose their plans and settings, and pay for them, and the platform bills them monthly. One process serves every relay, each on its own hosts, while [zooid](https://github.com/coracle-social/zooid) still carries the media, push and calls that haven't moved in yet.
+A multi-tenant platform for hosting Nostr community relays. Tenants create relays, choose their plans and settings, and pay for them, and the platform bills them monthly. One process serves every relay on its own hosts, with its rooms, media, push notifications and calls.
 
 ## Layout
 
 The backend is a Rust workspace whose crates are layered, each depending only on those listed before it:
 
 - `crates/db` — the Postgres pool, migrations and transactions
-- `crates/adapters` — clients for Stripe, Nostr Wallet Connect, the robot's Nostr identity, DNS and zooid
-- `crates/core` — the domain: tenants, relays, billing, usage, custom domains, sessions
-- `crates/relay` — the virtual relays: websockets, NIP-11 documents, and resolving hosts to relays
+- `crates/adapters` — clients for Stripe, Nostr Wallet Connect, the robot's Nostr identity, DNS, media storage, LiveKit and outbound HTTP
+- `crates/core` — the domain: tenants, relays, access, rooms, events, media, calls, billing, usage, custom domains, sessions
+- `crates/relay` — the virtual relays: websockets, NIP-11 and NIP-86, Blossom, push, LiveKit tokens and webhooks, and resolving hosts to relays
 - `crates/api` — the JSON API, documented in [crates/api/README.md](./crates/api/README.md)
 - `crates/app` — the `caravel` binary, which reads the environment, serves each request by its host and runs the background workers
 
@@ -25,27 +25,27 @@ The binary reads these from the environment, or from a `.env` file in its workin
 | `API_URL` | The API's public base url, which NIP-98 signatures are checked against |
 | `ADMIN_PUBKEYS` | Comma-separated hex pubkeys of the platform's admins |
 | `DATABASE_URL` | A Postgres url |
-| `ROBOT_SECRET` | The robot's hex Nostr secret key. It signs the robot's DMs and zooid requests, and encrypts stored secrets |
+| `ROBOT_SECRET` | The robot's hex Nostr secret key. It signs the robot's DMs and encrypts stored secrets, relays' keys among them |
 | `ROBOT_NAME`, `ROBOT_DESCRIPTION`, `ROBOT_PICTURE` | The robot's profile, all optional |
 | `ROBOT_WALLET` | The platform's NWC url, which issues the Lightning invoices tenants pay |
 | `ROBOT_OUTBOX_RELAYS` | Relays the robot publishes its profile and relay list to |
 | `ROBOT_INDEXER_RELAYS` | Relays the robot looks up recipients' relay lists and profiles on |
 | `ROBOT_MESSAGING_RELAYS` | Relays the robot receives DMs on |
 | `RELAY_DOMAINS` | Comma-separated domains relay subdomains live under |
-| `ZOOID_API_URL` | Zooid's API, whose `API_WHITELIST` must include the robot's pubkey |
-| `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` | The LiveKit server relays with calls enabled use |
-| `BLOSSOM_S3_ENDPOINT`, `BLOSSOM_S3_REGION`, `BLOSSOM_S3_BUCKET`, `BLOSSOM_S3_ACCESS_KEY`, `BLOSSOM_S3_SECRET_KEY` | The bucket relays with Blossom enabled store media in |
+| `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` | The LiveKit server relays' calls run on. Without them no relay has calls |
+| `MEDIA_DIR` | The directory relays' media is kept in when no bucket is set, `data/media` by default |
+| `MEDIA_S3_BUCKET`, `MEDIA_S3_REGION`, `MEDIA_S3_ACCESS_KEY`, `MEDIA_S3_SECRET_KEY`, `MEDIA_S3_ENDPOINT` | The S3 bucket relays' media is kept in instead; the endpoint is needed only for a service other than AWS |
 | `STRIPE_SECRET_KEY` | The Stripe account tenants pay |
 | `FORWARDED_HEADER` | The header a trusted proxy reports a client's address in, such as `X-Forwarded-For` |
 | `CONNECTIONS_PER_MINUTE` | New relay connections allowed per minute from one address, `0` (unlimited) by default |
 
-Every variable without a default is required, except `ADMIN_PUBKEYS`, the robot's profile and `FORWARDED_HEADER`.
+Every variable without a default is required, except `ADMIN_PUBKEYS`, the robot's profile, `FORWARDED_HEADER`, LiveKit's and the bucket's.
 
 ## Deployment
 
 Caravel ships as a Docker image built from the [`Dockerfile`](./Dockerfile) and published as `gitea.coracle.social/coracle/caravel` by [CI](./.gitea/workflows/ci.yml) on each push to `master`. One container runs the API on port `2892` and the dashboard on port `3000`. The dashboard's `VITE_` settings are filled in from `API_URL`, `RELAY_DOMAINS`, `PLATFORM_NAME` and `PLATFORM_LOGO` when the container starts.
 
-Zooid runs on its own server behind [Caddy](https://caddyserver.com/), whose [on-demand TLS](https://caddyserver.com/docs/automatic-https#on-demand-tls) asks `GET /domains/check?domain=` before issuing each certificate, so only hosts some relay answers on get one:
+Relay hosts reach Caravel through [Caddy](https://caddyserver.com/), whose [on-demand TLS](https://caddyserver.com/docs/automatic-https#on-demand-tls) asks `GET /domains/check?domain=` before issuing each certificate, so only hosts some relay answers on get one:
 
 ```
 {
@@ -58,11 +58,11 @@ Zooid runs on its own server behind [Caddy](https://caddyserver.com/), whose [on
   tls {
     on_demand
   }
-  reverse_proxy localhost:3334
+  reverse_proxy <caravel-host>:2892
 }
 ```
 
-Point a wildcard DNS record for each of the `RELAY_DOMAINS` at the zooid server. Tenants point a custom domain at their relay with a CNAME to its canonical host, which Caravel verifies in the background.
+Point a wildcard DNS record for each of the `RELAY_DOMAINS` at the Caddy server. LiveKit's webhook is `https://<any relay host>/.well-known/nip29/livekit/webhook`, which serves every relay's calls. Tenants point a custom domain at their relay with a CNAME to its canonical host, which Caravel verifies in the background.
 
 ## Local development
 

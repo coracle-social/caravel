@@ -8,6 +8,7 @@ use crate::Core;
 use crate::error::Result;
 use crate::plans;
 use crate::relays::{self, RelayStatus};
+use crate::{calls, media};
 
 /// One reading of a relay's metered usage. `storage_bytes` is a level, so a
 /// period bills its peak; `participant_seconds` is a lifetime clock of time spent
@@ -81,8 +82,7 @@ pub async fn get_usage_totals_for_tenant(
 }
 
 /// Take a usage reading of every active relay on a paid plan with a metered
-/// feature on. A relay that can't be read is skipped, leaving a gap its period's
-/// rollup tolerates.
+/// feature on: the blobs it holds, and its call clock.
 pub async fn sample_usage(core: &Core) -> Result<()> {
     let now = core.clock.now();
 
@@ -97,26 +97,16 @@ pub async fn sample_usage(core: &Core) -> Result<()> {
             continue;
         }
 
-        let usage = match core.zooid.get_usage(&relay.id).await {
-            Ok(usage) => usage,
-            Err(error) => {
-                tracing::warn!(relay = %relay.id, error = %error, "failed to sample relay usage");
-                continue;
-            }
-        };
-
         let sample = UsageSample {
             id: uuid::Uuid::new_v4().to_string(),
             relay_id: relay.id.clone(),
             tenant_pubkey: relay.tenant_pubkey.clone(),
-            storage_bytes: usage.storage_bytes,
-            participant_seconds: usage.participant_seconds,
+            storage_bytes: media::storage_bytes(core.db.pool(), &relay.id).await?,
+            participant_seconds: calls::participant_seconds(core.db.pool(), &relay.id).await?,
             created_at: now,
         };
 
-        if let Err(error) = insert_usage_sample(core.db.pool(), &sample).await {
-            tracing::error!(relay = %relay.id, error = %error, "failed to record usage sample");
-        }
+        insert_usage_sample(core.db.pool(), &sample).await?;
     }
 
     Ok(())

@@ -10,7 +10,7 @@ use caravel_core::billing::{self, ledger};
 use caravel_core::hosting::{self, RelaySettings};
 use caravel_core::relays::{self, Relay, activity};
 use caravel_core::tenants::{self, Tenant};
-use caravel_core::{Core, Error, access};
+use caravel_core::{Core, Error, access, transfer};
 use serde::{Deserialize, Serialize};
 
 use crate::auth::Authed;
@@ -344,14 +344,7 @@ pub async fn export_relay_data(
         return Err(Error::conflict("relay-is-purged", "relay has been purged").into());
     }
 
-    let stream = core
-        .zooid
-        .export_events(&relay.id)
-        .await
-        .map_err(Error::from)?
-        .ok_or(Error::NotFound(
-            "relay is not provisioned on the hosting backend",
-        ))?;
+    let stream = transfer::export_events(core.db.pool().clone(), relay.id.clone());
 
     Ok((
         [
@@ -379,16 +372,7 @@ pub async fn import_relay_data(
         return Err(Error::conflict("relay-is-purged", "relay has been purged").into());
     }
 
-    let result = core
-        .zooid
-        .import_events(&relay.id, body.into_data_stream())
-        .await
-        .map_err(Error::from)?
-        .ok_or(Error::NotFound(
-            "relay is not provisioned on the hosting backend",
-        ))?;
-
-    ok(result)
+    ok(transfer::import_events(&core, &relay, body.into_data_stream()).await?)
 }
 
 // --- Invoices ---

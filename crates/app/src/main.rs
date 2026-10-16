@@ -9,7 +9,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
-use caravel_adapters::{robot::Robot, stripe::Stripe, wallet::Wallet, zooid::Zooid};
+use caravel_adapters::blobs::Blobs;
+use caravel_adapters::livekit::Livekit;
+use caravel_adapters::outbound::Outbound;
+use caravel_adapters::{robot::Robot, stripe::Stripe, wallet::Wallet};
 use caravel_core::Core;
 use caravel_db::Db;
 use caravel_relay::Relays;
@@ -60,7 +63,16 @@ async fn serve() -> Result<()> {
         robot: Robot::new(&settings.robot_secret, settings.robot_profile)?,
         wallet: Wallet::from_url(&settings.robot_wallet)
             .context("ROBOT_WALLET is not an NWC url")?,
-        zooid: Zooid::new(&settings.zooid_api_url, &settings.robot_secret)?,
+        blobs: match &settings.media {
+            config::Media::Local(dir) => Blobs::local(dir).context("MEDIA_DIR is not usable")?,
+            config::Media::S3(s3) => Blobs::s3(s3).context("the media bucket is misconfigured")?,
+        },
+        livekit: settings
+            .livekit
+            .as_ref()
+            .map(|livekit| Livekit::new(&livekit.url, &livekit.api_key, &livekit.api_secret))
+            .transpose()?,
+        outbound: Outbound::new(Duration::from_secs(10), false)?,
     };
     let background = core.with_db(Db::connect(&settings.database_url, 5).await?);
 

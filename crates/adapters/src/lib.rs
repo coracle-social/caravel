@@ -3,8 +3,10 @@
 //! plain values for the core to interpret.
 
 pub mod bitcoin;
+pub mod blobs;
 pub mod dns;
+pub mod livekit;
+pub mod outbound;
 pub mod robot;
 pub mod stripe;
 pub mod wallet;
-pub mod zooid;

@@ -11,26 +11,6 @@ pub struct Config {
     /// `<subdomain>.<domain>` for one of these.
     pub relay_domains: Vec<String>,
     pub platform_key: PlatformKey,
-    pub blossom_s3: S3Config,
-    pub livekit: LivekitConfig,
-    /// The zooid API's host, which shares the relays' on-demand TLS.
-    pub zooid_api_host: String,
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct S3Config {
-    pub endpoint: String,
-    pub region: String,
-    pub bucket: String,
-    pub access_key: String,
-    pub secret_key: String,
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct LivekitConfig {
-    pub url: String,
-    pub api_key: String,
-    pub api_secret: String,
 }
 
 impl Config {

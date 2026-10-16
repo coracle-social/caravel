@@ -20,15 +20,20 @@ use coracle_lib::keys::SecretKey;
 
 const DAY: i64 = 24 * 60 * 60;
 
+/// The sweep reads every membership on the shared database, so the tests take turns.
+static SERIAL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 struct Fixture {
     core: Core,
     stripe: FakeStripe,
     relay: Relay,
+    _turn: tokio::sync::MutexGuard<'static, ()>,
 }
 
 /// A relay on the free plan (ten members) selling memberships at $5 a month, whose
 /// tenant can take payments.
 async fn fixture() -> Result<Fixture> {
+    let turn = SERIAL.lock().await;
     let stripe = FakeStripe::start().await;
     let mut core = core().await;
     core.stripe = stripe.stripe();
@@ -42,6 +47,7 @@ async fn fixture() -> Result<Fixture> {
         core,
         stripe,
         relay,
+        _turn: turn,
     })
 }
 
@@ -150,7 +156,7 @@ async fn a_paying_member_is_admitted() -> Result<()> {
     assert_eq!(
         session.form["success_url"],
         format!(
-            "https://{}/?session={{CHECKOUT_SESSION_ID}}",
+            "https://{}/?checkout={{CHECKOUT_SESSION_ID}}",
             f.relay.host()
         )
     );
@@ -368,7 +374,7 @@ async fn a_lapse_removes_access_and_tells_the_member_how_to_renew() -> Result<()
     // The renewal link signs the member in.
     let token = notice
         .message
-        .split("session=")
+        .split("token=")
         .nth(1)
         .expect("no session in the link");
     let session = auth::find_session(f.core.db.pool(), token, now)

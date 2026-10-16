@@ -62,7 +62,7 @@ jobs:
       - name: Test
         run: cargo test --workspace --locked
 
-  frontend:
+  web:
     runs-on: ubuntu-latest
 
     steps:
@@ -73,16 +73,16 @@ jobs:
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
 
       - name: Install dependencies
-        working-directory: frontend
+        working-directory: web
         run: bun install --frozen-lockfile
 
       - name: Build
-        working-directory: frontend
+        working-directory: web
         run: bun run build
 
   # Only a push to master that passed every check above ships an image.
   docker:
-    needs: [backend, frontend]
+    needs: [backend, web]
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     permissions:

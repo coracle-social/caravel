@@ -404,11 +404,11 @@ fn with_return(page: &str, return_url: Option<&str>) -> Result<String> {
     Ok(url.to_string())
 }
 
-/// Where Stripe sends a payer back to: `page`, with the session for it to settle.
-/// Stripe fills in the placeholder, so it is appended unencoded.
+/// Where Stripe sends a payer back to: `page`, with the checkout session for it
+/// to settle. Stripe fills in the placeholder, so it is appended unencoded.
 fn checkout_success_url(page: &str) -> String {
     let separator = if page.contains('?') { '&' } else { '?' };
-    format!("{page}{separator}session={{CHECKOUT_SESSION_ID}}")
+    format!("{page}{separator}checkout={{CHECKOUT_SESSION_ID}}")
 }
 
 /// What a relay sells memberships for, and whether it can take payment now.
@@ -763,7 +763,7 @@ async fn lapse(core: &Core, membership: &Membership, relay: &Relay) -> Result<()
     if let Some(pubkey) = &membership.pubkey {
         let (token, _) = auth::create_session(core.db.pool(), pubkey, now).await?;
         let mut renew = url::Url::parse(&portal_url(relay, "/")).map_err(Error::internal)?;
-        renew.query_pairs_mut().append_pair("session", &token);
+        renew.query_pairs_mut().append_pair("token", &token);
         let message = format!(
             "Your membership of {} has ended. Renew at {renew}",
             relay.display_name()

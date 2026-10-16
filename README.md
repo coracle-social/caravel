@@ -13,7 +13,7 @@ The backend is a Rust workspace whose crates are layered, each depending only on
 - `crates/api` — the JSON API, documented in [crates/api/README.md](./crates/api/README.md)
 - `crates/app` — the `caravel` binary, which reads the environment, serves each request by its host and runs the background workers
 
-The dashboard is a SolidJS app in `frontend/`.
+`web/` builds three SolidJS apps, which the binary embeds: the tenant dashboard, the admin dashboard, and the member portal each relay serves on its own host.
 
 ## Configuration
 
@@ -21,8 +21,10 @@ The binary reads these from the environment, or from a `.env` file in its workin
 
 | Variable | Description |
 | --- | --- |
-| `PORT` | The port the API listens on, `2892` by default |
-| `API_URL` | The API's public base url, which NIP-98 signatures are checked against |
+| `PORT` | The port everything is served on, `2892` by default |
+| `API_URL` | The API's public base url, which NIP-98 signatures are checked against. On its own host, the API is served at the root, as Flotilla needs; sharing `PLATFORM_URL`'s host, it needs a path such as `/api` |
+| `PLATFORM_URL` | The dashboards' public url. Without it, no dashboard is served |
+| `PLATFORM_NAME`, `PLATFORM_LOGO` | The name and logo the web apps show, `Caravel` and `/caravel.png` by default |
 | `ADMIN_PUBKEYS` | Comma-separated hex pubkeys of the platform's admins |
 | `DATABASE_URL` | A Postgres url |
 | `ROBOT_SECRET` | The robot's hex Nostr secret key. It signs the robot's DMs and encrypts stored secrets, relays' keys among them |
@@ -41,19 +43,23 @@ The binary reads these from the environment, or from a `.env` file in its workin
 | `FORWARDED_HEADER` | The header a trusted proxy reports a client's address in, such as `X-Forwarded-For` |
 | `CONNECTIONS_PER_MINUTE` | New relay connections allowed per minute from one address, `0` (unlimited) by default |
 
-Every variable without a default is required, except `ADMIN_PUBKEYS`, the robot's profile, `FORWARDED_HEADER`, LiveKit's and the bucket's.
+Every variable without a default is required, except `ADMIN_PUBKEYS`, the robot's profile, `FORWARDED_HEADER`, `PLATFORM_URL`, LiveKit's and the bucket's.
 
 ## Deployment
 
-Caravel ships as a Docker image built from the [`Dockerfile`](./Dockerfile) and published as `gitea.coracle.social/coracle/caravel` by [CI](./.gitea/workflows/ci.yml) on each push to `master`. One container runs the API on port `2892` and the dashboard on port `3000`. The dashboard's `VITE_` settings are filled in from `API_URL`, `RELAY_DOMAINS`, `PLATFORM_NAME` and `PLATFORM_LOGO` when the container starts.
+Caravel ships as a Docker image built from the [`Dockerfile`](./Dockerfile) and published as `gitea.coracle.social/coracle/caravel` by [CI](./.gitea/workflows/ci.yml) on each push to `master`. The image is one binary, with the web apps built in, serving everything on port `2892`: each request is answered by its host, so the platform host gets the dashboards, the API host the API, and a relay's hosts that relay and its member portal. Mount a volume at `/app/data` for media kept on disk.
 
-Relay hosts reach Caravel through [Caddy](https://caddyserver.com/), whose [on-demand TLS](https://caddyserver.com/docs/automatic-https#on-demand-tls) asks `GET /domains/check?domain=` before issuing each certificate, so only hosts some relay answers on get one:
+Every host reaches Caravel through [Caddy](https://caddyserver.com/). The platform and API hosts get ordinary certificates; relay hosts use [on-demand TLS](https://caddyserver.com/docs/automatic-https#on-demand-tls), which asks `GET /domains/check?domain=` before issuing each certificate, so only hosts some relay answers on get one:
 
 ```
 {
   on_demand_tls {
     ask http://<caravel-host>:2892/domains/check
   }
+}
+
+<platform-host>, <api-host> {
+  reverse_proxy <caravel-host>:2892
 }
 
 :443 {
@@ -73,11 +79,11 @@ You need [Rust](https://rustup.rs/), [Bun](https://bun.sh/), [just](https://gith
 ```sh
 just pg
 cp .env.template .env
-cp frontend/.env.template frontend/.env
-cd frontend && bun install && cd ..
+cp web/.env.template web/.env
+cd web && bun install && cd ..
 just dev
 ```
 
-`just pg` starts Postgres on `127.0.0.1:55433`, and `just reset-db` recreates its database, which a change to the schema needs until the first release. `just dev` runs the API on `http://127.0.0.1:2892` and the dashboard on `http://127.0.0.1:5173`, restarting the API when a crate changes.
+`just pg` starts Postgres on `127.0.0.1:55433`, and `just reset-db` recreates its database, which a change to the schema needs until the first release. `just dev` runs the API on `http://127.0.0.1:2892` and the web apps on `http://127.0.0.1:5173`, restarting the API when a crate changes. There, `/admin` is the admin dashboard and `/portal?relay=<id>` a relay's member portal. To serve the built apps from the binary instead, run `just build-web` and set `PLATFORM_URL`.
 
 `just check` formats, lints, builds and tests everything, as CI does. Tests create one database per test binary on the server `TEST_DATABASE_URL` names, `just pg`'s by default.

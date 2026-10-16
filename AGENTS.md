@@ -8,7 +8,7 @@ There is one right place to document any given information:
 
 - Functions should have a doc comment explaining the purpose of the function, not its implementation.
 - Only very strange behavior should be documented using non-doc comments.
-- Models and their fields are documented where the model is defined, in the core module that owns it (e.g. `Relay` in `crates/core/src/relays/mod.rs`), not in migrations, implementations, or anywhere on the frontend.
+- Models and their fields are documented where the model is defined, in the core module that owns it (e.g. `Relay` in `crates/core/src/relays/mod.rs`), not in migrations, implementations, or anywhere in the web apps.
 - Database indexes are documented in migrations.
 
 ## Data Modeling
@@ -47,9 +47,9 @@ Read configuration from the environment only in `crates/app/src/config.rs`, and 
 
 ## Verification
 
-Check justfile and frontend/package.json for common commands for linting/building. Tests need Postgres: `just pg` starts one with podman, and each test binary creates its own database on it.
+Check justfile and web/package.json for common commands for linting/building. Tests need Postgres: `just pg` starts one with podman, and each test binary creates its own database on it.
 
-Pull requests run `.gitea/workflows/ci.yml`, which is the workspace's fmt/clippy/test against a Postgres service plus the frontend build. Keep it in step with the justfile.
+Pull requests run `.gitea/workflows/ci.yml`, which is the workspace's fmt/clippy/test against a Postgres service plus the web build. Keep it in step with the justfile.
 
 ## Skills
 

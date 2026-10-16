@@ -1,0 +1,29 @@
+@import "tailwindcss";
+@import "../../node_modules/preline/variants.css";
+@source "../../node_modules/preline/dist/*.js";
+
+/* Pointer cursor on buttons */
+@layer base {
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+}
+
+/* Defaults hover styles on all devices */
+@custom-variant hover (&:hover);
+
+/* Brand accent palette (mapped to blue utilities used across the app) */
+@theme {
+  --color-blue-50: #f7f1ec;
+  --color-blue-100: #efdfd2;
+  --color-blue-200: #e2c5ad;
+  --color-blue-300: #d5aa88;
+  --color-blue-400: #ca9469;
+  --color-blue-500: #c18254;
+  --color-blue-600: #c18254;
+  --color-blue-700: #a66d46;
+  --color-blue-800: #8a5a39;
+  --color-blue-900: #6f4730;
+  --color-blue-950: #45291a;
+}

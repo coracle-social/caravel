@@ -1,10 +1,6 @@
 //! The `caravel` binary: one process serving the API and running the platform's
 //! background work.
 
-mod config;
-mod dispatch;
-mod workers;
-
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -13,6 +9,9 @@ use caravel_adapters::blobs::Blobs;
 use caravel_adapters::livekit::Livekit;
 use caravel_adapters::outbound::Outbound;
 use caravel_adapters::{robot::Robot, stripe::Stripe, wallet::Wallet};
+use caravel_app::dispatch::Hosts;
+use caravel_app::web::Web;
+use caravel_app::{config, dispatch, workers};
 use caravel_core::Core;
 use caravel_db::Db;
 use caravel_relay::Relays;
@@ -90,7 +89,9 @@ async fn serve() -> Result<()> {
         .allow_origin(Any)
         .allow_methods(Any)
         .allow_headers(Any);
-    let app = dispatch::router(caravel_api::router(core).layer(cors), relays);
+    let hosts = Hosts::from_urls(&core.config.api_url, settings.web.platform_url.as_deref())?;
+    let web = Web::new(settings.web.shell_config(&core.config));
+    let app = dispatch::router(caravel_api::router(core).layer(cors), relays, web, hosts);
 
     let listener = tokio::net::TcpListener::bind(("0.0.0.0", settings.port)).await?;
     tracing::info!(port = settings.port, "serving");

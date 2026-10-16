@@ -10,17 +10,14 @@ dev:
   #!/usr/bin/env sh
   trap 'kill 0' EXIT
   onchange crates -ik -- bash -c 'RUST_LOG=caravel=info,caravel_core=info,caravel_api=info cargo run -p caravel-app' &
-  cd frontend && bun dev &
+  cd web && bun dev &
   wait
 
 dev-backend:
   onchange crates -ik -- bash -c 'RUST_LOG=caravel=info,caravel_core=info,caravel_api=info cargo run -p caravel-app'
 
-dev-frontend:
-  cd frontend && bun run dev
-
-preview-frontend:
-  cd frontend && bun run preview
+dev-web:
+  cd web && bun run dev
 
 fmt-backend:
   cargo fmt --all
@@ -34,14 +31,14 @@ test-backend:
 build-backend:
   cargo build --workspace
 
-build-frontend:
-  cd frontend && bun i && bun run build
+build-web:
+  cd web && bun i && bun run build
 
 fmt: fmt-backend
 
 lint: lint-backend
 
-build: build-backend build-frontend
+build: build-backend build-web
 
 test: test-backend
 

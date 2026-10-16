@@ -19,7 +19,7 @@ Caravel's backend is one binary built from a Cargo workspace. The crates form la
 
 **api** is the JSON API. Handlers load what the request names through the core, check the caller against it with the core's rules, and call the core. Routes are grouped by who may call them: public, member, tenant, and admin. The API reference is the crate's README.
 
-**app** builds the `caravel` binary. It reads and checks the environment, connects two pools (one for requests, one for background work, so workers can't starve requests), builds the core, schedules the background workers, and serves each request by its host: a relay's hosts get that relay, and every other host gets the API. On shutdown it closes every relay connection with code 1001 and gives workers ten seconds to stop.
+**app** builds the `caravel` binary. It reads and checks the environment, connects two pools (one for requests, one for background work, so workers can't starve requests), builds the core, schedules the background workers, and serves each request by its host. A relay's hosts get that relay's protocols, and its member portal for a browser asking for a page; a page on any of its hosts but the primary one redirects there. The API host gets the API, and the platform host the dashboards (the admin one under `/admin`), and the API too when it shares that host under a path. Any other host gets nothing but the health check and on-demand TLS's ask. The web apps are embedded in the binary, and the app writes each one's runtime configuration into its page; the `web` skill covers them. A routing test checks every kind of host against every kind of request. On shutdown it closes every relay connection with code 1001 and gives workers ten seconds to stop.
 
 ## The core handle
 

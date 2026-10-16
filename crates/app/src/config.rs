@@ -20,6 +20,28 @@ pub struct Settings {
     pub media: Media,
     pub livekit: Option<Livekit>,
     pub relays: RelaysConfig,
+    pub web: WebSettings,
+}
+
+/// How the dashboards and the member portal are served and branded.
+pub struct WebSettings {
+    /// The dashboards' public url. Without one, this process serves no dashboard.
+    pub platform_url: Option<String>,
+    pub platform_name: String,
+    pub platform_logo: String,
+}
+
+impl WebSettings {
+    /// The configuration every app's shell carries.
+    pub fn shell_config(&self, config: &Config) -> serde_json::Value {
+        serde_json::json!({
+            "api_url": config.api_url,
+            "relay_domains": config.relay_domains,
+            "platform_name": self.platform_name,
+            "platform_logo": self.platform_logo,
+            "flotilla_url": config.flotilla_url,
+        })
+    }
 }
 
 /// Where relays' media is kept.
@@ -90,6 +112,11 @@ pub fn load() -> Result<Settings> {
                 api_secret: required("LIVEKIT_API_SECRET")?,
             }),
             None => None,
+        },
+        web: WebSettings {
+            platform_url: optional("PLATFORM_URL").map(|url| url.trim_end_matches('/').to_string()),
+            platform_name: optional("PLATFORM_NAME").unwrap_or_else(|| "Caravel".to_string()),
+            platform_logo: optional("PLATFORM_LOGO").unwrap_or_else(|| "/caravel.png".to_string()),
         },
         relays: RelaysConfig {
             forwarded_header: optional("FORWARDED_HEADER"),

@@ -6,6 +6,7 @@ pub mod bitcoin;
 pub mod blobs;
 pub mod dns;
 pub mod livekit;
+pub mod nostr;
 pub mod outbound;
 pub mod robot;
 pub mod stripe;

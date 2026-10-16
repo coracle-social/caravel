@@ -124,7 +124,7 @@ async fn publish_robot_identity(core: Core, shutdown: CancellationToken) {
     let mut delay = Duration::from_secs(5);
 
     loop {
-        match core.robot.publish_identity().await {
+        match core.robot.publish_identity(core.clock.now()).await {
             Ok(()) => return,
             Err(error) => tracing::warn!(error = %error, "failed to publish robot identity"),
         }

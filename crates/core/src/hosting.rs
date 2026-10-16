@@ -75,7 +75,7 @@ pub async fn ensure_tenant(core: &Core, pubkey: &str, return_url: &str) -> Resul
 
     let name = core
         .robot
-        .fetch_nostr_name(pubkey)
+        .fetch_nostr_name(pubkey, core.clock.now())
         .await
         .unwrap_or_else(|| pubkey.chars().take(8).collect());
     let stripe_customer_id = core.stripe.create_customer(pubkey, &name).await?;

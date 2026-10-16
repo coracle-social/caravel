@@ -441,7 +441,7 @@ async fn maybe_churn_tenant(core: &Core, tenant: &Tenant, invoices: &[Invoice]) 
         churn_tenant(core, &tenant.pubkey).await?;
 
         let message = format!("{CHURN_DM}\n\n{}", tenant.return_url);
-        if let Err(error) = core.robot.send_dm(&tenant.pubkey, &message).await {
+        if let Err(error) = core.robot.send_dm(&tenant.pubkey, &message, now).await {
             tracing::error!(tenant = %tenant.pubkey, error = %error, "failed to send churn DM");
         }
     }
@@ -540,7 +540,11 @@ async fn reconcile_payments(
 
     if let Some(bolt11) = ledger::get_bolt11_for_invoice(core.db.pool(), &invoice.id).await?
         && bolt11.settled_at.is_none()
-        && core.wallet.is_settled(&bolt11.lnbc).await.unwrap_or(false)
+        && core
+            .wallet
+            .is_settled(&bolt11.lnbc, now)
+            .await
+            .unwrap_or(false)
     {
         core.db
             .with_tx(async |conn| {
@@ -607,16 +611,16 @@ async fn pay_with_nwc(
         let nwc_url = core.config.platform_key.decrypt(encrypted_nwc_url)?;
         let tenant_wallet = Wallet::from_url(&nwc_url)?;
         let bolt11 = ensure_bolt11_for_invoice(core, invoice).await?;
+        let now = core.clock.now();
 
         // A payment that errors but landed anyway, or an invoice paid meanwhile, is fine.
-        if let Err(error) = tenant_wallet.pay_invoice(bolt11.lnbc.clone()).await
-            && !core.wallet.is_settled(&bolt11.lnbc).await.unwrap_or(false)
+        if let Err(error) = tenant_wallet.pay_invoice(&bolt11.lnbc, now).await
+            && !core.wallet.is_settled(&bolt11.lnbc, now).await.unwrap_or(false)
             && !matches!(ledger::get_invoice(core.db.pool(), &invoice.id).await, Ok(Some(paid)) if paid.paid_at.is_some())
         {
             return Err(error.into());
         }
 
-        let now = core.clock.now();
         core.db
             .with_tx(async |conn| {
                 tenants::set_tenant_nwc_error(&mut *conn, &tenant.pubkey, None).await?;
@@ -701,7 +705,7 @@ async fn send_payment_reminder(core: &Core, tenant: &Tenant, invoice: &Invoice) 
 
     let payment_url = format!("{}?invoice={}", tenant.return_url, invoice.id);
     let message = format!("{MANUAL_PAYMENT_DM}\n\n{payment_url}");
-    core.robot.send_dm(&tenant.pubkey, &message).await?;
+    core.robot.send_dm(&tenant.pubkey, &message, now).await?;
 
     ledger::mark_invoice_notified(core.db.pool(), &invoice.id, now).await
 }
@@ -744,7 +748,7 @@ pub async fn ensure_bolt11_for_invoice(core: &Core, invoice: &Invoice) -> Result
     let msats = bitcoin::usd_cents_to_msats(invoice.amount).await?;
     let lnbc = core
         .wallet
-        .make_invoice(msats, "Relay subscription payment", expiry as u64)
+        .make_invoice(msats, "Relay subscription payment", expiry as u64, now)
         .await?;
 
     ledger::insert_bolt11(

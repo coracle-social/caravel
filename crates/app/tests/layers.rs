@@ -28,12 +28,15 @@ const LAYERS: [(&str, &[&str]); 6] = [
 
 /// Third-party crates and the only workspace crates that may depend on them.
 const CONFINED: [(&str, &[&str]); 6] = [
-    ("nostr-sdk", &["caravel-adapters"]),
-    ("nwc", &["caravel-adapters"]),
     ("reqwest", &["caravel-adapters"]),
+    ("tokio-tungstenite", &["caravel-adapters"]),
+    ("coracle-kinds", &["caravel-adapters"]),
     ("axum", &["caravel-relay", "caravel-api", "caravel-app"]),
     ("tower-http", &["caravel-relay", "caravel-app"]),
-    ("coracle-lib", &["caravel-core", "caravel-relay"]),
+    (
+        "coracle-lib",
+        &["caravel-adapters", "caravel-core", "caravel-relay"],
+    ),
 ];
 
 /// Each workspace crate's normal (not dev or build) dependencies.

@@ -1,48 +1,31 @@
 import { useParams } from "@solidjs/router"
-import { createEffect, createResource, createSignal, onCleanup, Show } from "solid-js"
+import { Show } from "solid-js"
+import ActivityFeed from "@/shared/components/ActivityFeed"
 import BackLink from "@/shared/components/BackLink"
 import PageContainer from "@/shared/components/PageContainer"
-import PaymentDialog from "@/shared/components/PaymentDialog"
-import PaymentSetup from "@/shared/components/PaymentSetup"
+import PostPaidPrompts, { usePostPaidFlow } from "@/shared/components/PostPaidPrompts"
 import RelayDetailCard from "@/shared/components/RelayDetailCard"
 import ResourceState from "@/shared/components/ResourceState"
+import type { PlanId } from "@/shared/lib/api"
+import { FREE } from "@/shared/lib/plans"
+import { useRelay, useRelayActivity, useRelayMembers } from "@/shared/lib/relays"
 import useMinLoading from "@/shared/lib/useMinLoading"
-import ActivityFeed from "@/shared/components/ActivityFeed"
-import { listRelayMembers } from "@/shared/lib/api"
-import { useRelay, useRelayActivity } from "@/shared/lib/hooks"
-import useRelayToggles from "@/shared/lib/useRelayToggles"
-import { refetchBilling, setBillingFlowActive } from "@/shared/lib/state"
+import useRelayActions from "@/shared/lib/useRelayActions"
 
 export default function RelayDetail() {
   const params = useParams()
   const relayId = () => params.id ?? ""
-  const [relay, { refetch, mutate }] = useRelay(relayId)
-  const [members] = createResource(relayId, async (id) => {
-    if (!id) return []
-
-    try {
-      return (await listRelayMembers(id)).members
-    } catch {
-      return []
-    }
-  })
+  const [relay, actions] = useRelay(relayId)
+  const [members] = useRelayMembers(relayId)
   const loading = useMinLoading(() => relay.loading && !relay())
   const [activity] = useRelayActivity(relayId)
-  const { busy, handleDeactivate, handleReactivate, handlePurge, handleUpdatePlan, pendingInvoice, clearPendingInvoice, pendingPaymentSetup, clearPendingPaymentSetup, toggles } = useRelayToggles(relayId, relay, { refetch, mutate })
+  const { busy, deactivate, reactivate, purge, toggle, updatePlan } = useRelayActions(relayId, relay, actions)
+  const postPaid = usePostPaidFlow()
 
-  const [paymentSetupOpen, setPaymentSetupOpen] = createSignal(false)
-
-  createEffect(() => {
-    if (pendingPaymentSetup() && !pendingInvoice()) {
-      setPaymentSetupOpen(true)
-      clearPendingPaymentSetup()
-    }
-  })
-
-  // Suppress the shared banner's redundant pay/setup prompts while this page's
-  // own inline plan-change modals are open.
-  createEffect(() => setBillingFlowActive(Boolean(pendingInvoice()) || paymentSetupOpen()))
-  onCleanup(() => setBillingFlowActive(false))
+  async function changePlan(planId: PlanId) {
+    await updatePlan(planId)
+    if (planId !== FREE) await postPaid.start()
+  }
 
   return (
     <PageContainer>
@@ -55,39 +38,19 @@ export default function RelayDetail() {
               relay={r()}
               currentMembers={members()?.length}
               editHref={`/relays/${params.id}/edit`}
-              onDeactivate={handleDeactivate}
-              onReactivate={handleReactivate}
-              deactivating={busy()}
-              reactivating={busy()}
-              onPurge={handlePurge}
-              purging={busy()}
-              onUpdatePlan={handleUpdatePlan}
-              mutateRelay={mutate}
-              {...toggles}
+              busy={busy()}
+              onDeactivate={deactivate}
+              onReactivate={reactivate}
+              onPurge={purge}
+              onToggle={toggle}
+              onUpdatePlan={changePlan}
+              mutateRelay={actions.mutate}
             />
             <ActivityFeed activity={activity() ?? []} loading={activity.loading} />
           </div>
         )}
       </Show>
-      <Show when={pendingInvoice()}>
-        {(inv) => (
-          <PaymentDialog
-            invoice={inv()}
-            open={true}
-            onClose={() => {
-              clearPendingInvoice()
-              void refetchBilling()
-            }}
-          />
-        )}
-      </Show>
-      <PaymentSetup
-        open={paymentSetupOpen()}
-        onClose={() => {
-          setPaymentSetupOpen(false)
-          void refetchBilling()
-        }}
-      />
+      <PostPaidPrompts flow={postPaid} />
     </PageContainer>
   )
 }

@@ -1,11 +1,8 @@
 import { Show } from "solid-js"
+import SegmentedTabs from "@/shared/components/SegmentedTabs"
 
 type SignerTab = "qr" | "paste"
 
-// Presentational NIP-46 signer panel. No signers are created here; QR/URI are
-// generated in Login.tsx and passed down, and actions are surfaced as callbacks.
-// Props are reactive only when read lazily, so access props.* inside JSX, never
-// destructure signal-bearing props at the top.
 type LoginSignerScreenProps = {
   signerTab: () => SignerTab
   setSignerTab: (tab: SignerTab) => void
@@ -20,6 +17,7 @@ type LoginSignerScreenProps = {
   onConnectBunker: () => void
 }
 
+// Logging in with a remote signer, by QR code or a pasted bunker link.
 export default function LoginSignerScreen(props: LoginSignerScreenProps) {
   return (
     <>
@@ -33,22 +31,11 @@ export default function LoginSignerScreen(props: LoginSignerScreenProps) {
       </button>
       <h2 class="mt-3 text-lg font-semibold text-gray-900">Log in with signer</h2>
       <div class="mt-4 space-y-4">
-        <div class="flex gap-2 border border-gray-200 rounded-lg p-1">
-          <button
-            type="button"
-            class={`flex-1 rounded-md px-3 py-2 text-sm ${props.signerTab() === "qr" ? "bg-gray-900 text-white" : "text-gray-700"}`}
-            onClick={() => props.setSignerTab("qr")}
-          >
-            Use QR Code
-          </button>
-          <button
-            type="button"
-            class={`flex-1 rounded-md px-3 py-2 text-sm ${props.signerTab() === "paste" ? "bg-gray-900 text-white" : "text-gray-700"}`}
-            onClick={() => props.setSignerTab("paste")}
-          >
-            Paste Link
-          </button>
-        </div>
+        <SegmentedTabs
+          tabs={[{ value: "qr", label: "Use QR Code" }, { value: "paste", label: "Paste Link" }]}
+          selected={props.signerTab()}
+          onSelect={props.setSignerTab}
+        />
 
         <Show when={props.signerTab() === "qr"}>
           <Show when={props.qrDataUrl()} fallback={

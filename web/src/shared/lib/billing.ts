@@ -2,13 +2,15 @@ import { createMemo } from "solid-js"
 import { indexBy } from "@welshman/lib"
 import { listPayableInvoices, type Invoice, type Tenant } from "@/shared/lib/api"
 import { autopayConfigured, cardState, nwcState } from "@/shared/lib/paymentMethod"
-import { autopayBilling, billingDraftInvoice, billingInvoices, billingRelays, billingTenant, plans, refetchBilling } from "@/shared/lib/state"
+import { autopayBilling, billingDraftInvoice, billingInvoices, billingRelays, billingTenant, plans } from "@/shared/lib/state"
 
 export type BillingPromptKind = "churned" | "pay_invoice" | "update_method" | "setup_autopay"
 
+export type Severity = "error" | "warn" | "info"
+
 export type BillingPrompt = {
   kind: BillingPromptKind
-  severity: "error" | "warn" | "info"
+  severity: Severity
   message: string
 }
 
@@ -18,24 +20,13 @@ export type BillingStatusSnapshot = {
   hasPaidSubscription: boolean
 }
 
-// The single billing read shared by the dashboard shell and the billing page.
-// `openInvoice` is the OLDEST open, positive invoice — matching the backend's
-// dunning order, so a manual "Pay now" clears invoices in collection order.
+// The signed-in tenant's billing. `openInvoice` is the oldest owed, which collection charges first.
 export function useBillingStatus() {
   const tenant = () => billingTenant()
   const invoices = () => billingInvoices() ?? []
-
-  // The current period's in-progress bill (outstanding items not yet cut into a
-  // real invoice), or undefined when nothing is due. Shown as a "draft" row.
   const draftInvoice = () => billingDraftInvoice() ?? undefined
-
-  // Every open, positive invoice, oldest first — the same set autopay collects.
   const openInvoices = createMemo(() => listPayableInvoices(invoices()))
-  // The dunning target surfaced as "Pay now" — the oldest of them.
   const openInvoice = () => openInvoices()[0]
-
-  // Amount due: the total of all open invoices.
-  const balance = () => openInvoices().reduce((sum, inv) => sum + inv.amount, 0)
 
   const hasPaidSubscription = createMemo(() => {
     const planById = indexBy((p) => p.id, plans())
@@ -47,14 +38,11 @@ export function useBillingStatus() {
 
   const loading = () => billingTenant.loading || billingInvoices.loading || billingDraftInvoice.loading
 
-  return { tenant, invoices, draftInvoice, balance, openInvoice, hasPaidSubscription, loading, refetch: refetchBilling, autopay: autopayBilling }
+  return { tenant, invoices, draftInvoice, openInvoice, hasPaidSubscription, loading, autopay: autopayBilling }
 }
 
-// Pure priority selector: returns the single highest-priority billing prompt to
-// surface, or null. Priority: churned > pay an open invoice > fix a failed method
-// > set up autopay. `suppressInline` hides the prompts the create/upgrade inline
-// flow already handles (pay_invoice, setup_autopay) while still surfacing churn
-// and method errors.
+// The one billing prompt to show: churn, an open invoice, a failed method, then autopay.
+// `suppressInline` leaves out the invoice and autopay ones while a page shows its own.
 export function activeBillingPrompt(
   s: BillingStatusSnapshot,
   opts?: { suppressInline?: boolean },
@@ -77,10 +65,7 @@ export function activeBillingPrompt(
   const methodError = nwc.kind === "error" || card.kind === "error"
   const suppressInline = opts?.suppressInline ?? false
 
-  // Any open invoice gets a "Pay now" surface, even with autopay configured:
-  // autopay may not have fired yet or may have failed without setting an error,
-  // and the user still needs a way to pay manually. Only the inline create/upgrade
-  // flow (suppressInline) handles its own invoice, so defer to it there.
+  // Autopay may not have run yet, so an open invoice is payable by hand regardless.
   if (s.openInvoice && !suppressInline) {
     return {
       kind: "pay_invoice",
@@ -112,20 +97,7 @@ export function activeBillingPrompt(
 
 export type AccountStatus = "active" | "inactive" | "delinquent"
 
-// Coarse account-health summary for the status badge. Pure function of the same
-// snapshot `activeBillingPrompt` consumes, so the badge can never disagree with
-// the prompt. Mutually exclusive and total:
-//   - delinquent: churned_at is set — the ONLY frontend-visible signal of a real
-//     suspension (churn_tenant is the single place relays are paused). An open
-//     invoice alone is NOT delinquency: the tenant has a 7-day grace window and
-//     autopay may simply not have fired yet. Matches the sole severity:"error"
-//     branch in activeBillingPrompt.
-//   - active: not churned AND there is paid business to keep running — an active
-//     paid relay, an open balance, or a configured payment method. A failed method
-//     (nwc_error/stripe_error) or an unpaid invoice within grace stays "active";
-//     the per-method rows and the inline prompt carry that detail.
-//   - inactive: not churned and nothing billable — no paid relay, no balance, no
-//     method. The brand-new or free-only tenant (typically billing_anchor == null).
+// Delinquent once churned, active with a paid relay, a balance or a method, else inactive.
 export function accountStatus(s: BillingStatusSnapshot): AccountStatus {
   const tenant = s.tenant
   if (!tenant) return "inactive"

@@ -11,12 +11,12 @@ use crate::Core;
 use crate::access::{self, MemberSource};
 use crate::billing::ledger;
 use crate::bus::Change;
-use crate::crypto::{RelayKey, generate_keypair};
+use crate::crypto::generate_keypair;
 use crate::domains::normalize_custom_domain;
 use crate::error::{Error, Result};
 use crate::flag::Flag;
 use crate::plans;
-use crate::relays::activity::{self, ActivityType, Snapshot};
+use crate::relays::activity::{self, ActivityType};
 use crate::relays::{self, MemberInterval, Relay, RelayStatus};
 use crate::tenants::{self, Tenant};
 
@@ -63,7 +63,7 @@ pub struct RelaySettings {
 pub async fn ensure_tenant(core: &Core, pubkey: &str, return_url: &str) -> Result<Tenant> {
     let return_url = return_url.trim().trim_end_matches('/');
     if return_url.is_empty() {
-        return Err(Error::conflict(
+        return Err(Error::invalid(
             "return-url-required",
             "return_url is required",
         ));
@@ -97,12 +97,12 @@ pub async fn ensure_tenant(core: &Core, pubkey: &str, return_url: &str) -> Resul
 /// Replace the tenant's NWC url, stored encrypted. Empty removes it.
 pub async fn set_tenant_nwc_url(core: &Core, pubkey: &str, nwc_url: &str) -> Result<()> {
     let encrypted = if nwc_url.is_empty() {
-        String::new()
+        None
     } else {
-        core.config.platform_key.encrypt(nwc_url)?
+        Some(core.config.platform_key.encrypt(nwc_url)?)
     };
 
-    tenants::set_tenant_nwc_url(core.db.pool(), pubkey, &encrypted).await
+    tenants::set_tenant_nwc_url(core.db.pool(), pubkey, encrypted.as_deref()).await
 }
 
 /// Ban a tenant: block relay creation, forgive what they owe, and purge their
@@ -144,9 +144,7 @@ pub async fn ban_tenant(core: &Core, pubkey: &str) -> Result<()> {
 
 /// Lift a tenant's ban. Purged relays stay purged and forgiven charges forgiven.
 pub async fn unban_tenant(core: &Core, pubkey: &str) -> Result<()> {
-    let tenant = tenants::get_tenant(core.db.pool(), pubkey)
-        .await?
-        .ok_or(Error::NotFound("tenant not found"))?;
+    let tenant = tenants::require_tenant(core.db.pool(), pubkey).await?;
     if tenant.banned_at.is_none() {
         return Err(Error::conflict("tenant-not-banned", "tenant is not banned"));
     }
@@ -162,9 +160,7 @@ pub async fn create_relay(
     tenant_pubkey: &str,
     settings: RelaySettings,
 ) -> Result<Relay> {
-    let tenant = tenants::get_tenant(core.db.pool(), tenant_pubkey)
-        .await?
-        .ok_or(Error::NotFound("tenant not found"))?;
+    let tenant = tenants::require_tenant(core.db.pool(), tenant_pubkey).await?;
     if tenant.banned_at.is_some() {
         return Err(Error::conflict("tenant-is-banned", "tenant is banned"));
     }
@@ -201,20 +197,16 @@ pub async fn create_relay(
         ..Default::default()
     };
     let relay = validate_relay(core, apply_settings(core, relay, settings)?)?;
-    let key = RelayKey::decrypt(&core.config.platform_key, &relay.secret)?;
+    let key = core.relay_key(&relay)?;
 
     core.db
         .with_tx(async |conn| {
             relays::insert_relay(conn, &relay).await?;
-            let snapshot = Snapshot::Relay {
-                plan: relay.plan_id.clone(),
-                status: relay.status,
-            };
             activity::insert_relay_activity(
                 &mut *conn,
                 ActivityType::CreateRelay,
-                &relay.id,
-                snapshot,
+                &relay,
+                relay.status,
                 now,
             )
             .await?;
@@ -245,36 +237,32 @@ pub async fn create_relay(
 /// redirects to the relay from then on. Downgrading to a plan with a member limit
 /// the relay is over is refused.
 pub async fn update_relay(core: &Core, relay: Relay, settings: RelaySettings) -> Result<Relay> {
-    if relay.is_purged() {
-        return Err(Error::conflict("relay-is-purged", "relay has been purged"));
-    }
+    relay.require_unpurged()?;
 
     let previous = relay.clone();
     let relay = validate_relay(core, apply_settings(core, relay, settings)?)?;
 
     if relay.plan_id != previous.plan_id
-        && let Some(limit) =
-            plans::get_plan(&relay.plan_id).and_then(|plan| plan.members.map(|limit| (plan, limit)))
+        && let Some(limit) = relay.member_limit()
     {
-        let (plan, limit) = limit;
         let members = access::count_members(core.db.pool(), &relay.id).await?;
         if members > limit {
             return Err(Error::invalid(
                 "member-limit-exceeded",
                 format!(
                     "relay has {members} members, which exceeds the {} plan limit of {limit}",
-                    plan.name.to_lowercase()
+                    relay.plan_id
                 ),
             ));
         }
     }
 
     let now = core.clock.now();
-    let replaced_domain = (previous.custom_domain_verified
-        && !previous.custom_domain.is_empty()
-        && previous.custom_domain != relay.custom_domain)
-        .then(|| previous.custom_domain.clone());
-    let own_hosts = vec![relay.canonical_host(), relay.custom_domain.clone()];
+    let replaced_domain = previous.custom_domain.clone().filter(|_| {
+        previous.custom_domain_verified && previous.custom_domain != relay.custom_domain
+    });
+    let mut own_hosts = vec![relay.canonical_host()];
+    own_hosts.extend(relay.custom_domain.clone());
 
     core.db
         .with_tx(async |conn| {
@@ -283,15 +271,11 @@ pub async fn update_relay(core: &Core, relay: Relay, settings: RelaySettings) ->
                 relays::add_host_redirect(&mut *conn, host, &relay.id, now).await?;
             }
             relays::remove_host_redirects(&mut *conn, &own_hosts).await?;
-            let snapshot = Snapshot::Relay {
-                plan: relay.plan_id.clone(),
-                status: relay.status,
-            };
             activity::insert_relay_activity(
                 conn,
                 ActivityType::UpdateRelay,
-                &relay.id,
-                snapshot,
+                &relay,
+                relay.status,
                 now,
             )
             .await
@@ -303,15 +287,13 @@ pub async fn update_relay(core: &Core, relay: Relay, settings: RelaySettings) ->
         relay_id: relay.id.clone(),
     });
 
-    relays::get_relay(core.db.pool(), &relay.id)
-        .await?
-        .ok_or(Error::NotFound("relay not found"))
+    relays::require_relay(core.db.pool(), &relay.id).await
 }
 
 /// Pause a relay at its tenant's request, crediting the rest of the period.
 pub async fn deactivate_relay(core: &Core, relay: &Relay) -> Result<()> {
+    relay.require_unpurged()?;
     match relay.status {
-        _ if relay.is_purged() => Err(Error::conflict("relay-is-purged", "relay has been purged")),
         RelayStatus::Delinquent => Err(Error::conflict(
             "relay-is-delinquent",
             "relay is delinquent",
@@ -334,8 +316,8 @@ pub async fn deactivate_relay(core: &Core, relay: &Relay) -> Result<()> {
 
 /// Resume a paused relay, charging the rest of the period.
 pub async fn reactivate_relay(core: &Core, relay: &Relay) -> Result<()> {
+    relay.require_unpurged()?;
     match relay.status {
-        _ if relay.is_purged() => Err(Error::conflict("relay-is-purged", "relay has been purged")),
         RelayStatus::Delinquent => Err(Error::conflict(
             "relay-is-delinquent",
             "relay is delinquent",
@@ -376,10 +358,9 @@ pub async fn purge_relay(core: &Core, relay: &Relay) -> Result<()> {
     Ok(())
 }
 
-/// The pubkeys that are members of a relay.
 /// Make a pubkey a member of a relay by hand.
 pub async fn add_member(core: &Core, relay: &Relay, pubkey: &str) -> Result<()> {
-    let key = RelayKey::decrypt(&core.config.platform_key, &relay.secret)?;
+    let key = core.relay_key(relay)?;
     let now = core.clock.now();
     let published = core
         .db
@@ -388,13 +369,16 @@ pub async fn add_member(core: &Core, relay: &Relay, pubkey: &str) -> Result<()> 
         })
         .await?;
 
-    publish_access_change(core, relay, published);
+    core.bus.publish(Change::AccessChanged {
+        relay_id: relay.id.clone(),
+        published,
+    });
     Ok(())
 }
 
 /// Remove a member from a relay. Its owner can't be removed.
 pub async fn remove_member(core: &Core, relay: &Relay, pubkey: &str) -> Result<()> {
-    let key = RelayKey::decrypt(&core.config.platform_key, &relay.secret)?;
+    let key = core.relay_key(relay)?;
     let now = core.clock.now();
     let published = core
         .db
@@ -403,17 +387,11 @@ pub async fn remove_member(core: &Core, relay: &Relay, pubkey: &str) -> Result<(
         })
         .await?;
 
-    publish_access_change(core, relay, published);
+    core.bus.publish(Change::AccessChanged {
+        relay_id: relay.id.clone(),
+        published,
+    });
     Ok(())
-}
-
-fn publish_access_change(core: &Core, relay: &Relay, published: Vec<coracle_lib::events::Event>) {
-    if !published.is_empty() {
-        core.bus.publish(Change::AccessChanged {
-            relay_id: relay.id.clone(),
-            published,
-        });
-    }
 }
 
 async fn change_relay_status(
@@ -439,11 +417,7 @@ async fn change_relay_status(
 /// activity so billing knows whether to credit it.
 async fn purge_relay_in_tx(conn: &mut sqlx::PgConnection, relay: &Relay, now: i64) -> Result<()> {
     relays::set_relay_purged_at(&mut *conn, &relay.id, now).await?;
-    let snapshot = Snapshot::Relay {
-        plan: relay.plan_id.clone(),
-        status: relay.status,
-    };
-    activity::insert_relay_activity(conn, ActivityType::PurgeRelay, &relay.id, snapshot, now)
+    activity::insert_relay_activity(conn, ActivityType::PurgeRelay, relay, relay.status, now)
         .await?;
     Ok(())
 }
@@ -608,12 +582,7 @@ pub async fn erase_purged_relays(core: &Core) -> Result<()> {
                         .execute(&mut *conn)
                         .await?;
                 }
-                sqlx::query("UPDATE relay SET erased_at = $2 WHERE id = $1")
-                    .bind(&relay.id)
-                    .bind(now)
-                    .execute(&mut *conn)
-                    .await?;
-                Ok::<_, Error>(())
+                relays::set_relay_erased_at(conn, &relay.id, now).await
             })
             .await?;
 

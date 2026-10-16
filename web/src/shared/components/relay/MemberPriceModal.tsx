@@ -1,8 +1,10 @@
 import { createEffect, createResource, createSignal, on, Show } from "solid-js"
 import Modal from "@/shared/components/Modal"
-import { getPayoutStatus, updateRelay, type MemberInterval, type Relay } from "@/shared/lib/api"
-import { account } from "@/shared/lib/state"
-import { usePayoutRedirect } from "@/shared/lib/usePayoutRedirect"
+import { account } from "@/shared/lib/account"
+import { getPayoutStatus, openPayoutOnboarding, updateRelay, type MemberInterval, type Relay } from "@/shared/lib/api"
+import { formatError } from "@/shared/lib/format"
+import { loaded } from "@/shared/lib/resource"
+import { useRedirect } from "@/shared/lib/useRedirect"
 
 type Props = {
   open: boolean
@@ -16,7 +18,7 @@ const MIN_PRICE = 50
 
 export default function MemberPriceModal(props: Props) {
   const [connect] = createResource(() => props.open && props.relay().tenant_pubkey, getPayoutStatus)
-  const payouts = usePayoutRedirect()
+  const stripe = useRedirect()
   const [price, setPrice] = createSignal("")
   const [memberInterval, setMemberInterval] = createSignal<MemberInterval>("month")
   const [saving, setSaving] = createSignal(false)
@@ -44,7 +46,7 @@ export default function MemberPriceModal(props: Props) {
       props.onSaved(await updateRelay(props.relay().id, { member_price: memberPrice, member_interval: memberInterval() }))
       props.onClose()
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to save price")
+      setError(formatError(e, "Failed to save price"))
     } finally {
       setSaving(false)
     }
@@ -76,7 +78,7 @@ export default function MemberPriceModal(props: Props) {
 
       <p class="text-sm text-gray-500">
         Charge each member a recurring fee for admission. Members pay through Stripe, and the owner receives what they pay, less the platform's fee
-        <Show when={connect.error ? undefined : connect()}>{(status) => <> of {status().fee_percent}%</>}</Show>.
+        <Show when={loaded(connect)}>{(status) => <> of {status().fee_percent}%</>}</Show>.
       </p>
 
       <Show when={!connect.loading} fallback={<p class="text-sm text-gray-500">Checking payouts…</p>}>
@@ -90,16 +92,16 @@ export default function MemberPriceModal(props: Props) {
                   fallback={<p class="text-sm text-yellow-800">The owner of this relay has not finished setting up payouts.</p>}
                 >
                   <p class="text-sm text-yellow-800">Set up payouts with Stripe before charging members.</p>
-                  <Show when={payouts.error()}>
-                    <p class="text-sm text-red-600">{payouts.error()}</p>
+                  <Show when={stripe.error()}>
+                    <p class="text-sm text-red-600">{stripe.error()}</p>
                   </Show>
                   <button
                     type="button"
-                    onClick={payouts.openSetup}
-                    disabled={payouts.redirecting()}
+                    onClick={() => stripe.go(() => openPayoutOnboarding(account()!.pubkey, window.location.href), "Failed to open Stripe")}
+                    disabled={stripe.redirecting()}
                     class="inline-flex items-center rounded-lg bg-yellow-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-yellow-700 disabled:opacity-50"
                   >
-                    {payouts.redirecting() ? "Opening Stripe…" : connect()?.account_id ? "Finish setting up payouts" : "Set up payouts"}
+                    {stripe.redirecting() ? "Opening Stripe…" : connect()?.account_id ? "Finish setting up payouts" : "Set up payouts"}
                   </button>
                 </Show>
               </div>

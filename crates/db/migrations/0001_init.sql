@@ -1,7 +1,7 @@
 CREATE TABLE tenant (
   pubkey TEXT PRIMARY KEY,
   return_url TEXT NOT NULL DEFAULT '',
-  nwc_url TEXT NOT NULL DEFAULT '',
+  nwc_url TEXT,
   nwc_error TEXT,
   stripe_error TEXT,
   created_at BIGINT NOT NULL,
@@ -12,7 +12,7 @@ CREATE TABLE tenant (
   overage_billed_at BIGINT,
   churned_at BIGINT,
   banned_at BIGINT,
-  stripe_account_id TEXT NOT NULL DEFAULT '',
+  stripe_account_id TEXT,
   stripe_account_ready BOOLEAN NOT NULL DEFAULT false
 );
 
@@ -39,7 +39,7 @@ CREATE TABLE relay (
   blossom_enabled BOOLEAN NOT NULL DEFAULT false,
   livekit_enabled BOOLEAN NOT NULL DEFAULT false,
   push_enabled BOOLEAN NOT NULL DEFAULT true,
-  custom_domain TEXT NOT NULL DEFAULT '',
+  custom_domain TEXT,
   custom_domain_verified BOOLEAN NOT NULL DEFAULT false,
   blossom_authenticated_read BOOLEAN NOT NULL DEFAULT false,
   member_price BIGINT NOT NULL DEFAULT 0,
@@ -57,14 +57,14 @@ CREATE INDEX relay_tenant_created_idx ON relay (tenant_pubkey, created_at);
 -- Resolves a request's host to the relay whose verified custom domain it is, and
 -- keeps two live relays from claiming one domain.
 CREATE UNIQUE INDEX relay_custom_domain_key ON relay (custom_domain)
-  WHERE custom_domain <> '' AND custom_domain_verified AND purged_at IS NULL;
+  WHERE custom_domain IS NOT NULL AND custom_domain_verified AND purged_at IS NULL;
 
 -- Purged relays whose data is still to be erased.
 CREATE INDEX relay_unerased_idx ON relay (id) WHERE purged_at IS NOT NULL AND erased_at IS NULL;
 
 -- The domain verification poller's queue of custom domains still to verify.
 CREATE INDEX relay_unverified_custom_domain_idx ON relay (id)
-  WHERE custom_domain <> '' AND NOT custom_domain_verified AND purged_at IS NULL;
+  WHERE custom_domain IS NOT NULL AND NOT custom_domain_verified AND purged_at IS NULL;
 
 CREATE TABLE host_redirect (
   host TEXT PRIMARY KEY,
@@ -81,15 +81,14 @@ CREATE TABLE activity (
   tenant_pubkey TEXT NOT NULL REFERENCES tenant (pubkey),
   created_at BIGINT NOT NULL,
   activity_type TEXT NOT NULL,
-  resource_type TEXT NOT NULL,
-  resource_id TEXT NOT NULL,
+  relay_id TEXT NOT NULL REFERENCES relay (id),
   billed_at BIGINT,
   snapshot JSONB NOT NULL
 );
 
--- A resource's history in order, for its activity feed and for billing's reads of
--- its state at a period boundary.
-CREATE INDEX activity_resource_created_idx ON activity (resource_id, created_at, seq);
+-- A relay's history in order, for its activity feed and for billing's reads of its
+-- state at a period boundary.
+CREATE INDEX activity_relay_created_idx ON activity (relay_id, created_at, seq);
 
 -- A tenant's activity that billing has not reconciled yet.
 CREATE INDEX activity_unbilled_idx ON activity (tenant_pubkey, created_at, seq) WHERE billed_at IS NULL;
@@ -390,11 +389,11 @@ CREATE TABLE membership (
   relay_id TEXT NOT NULL REFERENCES relay (id),
   pubkey TEXT,
   invite_code TEXT,
-  stripe_customer_id TEXT NOT NULL DEFAULT '',
-  stripe_subscription_id TEXT NOT NULL DEFAULT '',
+  stripe_customer_id TEXT,
+  stripe_subscription_id TEXT,
   status TEXT NOT NULL CHECK (status IN ('pending', 'active', 'canceled', 'lapsed')),
   current_period_end BIGINT,
-  claimed_at BIGINT,
+  bound_at BIGINT,
   created_at BIGINT NOT NULL,
   CHECK (pubkey IS NOT NULL OR invite_code IS NOT NULL)
 );
@@ -407,7 +406,7 @@ CREATE UNIQUE INDEX membership_live_key ON membership (relay_id, pubkey)
 -- Invite pages and joins find an invite's membership by its code.
 CREATE UNIQUE INDEX membership_invite_key ON membership (invite_code) WHERE invite_code IS NOT NULL;
 
--- A relay's memberships, newest first, and its unclaimed invites holding seats.
+-- A relay's memberships, newest first, and its unused invites holding seats.
 CREATE INDEX membership_relay_idx ON membership (relay_id, created_at);
 
 -- A member's account, listing every membership they hold.

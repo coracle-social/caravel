@@ -7,8 +7,9 @@
 use anyhow::{Result, bail};
 use axum::Router;
 use axum::extract::{Request, State};
-use axum::http::{StatusCode, Uri, header};
+use axum::http::{Method, StatusCode, Uri, header};
 use axum::response::{IntoResponse, Redirect, Response};
+use caravel_core::relays;
 use caravel_relay::{Relays, Route};
 use tower::ServiceExt;
 
@@ -95,20 +96,23 @@ async fn dispatch(State(dispatch): State<Dispatch>, request: Request) -> Respons
 async fn relay_host(dispatch: &Dispatch, route: Route, request: Request) -> Response {
     let path = request.uri().path();
     if path.starts_with("/assets/") {
-        return file_or_404(&dispatch.web, path);
+        return dispatch
+            .web
+            .file(path)
+            .unwrap_or_else(|| StatusCode::NOT_FOUND.into_response());
     }
 
     if web::is_page_request(&request) {
-        if route.host != route.primary_host {
+        let primary_host = route.primary_host();
+        if route.host != primary_host {
             let target = request
                 .uri()
                 .path_and_query()
                 .map_or("/", |path| path.as_str());
-            return Redirect::permanent(&format!("https://{}{target}", route.primary_host))
-                .into_response();
+            return Redirect::permanent(&format!("https://{primary_host}{target}")).into_response();
         }
-        let relay = route.instance.state().relay.clone();
-        return dispatch.web.shell(App::Portal, web::portal_context(&relay));
+        let relay = route.instance.state().relay.profile();
+        return dispatch.web.shell(App::Portal, Some(relay));
     }
 
     dispatch.relays.serve(route, request).await
@@ -124,10 +128,7 @@ fn platform_host(dispatch: &Dispatch, request: &Request) -> Response {
     if path.starts_with("/assets/") {
         return StatusCode::NOT_FOUND.into_response();
     }
-    if !matches!(
-        *request.method(),
-        axum::http::Method::GET | axum::http::Method::HEAD
-    ) {
+    if !matches!(*request.method(), Method::GET | Method::HEAD) {
         return StatusCode::METHOD_NOT_ALLOWED.into_response();
     }
 
@@ -136,12 +137,7 @@ fn platform_host(dispatch: &Dispatch, request: &Request) -> Response {
     } else {
         App::Tenant
     };
-    dispatch.web.shell(app, serde_json::json!({}))
-}
-
-fn file_or_404(web: &Web, path: &str) -> Response {
-    web.file(path)
-        .unwrap_or_else(|| StatusCode::NOT_FOUND.into_response())
+    dispatch.web.shell(app, None)
 }
 
 async fn call(router: &Router, request: Request) -> Response {
@@ -181,7 +177,7 @@ fn strip_prefix(mut request: Request, prefix: &str) -> Request {
 
 /// The host a request is for, lowercased and without a port: from the `Host`
 /// header, or the request target's authority under HTTP/2.
-pub fn request_host(request: &Request) -> String {
+fn request_host(request: &Request) -> String {
     let host = request
         .headers()
         .get(header::HOST)
@@ -193,12 +189,5 @@ pub fn request_host(request: &Request) -> String {
                 .map(|authority| authority.as_str())
         })
         .unwrap_or_default();
-    let host = host.rsplit_once(':').map_or(host, |(name, port)| {
-        if port.chars().all(|c| c.is_ascii_digit()) {
-            name
-        } else {
-            host
-        }
-    });
-    host.trim_end_matches('.').to_lowercase()
+    relays::url_host(host)
 }

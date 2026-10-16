@@ -4,7 +4,7 @@
 mod common;
 
 use axum::http::StatusCode;
-use caravel_core::testing::API_URL;
+use caravel_core::testing::{self, API_URL};
 use common::*;
 use coracle_lib::keys::SecretKey;
 
@@ -34,10 +34,10 @@ async fn a_session_signature_must_be_for_this_request_and_fresh() {
     let url = format!("{API_URL}/session");
 
     for auth in [
-        sign_http_auth(&user, API_URL, "POST", now),
-        sign_http_auth(&user, &url, "GET", now),
-        sign_http_auth(&user, &url, "POST", now - 120),
-        sign_http_auth(&user, &url, "POST", now + 120),
+        testing::http_auth(&user, API_URL, "POST", now),
+        testing::http_auth(&user, &url, "GET", now),
+        testing::http_auth(&user, &url, "POST", now - 120),
+        testing::http_auth(&user, &url, "POST", now + 120),
     ] {
         let response = api.request("POST", "/session", Some(&auth), None).await;
         assert_eq!(
@@ -108,7 +108,7 @@ async fn a_base_url_signature_works_for_fifteen_minutes() {
     let user = SecretKey::generate();
     let now = api.core.clock.now();
 
-    let fresh = sign_http_auth(&user, API_URL, "GET", now - 14 * 60);
+    let fresh = testing::http_auth(&user, API_URL, "GET", now - 14 * 60);
     assert_eq!(
         api.request("GET", "/identity", Some(&fresh), None)
             .await
@@ -116,7 +116,7 @@ async fn a_base_url_signature_works_for_fifteen_minutes() {
         StatusCode::OK
     );
 
-    let stale = sign_http_auth(&user, API_URL, "GET", now - 16 * 60);
+    let stale = testing::http_auth(&user, API_URL, "GET", now - 16 * 60);
     assert_eq!(
         api.request("GET", "/identity", Some(&stale), None)
             .await
@@ -124,7 +124,7 @@ async fn a_base_url_signature_works_for_fifteen_minutes() {
         StatusCode::UNAUTHORIZED
     );
 
-    let elsewhere = sign_http_auth(&user, "http://elsewhere.test", "GET", now);
+    let elsewhere = testing::http_auth(&user, "http://elsewhere.test", "GET", now);
     assert_eq!(
         api.request("GET", "/identity", Some(&elsewhere), None)
             .await
@@ -217,7 +217,7 @@ async fn every_route_has_an_auth_class() {
     }
 
     for (method, path) in &public_missing {
-        let body = serde_json::json!({ "session": "cs_missing" });
+        let body = serde_json::json!({ "checkout": "cs_missing" });
         let response = api.request(method, path, None, Some(body)).await;
         assert_eq!(response.status, StatusCode::NOT_FOUND, "{method} {path}");
     }
@@ -231,4 +231,20 @@ async fn every_route_has_an_auth_class() {
         let response = api.request(method, path, Some(&bearer), None).await;
         assert_eq!(response.status, StatusCode::FORBIDDEN, "{method} {path}");
     }
+}
+
+#[tokio::test]
+async fn banning_a_tenant_nobody_is_not_found() {
+    let api = TestApi::new().await;
+    let admin = api.bearer(&api.admin).await;
+    let nobody = SecretKey::generate().public_key().to_hex();
+    let banned = api
+        .request(
+            "POST",
+            &format!("/tenants/{nobody}/ban"),
+            Some(&admin),
+            None,
+        )
+        .await;
+    assert_eq!(banned.status, StatusCode::NOT_FOUND);
 }

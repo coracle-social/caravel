@@ -1,13 +1,14 @@
 import { A } from "@solidjs/router"
 import { createSignal, onCleanup, onMount, Show } from "solid-js"
-import { getProfilePicture, type ProfileContent } from "applesauce-core/helpers/profile"
-import { fetchModerationBlob, type ModerationItem, type Relay, type Upload } from "@/shared/lib/api"
+import type { ProfileContent } from "applesauce-core/helpers/profile"
+import { canonicalHost, fetchModerationBlob, relayName, type ModerationItem, type Relay, type Upload } from "@/shared/lib/api"
+import Avatar from "@/shared/components/Avatar"
 import CopyNpub from "@/shared/components/CopyNpub"
+import { profileName } from "@/shared/lib/profiles"
 import NoteContent from "@/admin/components/NoteContent"
 import { formatBytes, formatTimeAgo } from "@/shared/lib/format"
 
-// The kinds these relays actually carry, so the feed reads as content instead
-// of as numbers. Anything else falls back to its raw kind.
+// Names for the kinds these relays carry; any other shows its number.
 const KIND_LABELS: Record<number, string> = {
   0: "Profile",
   1: "Note",
@@ -30,9 +31,7 @@ function FileIcon() {
   )
 }
 
-// Renders the blob itself so uploads can be judged on sight. Blobs frequently
-// carry no recorded mimetype, so attempt an image unless the type rules it out;
-// anything else, or a blob that won't load, falls back to a file tile.
+// An upload as an image, unless its type rules that out or it won't load, or else as a file tile.
 function UploadPreview(props: { upload: Upload; relayId: string }) {
   const [src, setSrc] = createSignal<string>()
   const [failed, setFailed] = createSignal(false)
@@ -50,9 +49,7 @@ function UploadPreview(props: { upload: Upload; relayId: string }) {
   onMount(() => {
     if (!couldBeImage || !anchor) return
 
-    // Only fetch what actually scrolls into view. Each preview is a round trip
-    // that proxies the whole blob, and a page can list hundreds of uploads —
-    // this is the native loading="lazy" we gave up by fetching by hand.
+    // Each preview proxies a whole blob, so fetch only what scrolls into view.
     const observer = new IntersectionObserver(
       (entries) => {
         if (!entries.some((entry) => entry.isIntersecting)) return
@@ -80,9 +77,7 @@ function UploadPreview(props: { upload: Upload; relayId: string }) {
   return (
     <a
       ref={anchor}
-      // Once proxied, the object URL opens the real bytes in a new tab. Before
-      // that — and for anything we don't preview — fall back to the blob's
-      // canonical URL on the relay, which only its own members can open.
+      // The proxied bytes once loaded, or else the blob on its relay, which only members can open.
       href={src() ?? props.upload.url}
       target="_blank"
       rel="noreferrer"
@@ -103,7 +98,7 @@ type ModerationListItemProps = {
 }
 
 export default function ModerationListItem(props: ModerationListItemProps) {
-  const displayName = () => props.metadata?.name || props.metadata?.display_name
+  const displayName = () => profileName(props.metadata)
   const label = () =>
     props.item.type === "upload"
       ? "Upload"
@@ -113,16 +108,7 @@ export default function ModerationListItem(props: ModerationListItemProps) {
     <li class="rounded-lg border border-gray-200 bg-white p-4">
       <div class="flex items-start justify-between gap-3">
         <div class="flex min-w-0 items-center gap-2">
-          <Show
-            when={getProfilePicture(props.metadata)}
-            fallback={
-              <div class="h-7 w-7 flex-shrink-0 rounded-full bg-gray-200 flex items-center justify-center text-[11px] text-gray-500">
-                {(displayName() || props.item.data.pubkey).slice(0, 1).toUpperCase()}
-              </div>
-            }
-          >
-            <img src={getProfilePicture(props.metadata)} alt="" class="h-7 w-7 flex-shrink-0 rounded-full object-cover" />
-          </Show>
+          <Avatar profile={props.metadata} pubkey={props.item.data.pubkey} class="h-7 w-7 flex-shrink-0" fallbackClass="bg-gray-200 text-[11px] text-gray-500" />
           <div class="min-w-0">
             <Show when={displayName()}>
               <p class="truncate text-sm font-medium text-gray-900">{displayName()}</p>
@@ -179,7 +165,7 @@ export default function ModerationListItem(props: ModerationListItemProps) {
       <div class="mt-3 border-t border-gray-100 pt-3">
         <A href={`/admin/relays/${props.item.relay_id}`} class="text-xs text-gray-500 hover:text-gray-900 hover:underline">
           <Show when={props.relay} fallback={props.item.relay_id}>
-            {(relay) => <>{relay().info_name || relay().subdomain} · {relay().subdomain}.{relay().zooid_domain}</>}
+            {(relay) => <>{relayName(relay())} · {canonicalHost(relay())}</>}
           </Show>
         </A>
       </div>

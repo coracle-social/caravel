@@ -1,11 +1,10 @@
 import { For, Show } from "solid-js"
+import type { Severity } from "@/shared/lib/billing"
 
 export type PromptBannerAction = {
   label: string
   onClick: () => void
 }
-
-type Severity = "error" | "warn" | "info"
 
 type PromptBannerProps = {
   severity: Severity

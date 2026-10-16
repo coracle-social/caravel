@@ -14,8 +14,8 @@ use crate::response::ApiError;
 /// the API's base url, which clients from before sessions send on every request.
 pub struct Authed(pub Actor);
 
-/// An authenticated actor who administers the platform.
-pub struct Admin(pub Actor);
+/// Proof that the request is from an admin of the platform.
+pub struct Admin;
 
 impl FromRequestParts<Core> for Authed {
     type Rejection = ApiError;
@@ -44,7 +44,7 @@ impl FromRequestParts<Core> for Admin {
     async fn from_request_parts(parts: &mut Parts, core: &Core) -> Result<Self, Self::Rejection> {
         let Authed(actor) = Authed::from_request_parts(parts, core).await?;
         actor.require_admin()?;
-        Ok(Self(actor))
+        Ok(Self)
     }
 }
 

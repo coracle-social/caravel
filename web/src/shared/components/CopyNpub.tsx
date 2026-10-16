@@ -1,11 +1,8 @@
 import { copyToClipboard } from "@/shared/lib/clipboard"
 import { shortenNpub, toNpub } from "@/shared/lib/pubkey"
 
-// Renders a pubkey as a shortened npub followed by a small copy button. The button
-// copies the full npub and toasts on success. The icon inherits the surrounding
-// text color (currentColor + opacity) so it reads on both light and dark
-// backgrounds, and the click stops propagation so it can sit inside links/cards
-// without triggering them. Pass `class` to style the npub text.
+// A pubkey as a short npub with a button copying the whole one, which works
+// inside a link without following it. `class` styles the npub.
 export default function CopyNpub(props: { pubkey: string; class?: string }) {
   const copy = (event: MouseEvent) => {
     event.preventDefault()

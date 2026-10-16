@@ -1,15 +1,12 @@
 import { For, Show } from "solid-js"
-import type { Activity } from "@/shared/lib/hooks"
+import type { Activity, ActivityType } from "@/shared/lib/api"
 
-const ACTIVITY_LABELS: Record<string, string> = {
-  create_relay:           "Relay created",
-  update_relay:           "Relay updated",
-  deactivate_relay:       "Relay deactivated",
-  activate_relay:         "Relay activated",
-  fail_relay_sync:        "Relay sync failed",
-  complete_relay_sync:    "Relay sync completed",
-  create_tenant:          "Account created",
-  update_tenant:          "Account updated",
+// Every other activity shows its type in words.
+const ACTIVITY_LABELS: Partial<Record<ActivityType, string>> = {
+  create_relay:     "Relay created",
+  update_relay:     "Relay updated",
+  deactivate_relay: "Relay deactivated",
+  activate_relay:   "Relay activated",
 }
 
 function formatDate(ts: number) {

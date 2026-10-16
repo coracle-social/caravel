@@ -1,7 +1,21 @@
+import type { MemberInterval } from "@/shared/lib/api"
+
 export const formatUsd = (cents: number) => `$${(cents / 100).toFixed(2)}`
 
+export const formatPrice = (cents: number, interval: MemberInterval) => `${formatUsd(cents)} / ${interval}`
+
+export const formatDate = (secs: number) => new Date(secs * 1000).toLocaleDateString()
+
+export const formatLongDate = (secs: number) =>
+  new Date(secs * 1000).toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" })
+
+export const formatDateTime = (secs: number) => new Date(secs * 1000).toLocaleString()
+
 export const formatPeriod = (startSecs?: number, endSecs?: number) =>
-  (!startSecs || !endSecs) ? "" : `${new Date(startSecs * 1000).toLocaleDateString()} – ${new Date(endSecs * 1000).toLocaleDateString()}`
+  (!startSecs || !endSecs) ? "" : `${formatDate(startSecs)} – ${formatDate(endSecs)}`
+
+// What went wrong, for showing to the person it went wrong for.
+export const formatError = (error: unknown, fallback: string) => error instanceof Error ? error.message : fallback
 
 const RELATIVE_UNITS: [Intl.RelativeTimeFormatUnit, number][] = [
   ["year", 365 * 24 * 60 * 60],

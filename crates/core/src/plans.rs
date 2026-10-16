@@ -2,9 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-// Plan ids are permanent billing keys: past charges are priced by resolving the id
-// recorded on them, so an id is never reused or repriced. Mirrored in the
-// frontend's plans.ts.
+// Past charges are priced by their plan id, so ids are never reused or repriced.
 pub const PLAN_FREE: &str = "free";
 pub const PLAN_BASIC: &str = "basic";
 pub const PLAN_GROWTH: &str = "growth";
@@ -20,7 +18,6 @@ pub struct Plan {
     pub id: String,
     pub name: String,
     pub amount: i64,
-    pub hidden: bool,
     pub members: Option<i64>,
     pub blossom: bool,
     pub livekit: bool,
@@ -37,6 +34,13 @@ pub struct Plan {
     pub av_overage: i64,
 }
 
+impl Plan {
+    /// Whether relays on the plan are billed for it.
+    pub fn is_paid(&self) -> bool {
+        self.amount > 0
+    }
+}
+
 /// The plan catalog. Paid tiers sell an allowance of storage and A/V participant
 /// hours rather than a cap: usage past it bills per whole unit at the tier's rate,
 /// priced so a relay that outgrows Basic reaches Growth's price around the point
@@ -47,7 +51,6 @@ pub fn list_plans() -> Vec<Plan> {
             id: PLAN_FREE.to_string(),
             name: "Free".to_string(),
             amount: 0,
-            hidden: false,
             members: Some(10),
             blossom: false,
             livekit: false,
@@ -60,7 +63,6 @@ pub fn list_plans() -> Vec<Plan> {
             id: PLAN_BASIC.to_string(),
             name: "Basic".to_string(),
             amount: 500,
-            hidden: false,
             members: Some(100),
             blossom: true,
             livekit: true,
@@ -73,7 +75,6 @@ pub fn list_plans() -> Vec<Plan> {
             id: PLAN_GROWTH.to_string(),
             name: "Growth".to_string(),
             amount: 2500,
-            hidden: false,
             members: None,
             blossom: true,
             livekit: true,

@@ -88,7 +88,7 @@ async fn next(receiver: &mut mpsc::UnboundedReceiver<Value>) -> Option<Value> {
 #[tokio::test]
 async fn a_local_callback_is_refused() {
     let mut core = testing::core(&SecretKey::generate().public_key().to_hex()).await;
-    core.outbound = Outbound::new(Duration::from_secs(1), false).unwrap();
+    core.outbound = Outbound::new(Duration::from_secs(1)).unwrap();
     let server = Server::start_with(core).await;
     let (relay, owner) = server.relay().await;
     let mut client = server.connect(&relay.canonical_host()).await;

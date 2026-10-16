@@ -8,15 +8,14 @@ use bytes::Bytes;
 use coracle_lib::events::Event;
 use futures_util::{Stream, StreamExt};
 use serde::{Deserialize, Serialize};
-use sqlx::{PgPool, Row};
+use sqlx::PgPool;
 
 use crate::Core;
 use crate::bus::Change;
-use crate::crypto::RelayKey;
 use crate::error::{Error, Result};
-use crate::events::{self, EventHead, Saved, StoredEvent};
+use crate::events::{self, Saved};
 use crate::management;
-use crate::relay_policy::kinds;
+use crate::relay_policy;
 use crate::relays::Relay;
 use crate::rooms;
 
@@ -32,13 +31,14 @@ const EXPORT_PAGE: i64 = 1000;
 /// How many events an import stores per transaction.
 const IMPORT_BATCH: usize = 500;
 
-/// One line of an import that didn't become a stored event.
+/// Something in an import that didn't become a stored event: a line, the event on
+/// it, or a room.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ImportProblem {
-    #[serde(default, skip_serializing_if = "is_zero")]
-    pub line: usize,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub event_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_id: Option<String>,
     pub message: String,
 }
 
@@ -72,6 +72,26 @@ impl ImportResult {
             self.problems.push(problem);
         }
     }
+
+    /// Count what another part of the import did.
+    fn add(&mut self, other: ImportResult) {
+        self.imported += other.imported;
+        self.invalid += other.invalid;
+        self.skipped += other.skipped;
+        self.rooms_rebuilt += other.rooms_rebuilt;
+        for problem in other.problems {
+            self.note(problem);
+        }
+    }
+}
+
+/// What one line of a dump holds.
+enum Line {
+    Blank,
+    Invalid(ImportProblem),
+    /// An event describing the source relay's own state.
+    SourceState,
+    Event(Event),
 }
 
 /// Every event a relay stores, as JSONL, read a page at a time so a relay of any
@@ -88,48 +108,22 @@ pub fn export_events(
                 return Ok(None);
             };
 
-            let rows = sqlx::query(
-                "SELECT id, pubkey, created_at, kind, tag_values, content, tags, sig FROM event
-                 WHERE relay_id = $1 AND (created_at < $2 OR (created_at = $2 AND id > $3))
-                 ORDER BY created_at DESC, id LIMIT $4",
-            )
-            .bind(&relay_id)
-            .bind(created_at)
-            .bind(&id)
-            .bind(EXPORT_PAGE)
-            .fetch_all(&pool)
-            .await?;
+            let page =
+                events::list_events_after(&pool, &relay_id, created_at, &id, EXPORT_PAGE).await?;
+            let text: String = page
+                .iter()
+                .map(|stored| format!("{}\n", stored.to_json(false)))
+                .collect();
 
-            let mut page = String::new();
-            for row in &rows {
-                let stored = StoredEvent {
-                    head: EventHead {
-                        id: row.get::<Vec<u8>, _>("id").try_into().unwrap_or_default(),
-                        pubkey: row
-                            .get::<Vec<u8>, _>("pubkey")
-                            .try_into()
-                            .unwrap_or_default(),
-                        created_at: row.get("created_at"),
-                        kind: u16::try_from(row.get::<i32, _>("kind")).unwrap_or_default(),
-                        tag_values: row.get("tag_values"),
-                    },
-                    content: row.get("content"),
-                    tags: row.get("tags"),
-                    sig: row.get::<Vec<u8>, _>("sig").try_into().unwrap_or([0; 64]),
-                };
-                page.push_str(&stored.to_json(false));
-                page.push('\n');
-            }
-
-            let next = rows
+            let next = page
                 .last()
-                .filter(|_| rows.len() as i64 == EXPORT_PAGE)
-                .map(|row| (row.get::<i64, _>("created_at"), row.get::<Vec<u8>, _>("id")));
+                .filter(|_| page.len() as i64 == EXPORT_PAGE)
+                .map(|last| (last.head.created_at, last.head.id.to_vec()));
 
-            if rows.is_empty() {
+            if page.is_empty() {
                 return Ok(None);
             }
-            Ok(Some((Bytes::from(page), next)))
+            Ok(Some((Bytes::from(text), next)))
         }
     })
 }
@@ -149,13 +143,21 @@ where
     let mut buffer: Vec<u8> = Vec::new();
     let mut line = 0;
     let mut overlong = false;
-    let rooms_enabled = relay.groups_enabled;
+    let mut ended = false;
 
-    while let Some(chunk) = body.next().await {
-        let chunk = chunk.map_err(|error| {
-            Error::invalid("unreadable-body", format!("the upload broke off: {error}"))
-        })?;
-        buffer.extend_from_slice(&chunk);
+    while !ended {
+        match body.next().await {
+            Some(chunk) => buffer.extend_from_slice(&chunk.map_err(|error| {
+                Error::invalid("unreadable-body", format!("the upload broke off: {error}"))
+            })?),
+            // The last line needn't end with a newline.
+            None => {
+                ended = true;
+                if !buffer.is_empty() {
+                    buffer.push(b'\n');
+                }
+            }
+        }
 
         while let Some(end) = buffer.iter().position(|byte| *byte == b'\n') {
             let text: Vec<u8> = buffer.drain(..=end).collect();
@@ -164,24 +166,39 @@ where
                 overlong = false;
                 continue;
             }
-            parse_line(
-                &mut result,
-                &mut rooms_touched,
-                &mut batch,
-                rooms_enabled,
-                line,
-                &text[..text.len() - 1],
-            );
+
+            match parse_line(line, &text[..text.len() - 1]) {
+                Line::Blank => {}
+                Line::Invalid(problem) => result.fail(problem),
+                Line::SourceState => result.skipped += 1,
+                Line::Event(event) => {
+                    if relay.groups_enabled
+                        && let Some(room_id) = rooms::room_id(&event)
+                    {
+                        let history = rooms_touched.entry(room_id.to_string()).or_default();
+                        if rooms::is_moderation_kind(event.kind)
+                            || matches!(
+                                event.kind,
+                                rooms::kinds::JOIN_REQUEST | rooms::kinds::LEAVE_REQUEST
+                            )
+                        {
+                            history.push(event.clone());
+                        }
+                    }
+                    batch.push((line, event));
+                }
+            }
+
             if batch.len() >= IMPORT_BATCH {
-                store_batch(core, relay, &mut result, std::mem::take(&mut batch)).await?;
+                result.add(store_batch(core, relay, std::mem::take(&mut batch)).await?);
             }
         }
 
         if buffer.len() > MAX_LINE_BYTES {
             if !overlong {
                 result.fail(ImportProblem {
-                    line: line + 1,
-                    event_id: String::new(),
+                    line: Some(line + 1),
+                    event_id: None,
                     message: format!("the line is longer than {MAX_LINE_BYTES} bytes"),
                 });
             }
@@ -190,100 +207,59 @@ where
         }
     }
 
-    if !buffer.is_empty() && !overlong {
-        line += 1;
-        parse_line(
-            &mut result,
-            &mut rooms_touched,
-            &mut batch,
-            rooms_enabled,
-            line,
-            &buffer,
-        );
-    }
-    store_batch(core, relay, &mut result, batch).await?;
-
-    rebuild_rooms(core, relay, &mut result, rooms_touched).await?;
+    result.add(store_batch(core, relay, batch).await?);
+    result.add(rebuild_rooms(core, relay, rooms_touched).await?);
     Ok(result)
 }
 
-fn parse_line(
-    result: &mut ImportResult,
-    rooms_touched: &mut BTreeMap<String, Vec<Event>>,
-    batch: &mut Vec<(usize, Event)>,
-    rooms_enabled: bool,
-    line: usize,
-    text: &[u8],
-) {
+fn parse_line(line: usize, text: &[u8]) -> Line {
     let text = String::from_utf8_lossy(text);
     let text = text.trim();
     if text.is_empty() {
-        return;
+        return Line::Blank;
     }
 
     let event: Event = match serde_json::from_str(text) {
         Ok(event) => event,
         Err(error) => {
-            return result.fail(ImportProblem {
-                line,
-                event_id: String::new(),
+            return Line::Invalid(ImportProblem {
+                line: Some(line),
+                event_id: None,
                 message: format!("json parse error: {error}"),
             });
         }
     };
 
     if event.verify().is_err() {
-        return result.fail(ImportProblem {
-            line,
-            event_id: event.id.to_hex(),
+        return Line::Invalid(ImportProblem {
+            line: Some(line),
+            event_id: Some(event.id.to_hex()),
             message: "invalid signature".to_string(),
         });
     }
 
     if is_source_state(event.kind) {
-        result.skipped += 1;
-        return;
+        return Line::SourceState;
     }
 
-    if let Some(room_id) = rooms::room_id(&event)
-        && rooms_enabled
-        && rooms::is_room_event(event.kind, Some(room_id))
-    {
-        let history = rooms_touched.entry(room_id.to_string()).or_default();
-        if rooms::is_moderation_kind(event.kind)
-            || matches!(
-                event.kind,
-                rooms::kinds::JOIN_REQUEST | rooms::kinds::LEAVE_REQUEST
-            )
-        {
-            history.push(event.clone());
-        }
-    }
-
-    batch.push((line, event));
+    Line::Event(event)
 }
 
 /// Events the source relay published about its own members, roles, media and
 /// rooms, which this relay derives from its own tables instead.
 fn is_source_state(kind: u16) -> bool {
-    matches!(
-        kind,
-        kinds::RELAY_ADD_MEMBER
-            | kinds::RELAY_REMOVE_MEMBER
-            | kinds::RELAY_MEMBERS
-            | kinds::RELAY_ROLE
-            | kinds::BLOB_DESCRIPTOR
-    ) || rooms::is_metadata_kind(kind)
+    relay_policy::is_relay_written(kind) || rooms::is_metadata_kind(kind)
 }
 
+/// Store a batch of events, each with the line it came from.
 async fn store_batch(
     core: &Core,
     relay: &Relay,
-    result: &mut ImportResult,
     batch: Vec<(usize, Event)>,
-) -> Result<()> {
+) -> Result<ImportResult> {
+    let mut result = ImportResult::default();
     if batch.is_empty() {
-        return Ok(());
+        return Ok(result);
     }
 
     let now = core.clock.now();
@@ -308,21 +284,21 @@ async fn store_batch(
         match saved {
             Some(Saved::New | Saved::Duplicate) => result.imported += 1,
             Some(Saved::Deleted) => result.fail(ImportProblem {
-                line: *line,
-                event_id: event.id.to_hex(),
+                line: Some(*line),
+                event_id: Some(event.id.to_hex()),
                 message: "a deletion stored on this relay refuses it".to_string(),
             }),
             None => result.fail(ImportProblem {
-                line: *line,
-                event_id: event.id.to_hex(),
+                line: Some(*line),
+                event_id: Some(event.id.to_hex()),
                 message: "the event contains a NUL character".to_string(),
             }),
         }
     }
-    Ok(())
+    Ok(result)
 }
 
-/// Rebuild each room the dump touched from its own history, then rewrite the
+/// Rebuild each room the dump changed from its own history, then rewrite the
 /// relay's published state and tell its subscribers. A room the relay doesn't hold
 /// is created only by a create event the dump carries; and a deletion of the room
 /// is replayed only when nothing follows it, since anything after it belongs to a
@@ -330,14 +306,14 @@ async fn store_batch(
 async fn rebuild_rooms(
     core: &Core,
     relay: &Relay,
-    result: &mut ImportResult,
     rooms_touched: BTreeMap<String, Vec<Event>>,
-) -> Result<()> {
+) -> Result<ImportResult> {
+    let mut result = ImportResult::default();
     if rooms_touched.is_empty() {
-        return Ok(());
+        return Ok(result);
     }
 
-    let key = RelayKey::decrypt(&core.config.platform_key, &relay.secret)?;
+    let key = core.relay_key(relay)?;
     let known: Vec<String> = rooms::list_rooms(core.db.pool(), &relay.id)
         .await?
         .into_iter()
@@ -351,12 +327,15 @@ async fn rebuild_rooms(
             .any(|event| event.kind == rooms::kinds::CREATE_GROUP);
         if !known.contains(&room_id) && !created {
             result.note(ImportProblem {
-                line: 0,
-                event_id: String::new(),
+                line: None,
+                event_id: None,
                 message: format!(
                     "failed to rebuild group {room_id}: the dump carries no create event for it"
                 ),
             });
+            continue;
+        }
+        if history.is_empty() {
             continue;
         }
 
@@ -376,6 +355,10 @@ async fn rebuild_rooms(
         result.rooms_rebuilt += 1;
     }
 
+    if result.rooms_rebuilt == 0 {
+        return Ok(result);
+    }
+
     let published = core
         .db
         .with_tx(async |conn| management::rebuild_derived(conn, &key, &relay.id, now).await)
@@ -384,5 +367,5 @@ async fn rebuild_rooms(
         relay_id: relay.id.clone(),
         published,
     });
-    Ok(())
+    Ok(result)
 }

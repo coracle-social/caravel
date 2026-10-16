@@ -1,26 +1,19 @@
 import { createSignal } from "solid-js"
 import { ensureInvoiceBolt11, invoiceStatus, listInvoiceItems, type Invoice, type InvoiceItem } from "@/shared/lib/api"
 import { methodLabel } from "@/shared/lib/paymentMethod"
-import { formatUsd } from "@/shared/lib/format"
+import { formatDate, formatUsd } from "@/shared/lib/format"
 import { PLATFORM_NAME } from "@/shared/lib/config"
-
-const fmtDate = (seconds: number) => new Date(seconds * 1000).toLocaleDateString()
 
 function escapeHtml(value: string) {
   const map: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }
   return value.replace(/[&<>"']/g, (c) => map[c])
 }
 
-// Generates a printable invoice and opens the browser's print/save-as-PDF dialog.
-// No PDF dependency: the invoice is rendered as standalone HTML into an off-screen
-// iframe so the current page is never disturbed. The bitcoin line is included only
-// for Lightning-relevant invoices (never card-paid or void) to avoid spuriously
-// minting a bolt11.
+// Printing an invoice from an off-screen frame, with its price in sats when it could be paid over Lightning.
 export function useInvoicePdf() {
   const [printing, setPrinting] = createSignal(false)
 
-  // `loadItems` overrides how line items are fetched — used by the draft invoice,
-  // whose sentinel id has no row in the per-invoice items endpoint.
+  // The draft invoice isn't stored, so it passes `loadItems` to fetch its items.
   async function printInvoice(invoice: Invoice, loadItems?: () => Promise<InvoiceItem[]>) {
     if (printing()) return
     setPrinting(true)
@@ -31,13 +24,14 @@ export function useInvoicePdf() {
         return [] as InvoiceItem[]
       })
 
+      // The draft isn't payable yet, so it has no Lightning invoice to price it.
       let sats: number | undefined
-      if (invoice.method !== "stripe" && invoice.method !== "comp" && invoice.voided_at == null) {
+      if (invoice.id !== "draft" && invoice.method !== "stripe" && invoice.method !== "comp" && invoice.voided_at == null) {
         try {
           const bolt11 = await ensureInvoiceBolt11(invoice.id)
           sats = Math.round(bolt11.msats / 1000)
         } catch {
-          // no bolt11 available — omit the bitcoin line
+          // Without a bolt11 there is no sats line.
         }
       }
 
@@ -52,8 +46,7 @@ export function useInvoicePdf() {
 
 function buildHtml(opts: { invoice: Invoice; items: InvoiceItem[]; sats?: number }): string {
   const { invoice, items, sats } = opts
-  // The draft invoice carries the sentinel id and no lifecycle timestamps, so
-  // invoiceStatus would read it as "open" — label it "draft" explicitly.
+  // The draft has no lifecycle timestamps, which would read as open.
   const status = invoice.id === "draft" ? "draft" : invoiceStatus(invoice)
 
   const rows = items.length
@@ -87,8 +80,8 @@ function buildHtml(opts: { invoice: Invoice; items: InvoiceItem[]; sats?: number
     <div class="meta">
       <div>Invoice ID: ${escapeHtml(invoice.id)}</div>
       <div>Billed to: ${escapeHtml(invoice.tenant_pubkey)}</div>
-      <div>Issued: ${fmtDate(invoice.created_at)}</div>
-      <div>Period: ${fmtDate(invoice.period_start)} &ndash; ${fmtDate(invoice.period_end)}</div>
+      <div>Issued: ${formatDate(invoice.created_at)}</div>
+      <div>Period: ${formatDate(invoice.period_start)} &ndash; ${formatDate(invoice.period_end)}</div>
       ${methodLine}
     </div>
     <table>

@@ -4,7 +4,7 @@
 use std::collections::BTreeSet;
 
 use anyhow::Result;
-use caravel_core::events::{self, Saved, StoredEvent};
+use caravel_core::events::{self, Saved, StoredEvent, kinds};
 use caravel_core::testing::{self, create_relay, sign_event};
 use caravel_core::{Core, Error};
 use coracle_lib::events::Event;
@@ -27,10 +27,10 @@ async fn save(core: &Core, relay_id: &str, event: &Event) -> Result<Saved> {
             let saved = events::save_event(&mut *conn, relay_id, event, NOW).await?;
             if saved == Saved::New {
                 match event.kind {
-                    events::DELETION => {
+                    kinds::DELETION => {
                         events::apply_deletion(conn, relay_id, event).await?;
                     }
-                    events::VANISH => {
+                    kinds::VANISH => {
                         events::apply_vanish(
                             conn,
                             relay_id,

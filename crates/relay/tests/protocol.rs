@@ -6,6 +6,7 @@ mod common;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
+use caravel_core::events::kinds;
 use caravel_core::testing::sign_event;
 use common::*;
 use coracle_lib::events::EventId;
@@ -132,7 +133,7 @@ async fn an_answer_for_another_relay_does_not_authenticate() {
     let wrong = format!("wss://{}/", second.canonical_host());
     let answer = sign_event(
         &owner,
-        22242,
+        kinds::CLIENT_AUTH,
         "",
         &[&["relay", &wrong], &["challenge", &client.challenge]],
         server.now(),
@@ -307,12 +308,12 @@ async fn a_verified_custom_domain_and_the_canonical_host_both_serve_the_relay() 
         .relays
         .resolve("chat.example.com")
         .expect("custom domain not served");
-    assert_eq!(custom.primary_host, "chat.example.com");
+    assert_eq!(custom.primary_host(), "chat.example.com");
     let canonical = server
         .relays
         .resolve(&relay.canonical_host())
         .expect("canonical host not served");
-    assert_eq!(canonical.primary_host, "chat.example.com");
+    assert_eq!(canonical.primary_host(), "chat.example.com");
 
     // A page on the canonical host goes to the custom domain; the protocol doesn't.
     let request = Request::builder().uri("/").body(Body::empty()).unwrap();
@@ -334,4 +335,69 @@ async fn shutting_down_closes_every_connection_as_going_away() {
     server.shutdown.cancel();
     let error = client.recv().await.unwrap_err().to_string();
     assert!(error.contains("1001") || error.contains("Away"), "{error}");
+}
+
+#[tokio::test]
+async fn a_request_to_vanish_must_name_a_host_the_relay_answers_on() {
+    let server = Server::start().await;
+    let (relay, owner) = server.relay().await;
+    let relay = server
+        .update(&relay, json!({"custom_domain": "unverified.example"}))
+        .await;
+
+    let mut client = server.connect(&relay.canonical_host()).await;
+    client.auth(&owner, server.now()).await;
+
+    let elsewhere = sign_event(
+        &owner,
+        kinds::VANISH,
+        "",
+        &[&["relay", "wss://unverified.example/"]],
+        server.now(),
+    );
+    let (accepted, message) = client.publish(&elsewhere).await;
+    assert!(!accepted);
+    assert!(message.contains("names another relay"), "{message}");
+
+    let here = sign_event(
+        &owner,
+        kinds::VANISH,
+        "",
+        &[&["relay", &format!("wss://{}:443/", relay.canonical_host())]],
+        server.now(),
+    );
+    assert!(client.publish(&here).await.0);
+}
+
+#[tokio::test]
+async fn a_browser_may_preflight_any_relay_endpoint() {
+    let server = Server::start().await;
+    let (relay, _) = server.relay().await;
+
+    let preflight = server
+        .http(
+            Request::builder()
+                .method("OPTIONS")
+                .uri("/upload")
+                .header("host", relay.canonical_host())
+                .header("origin", "https://app.example")
+                .header("access-control-request-method", "PUT")
+                .header("access-control-request-headers", "authorization, x-sha-256")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(preflight.status, StatusCode::OK);
+    assert_eq!(preflight.header("access-control-allow-origin"), Some("*"));
+    let allowed = preflight.header("access-control-allow-headers").unwrap();
+    assert!(
+        allowed.contains("authorization") && allowed.contains("x-sha-256"),
+        "{allowed}"
+    );
+    assert!(
+        preflight
+            .header("access-control-allow-methods")
+            .unwrap()
+            .contains("PUT")
+    );
 }

@@ -8,7 +8,7 @@ pub mod stripe;
 
 use anyhow::{Result, anyhow};
 use caravel_core::billing::{
-    self,
+    self, Collection,
     ledger::{self, Invoice, InvoiceItem},
 };
 use caravel_core::crypto::generate_keypair;
@@ -50,36 +50,18 @@ pub fn admin_pubkey(core: &Core) -> String {
 /// Sign up a tenant with a fresh keypair, returning its pubkey.
 pub async fn create_tenant(core: &Core) -> Result<String> {
     let (pubkey, _) = generate_keypair();
-    create_tenant_with(core, &pubkey).await?;
+    testing::insert_tenant(core, &pubkey).await;
     Ok(pubkey)
-}
-
-/// Sign up a tenant without reaching Stripe.
-pub async fn create_tenant_with(core: &Core, pubkey: &str) -> Result<()> {
-    tenants::insert_tenant(
-        core.db.pool(),
-        &Tenant {
-            pubkey: pubkey.to_string(),
-            return_url: "http://localhost/account".to_string(),
-            created_at: core.clock.now(),
-            stripe_customer_id: format!("cus_{}", &pubkey[..12]),
-            ..Default::default()
-        },
-    )
-    .await?;
-    Ok(())
 }
 
 /// Create a relay on `plan_id`, with every metered feature on for paid plans.
 pub async fn create_relay(core: &Core, tenant_pubkey: &str, plan_id: &str) -> Result<Relay> {
     let metered = Some(Flag(plan_id != "free"));
-    let subdomain = format!("r{}", &uuid::Uuid::new_v4().simple().to_string()[..12]);
-
     Ok(hosting::create_relay(
         core,
         tenant_pubkey,
         RelaySettings {
-            subdomain: Some(subdomain),
+            subdomain: Some(testing::subdomain()),
             domain: Some(testing::RELAY_DOMAIN.to_string()),
             plan_id: Some(plan_id.to_string()),
             blossom_enabled: metered,
@@ -134,7 +116,7 @@ pub async fn record_usage(
 /// [`reconcile_and_pay`].
 pub async fn reconcile(core: &Core, tenant_pubkey: &str) -> Result<()> {
     let tenant = get_tenant(core, tenant_pubkey).await?;
-    Ok(billing::reconcile_subscription(core, &tenant, false).await?)
+    Ok(billing::reconcile_subscription(core, &tenant, Collection::Settle).await?)
 }
 
 /// One pass of billing for a tenant in good standing, who pays what it invoices.
@@ -205,7 +187,7 @@ pub async fn line_items(core: &Core, invoice: &Invoice) -> Result<Vec<(String, i
 /// forward, or charges below the minimum an invoice is cut for.
 pub async fn outstanding(core: &Core, tenant_pubkey: &str) -> Result<i64> {
     Ok(
-        ledger::list_unbilled_invoice_items_for_tenant(core.db.pool(), tenant_pubkey)
+        ledger::list_outstanding_invoice_items_for_tenant(core.db.pool(), tenant_pubkey)
             .await?
             .iter()
             .map(|item| item.amount)

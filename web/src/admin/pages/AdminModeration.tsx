@@ -1,12 +1,12 @@
-import { createMemo, createSignal, For, onMount, Show } from "solid-js"
+import { createMemo, createResource, createSignal, For, onMount, Show } from "solid-js"
 import { uniq } from "@welshman/lib"
-import { listModeration, type ModerationItem } from "@/shared/lib/api"
+import { listModeration, listRelays, type ModerationItem } from "@/shared/lib/api"
 import LoadingState from "@/shared/components/LoadingState"
 import ModerationListItem from "@/admin/components/ModerationListItem"
 import PageContainer from "@/shared/components/PageContainer"
 import SearchInput from "@/shared/components/SearchInput"
 import { fuzzySearch } from "@/shared/lib/search"
-import { useAdminRelays, useProfileMetadataMap } from "@/shared/lib/hooks"
+import { useProfileMetadataMap } from "@/shared/lib/profiles"
 
 const TYPE_FILTERS = [
   {value: "all", label: "All"},
@@ -14,8 +14,7 @@ const TYPE_FILTERS = [
   {value: "upload", label: "Uploads"},
 ] as const
 
-// How far back the feed reaches. A bounded window keeps the relay from having
-// to scan its whole history to answer, and gives "load more" a real end.
+// How far back the feed reaches, which bounds the scan and gives "load more" an end.
 const RANGES = [
   {value: "1d", label: "24 hours", secs: 24 * 60 * 60},
   {value: "7d", label: "7 days", secs: 7 * 24 * 60 * 60},
@@ -26,21 +25,17 @@ const RANGES = [
 type TypeFilter = (typeof TYPE_FILTERS)[number]["value"]
 type RangeValue = (typeof RANGES)[number]["value"]
 
-// Frozen when the range is picked rather than recomputed per request, so
-// paging backwards can't drag the floor along with it.
+// Fixed when the range is picked, so paging back can't move it.
 const startOfRange = (range: RangeValue) => {
   const secs = RANGES.find(candidate => candidate.value === range)?.secs
   return secs === undefined ? undefined : Math.floor(Date.now() / 1000) - secs
 }
 
-// Uploads have no event id, so key them on the blob hash instead. Scoped by
-// relay because the same content can legitimately exist on several of them.
+// Uploads are keyed by blob hash, and every item by relay, since relays share content.
 const itemKey = (item: ModerationItem) =>
   item.type === "upload" ? `${item.relay_id}:${item.data.sha256}` : `${item.relay_id}:${item.data.id}`
 
-// Relay machinery rather than user content: role/permission events (8000/8001),
-// relay lists (10002), group lists (10009), and 13534. NIP-29's group management
-// events (9000-9020 moderation, 9021/9022 join/leave) are matched as a range.
+// Relay machinery rather than content: membership, roles, relay and group lists, and NIP-29 management.
 const CONTROL_KINDS = new Set([8000, 8001, 10002, 10009, 13534])
 
 const isControlEvent = (item: ModerationItem) =>
@@ -56,16 +51,14 @@ export default function AdminModeration() {
   const [typeFilter, setTypeFilter] = createSignal<TypeFilter>("all")
   const [range, setRange] = createSignal<RangeValue>("1d")
   const [since, setSince] = createSignal<number | undefined>(startOfRange("1d"))
-  const [relays] = useAdminRelays()
+  const [relays] = createResource(listRelays)
 
-  // Bumped whenever the window changes, so a response for the old window can't
-  // land on top of the new one.
+  // Bumped when the window changes, so a response for the old one is dropped.
   let generation = 0
 
   const relaysById = createMemo(() => new Map((relays() ?? []).map(relay => [relay.id, relay])))
 
-  // Control events stay in `items` so the pagination cursor and dedupe still see
-  // them; they're only hidden from the feed.
+  // Control events stay in `items` for paging and dedupe, and are only hidden.
   const visible = createMemo(() => items().filter(item => !isControlEvent(item)))
   const metadata = useProfileMetadataMap(() => uniq(visible().map(item => item.data.pubkey)))
 
@@ -84,15 +77,13 @@ export default function AdminModeration() {
 
       if (current !== generation) return
 
-      // `until` is inclusive and seen_at only has second resolution, so a page
-      // boundary repeats every item sharing that second.
+      // `until` is inclusive, so a page repeats the items that share its last second.
       const seen = new Set(loaded.map(itemKey))
       const fresh = page.items.filter(item => !seen.has(itemKey(item)))
 
       setItems(prev => [...prev, ...fresh])
 
-      // Either the window is fully covered, or a whole page shares one second
-      // and `until` has nowhere further back to go.
+      // Done when the window is covered, or a whole page shares one second.
       if (!page.truncated || fresh.length === 0) setExhausted(true)
     } catch (e) {
       if (current === generation) setError(e)
@@ -118,8 +109,7 @@ export default function AdminModeration() {
 
   onMount(() => void loadMore())
 
-  // Filtering is over what's been loaded, not the whole window, so paging
-  // further back can surface more matches.
+  // Filters what has loaded, so paging back can find more matches.
   const filtered = createMemo(() => {
     const type = typeFilter()
     const matching = type === "all" ? visible() : visible().filter(item => item.type === type)

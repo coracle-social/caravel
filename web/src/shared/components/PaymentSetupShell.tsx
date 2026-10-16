@@ -1,6 +1,10 @@
 import { Show, type JSX } from "solid-js"
 import Modal from "@/shared/components/Modal"
-import type { CardPortal, NwcSetup } from "@/shared/lib/usePaymentSetup"
+import ModalHeader from "@/shared/components/ModalHeader"
+import { account } from "@/shared/lib/account"
+import { createBillingPortalSession } from "@/shared/lib/api"
+import type { NwcSetup } from "@/shared/lib/useNwcSetup"
+import type { Redirect } from "@/shared/lib/useRedirect"
 
 type PaymentSetupShellProps = {
   open: boolean
@@ -12,35 +16,13 @@ type PaymentSetupShellProps = {
   children: JSX.Element
 }
 
-// Shared chrome for the payment-setup dialogs: the modal frame, the
-// title/description header with a close button, the error line, and the footer
-// container. Each caller supplies the body (children) and footer buttons.
+// The frame every payment-setup dialog shares, around its body and footer.
 export function PaymentSetupShell(props: PaymentSetupShellProps) {
   return (
-    <Modal
-      open={props.open}
-      onClose={props.onClose}
-      wrapperClass="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-      panelClass="w-full max-w-md rounded-2xl bg-white shadow-xl overflow-hidden"
-    >
-      <div class="px-6 pt-6 pb-4 border-b border-gray-100">
-        <div class="flex items-start justify-between gap-3">
-          <div>
-            <h2 class="text-lg font-semibold text-gray-900">{props.title}</h2>
-            <p class="text-sm text-gray-500 mt-1">{props.description}</p>
-          </div>
-          <button
-            type="button"
-            onClick={props.onClose}
-            class="text-gray-400 hover:text-gray-700 rounded p-1 hover:bg-gray-100 flex-shrink-0"
-            aria-label="Close"
-          >
-            <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M18 6L6 18M6 6l12 12" />
-            </svg>
-          </button>
-        </div>
-      </div>
+    <Modal open={props.open} onClose={props.onClose}>
+      <ModalHeader title={props.title} onClose={props.onClose}>
+        <p class="text-sm text-gray-500 mt-1">{props.description}</p>
+      </ModalHeader>
 
       {props.children}
 
@@ -55,14 +37,11 @@ export function PaymentSetupShell(props: PaymentSetupShellProps) {
   )
 }
 
-// The fixed-height content region between the header and footer.
 export function PaymentSetupBody(props: { children: JSX.Element }) {
   return <div class="px-6 py-4 min-h-[180px] flex flex-col justify-center">{props.children}</div>
 }
 
-// Footer for every payment-setup dialog: a "Done" confirm once an action has
-// succeeded, otherwise a secondary dismiss button. Card setup never "saves" (it
-// redirects away), so it always shows the dismiss button.
+// "Done" once a method is saved, otherwise a button to dismiss the dialog.
 export function SetupFooter(props: { saved?: boolean; cancelLabel: string; onClose: () => void }) {
   return (
     <Show
@@ -90,7 +69,6 @@ export function SetupFooter(props: { saved?: boolean; cancelLabel: string; onClo
   )
 }
 
-// Lightning/NWC body: the URL input + save, or the success state once saved.
 export function NwcSetupBody(props: { nwc: NwcSetup }) {
   const nwc = props.nwc
   return (
@@ -130,9 +108,15 @@ export function NwcSetupBody(props: { nwc: NwcSetup }) {
   )
 }
 
-// Card body: an explanation plus the button that redirects to the Stripe portal.
-// `isUpdate` adjusts the copy for tenants who already have a card on file.
-export function CardSetupBody(props: { card: CardPortal; isUpdate?: boolean }) {
+// Adding or managing a card in Stripe's billing portal. `isUpdate` is for a tenant with one.
+export function CardSetupBody(props: { billingPortal: Redirect; isUpdate?: boolean }) {
+  function open() {
+    void props.billingPortal.go(
+      () => createBillingPortalSession(account()!.pubkey, window.location.href),
+      "Failed to open billing portal",
+    )
+  }
+
   return (
     <div class="text-center space-y-4">
       <div class="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-gray-100">
@@ -148,11 +132,11 @@ export function CardSetupBody(props: { card: CardPortal; isUpdate?: boolean }) {
       </p>
       <button
         type="button"
-        onClick={props.card.openPortal}
-        disabled={props.card.redirecting()}
+        onClick={open}
+        disabled={props.billingPortal.redirecting()}
         class="w-full py-2 px-4 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
       >
-        {props.card.redirecting() ? "Redirecting..." : props.isUpdate ? "Manage card" : "Add a payment card"}
+        {props.billingPortal.redirecting() ? "Redirecting..." : props.isUpdate ? "Manage card" : "Add a payment card"}
       </button>
     </div>
   )

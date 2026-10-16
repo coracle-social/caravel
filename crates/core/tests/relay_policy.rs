@@ -1,10 +1,12 @@
 //! A relay's rules, ported from zooid's instance tests: who may write, who may
 //! subscribe, who may see which event, and who gets signatures.
 
+use caravel_core::events::kinds;
 use caravel_core::relay_policy::{
     self, CREATED_AT_UPPER_LIMIT, EventFacts, Refusal, RelaySnapshot, admit_req, admit_write,
-    can_receive, kinds, strips_signature,
+    can_receive, strips_signature,
 };
+use caravel_core::relays::url_host;
 use caravel_core::testing::sign_event;
 use coracle_lib::keys::SecretKey;
 
@@ -26,8 +28,8 @@ fn fixture() -> Fixture {
 
     let snapshot = RelaySnapshot {
         relay_id: "test".to_string(),
-        self_pubkey: relay.public_key().to_hex(),
-        owner: owner.public_key().to_hex(),
+        relay_pubkey: relay.public_key().to_hex(),
+        tenant_pubkey: owner.public_key().to_hex(),
         members: [member.public_key().to_hex()].into_iter().collect(),
         ..Default::default()
     };
@@ -156,7 +158,7 @@ fn kinds_the_relay_writes_itself_are_refused() {
         kinds::RELAY_REMOVE_MEMBER,
         kinds::RELAY_MEMBERS,
         kinds::RELAY_ROLE,
-        kinds::BLOB_DESCRIPTOR,
+        kinds::BLOSSOM_AUTH,
     ] {
         let event = sign_event(&f.owner, kind, "", &[], NOW);
         assert_eq!(
@@ -235,7 +237,7 @@ fn reading_needs_authentication_unless_anonymous_reads_are_on() {
         ..f.snapshot.clone()
     };
     assert_eq!(admit_req(&anonymous, &[]), Ok(()));
-    let note = facts(1, &f.snapshot.owner);
+    let note = facts(1, &f.snapshot.tenant_pubkey);
     assert!(can_receive(&anonymous, None, note));
     assert!(!can_receive(&f.snapshot, None, note));
 }
@@ -276,7 +278,7 @@ fn credentials_and_requests_are_never_served() {
         caravel_core::rooms::kinds::CREATE_INVITE,
         kinds::RELAY_JOIN,
         kinds::RELAY_LEAVE,
-        kinds::BLOB_DESCRIPTOR,
+        kinds::BLOSSOM_AUTH,
     ] {
         assert!(
             !can_receive(&f.snapshot, Some(&owner), facts(kind, &owner)),
@@ -310,4 +312,46 @@ fn ephemeral_kinds_are_not_stored() {
     assert!(!relay_policy::is_stored(20001));
     assert!(relay_policy::is_stored(1));
     assert!(relay_policy::is_stored(30023));
+}
+
+#[test]
+fn relay_urls_name_their_host_without_scheme_port_or_path() {
+    assert_eq!(url_host("ws://Relay.Example:8080/path"), "relay.example");
+    assert_eq!(url_host("relay.example."), "relay.example");
+}
+
+#[test]
+fn a_push_subscription_may_name_any_of_the_relays_hosts() {
+    let author = SecretKey::generate();
+    let hosts = ["relay.example".to_string(), "old.example".to_string()];
+    let subscription = |relay: &str| {
+        sign_event(
+            &author,
+            kinds::PUSH_SUBSCRIPTION,
+            "",
+            &[
+                &["d", "phone"],
+                &["relay", relay],
+                &["filter", "{}"],
+                &["callback", "https://push.example/"],
+            ],
+            NOW,
+        )
+    };
+
+    for relay in [
+        "wss://relay.example",
+        "wss://Old.Example:443/",
+        "old.example",
+    ] {
+        assert_eq!(
+            relay_policy::check_push_subscription(&subscription(relay), &hosts, 0),
+            Ok(()),
+            "{relay}"
+        );
+    }
+    assert!(
+        relay_policy::check_push_subscription(&subscription("wss://other.example"), &hosts, 0)
+            .is_err()
+    );
 }

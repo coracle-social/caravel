@@ -196,10 +196,10 @@ async fn an_import_skips_bad_lines_and_says_which() -> Result<()> {
 
     assert_eq!(result.imported, 1, "{result:?}");
     assert_eq!(result.invalid, 3, "{result:?}");
-    assert_eq!(result.problems[0].line, 2);
-    assert_eq!(result.problems[1].line, 3);
+    assert_eq!(result.problems[0].line, Some(2));
+    assert_eq!(result.problems[1].line, Some(3));
     assert_eq!(result.problems[1].message, "invalid signature");
-    assert_eq!(result.problems[2].line, 4);
+    assert_eq!(result.problems[2].line, Some(4));
     Ok(())
 }
 
@@ -510,6 +510,40 @@ async fn an_overlong_line_is_reported_and_skipped() -> Result<()> {
     let result = transfer::import_events(&core, &relay, stream).await?;
 
     assert_eq!((result.imported, result.invalid), (1, 1), "{result:?}");
-    assert_eq!(result.problems[0].line, 1);
+    assert_eq!(result.problems[0].line, Some(1));
+    Ok(())
+}
+
+// Posting in a room the relay holds changes nothing about the room.
+#[tokio::test]
+async fn an_import_that_only_posts_in_a_room_rebuilds_nothing() -> Result<()> {
+    let core = core().await;
+    let (relay, owner) = create_relay(&core).await;
+    let author = SecretKey::generate();
+
+    let create = sign_event(
+        &owner,
+        kinds::CREATE_GROUP,
+        "",
+        &[&["h", "room"], &["name", "lobby"]],
+        NOW - 100,
+    );
+    assert_eq!(
+        import(&core, &relay, &line(&create)).await?.rooms_rebuilt,
+        1
+    );
+
+    let chat = sign_event(&author, 9, "hello", &[&["h", "room"]], NOW - 50);
+    let result = import(&core, &relay, &line(&chat)).await?;
+    assert_eq!(
+        (result.imported, result.rooms_rebuilt),
+        (1, 0),
+        "{result:?}"
+    );
+    assert!(result.problems.is_empty(), "{result:?}");
+    assert_eq!(
+        room_name(&core, &relay, "room").await?.as_deref(),
+        Some("lobby")
+    );
     Ok(())
 }

@@ -9,16 +9,14 @@ use axum::body::{Body, Bytes};
 use axum::extract::{Extension, Path, Request};
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use axum::response::{IntoResponse, Response};
+use caravel_core::auth;
+use caravel_core::crypto::{is_hex64, sha256_hex};
+use caravel_core::events::kinds::BLOSSOM_AUTH;
 use caravel_core::media::{self, Blob, Deleted, MAX_BLOB_SIZE};
-use coracle_lib::events::Event;
 use futures_util::StreamExt;
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
 
 use crate::Route;
-
-/// The kind a Blossom authorization is.
-pub const AUTH_KIND: u16 = 24242;
 
 /// How far ahead of the clock an authorization may be dated.
 const MAX_DRIFT: i64 = 600;
@@ -55,6 +53,12 @@ impl Refused {
     fn new(status: StatusCode, reason: impl Into<String>) -> Self {
         Self(status, reason.into())
     }
+
+    /// The relay's own failure, logged with its cause.
+    fn failed(reason: &'static str, error: impl std::fmt::Display) -> Self {
+        tracing::warn!(error = %error, "{reason}");
+        Self::new(StatusCode::INTERNAL_SERVER_ERROR, reason)
+    }
 }
 
 impl IntoResponse for Refused {
@@ -64,51 +68,16 @@ impl IntoResponse for Refused {
         if let Ok(value) = HeaderValue::from_str(&reason) {
             response.headers_mut().insert("x-reason", value);
         }
-        cors(response)
+        response
     }
 }
 
 type Answer = Result<Response, Refused>;
 
-/// CORS for media: any origin may read, and may read why it was refused.
-pub fn cors(mut response: Response) -> Response {
-    let headers = response.headers_mut();
-    headers.insert(
-        header::ACCESS_CONTROL_ALLOW_ORIGIN,
-        HeaderValue::from_static("*"),
-    );
-    headers.insert(
-        header::ACCESS_CONTROL_EXPOSE_HEADERS,
-        HeaderValue::from_static("x-reason"),
-    );
-    response
-}
-
-pub async fn preflight() -> Response {
-    cors(
-        (
-            StatusCode::NO_CONTENT,
-            [
-                (
-                    header::ACCESS_CONTROL_ALLOW_HEADERS,
-                    HeaderValue::from_static(
-                        "authorization, content-type, x-content-length, x-content-type, x-sha-256",
-                    ),
-                ),
-                (
-                    header::ACCESS_CONTROL_ALLOW_METHODS,
-                    HeaderValue::from_static("GET, HEAD, PUT, DELETE"),
-                ),
-            ],
-        )
-            .into_response(),
-    )
-}
-
 /// The hash a path names: 64 hex characters, optionally with an extension.
-fn parse_name(name: &str) -> Option<String> {
+pub fn parse_name(name: &str) -> Option<String> {
     let hash = name.split('.').next()?.to_ascii_lowercase();
-    (hash.len() == 64 && hash.chars().all(|c| c.is_ascii_hexdigit())).then_some(hash)
+    is_hex64(&hash).then_some(hash)
 }
 
 fn extension(content_type: &str) -> Option<&'static str> {
@@ -134,8 +103,8 @@ fn extension(content_type: &str) -> Option<&'static str> {
 /// A blob as BUD-02 describes it, at its url on the relay's primary host.
 fn descriptor(route: &Route, blob: &Blob) -> Value {
     let url = match extension(&blob.content_type) {
-        Some(ext) => format!("https://{}/{}.{ext}", route.primary_host, blob.sha256),
-        None => format!("https://{}/{}", route.primary_host, blob.sha256),
+        Some(ext) => format!("https://{}/{}.{ext}", route.primary_host(), blob.sha256),
+        None => format!("https://{}/{}", route.primary_host(), blob.sha256),
     };
 
     json!({
@@ -159,18 +128,23 @@ fn require_media(route: &Route) -> Result<(), Refused> {
     }
 }
 
-/// Check an authorization for `verb`, returning its signer and the hashes it
-/// covers. Only the relay's members may authorize anything.
+/// Check an authorization for `verb`, returning its signer's pubkey and the
+/// hashes it covers. Only the relay's members may authorize anything.
 fn authorize(
     route: &Route,
     headers: &HeaderMap,
     verb: &str,
-) -> Result<(Event, Vec<String>), Refused> {
+) -> Result<(String, Vec<String>), Refused> {
     let unauthorized = |reason: &str| Refused::new(StatusCode::UNAUTHORIZED, reason);
-    let event = decode_authorization(headers).map_err(|reason| unauthorized(&reason))?;
+    let header = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .ok_or_else(|| unauthorized("an Authorization: Nostr header is required"))?;
+    let event =
+        auth::decode_authorization(header).map_err(|error| unauthorized(&error.to_string()))?;
     let now = route.instance.core().clock.now();
 
-    if event.kind != AUTH_KIND {
+    if event.kind != BLOSSOM_AUTH {
         return Err(unauthorized("the authorization must be kind 24242"));
     }
     if event.created_at > now + MAX_DRIFT {
@@ -187,38 +161,13 @@ fn authorize(
         )));
     }
 
-    if !route
-        .instance
-        .state()
-        .snapshot
-        .has_access(&event.pubkey.to_hex())
-    {
+    let pubkey = event.pubkey.to_hex();
+    if !route.instance.state().snapshot.has_access(&pubkey) {
         return Err(Refused::new(StatusCode::FORBIDDEN, "unauthorized"));
     }
 
     let hashes = event.tags.values("x").filter_map(parse_name).collect();
-    Ok((event, hashes))
-}
-
-fn decode_authorization(headers: &HeaderMap) -> Result<Event, String> {
-    use base64::Engine;
-
-    let encoded = headers
-        .get(header::AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.strip_prefix("Nostr "))
-        .ok_or("an Authorization: Nostr header is required")?
-        .trim();
-    let json = base64::engine::general_purpose::STANDARD
-        .decode(encoded)
-        .or_else(|_| base64::engine::general_purpose::URL_SAFE.decode(encoded))
-        .map_err(|_| "the authorization is not base64")?;
-    let event: Event =
-        serde_json::from_slice(&json).map_err(|_| "the authorization is not an event")?;
-    event
-        .verify()
-        .map_err(|_| "the authorization's signature does not verify")?;
-    Ok(event)
+    Ok((pubkey, hashes))
 }
 
 /// BUD-01: a blob's bytes, in whole or by range, as a download unless it is a
@@ -240,12 +189,7 @@ pub async fn download(
     let core = route.instance.core();
     let blob = media::get_blob(core.db.pool(), &state.relay.id, &sha256)
         .await
-        .map_err(|_| {
-            Refused::new(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "the blob could not be read",
-            )
-        })?
+        .map_err(|error| Refused::failed("the blob could not be read", error))?
         .ok_or_else(|| Refused::new(StatusCode::NOT_FOUND, "no such blob"))?;
 
     let range = request
@@ -257,12 +201,7 @@ pub async fn download(
         .blobs
         .get(&media::blob_key(&state.relay.id, &sha256), range.clone())
         .await
-        .map_err(|_| {
-            Refused::new(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "the blob could not be read",
-            )
-        })?
+        .map_err(|error| Refused::failed("the blob could not be read", error))?
         .ok_or_else(|| Refused::new(StatusCode::NOT_FOUND, "no such blob"))?;
 
     let status = if range.is_some() {
@@ -301,7 +240,7 @@ pub async fn download(
     );
     harden(headers, &blob.content_type);
 
-    Ok(cors(response))
+    Ok(response)
 }
 
 /// The bytes one `Range: bytes=` header asks for, when it asks for a single range
@@ -359,7 +298,7 @@ pub async fn check_upload(Extension(route): Extension<Route>, headers: HeaderMap
         .and_then(|value| value.parse::<u64>().ok())
     {
         Some(size) if size > MAX_BLOB_SIZE => Err(too_large()),
-        Some(_) => Ok(cors(StatusCode::OK.into_response())),
+        Some(_) => Ok(StatusCode::OK.into_response()),
         None => Err(Refused::new(
             StatusCode::LENGTH_REQUIRED,
             "X-Content-Length is required",
@@ -370,7 +309,7 @@ pub async fn check_upload(Extension(route): Extension<Route>, headers: HeaderMap
 /// BUD-02: store an upload for its signer.
 pub async fn upload(Extension(route): Extension<Route>, request: Request) -> Answer {
     require_media(&route)?;
-    let (auth, covered) = authorize(&route, request.headers(), "upload")?;
+    let (uploader, covered) = authorize(&route, request.headers(), "upload")?;
 
     if request
         .headers()
@@ -396,20 +335,20 @@ pub async fn upload(Extension(route): Extension<Route>, request: Request) -> Ans
 
     let blob = keep(
         &route,
-        &auth.pubkey.to_hex(),
+        &uploader,
         Bytes::from(bytes),
         content_type,
         &covered,
     )
     .await?;
-    Ok(cors(axum::Json(descriptor(&route, &blob)).into_response()))
+    Ok(axum::Json(descriptor(&route, &blob)).into_response())
 }
 
 /// BUD-04: copy a file from another server, given its url and an authorization
 /// naming its hash.
 pub async fn mirror(Extension(route): Extension<Route>, headers: HeaderMap, body: Bytes) -> Answer {
     require_media(&route)?;
-    let (auth, covered) = authorize(&route, &headers, "upload")?;
+    let (uploader, covered) = authorize(&route, &headers, "upload")?;
     if covered.is_empty() {
         return Err(Refused::new(
             StatusCode::BAD_REQUEST,
@@ -438,15 +377,8 @@ pub async fn mirror(Extension(route): Extension<Route>, headers: HeaderMap, body
         .content_type
         .unwrap_or_else(|| "application/octet-stream".to_string());
 
-    let blob = keep(
-        &route,
-        &auth.pubkey.to_hex(),
-        fetched.bytes,
-        content_type,
-        &covered,
-    )
-    .await?;
-    Ok(cors(axum::Json(descriptor(&route, &blob)).into_response()))
+    let blob = keep(&route, &uploader, fetched.bytes, content_type, &covered).await?;
+    Ok(axum::Json(descriptor(&route, &blob)).into_response())
 }
 
 /// Store bytes as a blob owned by `pubkey`, if they are one of the hashes the
@@ -458,7 +390,7 @@ async fn keep(
     content_type: String,
     covered: &[String],
 ) -> Result<Blob, Refused> {
-    let sha256 = hex::encode(Sha256::digest(&bytes));
+    let sha256 = sha256_hex(&bytes);
     if !covered.is_empty() && !covered.contains(&sha256) {
         return Err(Refused::new(
             StatusCode::FORBIDDEN,
@@ -468,35 +400,20 @@ async fn keep(
 
     let core = route.instance.core();
     let relay_id = route.instance.relay_id();
-    let failed = |_| {
-        Refused::new(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "the file could not be kept",
-        )
-    };
     let size = bytes.len() as i64;
 
     core.blobs
         .put(&media::blob_key(&relay_id, &sha256), bytes)
         .await
-        .map_err(failed)?;
+        .map_err(|error| Refused::failed("the file could not be kept", error))?;
 
-    let blob = Blob {
-        sha256,
-        content_type,
-        size,
-        created_at: 0,
-    };
     let now = core.clock.now();
     core.db
-        .with_tx(async |conn| media::record_upload(conn, &relay_id, &blob, pubkey, now).await)
-        .await
-        .map_err(|_| {
-            Refused::new(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "the file could not be recorded",
-            )
+        .with_tx(async |conn| {
+            media::record_upload(conn, &relay_id, &sha256, &content_type, size, pubkey, now).await
         })
+        .await
+        .map_err(|error| Refused::failed("the file could not be recorded", error))
 }
 
 /// BUD-02: the blobs a pubkey uploaded, for the relay's members.
@@ -508,7 +425,7 @@ pub async fn list(
     require_media(&route)?;
     authorize(&route, &headers, "list")?;
 
-    if pubkey.len() != 64 || !pubkey.chars().all(|c| c.is_ascii_hexdigit()) {
+    if !is_hex64(&pubkey) {
         return Err(Refused::new(StatusCode::BAD_REQUEST, "not a hex pubkey"));
     }
 
@@ -518,14 +435,9 @@ pub async fn list(
         &pubkey,
     )
     .await
-    .map_err(|_| {
-        Refused::new(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "the list could not be read",
-        )
-    })?;
+    .map_err(|error| Refused::failed("the list could not be read", error))?;
     let descriptors: Vec<Value> = blobs.iter().map(|blob| descriptor(&route, blob)).collect();
-    Ok(cors(axum::Json(descriptors).into_response()))
+    Ok(axum::Json(descriptors).into_response())
 }
 
 /// BUD-02: give up one's ownership of a blob, which goes with its last owner.
@@ -537,7 +449,7 @@ pub async fn delete(
     require_media(&route)?;
     let sha256 =
         parse_name(&name).ok_or_else(|| Refused::new(StatusCode::NOT_FOUND, "not a blob"))?;
-    let (auth, covered) = authorize(&route, &headers, "delete")?;
+    let (pubkey, covered) = authorize(&route, &headers, "delete")?;
     if !covered.contains(&sha256) {
         return Err(Refused::new(
             StatusCode::FORBIDDEN,
@@ -547,21 +459,15 @@ pub async fn delete(
 
     let core = route.instance.core();
     let relay_id = route.instance.relay_id();
-    let pubkey = auth.pubkey.to_hex();
     let deleted = core
         .db
         .with_tx(async |conn| media::delete_upload(conn, &relay_id, &sha256, &pubkey).await)
         .await
-        .map_err(|_| {
-            Refused::new(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "the blob could not be deleted",
-            )
-        })?;
+        .map_err(|error| Refused::failed("the blob could not be deleted", error))?;
 
     match deleted {
         Deleted::NotOwned => Err(Refused::new(StatusCode::NOT_FOUND, "you have no such blob")),
-        Deleted::Shared => Ok(cors(StatusCode::OK.into_response())),
+        Deleted::Shared => Ok(StatusCode::OK.into_response()),
         Deleted::Last => {
             if let Err(error) = core
                 .blobs
@@ -570,7 +476,7 @@ pub async fn delete(
             {
                 tracing::warn!(relay = %relay_id, error = %error, "failed to delete a blob's bytes");
             }
-            Ok(cors(StatusCode::OK.into_response()))
+            Ok(StatusCode::OK.into_response())
         }
     }
 }

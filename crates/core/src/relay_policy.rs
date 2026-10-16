@@ -12,26 +12,9 @@ use sqlx::PgExecutor;
 use crate::access::{self, INVITE_METHODS, MANAGED_METHODS};
 use crate::error::Result;
 use crate::events::EventHead;
-use crate::plans;
-use crate::relays::Relay;
+use crate::events::kinds;
+use crate::relays::{self, Relay};
 use crate::rooms::{self, ADMIN_ROLE};
-
-/// Kinds with a meaning on these relays.
-pub mod kinds {
-    pub const ZAP_RECEIPT: u16 = 9735;
-    pub const GIFT_WRAP: u16 = 1059;
-    pub const REPOST: u16 = 6;
-    pub const GENERIC_REPOST: u16 = 16;
-    pub const RELAY_ADD_MEMBER: u16 = 8000;
-    pub const RELAY_REMOVE_MEMBER: u16 = 8001;
-    pub const RELAY_MEMBERS: u16 = 13534;
-    pub const BLOB_DESCRIPTOR: u16 = 24242;
-    pub const RELAY_JOIN: u16 = 28934;
-    pub const RELAY_INVITE: u16 = 28935;
-    pub const RELAY_LEAVE: u16 = 28936;
-    pub const PUSH_SUBSCRIPTION: u16 = 30390;
-    pub const RELAY_ROLE: u16 = 33534;
-}
 
 /// How far ahead of the relay's clock an event may be dated.
 pub const CREATED_AT_UPPER_LIMIT: i64 = 300;
@@ -42,9 +25,9 @@ pub const CREATED_AT_UPPER_LIMIT: i64 = 300;
 pub struct RelaySnapshot {
     pub relay_id: String,
     /// The relay's own pubkey, which signs what it publishes about itself.
-    pub self_pubkey: String,
+    pub relay_pubkey: String,
     /// The tenant who owns the relay.
-    pub owner: String,
+    pub tenant_pubkey: String,
     pub public_read: bool,
     pub anonymous_read: bool,
     pub public_write: bool,
@@ -55,7 +38,7 @@ pub struct RelaySnapshot {
     /// The most members the relay's plan allows, if it has a limit.
     pub member_limit: Option<usize>,
     /// The relay sells memberships, so joining needs a claim.
-    pub paid: bool,
+    pub charges_members: bool,
     pub members: HashSet<String>,
     /// NIP-86 methods granted to pubkeys individually.
     pub method_grants: HashMap<String, BTreeSet<String>>,
@@ -174,8 +157,8 @@ impl RelaySnapshot {
     pub fn of(relay: &Relay) -> Self {
         Self {
             relay_id: relay.id.clone(),
-            self_pubkey: relay.pubkey.clone(),
-            owner: relay.tenant_pubkey.clone(),
+            relay_pubkey: relay.pubkey.clone(),
+            tenant_pubkey: relay.tenant_pubkey.clone(),
             public_read: relay.policy_public_read,
             anonymous_read: relay.policy_anonymous_read,
             public_write: relay.policy_public_write,
@@ -183,9 +166,9 @@ impl RelaySnapshot {
             strip_signatures: relay.policy_strip_signatures,
             groups_enabled: relay.groups_enabled,
             members_can_invite: relay.members_can_invite,
-            paid: relay.charges_members(),
-            member_limit: plans::get_plan(&relay.plan_id)
-                .and_then(|plan| plan.members)
+            charges_members: relay.charges_members(),
+            member_limit: relay
+                .member_limit()
                 .and_then(|limit| usize::try_from(limit).ok()),
             ..Default::default()
         }
@@ -193,7 +176,7 @@ impl RelaySnapshot {
 
     /// The owner and the relay itself, who may do anything.
     pub fn can_manage(&self, pubkey: &str) -> bool {
-        pubkey == self.owner || pubkey == self.self_pubkey
+        pubkey == self.tenant_pubkey || pubkey == self.relay_pubkey
     }
 
     /// Whether a pubkey belongs on the relay: a manager or a member.
@@ -269,15 +252,12 @@ impl<'a> EventFacts<'a> {
     }
 
     pub fn of_head(head: &'a EventHead, pubkey: &'a str) -> Self {
-        let name = if rooms::is_metadata_kind(head.kind) {
-            'd'
-        } else {
-            'h'
-        };
         Self {
             kind: head.kind,
             pubkey,
-            room: head.tag(name).filter(|room| !room.is_empty()),
+            room: head
+                .tag(rooms::room_tag(head.kind))
+                .filter(|room| !room.is_empty()),
         }
     }
 }
@@ -336,29 +316,25 @@ pub async fn load_snapshot(db: impl PgExecutor<'_> + Copy, relay: &Relay) -> Res
 }
 
 /// Kinds a client may never publish: the relay's own membership records, which it
-/// writes itself, and blob descriptors, which only the media server takes.
-fn is_relay_written(kind: u16) -> bool {
+/// writes itself, and Blossom authorizations, which only the media server takes.
+pub fn is_relay_written(kind: u16) -> bool {
     use kinds::*;
     matches!(
         kind,
-        RELAY_ADD_MEMBER | RELAY_REMOVE_MEMBER | RELAY_MEMBERS | RELAY_ROLE | BLOB_DESCRIPTOR
+        RELAY_ADD_MEMBER | RELAY_REMOVE_MEMBER | RELAY_MEMBERS | RELAY_ROLE | BLOSSOM_AUTH
     )
 }
 
 /// Kinds that are never served: invite codes are credentials, and the others are
 /// requests the relay acts on rather than keeps for readers.
-fn is_unreadable(kind: u16) -> bool {
-    use kinds::*;
-    matches!(
-        kind,
-        RELAY_INVITE
-            | rooms::kinds::CREATE_INVITE
-            | RELAY_JOIN
-            | RELAY_LEAVE
-            | PUSH_SUBSCRIPTION
-            | BLOB_DESCRIPTOR
-    )
-}
+pub const UNREADABLE_KINDS: [u16; 6] = [
+    kinds::RELAY_INVITE,
+    rooms::kinds::CREATE_INVITE,
+    kinds::RELAY_JOIN,
+    kinds::RELAY_LEAVE,
+    kinds::PUSH_SUBSCRIPTION,
+    kinds::BLOSSOM_AUTH,
+];
 
 /// The checks that read only what an unverified event already carries, run before
 /// paying for its signature.
@@ -377,8 +353,8 @@ pub fn screen(event: &Event, now: i64) -> Result<(), Refusal> {
 }
 
 /// Whether a verified event may be published by a connection authenticated as
-/// `authed`, in zooid's order. Join requests and push subscriptions pass here to be
-/// judged by their own rules.
+/// `authed`. Join requests and push subscriptions pass here to be judged by their
+/// own rules.
 pub fn admit_write(
     snapshot: &RelaySnapshot,
     event: &Event,
@@ -402,8 +378,7 @@ pub fn admit_write(
         ));
     }
 
-    // A zap receipt or gift wrap is for its recipient, so a member being addressed
-    // is enough, whoever delivers it.
+    // A zap receipt or gift wrap addressed to a member is welcome from anyone.
     if is_for_member(snapshot, event) {
         return Ok(());
     }
@@ -414,7 +389,7 @@ pub fn admit_write(
         ));
     }
 
-    if !authed.contains(&author) && author != snapshot.self_pubkey {
+    if !authed.contains(&author) && author != snapshot.relay_pubkey {
         return Err(Refusal::restricted(
             "you cannot publish events on behalf of others",
         ));
@@ -557,7 +532,9 @@ pub fn admit_join(snapshot: &RelaySnapshot, event: &Event) -> Result<Join, Refus
 
     match event.tags.value("claim") {
         Some(claim) => Ok(Join::Claim(claim.to_string())),
-        None if snapshot.paid => Err(Refusal::restricted("this space requires a paid membership")),
+        None if snapshot.charges_members => {
+            Err(Refusal::restricted("this space requires a paid membership"))
+        }
         None => Err(Refusal::restricted("no claim tag")),
     }
 }
@@ -598,7 +575,7 @@ pub fn can_receive(snapshot: &RelaySnapshot, reader: Option<&str>, event: EventF
         return reader == Some(event.pubkey);
     }
 
-    if is_unreadable(event.kind) {
+    if UNREADABLE_KINDS.contains(&event.kind) {
         return false;
     }
 
@@ -646,6 +623,43 @@ pub fn can_any_receive(snapshot: &RelaySnapshot, authed: &[String], event: Event
         .any(|reader| can_receive(snapshot, Some(reader), event))
 }
 
+/// Whether a live event goes to a reader subscribed as `authed`: one banned or
+/// removed since subscribing stops receiving at once.
+pub fn can_deliver(snapshot: &RelaySnapshot, authed: &[String], event: EventFacts<'_>) -> bool {
+    admit_req(snapshot, authed).is_ok() && can_any_receive(snapshot, authed, event)
+}
+
+/// Why a pubkey may not join a room's call.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CallRefusal {
+    NotMember,
+    NoRoom,
+    /// The room has no calls.
+    NoCalls,
+    /// The room keeps its calls to its members.
+    NotRoomMember,
+}
+
+/// Whether a pubkey may join a room's call: a member of the relay, in a room with
+/// calls, and in the room itself if it restricts them.
+pub fn admit_call(
+    snapshot: &RelaySnapshot,
+    pubkey: &str,
+    room_id: &str,
+) -> Result<(), CallRefusal> {
+    if !snapshot.has_access(pubkey) {
+        return Err(CallRefusal::NotMember);
+    }
+    let room = snapshot.rooms.get(room_id).ok_or(CallRefusal::NoRoom)?;
+    if !room.livekit {
+        return Err(CallRefusal::NoCalls);
+    }
+    if room.restricted && !snapshot.has_room_access(room, pubkey) {
+        return Err(CallRefusal::NotRoomMember);
+    }
+    Ok(())
+}
+
 /// Whether events go to these readers without signatures: on a relay that strips
 /// them, for anyone who doesn't manage it.
 pub fn strips_signature(snapshot: &RelaySnapshot, authed: &[String]) -> bool {
@@ -676,12 +690,7 @@ pub fn check_push_subscription(
         .tags
         .value("relay")
         .ok_or_else(|| Refusal::invalid("missing relay tag"))?;
-    let relay_host = relay
-        .split_once("://")
-        .map_or(relay, |(_, rest)| rest)
-        .trim_end_matches('/')
-        .to_lowercase();
-    if !hosts.contains(&relay_host) {
+    if !hosts.contains(&relays::url_host(relay)) {
         return Err(Refusal::invalid(
             "relay tag does not match this relay's URL",
         ));

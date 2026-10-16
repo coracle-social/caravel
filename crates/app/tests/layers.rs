@@ -32,7 +32,7 @@ const CONFINED: [(&str, &[&str]); 6] = [
     ("nwc", &["caravel-adapters"]),
     ("reqwest", &["caravel-adapters"]),
     ("axum", &["caravel-relay", "caravel-api", "caravel-app"]),
-    ("tower-http", &["caravel-app"]),
+    ("tower-http", &["caravel-relay", "caravel-app"]),
     ("coracle-lib", &["caravel-core", "caravel-relay"]),
 ];
 

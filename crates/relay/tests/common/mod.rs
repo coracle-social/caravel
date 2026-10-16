@@ -12,6 +12,7 @@ use axum::extract::{Request, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use caravel_core::Core;
+use caravel_core::events::kinds;
 use caravel_core::relays::Relay;
 use caravel_core::testing;
 use caravel_relay::{Relays, RelaysConfig};
@@ -154,7 +155,7 @@ impl Server {
         let payload = hex::encode(<sha2::Sha256 as sha2::Digest>::digest(body.as_bytes()));
         let auth = testing::sign_event(
             signer,
-            27235,
+            kinds::HTTP_AUTH,
             "",
             &[
                 &["u", &format!("https://{host}/")],
@@ -167,22 +168,13 @@ impl Server {
     }
 
     pub async fn manage_with(&self, host: &str, auth: &Event, body: String) -> Value {
-        use base64::Engine;
-
         let route = self.relays.resolve(host).expect("relay not served");
         let request = axum::http::Request::builder()
             .method("POST")
             .uri("/")
             .header("Host", host)
             .header("Content-Type", "application/nostr+json+rpc")
-            .header(
-                "Authorization",
-                format!(
-                    "Nostr {}",
-                    base64::engine::general_purpose::STANDARD
-                        .encode(serde_json::to_string(auth).unwrap())
-                ),
-            )
+            .header("Authorization", testing::authorization(auth))
             .body(axum::body::Body::from(body))
             .unwrap();
         let response = self.relays.serve(route, request).await;
@@ -261,7 +253,7 @@ impl Client {
         let relay = format!("wss://{}/", self.host);
         let event = testing::sign_event(
             secret,
-            22242,
+            kinds::CLIENT_AUTH,
             "",
             &[&["relay", &relay], &["challenge", &self.challenge.clone()]],
             now,
@@ -319,15 +311,6 @@ impl HttpResponse {
     pub fn header(&self, name: &str) -> Option<&str> {
         self.headers.get(name).and_then(|value| value.to_str().ok())
     }
-}
-
-/// An `Authorization` header carrying a signed event.
-pub fn nostr_authorization(event: &Event) -> String {
-    use base64::Engine;
-    format!(
-        "Nostr {}",
-        base64::engine::general_purpose::STANDARD.encode(serde_json::to_string(event).unwrap())
-    )
 }
 
 /// Serve a router on a local port, for the servers a relay calls out to.

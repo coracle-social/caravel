@@ -1,31 +1,22 @@
-import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js"
+import { createMemo, createResource, createSignal, For, Show } from "solid-js"
 import { fuzzySearch } from "@/shared/lib/search"
 import AdminInvoiceListItem from "@/admin/components/AdminInvoiceListItem"
 import PageContainer from "@/shared/components/PageContainer"
 import ResourceState from "@/shared/components/ResourceState"
 import SearchInput from "@/shared/components/SearchInput"
 import useMinLoading from "@/shared/lib/useMinLoading"
-import { primeProfiles, useAdminInvoices } from "@/shared/lib/hooks"
+import { listInvoices } from "@/shared/lib/api"
+import { usePrimeProfiles } from "@/shared/lib/profiles"
 
 export default function AdminInvoiceList() {
   const [query, setQuery] = createSignal("")
-  const [invoices] = useAdminInvoices()
+  const [invoices] = createResource(listInvoices)
   const loading = useMinLoading(() => invoices.loading)
 
-  // Each list item shows its tenant's profile; prime them all in one batch so
-  // we don't open a separate outbox subscription per invoice.
-  createEffect(() => {
-    const list = invoices() ?? []
-    if (!list.length) return
-    const sub = primeProfiles(list.map(i => i.tenant_pubkey))
-    onCleanup(() => sub.unsubscribe())
-  })
+  usePrimeProfiles(() => (invoices() ?? []).map(i => i.tenant_pubkey))
 
   const filtered = createMemo(() => {
-    const list = invoices() ?? []
-    const q = query().trim()
-    if (!q) return list
-    return fuzzySearch(list, ["tenant_pubkey", "id"], q)
+    return fuzzySearch(invoices() ?? [], ["tenant_pubkey", "id"], query().trim())
   })
 
   return (

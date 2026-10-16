@@ -2,9 +2,7 @@ import { A } from "@solidjs/router"
 import { Show } from "solid-js"
 
 type BackLinkProps = {
-  // Omit to pop the previous history entry instead of navigating to a fixed
-  // route — for pages reachable from several places, "back" should land the
-  // user wherever they came from.
+  // Without one, going back returns to wherever the page was opened from.
   href?: string
   label: string
 }

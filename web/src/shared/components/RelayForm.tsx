@@ -1,23 +1,19 @@
 import { createEffect, createMemo, createSignal, For, Show } from "solid-js"
-import type { Relay } from "@/shared/lib/hooks"
+import type { Relay } from "@/shared/lib/api"
 import { slugify } from "@/shared/lib/slugify"
-import { FREE } from "@/shared/lib/plans"
+import { FREE, memberLabel, priceLabel } from "@/shared/lib/plans"
 import { RELAY_DOMAIN } from "@/shared/lib/config"
+import { formatError } from "@/shared/lib/format"
 import { validateSubdomainLabel } from "@/shared/lib/subdomain"
-import { setToastMessage } from "@/shared/lib/state"
-import { plans } from "@/shared/lib/state"
+import { plans, setToastMessage } from "@/shared/lib/state"
 
 export type RelayFormValues = Pick<Relay, "info_name" | "subdomain" | "info_icon" | "info_description" | "plan_id">
 
 type RelayFormProps = {
   initialValues?: Partial<RelayFormValues>
-  // Domain shown as the subdomain suffix. Defaults to this client's configured
-  // domain, which is where a newly created relay lands; the edit form passes the
-  // relay's own so it reads right for a relay on some other zooid domain.
-  zooidDomain?: string
+  // The domain after the subdomain: the relay's own, or for a new relay, this dashboard's.
+  domain?: string
   syncSubdomainWithName?: boolean
-  // The plan can't be changed by editing a relay (only at creation or via the
-  // detail card), so the edit form hides the selector by passing false here.
   showPlanSelector?: boolean
   onSubmit: (values: RelayFormValues) => Promise<void> | void
   submitLabel: string
@@ -26,7 +22,7 @@ type RelayFormProps = {
 
 export default function RelayForm(props: RelayFormProps) {
   const showPlanSelector = () => props.showPlanSelector ?? true
-  const zooidDomain = () => props.zooidDomain ?? RELAY_DOMAIN
+  const domain = () => props.domain ?? RELAY_DOMAIN
   const defaultPlanId = createMemo(() => props.initialValues?.plan_id ?? plans()[0]?.id ?? FREE)
   const [planId, setPlanId] = createSignal(defaultPlanId())
   const [name, setName] = createSignal(props.initialValues?.info_name ?? "")
@@ -61,7 +57,7 @@ export default function RelayForm(props: RelayFormProps) {
         info_description: description(),
       })
     } catch (e) {
-      setToastMessage(e instanceof Error ? e.message : "Failed to save relay")
+      setToastMessage(formatError(e, "Failed to save relay"))
     } finally {
       setSubmitting(false)
     }
@@ -95,7 +91,7 @@ export default function RelayForm(props: RelayFormProps) {
             required
             class="flex-1 px-3 py-2"
           />
-          <span class="px-3 py-2 bg-gray-50 text-gray-500 text-sm border-l border-gray-300">.{zooidDomain()}</span>
+          <span class="px-3 py-2 bg-gray-50 text-gray-500 text-sm border-l border-gray-300">.{domain()}</span>
         </div>
       </div>
       <div>
@@ -120,7 +116,7 @@ export default function RelayForm(props: RelayFormProps) {
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-3">Plan</label>
           <div class="grid grid-cols-3 gap-3">
-            <For each={plans().filter((p) => !p.hidden)}>
+            <For each={plans()}>
               {(p) => (
                 <button
                   type="button"
@@ -129,10 +125,10 @@ export default function RelayForm(props: RelayFormProps) {
                 >
                   <div class="font-bold text-gray-900">{p.name}</div>
                   <div class="text-sm text-gray-500 mt-1">
-                    {p.amount === 0 ? "Free" : `$${p.amount / 100}/mo`}
+                    {priceLabel(p.amount)}{p.amount === 0 ? "" : "/mo"}
                   </div>
                   <div class="text-xs text-gray-500 mt-2">
-                    {p.members === null ? "Unlimited members" : `Up to ${p.members} members`}
+                    {memberLabel(p.members)}
                   </div>
                   <Show when={p.blossom}>
                     <div class="text-xs text-gray-500 mt-1">

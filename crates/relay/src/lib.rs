@@ -3,17 +3,17 @@
 //! and reloaded whenever the core says it changed; nothing on the path from a
 //! request's host to its relay touches the database.
 
-pub mod auth;
+mod auth;
 pub mod blossom;
-pub mod connections;
-pub mod instance;
-pub mod limits;
-pub mod livekit;
-pub mod message;
-pub mod nip11;
-pub mod nip86;
-pub mod push;
-pub mod session;
+mod connections;
+mod instance;
+mod limits;
+mod livekit;
+mod message;
+mod nip11;
+mod nip86;
+mod push;
+mod session;
 
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
@@ -21,16 +21,16 @@ use std::sync::{Arc, OnceLock, RwLock};
 
 use axum::Router;
 use axum::extract::{ConnectInfo, Extension, FromRequestParts, Request, State, WebSocketUpgrade};
-use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
+use axum::http::{HeaderMap, HeaderName, Method, StatusCode, header};
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{get, post, put};
 use caravel_core::bus::Change;
-use caravel_core::relays::{self, Relay, RelayStatus};
+use caravel_core::relays::{self, Relay};
 use caravel_core::{Core, Result};
-use coracle_lib::events::Event;
 use tokio::sync::broadcast::error::RecvError;
 use tokio_util::sync::CancellationToken;
 use tower::ServiceExt;
+use tower_http::cors::{Any, CorsLayer};
 
 use crate::instance::{InstanceState, RelayInstance};
 use crate::limits::Limiter;
@@ -79,8 +79,13 @@ pub struct Route {
     pub instance: Arc<RelayInstance>,
     /// The host the request came in on.
     pub host: String,
+}
+
+impl Route {
     /// The host the relay is known by, which pages on its other hosts redirect to.
-    pub primary_host: String,
+    pub fn primary_host(&self) -> String {
+        self.instance.state().relay.host()
+    }
 }
 
 /// Every relay this process serves, by id and by host.
@@ -96,7 +101,8 @@ struct Inner {
     pusher: Pusher,
     shutdown: CancellationToken,
     instances: RwLock<HashMap<String, Arc<RelayInstance>>>,
-    hosts: RwLock<HashMap<String, (String, String)>>,
+    /// The relay each host belongs to, by id.
+    hosts: RwLock<HashMap<String, String>>,
     router: OnceLock<Router>,
 }
 
@@ -125,49 +131,36 @@ impl Relays {
 
     /// The relay a host belongs to, if any.
     pub fn resolve(&self, host: &str) -> Option<Route> {
-        let (relay_id, primary_host) = self.inner.hosts.read().ok()?.get(host).cloned()?;
-        let instance = self.inner.instances.read().ok()?.get(&relay_id).cloned()?;
+        let relay_id = self
+            .inner
+            .hosts
+            .read()
+            .unwrap_or_else(|error| error.into_inner())
+            .get(host)
+            .cloned()?;
+        let instance = self.instance(&relay_id)?;
 
         Some(Route {
             instance,
             host: host.to_string(),
-            primary_host,
         })
     }
 
-    /// Answer a request on a relay's host: a websocket, its information document,
-    /// or a page.
+    /// Answer a protocol request on a relay's host: a websocket, its information
+    /// document, NIP-86, Blossom or LiveKit.
     pub async fn serve(&self, route: Route, mut request: Request) -> Response {
         let router = self.inner.router.get_or_init(|| {
             Router::new()
-                .route("/", get(root).post(management).options(preflight))
-                .route(
-                    "/upload",
-                    put(blossom::upload)
-                        .head(blossom::check_upload)
-                        .options(blossom::preflight),
-                )
-                .route("/mirror", put(blossom::mirror).options(blossom::preflight))
-                .route(
-                    "/list/{pubkey}",
-                    get(blossom::list).options(blossom::preflight),
-                )
-                .route(
-                    "/{name}",
-                    get(blossom::download)
-                        .delete(blossom::delete)
-                        .options(blossom::preflight),
-                )
-                .route(
-                    "/.well-known/nip29/livekit",
-                    get(livekit::support).options(livekit::preflight),
-                )
-                .route(
-                    "/.well-known/nip29/livekit/{room_id}",
-                    get(livekit::token).options(livekit::preflight),
-                )
+                .route("/", get(root).post(nip86::handle))
+                .route("/upload", put(blossom::upload).head(blossom::check_upload))
+                .route("/mirror", put(blossom::mirror))
+                .route("/list/{pubkey}", get(blossom::list))
+                .route("/{name}", get(blossom::download).delete(blossom::delete))
+                .route("/.well-known/nip29/livekit", get(livekit::support))
+                .route("/.well-known/nip29/livekit/{room_id}", get(livekit::token))
                 .route("/.well-known/nip29/livekit/webhook", post(livekit::webhook))
                 .fallback(|| async { StatusCode::NOT_FOUND })
+                .layer(cors())
                 .with_state(self.clone())
         });
 
@@ -195,7 +188,9 @@ impl Relays {
                     relay_id,
                     published,
                 }) => {
-                    self.deliver_access_change(&relay_id, &published).await;
+                    if let Some(instance) = self.instance(&relay_id) {
+                        instance.apply_access_change(&published).await;
+                    }
                     Ok(())
                 }
                 Ok(Change::Notified {
@@ -225,7 +220,7 @@ impl Relays {
     /// serving it otherwise.
     pub async fn reload(&self, relay_id: &str) -> Result<()> {
         match relays::get_relay(self.inner.core.db.pool(), relay_id).await? {
-            Some(relay) if is_served(&relay) => self.install(relay).await?,
+            Some(relay) if relay.is_served() => self.install(relay).await?,
             _ => self.remove(relay_id),
         }
         Ok(())
@@ -241,22 +236,11 @@ impl Relays {
             .cloned()
     }
 
-    /// Reload a relay's access lists and rooms after a change made outside it, then
-    /// deliver what the relay published about the change.
-    async fn deliver_access_change(&self, relay_id: &str, published: &[Event]) {
-        if let Some(instance) = self.instance(relay_id) {
-            instance.refresh().await;
-            for event in published {
-                instance.fanout(event);
-            }
-        }
-    }
-
     async fn reload_all(&self) -> Result<()> {
         let live: Vec<Relay> = relays::list_relays(self.inner.core.db.pool())
             .await?
             .into_iter()
-            .filter(is_served)
+            .filter(Relay::is_served)
             .collect();
 
         let stale: Vec<String> = {
@@ -312,19 +296,14 @@ impl Relays {
             }
         }
 
-        let primary = relay.host();
         let mut hosts = self
             .inner
             .hosts
             .write()
             .unwrap_or_else(|error| error.into_inner());
-        hosts.retain(|_, (relay_id, _)| relay_id != &relay.id);
-        for host in relay
-            .redirect_from
-            .iter()
-            .chain([&relay.canonical_host(), &primary])
-        {
-            hosts.insert(host.clone(), (relay.id.clone(), primary.clone()));
+        hosts.retain(|_, relay_id| relay_id != &relay.id);
+        for host in relay.hosts() {
+            hosts.insert(host, relay.id.clone());
         }
 
         Ok(())
@@ -341,7 +320,7 @@ impl Relays {
             .hosts
             .write()
             .unwrap_or_else(|error| error.into_inner())
-            .retain(|_, (id, _)| id != relay_id);
+            .retain(|_, id| id != relay_id);
 
         if let Some(instance) = removed {
             instance.close();
@@ -361,11 +340,6 @@ impl Relays {
     }
 }
 
-/// Whether a relay is served: active and not purged.
-fn is_served(relay: &Relay) -> bool {
-    relay.status == RelayStatus::Active && !relay.is_purged()
-}
-
 async fn root(
     State(relays): State<Relays>,
     Extension(route): Extension<Route>,
@@ -383,9 +357,9 @@ async fn root(
     }
 
     if !is_upgrade(headers) {
-        if route.host != route.primary_host {
-            return Redirect::permanent(&format!("https://{}/", route.primary_host))
-                .into_response();
+        let primary_host = route.primary_host();
+        if route.host != primary_host {
+            return Redirect::permanent(&format!("https://{primary_host}/")).into_response();
         }
         return (
             StatusCode::OK,
@@ -423,36 +397,27 @@ async fn root(
         })
 }
 
-/// NIP-86: management calls arrive as `POST`s to the relay's url.
-async fn management(
-    Extension(route): Extension<Route>,
-    headers: HeaderMap,
-    body: axum::body::Bytes,
-) -> Response {
-    nip86::handle(&route, &headers, &body).await
-}
-
-/// Browsers preflight the information document, since they won't ask for
-/// `application/nostr+json` without permission.
-async fn preflight() -> Response {
-    (
-        StatusCode::NO_CONTENT,
-        [
-            (
-                header::ACCESS_CONTROL_ALLOW_ORIGIN,
-                HeaderValue::from_static("*"),
-            ),
-            (
-                header::ACCESS_CONTROL_ALLOW_HEADERS,
-                HeaderValue::from_static("accept, authorization, content-type"),
-            ),
-            (
-                header::ACCESS_CONTROL_ALLOW_METHODS,
-                HeaderValue::from_static("GET, POST, OPTIONS"),
-            ),
-        ],
-    )
-        .into_response()
+/// CORS for everything a relay serves over HTTP: any origin may call it, with
+/// the headers NIP-98, Blossom and NIP-11 use, and read why media was refused.
+fn cors() -> CorsLayer {
+    CorsLayer::new()
+        .allow_origin(Any)
+        .allow_methods([
+            Method::GET,
+            Method::HEAD,
+            Method::POST,
+            Method::PUT,
+            Method::DELETE,
+        ])
+        .allow_headers([
+            header::ACCEPT,
+            header::AUTHORIZATION,
+            header::CONTENT_TYPE,
+            HeaderName::from_static("x-content-length"),
+            HeaderName::from_static("x-content-type"),
+            HeaderName::from_static("x-sha-256"),
+        ])
+        .expose_headers([HeaderName::from_static("x-reason")])
 }
 
 fn is_upgrade(headers: &HeaderMap) -> bool {

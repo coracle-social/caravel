@@ -2,12 +2,8 @@ import { A } from "@solidjs/router"
 import { Show } from "solid-js"
 import ToggleButton from "@/shared/components/ToggleButton"
 
-// Pure presentational toggle that gates a feature behind plan limits. Props are
-// reactive only when read lazily, so access props.* inside JSX/derivations and
-// never destructure at the top.
 type PlanGatedToggleProps = {
   enabled: boolean
-  fallbackEnabled: boolean
   planLimited: boolean
   showPlanActions: boolean
   canUpdatePlan: boolean
@@ -15,12 +11,13 @@ type PlanGatedToggleProps = {
   onToggle?: () => void
 }
 
+// A feature's switch, or on a plan without the feature, a prompt to upgrade.
 export default function PlanGatedToggle(props: PlanGatedToggleProps) {
   return (
     <Show
       when={!props.planLimited}
       fallback={
-        <Show when={props.showPlanActions} fallback={<ToggleButton enabled={props.fallbackEnabled} onToggle={props.onToggle} />}>
+        <Show when={props.showPlanActions} fallback={<ToggleButton enabled={props.enabled} onToggle={props.onToggle} />}>
           <Show
             when={props.canUpdatePlan}
             fallback={

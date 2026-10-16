@@ -7,8 +7,9 @@ mod common;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::routing::get;
+use caravel_core::events::kinds;
 use caravel_core::relays::Relay;
-use caravel_core::testing::sign_event;
+use caravel_core::testing::{self, sign_event};
 use common::*;
 use coracle_lib::keys::SecretKey;
 use serde_json::json;
@@ -26,7 +27,13 @@ fn blossom_auth(server: &Server, signer: &SecretKey, verb: &str, hashes: &[&str]
         tags.push(vec!["x", hash]);
     }
     let tags: Vec<&[&str]> = tags.iter().map(Vec::as_slice).collect();
-    nostr_authorization(&sign_event(signer, 24242, verb, &tags, server.now()))
+    testing::authorization(&sign_event(
+        signer,
+        kinds::BLOSSOM_AUTH,
+        verb,
+        &tags,
+        server.now(),
+    ))
 }
 
 async fn media_relay(server: &Server) -> (Relay, SecretKey) {
@@ -198,9 +205,9 @@ async fn an_authorization_must_be_for_the_verb_and_unexpired() {
         .await;
     assert_eq!(wrong_verb.status, StatusCode::UNAUTHORIZED);
 
-    let expired = nostr_authorization(&sign_event(
+    let expired = testing::authorization(&sign_event(
         &owner,
-        24242,
+        kinds::BLOSSOM_AUTH,
         "",
         &[
             &["t", "upload"],

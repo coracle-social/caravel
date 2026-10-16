@@ -5,12 +5,13 @@ use axum::extract::{Path, Query, State};
 use axum::http::header;
 use axum::response::IntoResponse;
 use caravel_core::billing::ledger;
+use caravel_core::crypto::is_hex64;
 use caravel_core::{Core, Error, auth, hosting, media, moderation, relays, tenants};
 use serde::Deserialize;
 
 use crate::auth::Admin;
 use crate::response::{ApiResult, ok};
-use crate::tenant::{TenantView, load_tenant};
+use crate::tenant::TenantView;
 
 pub async fn list_tenants(State(core): State<Core>, _: Admin) -> ApiResult {
     let tenants = tenants::list_tenants(core.db.pool()).await?;
@@ -26,9 +27,10 @@ pub async fn ban_tenant(
     _: Admin,
     Path(pubkey): Path<String>,
 ) -> ApiResult {
-    load_tenant(&core, &pubkey).await?;
     hosting::ban_tenant(&core, &pubkey).await?;
-    ok(TenantView::from(load_tenant(&core, &pubkey).await?))
+    ok(TenantView::from(
+        tenants::require_tenant(core.db.pool(), &pubkey).await?,
+    ))
 }
 
 /// Lift a tenant's ban. Their purged relays stay purged.
@@ -38,7 +40,9 @@ pub async fn unban_tenant(
     Path(pubkey): Path<String>,
 ) -> ApiResult {
     hosting::unban_tenant(&core, &pubkey).await?;
-    ok(TenantView::from(load_tenant(&core, &pubkey).await?))
+    ok(TenantView::from(
+        tenants::require_tenant(core.db.pool(), &pubkey).await?,
+    ))
 }
 
 /// End every session a pubkey holds.
@@ -88,11 +92,11 @@ pub async fn get_moderation_blob(
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
     {
-        return Err(Error::conflict("invalid-relay", "relay id is invalid").into());
+        return Err(Error::invalid("invalid-relay", "relay id is invalid").into());
     }
 
-    if sha256.len() != 64 || !sha256.chars().all(|c| c.is_ascii_hexdigit()) {
-        return Err(Error::conflict("invalid-sha256", "sha256 is invalid").into());
+    if !is_hex64(&sha256) {
+        return Err(Error::invalid("invalid-sha256", "sha256 is invalid").into());
     }
 
     let blob = media::get_blob(core.db.pool(), &relay_id, &sha256)

@@ -10,9 +10,9 @@ use serde::{Deserialize, Serialize};
 use sqlx::types::Json;
 use sqlx::{PgConnection, PgExecutor};
 
-use crate::access::{store, tag};
 use crate::crypto::RelayKey;
 use crate::error::Result;
+use crate::events::{self, tag};
 
 pub mod kinds {
     pub const PUT_USER: u16 = 9000;
@@ -42,19 +42,19 @@ pub fn is_metadata_kind(kind: u16) -> bool {
 }
 
 /// Kinds that change a room, which only its moderators may publish.
+const MODERATION_KINDS: [u16; 8] = [
+    kinds::PUT_USER,
+    kinds::REMOVE_USER,
+    kinds::EDIT_METADATA,
+    kinds::DELETE_EVENT,
+    kinds::CREATE_GROUP,
+    kinds::DELETE_GROUP,
+    kinds::CREATE_INVITE,
+    kinds::PUT_PINS,
+];
+
 pub fn is_moderation_kind(kind: u16) -> bool {
-    use kinds::*;
-    matches!(
-        kind,
-        PUT_USER
-            | REMOVE_USER
-            | EDIT_METADATA
-            | DELETE_EVENT
-            | CREATE_GROUP
-            | DELETE_GROUP
-            | CREATE_INVITE
-            | PUT_PINS
-    )
+    MODERATION_KINDS.contains(&kind)
 }
 
 /// Whether an event belongs to the room machinery: it is about a room, changes
@@ -66,15 +66,18 @@ pub fn is_room_event(kind: u16, room: Option<&str>) -> bool {
         || room.is_some()
 }
 
-/// The room an event is about: its `d` tag for the relay's room events, and its
-/// `h` tag otherwise.
+/// The tag naming the room an event of `kind` is about: `d` for the relay's room
+/// events, and `h` otherwise.
+pub fn room_tag(kind: u16) -> &'static str {
+    if is_metadata_kind(kind) { "d" } else { "h" }
+}
+
+/// The room an event is about.
 pub fn room_id(event: &Event) -> Option<&str> {
-    let name = if is_metadata_kind(event.kind) {
-        "d"
-    } else {
-        "h"
-    };
-    event.tags.value(name).filter(|id| !id.is_empty())
+    event
+        .tags
+        .value(room_tag(event.kind))
+        .filter(|id| !id.is_empty())
 }
 
 /// A room's settings, as its creator and moderators set them.
@@ -212,25 +215,45 @@ pub async fn apply_event(
             if room.is_none_or(|room| room.has_flag("closed") && !invited) {
                 return Ok(Vec::new());
             }
-            set_member(
-                conn,
-                key,
-                relay_id,
-                room_id,
-                &event.pubkey.to_hex(),
-                true,
-                now,
+
+            let pubkey = event.pubkey.to_hex();
+            let added = sqlx::query(
+                "INSERT INTO room_member (relay_id, room_id, pubkey, created_at) VALUES ($1, $2, $3, $4)
+                 ON CONFLICT DO NOTHING",
             )
-            .await
+            .bind(relay_id)
+            .bind(room_id)
+            .bind(&pubkey)
+            .bind(now)
+            .execute(&mut *conn)
+            .await?
+            .rows_affected();
+            if added == 0 {
+                return Ok(Vec::new());
+            }
+            publish_member_change(conn, key, relay_id, room_id, &pubkey, kinds::PUT_USER, now).await
         }
         kinds::LEAVE_REQUEST => {
-            set_member(
+            let pubkey = event.pubkey.to_hex();
+            let removed = sqlx::query(
+                "DELETE FROM room_member WHERE relay_id = $1 AND room_id = $2 AND pubkey = $3",
+            )
+            .bind(relay_id)
+            .bind(room_id)
+            .bind(&pubkey)
+            .execute(&mut *conn)
+            .await?
+            .rows_affected();
+            if removed == 0 {
+                return Ok(Vec::new());
+            }
+            publish_member_change(
                 conn,
                 key,
                 relay_id,
                 room_id,
-                &event.pubkey.to_hex(),
-                false,
+                &pubkey,
+                kinds::REMOVE_USER,
                 now,
             )
             .await
@@ -266,8 +289,7 @@ pub async fn apply_event(
             Ok(vec![publish_pins(conn, key, relay_id, room_id, now).await?])
         }
         kinds::DELETE_EVENT => {
-            // The room's own state events are off limits: deleting one would leave
-            // the room describing itself wrongly.
+            // The room's own state events stay, or it would describe itself wrongly.
             let ids: Vec<Vec<u8>> = event
                 .tags
                 .values("e")
@@ -276,11 +298,14 @@ pub async fn apply_event(
             sqlx::query(
                 "DELETE FROM event
                  WHERE relay_id = $1 AND id = ANY($2) AND tag_values @> ARRAY['h:' || $3]
-                   AND NOT (kind BETWEEN 39000 AND 39005 OR kind IN (9000, 9001, 9002, 9005, 9007, 9008, 9009, 9010))",
+                   AND NOT (kind BETWEEN $4 AND $5 OR kind = ANY($6))",
             )
             .bind(relay_id)
             .bind(ids)
             .bind(room_id)
+            .bind(i32::from(kinds::METADATA))
+            .bind(i32::from(kinds::PINS))
+            .bind(MODERATION_KINDS.map(i32::from))
             .execute(conn)
             .await?;
             Ok(Vec::new())
@@ -293,11 +318,14 @@ pub async fn apply_event(
                 .await?;
             sqlx::query(
                 "DELETE FROM event
-                 WHERE relay_id = $1 AND kind <> 9008
-                   AND ((kind BETWEEN 39000 AND 39005 AND d = $2) OR tag_values @> ARRAY['h:' || $2])",
+                 WHERE relay_id = $1 AND kind <> $3
+                   AND ((kind BETWEEN $4 AND $5 AND d = $2) OR tag_values @> ARRAY['h:' || $2])",
             )
             .bind(relay_id)
             .bind(room_id)
+            .bind(i32::from(kinds::DELETE_GROUP))
+            .bind(i32::from(kinds::METADATA))
+            .bind(i32::from(kinds::PINS))
             .execute(conn)
             .await?;
             Ok(Vec::new())
@@ -337,56 +365,26 @@ async fn is_invited(
     .await?)
 }
 
-/// Add or remove one room member as the relay, publishing a put-user or
-/// remove-user event and the new member list. Nothing is written if the pubkey is
-/// already where it should be.
-async fn set_member(
+/// Publish, as the relay, a put-user or remove-user event (`kind`) for one room
+/// member, and the room's new member and admin lists.
+async fn publish_member_change(
     conn: &mut PgConnection,
     key: &RelayKey,
     relay_id: &str,
     room_id: &str,
     pubkey: &str,
-    present: bool,
+    kind: u16,
     now: i64,
 ) -> Result<Vec<Event>> {
-    let changed = if present {
-        sqlx::query(
-            "INSERT INTO room_member (relay_id, room_id, pubkey, created_at) VALUES ($1, $2, $3, $4)
-             ON CONFLICT DO NOTHING",
-        )
-        .bind(relay_id)
-        .bind(room_id)
-        .bind(pubkey)
-        .bind(now)
-        .execute(&mut *conn)
-        .await?
-        .rows_affected()
-    } else {
-        sqlx::query("DELETE FROM room_member WHERE relay_id = $1 AND room_id = $2 AND pubkey = $3")
-            .bind(relay_id)
-            .bind(room_id)
-            .bind(pubkey)
-            .execute(&mut *conn)
-            .await?
-            .rows_affected()
-    };
-
-    if changed == 0 {
-        return Ok(Vec::new());
-    }
-
-    let kind = if present {
-        kinds::PUT_USER
-    } else {
-        kinds::REMOVE_USER
-    };
-    let event = key.sign(
+    let event = events::publish(
+        &mut *conn,
+        key,
+        relay_id,
         kind,
         vec![tag(&["p", pubkey]), tag(&["h", room_id])],
-        "",
         now,
-    );
-    store(&mut *conn, relay_id, &event, now).await?;
+    )
+    .await?;
 
     let mut published = vec![event];
     published.extend(publish_membership(conn, key, relay_id, room_id, now).await?);
@@ -419,13 +417,11 @@ pub async fn publish_metadata(
     let mut tags = vec![tag(&["d", room_id])];
     tags.extend(room.map(|room| room.tags.0).unwrap_or_default());
 
-    let event = key.sign(kinds::METADATA, tags, "", now);
-    store(conn, relay_id, &event, now).await?;
-    Ok(event)
+    events::publish(conn, key, relay_id, kinds::METADATA, tags, now).await
 }
 
 /// Rewrite a room's admin list (kind 39001): the relay's owner and the pubkeys
-/// granted management methods, who administer every room, then the room's own
+/// granted management methods, listed as admins of every room, then the room's own
 /// admins with their roles.
 pub async fn publish_admins(
     conn: &mut PgConnection,
@@ -467,9 +463,7 @@ pub async fn publish_admins(
         }
     }
 
-    let event = key.sign(kinds::ADMINS, tags, "", now);
-    store(conn, relay_id, &event, now).await?;
-    Ok(event)
+    events::publish(conn, key, relay_id, kinds::ADMINS, tags, now).await
 }
 
 /// Rewrite a room's member list (kind 39002).
@@ -495,9 +489,7 @@ pub async fn publish_members(
             .map(|pubkey| vec!["p".to_string(), pubkey]),
     );
 
-    let event = key.sign(kinds::MEMBERS, tags, "", now);
-    store(conn, relay_id, &event, now).await?;
-    Ok(event)
+    events::publish(conn, key, relay_id, kinds::MEMBERS, tags, now).await
 }
 
 /// Rewrite a room's pinned events (kind 39005).
@@ -512,7 +504,5 @@ pub async fn publish_pins(
     let mut tags = vec![tag(&["-"]), tag(&["d", room_id])];
     tags.extend(room.map(|room| room.pins.0).unwrap_or_default());
 
-    let event = key.sign(kinds::PINS, tags, "", now);
-    store(conn, relay_id, &event, now).await?;
-    Ok(event)
+    events::publish(conn, key, relay_id, kinds::PINS, tags, now).await
 }

@@ -1,18 +1,10 @@
 import { Show } from "solid-js"
-import type { Interval } from "@/portal/lib/api"
-import { formatPrice } from "@/portal/lib/format"
-
-type Described = {
-  host: string
-  name: string
-  icon: string
-  description: string
-  price?: number
-  interval?: Interval
-}
+import type { RelayProfile } from "@/shared/lib/api"
+import { formatPrice } from "@/shared/lib/format"
+import type { Offer } from "@/portal/lib/api"
 
 // Which relay this is, and what membership costs when it sells one.
-export default function RelayHeader(props: { relay: Described }) {
+export default function RelayHeader(props: { relay: RelayProfile & Partial<Pick<Offer, "price" | "interval">> }) {
   const name = () => props.relay.name || props.relay.host
 
   return (

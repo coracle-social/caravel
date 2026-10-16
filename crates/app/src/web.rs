@@ -9,8 +9,12 @@ use std::sync::Arc;
 use axum::body::Body;
 use axum::http::{HeaderValue, Method, Request, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use caravel_core::relays::Relay;
-use serde_json::{Value, json};
+use caravel_core::config::Config;
+use caravel_core::relays::RelayProfile;
+use caravel_relay::blossom;
+use serde::Serialize;
+
+use crate::config::WebSettings;
 
 #[derive(rust_embed::Embed)]
 #[folder = "../../web/dist"]
@@ -26,7 +30,8 @@ pub enum App {
 }
 
 impl App {
-    fn shell(self) -> &'static str {
+    /// The built file its shell is.
+    fn file_name(self) -> &'static str {
         match self {
             App::Tenant => "tenant.html",
             App::Admin => "admin.html",
@@ -41,15 +46,47 @@ enum Files {
     Given(Arc<HashMap<String, Vec<u8>>>),
 }
 
-/// The built apps, and the configuration every shell carries.
+/// What every app's page is configured with.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct PageConfig {
+    pub api_url: String,
+    pub relay_domains: Vec<String>,
+    pub platform_name: String,
+    pub platform_logo: String,
+    pub flotilla_url: String,
+}
+
+impl PageConfig {
+    pub fn new(config: &Config, web: &WebSettings) -> Self {
+        Self {
+            api_url: config.api_url.clone(),
+            relay_domains: config.relay_domains.clone(),
+            platform_name: web.platform_name.clone(),
+            platform_logo: web.platform_logo.clone(),
+            flotilla_url: config.flotilla_url.clone(),
+        }
+    }
+}
+
+/// A page's configuration: what every app's carries, and the relay the member
+/// portal is served for.
+#[derive(Serialize)]
+struct Page<'a> {
+    #[serde(flatten)]
+    config: &'a PageConfig,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    relay: Option<RelayProfile>,
+}
+
+/// The built apps, and the configuration every page carries.
 #[derive(Clone)]
 pub struct Web {
     files: Files,
-    config: Value,
+    config: PageConfig,
 }
 
 impl Web {
-    pub fn new(config: Value) -> Self {
+    pub fn new(config: PageConfig) -> Self {
         Self {
             files: Files::Embedded,
             config,
@@ -57,7 +94,7 @@ impl Web {
     }
 
     /// Apps built from `files`, keyed by path, instead of the embedded build.
-    pub fn with_files(config: Value, files: HashMap<String, Vec<u8>>) -> Self {
+    pub fn with_files(config: PageConfig, files: HashMap<String, Vec<u8>>) -> Self {
         Self {
             files: Files::Given(Arc::new(files)),
             config,
@@ -102,10 +139,10 @@ impl Web {
         )
     }
 
-    /// An app's HTML shell, carrying the shared configuration with `context`
-    /// merged in.
-    pub fn shell(&self, app: App, context: Value) -> Response {
-        let Some((html, _)) = self.read(app.shell()) else {
+    /// An app's HTML shell, carrying its page's configuration: for the member
+    /// portal, with the relay it is served for.
+    pub fn shell(&self, app: App, relay: Option<RelayProfile>) -> Response {
+        let Some((html, _)) = self.read(app.file_name()) else {
             return (
                 StatusCode::SERVICE_UNAVAILABLE,
                 "The web apps aren't built.",
@@ -113,12 +150,14 @@ impl Web {
                 .into_response();
         };
 
-        let mut config = self.config.clone();
-        if let (Some(config), Value::Object(context)) = (config.as_object_mut(), context) {
-            config.extend(context);
-        }
+        let page = Page {
+            config: &self.config,
+            relay,
+        };
         // A `<` in a value can't end the script element it sits in.
-        let config = config.to_string().replace('<', "\\u003c");
+        let config = serde_json::to_string(&page)
+            .expect("page config serializes")
+            .replace('<', "\\u003c");
         let script = format!(r#"<script id="config" type="application/json">{config}</script>"#);
         let html =
             String::from_utf8_lossy(&html).replacen("</head>", &format!("{script}</head>"), 1);
@@ -135,19 +174,6 @@ impl Web {
         )
             .into_response()
     }
-}
-
-/// What the portal knows of the relay it is served for.
-pub fn portal_context(relay: &Relay) -> Value {
-    json!({
-        "relay": {
-            "id": relay.id,
-            "host": relay.host(),
-            "name": relay.display_name(),
-            "icon": relay.info_icon,
-            "description": relay.info_description,
-        },
-    })
 }
 
 /// Whether a request is a browser navigating to a page, rather than a protocol
@@ -170,6 +196,5 @@ pub fn is_page_request<B>(request: &Request<B>) -> bool {
 /// `/<sha256>`, with or without an extension, as Blossom serves blobs.
 fn is_blob_path(path: &str) -> bool {
     let name = path.trim_start_matches('/');
-    let hash = name.split('.').next().unwrap_or_default();
-    !name.contains('/') && hash.len() == 64 && hash.chars().all(|c| c.is_ascii_hexdigit())
+    !name.contains('/') && blossom::parse_name(name).is_some()
 }

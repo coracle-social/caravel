@@ -1,21 +1,20 @@
-import MemberPayments from "@/shared/components/relay/MemberPayments"
-import { Show, createSignal } from "solid-js"
-import type { Relay, PlanId } from "@/shared/lib/api"
-import ConfirmDialog from "@/shared/components/ConfirmDialog"
+import { For, Show, createSignal } from "solid-js"
+import { canonicalHost, relayName, type PlanId, type Relay, type RelayFlag } from "@/shared/lib/api"
+import ConfirmDialog, { type Confirmation } from "@/shared/components/ConfirmDialog"
 import CustomDomainModal from "@/shared/components/relay/CustomDomainModal"
 import DataTransferModal from "@/shared/components/relay/DataTransferModal"
 import Field from "@/shared/components/Field"
+import MemberPayments from "@/shared/components/relay/MemberPayments"
+import PlanGatedToggle from "@/shared/components/relay/PlanGatedToggle"
 import PricingTable from "@/shared/components/PricingTable"
+import RelayCardHeader from "@/shared/components/relay/RelayCardHeader"
+import StatusBadge from "@/shared/components/StatusBadge"
 import ToggleButton from "@/shared/components/ToggleButton"
 import ToggleField from "@/shared/components/ToggleField"
-import RelayCardHeader, { StatusBadge } from "@/shared/components/relay/RelayCardHeader"
-import PlanGatedToggle from "@/shared/components/relay/PlanGatedToggle"
-import { setToastMessage } from "@/shared/lib/state"
-import { useProfileMetadata } from "@/shared/lib/hooks"
+import { plans, setToastMessage } from "@/shared/lib/state"
+import { useProfileMetadata } from "@/shared/lib/profiles"
 import useMinLoading from "@/shared/lib/useMinLoading"
-import { flagToBool } from "@/shared/lib/relayFlags"
 import { FREE } from "@/shared/lib/plans"
-import { plans } from "@/shared/lib/state"
 import useCustomDomain from "@/shared/lib/useCustomDomain"
 
 function DetailSection(props: { title: string; children: any }) {
@@ -40,28 +39,85 @@ function MembershipSection(props: { title: string; children: any }) {
   )
 }
 
+// A switch, which on a free plan asks to upgrade if `planGated`, shown while `requires` is on.
+type Toggle = {
+  flag: RelayFlag
+  label: string
+  planGated?: boolean
+  requires?: RelayFlag
+}
+
+const POLICY_TOGGLES: Toggle[] = [
+  { flag: "policy_public_read", label: "Public read" },
+  { flag: "policy_public_write", label: "Public write" },
+  { flag: "policy_public_join", label: "Public join" },
+  { flag: "members_can_invite", label: "Members can invite others" },
+  { flag: "policy_strip_signatures", label: "Strip signatures" },
+]
+
+const FEATURE_TOGGLES: Toggle[] = [
+  { flag: "groups_enabled", label: "Rooms" },
+  { flag: "management_enabled", label: "Management API" },
+  { flag: "push_enabled", label: "Push notifications" },
+  { flag: "blossom_enabled", label: "Media storage", planGated: true },
+  { flag: "blossom_authenticated_read", label: "Members-only media", requires: "blossom_enabled" },
+  { flag: "livekit_enabled", label: "LiveKit support", planGated: true },
+]
+
+type Action = "deactivate" | "reactivate" | "purge"
+
+function confirmation(action: Action, label: string): Confirmation {
+  switch (action) {
+    case "purge":
+      return {
+        title: "Purge relay?",
+        description: `${label} and all of its data will be permanently deleted.`,
+        details: [
+          "All events, uploads, members, and settings are deleted from the hosting backend.",
+          "The relay's subdomain and custom domain stop serving immediately.",
+          "An active paid relay earns a prorated credit for the rest of the billing period.",
+          "This cannot be undone — a purged relay cannot be re-activated.",
+        ],
+        confirmLabel: "Yes, purge relay",
+        busyLabel: "Purging...",
+        tone: "danger",
+      }
+    case "deactivate":
+      return {
+        title: "Deactivate relay?",
+        description: `${label} will be taken offline immediately.`,
+        details: [
+          "All client connections will be dropped immediately.",
+          "Members will be unable to read from or publish to the relay.",
+          "Scheduled and automated tasks (billing, syncing) will be paused.",
+          "All relay data, settings, and members are preserved, nothing is deleted.",
+          "You can reactivate at any time from this page.",
+        ],
+        confirmLabel: "Yes, deactivate",
+        busyLabel: "Deactivating...",
+        tone: "danger",
+      }
+    case "reactivate":
+      return {
+        title: "Reactivate relay?",
+        description: `${label} will come back online and start accepting connections.`,
+        confirmLabel: "Yes, reactivate",
+        busyLabel: "Reactivating...",
+        tone: "primary",
+      }
+  }
+}
+
 type RelayDetailCardProps = {
   relay: Relay
   currentMembers?: number
   showTenant?: boolean
   editHref?: string
+  busy?: boolean
   onDeactivate?: () => void | Promise<void>
   onReactivate?: () => void | Promise<void>
-  deactivating?: boolean
-  reactivating?: boolean
   onPurge?: () => void | Promise<void>
-  purging?: boolean
-  onTogglePublicRead?: () => void
-  onTogglePublicWrite?: () => void
-  onTogglePublicJoin?: () => void
-  onToggleMembersCanInvite?: () => void
-  onToggleStripSignatures?: () => void
-  onToggleGroups?: () => void
-  onToggleManagement?: () => void
-  onToggleMediaStorage?: () => void
-  onToggleMembersOnlyMedia?: () => void
-  onToggleLivekitSupport?: () => void
-  onTogglePushNotifications?: () => void
+  onToggle?: (flag: RelayFlag) => void
   onUpdatePlan?: (planId: PlanId) => Promise<void>
   enforcePlanLimits?: boolean
   showPlanActions?: boolean
@@ -71,16 +127,14 @@ type RelayDetailCardProps = {
 export default function RelayDetailCard(props: RelayDetailCardProps) {
   const r = () => props.relay
   const [planId, setPlanId] = createSignal<PlanId>(props.relay.plan_id)
-  const [pendingAction, setPendingAction] = createSignal<"deactivate" | "reactivate" | "purge" | null>(null)
+  const [pendingAction, setPendingAction] = createSignal<Action>()
   const [customDomainModalOpen, setCustomDomainModalOpen] = createSignal(false)
   const [dataTransferModalOpen, setDataTransferModalOpen] = createSignal(false)
   const { saving: cdSaving, verifying: cdVerifying, error: cdError, saveDomain, verifyDomain } =
     useCustomDomain(() => props.relay.id, props.mutateRelay ?? (() => {}))
   const cdVerifyingVisible = useMinLoading(cdVerifying)
 
-  // Resolve the owning tenant's profile so the Tenant field can show a name and
-  // avatar instead of a raw pubkey. Only relevant in admin (showTenant) views.
-  // This subscription stays in the parent so the header doesn't double-subscribe.
+  // Only admin views show the tenant, and the header reads it from here.
   const tenantProfile = useProfileMetadata(() => (props.showTenant ? props.relay.tenant_pubkey : undefined))
 
   const memberLimitLabel = () => {
@@ -90,33 +144,7 @@ export default function RelayDetailCard(props: RelayDetailCardProps) {
   }
   const planLimited = () => (props.enforcePlanLimits ?? true) && r().plan_id === FREE
   const showPlanActions = () => props.showPlanActions ?? true
-  const actionBusy = () => pendingAction() === "deactivate" ? !!props.deactivating : pendingAction() === "reactivate" ? !!props.reactivating : pendingAction() === "purge" ? !!props.purging : false
-  const relayLabel = () => r().info_name || r().subdomain
-  const confirmTitle = () => pendingAction() === "purge" ? "Purge relay?" : pendingAction() === "deactivate" ? "Deactivate relay?" : "Reactivate relay?"
-  const confirmDescription = () => pendingAction() === "purge"
-    ? `${relayLabel()} and all of its data will be permanently deleted.`
-    : pendingAction() === "deactivate"
-      ? `${relayLabel()} will be taken offline immediately.`
-      : `${relayLabel()} will come back online and start accepting connections.`
-  const confirmDetails = () => pendingAction() === "purge"
-    ? [
-        "All events, uploads, members, and settings are deleted from the hosting backend.",
-        "The relay's subdomain and custom domain stop serving immediately.",
-        "An active paid relay earns a prorated credit for the rest of the billing period.",
-        "This cannot be undone — a purged relay cannot be re-activated.",
-      ]
-    : pendingAction() === "deactivate"
-      ? [
-          "All client connections will be dropped immediately.",
-          "Members will be unable to read from or publish to the relay.",
-          "Scheduled and automated tasks (billing, syncing) will be paused.",
-          "All relay data, settings, and members are preserved, nothing is deleted.",
-          "You can reactivate at any time from this page.",
-        ]
-      : undefined
-  const confirmLabel = () => pendingAction() === "purge" ? "Yes, purge relay" : pendingAction() === "deactivate" ? "Yes, deactivate" : "Yes, reactivate"
-  const confirmBusyLabel = () => pendingAction() === "purge" ? "Purging..." : pendingAction() === "deactivate" ? "Deactivating..." : "Reactivating..."
-  const confirmTone = () => pendingAction() === "reactivate" ? "primary" : "danger"
+  const busy = () => props.busy ?? false
 
   async function changePlanId(planId: PlanId) {
     setPlanId(planId)
@@ -124,17 +152,13 @@ export default function RelayDetailCard(props: RelayDetailCardProps) {
       await props.onUpdatePlan?.(planId)
       setToastMessage(`Plan updated to ${planId}`, "success")
     } catch {
-      // error is handled by the caller
+      // The caller reports the error.
     }
   }
 
-  function openActionDialog(action: "deactivate" | "reactivate" | "purge") {
-    setPendingAction(action)
-  }
-
   function closeActionDialog() {
-    if (actionBusy()) return
-    setPendingAction(null)
+    if (busy()) return
+    setPendingAction(undefined)
   }
 
   async function confirmAction() {
@@ -149,8 +173,28 @@ export default function RelayDetailCard(props: RelayDetailCardProps) {
       await props.onPurge?.()
     }
 
-    setPendingAction(null)
+    setPendingAction(undefined)
   }
+
+  const renderToggle = (toggle: Toggle) => (
+    <Show when={!toggle.requires || r()[toggle.requires] === 1}>
+      <ToggleField label={toggle.label}>
+        <Show
+          when={toggle.planGated}
+          fallback={<ToggleButton enabled={r()[toggle.flag] === 1} onToggle={() => props.onToggle?.(toggle.flag)} />}
+        >
+          <PlanGatedToggle
+            enabled={r()[toggle.flag] === 1}
+            planLimited={planLimited()}
+            showPlanActions={showPlanActions()}
+            canUpdatePlan={!!props.onUpdatePlan}
+            editHref={props.editHref}
+            onToggle={() => props.onToggle?.(toggle.flag)}
+          />
+        </Show>
+      </ToggleField>
+    </Show>
+  )
 
   return (
     <div class="space-y-6">
@@ -159,14 +203,12 @@ export default function RelayDetailCard(props: RelayDetailCardProps) {
         showTenant={props.showTenant}
         tenantProfile={tenantProfile}
         editHref={props.editHref}
-        deactivating={props.deactivating}
-        reactivating={props.reactivating}
-        purging={props.purging}
-        onRequestDeactivate={props.onDeactivate ? () => openActionDialog("deactivate") : undefined}
-        onRequestReactivate={props.onReactivate ? () => openActionDialog("reactivate") : undefined}
+        busy={busy()}
+        onRequestDeactivate={props.onDeactivate ? () => setPendingAction("deactivate") : undefined}
+        onRequestReactivate={props.onReactivate ? () => setPendingAction("reactivate") : undefined}
         onRequestManageCustomDomain={() => setCustomDomainModalOpen(true)}
         onRequestTransferData={() => setDataTransferModalOpen(true)}
-        onRequestPurge={props.onPurge ? () => openActionDialog("purge") : undefined}
+        onRequestPurge={props.onPurge ? () => setPendingAction("purge") : undefined}
       />
 
       <hr class="border-gray-200" />
@@ -202,7 +244,7 @@ export default function RelayDetailCard(props: RelayDetailCardProps) {
                 </p>
               </div>
               <div class="rounded border border-yellow-200 bg-white px-3 py-2 font-mono text-xs text-gray-700 break-all">
-                {r().custom_domain} CNAME {r().subdomain}.{r().zooid_domain}
+                {r().custom_domain} CNAME {canonicalHost(r())}
               </div>
               <p class="text-xs text-yellow-700">
                 For apex domains (e.g. example.com), use an ALIAS or ANAME record instead.
@@ -241,89 +283,13 @@ export default function RelayDetailCard(props: RelayDetailCardProps) {
       <hr class="border-gray-200" />
 
       <DetailSection title="Policy">
-        <ToggleField label="Public read">
-          <ToggleButton
-            enabled={flagToBool(r().policy_public_read, false)}
-            onToggle={props.onTogglePublicRead}
-          />
-        </ToggleField>
-        <ToggleField label="Public write">
-          <ToggleButton
-            enabled={flagToBool(r().policy_public_write, false)}
-            onToggle={props.onTogglePublicWrite}
-          />
-        </ToggleField>
-        <ToggleField label="Public join">
-          <ToggleButton
-            enabled={flagToBool(r().policy_public_join, false)}
-            onToggle={props.onTogglePublicJoin}
-          />
-        </ToggleField>
-        <ToggleField label="Members can invite others">
-          <ToggleButton
-            enabled={flagToBool(r().members_can_invite, true)}
-            onToggle={props.onToggleMembersCanInvite}
-          />
-        </ToggleField>
-        <ToggleField label="Strip signatures">
-          <ToggleButton
-            enabled={flagToBool(r().policy_strip_signatures, false)}
-            onToggle={props.onToggleStripSignatures}
-          />
-        </ToggleField>
+        <For each={POLICY_TOGGLES}>{renderToggle}</For>
       </DetailSection>
 
       <hr class="border-gray-200" />
 
       <DetailSection title="Features">
-        <ToggleField label="Rooms">
-          <ToggleButton
-            enabled={flagToBool(r().groups_enabled, true)}
-            onToggle={props.onToggleGroups}
-          />
-        </ToggleField>
-        <ToggleField label="Management API">
-          <ToggleButton
-            enabled={flagToBool(r().management_enabled, true)}
-            onToggle={props.onToggleManagement}
-          />
-        </ToggleField>
-        <ToggleField label="Push notifications">
-          <ToggleButton
-            enabled={flagToBool(r().push_enabled, true)}
-            onToggle={props.onTogglePushNotifications}
-          />
-        </ToggleField>
-        <ToggleField label="Media storage">
-          <PlanGatedToggle
-            enabled={flagToBool(r().blossom_enabled, true)}
-            fallbackEnabled={flagToBool(r().blossom_enabled, false)}
-            planLimited={planLimited()}
-            showPlanActions={showPlanActions()}
-            canUpdatePlan={!!props.onUpdatePlan}
-            editHref={props.editHref}
-            onToggle={props.onToggleMediaStorage}
-          />
-        </ToggleField>
-        <Show when={flagToBool(r().blossom_enabled, false)}>
-          <ToggleField label="Members-only media">
-            <ToggleButton
-              enabled={flagToBool(r().blossom_authenticated_read, false)}
-              onToggle={props.onToggleMembersOnlyMedia}
-            />
-          </ToggleField>
-        </Show>
-        <ToggleField label="LiveKit support">
-          <PlanGatedToggle
-            enabled={flagToBool(r().livekit_enabled, true)}
-            fallbackEnabled={flagToBool(r().livekit_enabled, false)}
-            planLimited={planLimited()}
-            showPlanActions={showPlanActions()}
-            canUpdatePlan={!!props.onUpdatePlan}
-            editHref={props.editHref}
-            onToggle={props.onToggleLivekitSupport}
-          />
-        </ToggleField>
+        <For each={FEATURE_TOGGLES}>{renderToggle}</For>
       </DetailSection>
 
       <hr class="border-gray-200" />
@@ -370,14 +336,8 @@ export default function RelayDetailCard(props: RelayDetailCardProps) {
       </Show>
 
       <ConfirmDialog
-        open={pendingAction() !== null}
-        title={confirmTitle()}
-        description={confirmDescription()}
-        details={confirmDetails()}
-        confirmLabel={confirmLabel()}
-        busyLabel={confirmBusyLabel()}
-        busy={actionBusy()}
-        tone={confirmTone()}
+        confirmation={pendingAction() && confirmation(pendingAction()!, relayName(r()))}
+        busy={busy()}
         onConfirm={confirmAction}
         onClose={closeActionDialog}
       />

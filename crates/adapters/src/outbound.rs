@@ -13,7 +13,7 @@ use reqwest::redirect;
 /// addresses. It resolves names itself and connects only to the addresses that
 /// pass, so a name resolving somewhere else at request time (DNS rebinding) is
 /// still refused. `allow_private` is for tests, which call servers on loopback.
-pub fn client(timeout: Duration, allow_private: bool) -> Result<reqwest::Client> {
+fn client(timeout: Duration, allow_private: bool) -> Result<reqwest::Client> {
     let redirects = redirect::Policy::custom(move |attempt| {
         if attempt.previous().len() >= 5 {
             return attempt.error("too many redirects");
@@ -34,7 +34,7 @@ pub fn client(timeout: Duration, allow_private: bool) -> Result<reqwest::Client>
 
 /// Whether a url may be fetched: http or https, and not a refused address when
 /// it names one literally, which resolution never sees.
-pub fn check_url(url: &url::Url, allow_private: bool) -> Result<()> {
+fn check_url(url: &url::Url, allow_private: bool) -> Result<()> {
     if !matches!(url.scheme(), "http" | "https") {
         bail!("only http and https urls may be fetched");
     }
@@ -57,7 +57,7 @@ pub fn check_url(url: &url::Url, allow_private: bool) -> Result<()> {
 }
 
 /// Loopback, private, link-local, unspecified and multicast addresses.
-pub fn is_refused(ip: IpAddr) -> bool {
+fn is_refused(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(ip) => {
             ip.is_loopback()
@@ -119,7 +119,16 @@ pub struct Fetched {
 }
 
 impl Outbound {
-    pub fn new(timeout: Duration, allow_private: bool) -> Result<Self> {
+    pub fn new(timeout: Duration) -> Result<Self> {
+        Self::build(timeout, false)
+    }
+
+    /// A client that also reaches local addresses, for tests' servers on loopback.
+    pub fn allowing_private(timeout: Duration) -> Result<Self> {
+        Self::build(timeout, true)
+    }
+
+    fn build(timeout: Duration, allow_private: bool) -> Result<Self> {
         Ok(Self {
             client: client(timeout, allow_private)?,
             allow_private,
@@ -217,7 +226,7 @@ mod tests {
     async fn a_name_resolving_to_loopback_is_never_dialed() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
-        let outbound = Outbound::new(Duration::from_secs(2), false).unwrap();
+        let outbound = Outbound::new(Duration::from_secs(2)).unwrap();
 
         let refused = outbound
             .post_json(&format!("http://localhost:{port}/"), &serde_json::json!({}))

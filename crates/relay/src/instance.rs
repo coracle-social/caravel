@@ -7,9 +7,10 @@ use std::sync::{Arc, RwLock};
 
 use caravel_core::access;
 use caravel_core::crypto::RelayKey;
-use caravel_core::events::{self, DELETION, Saved, StoredEvent, VANISH};
-use caravel_core::relay_policy::{self, EventFacts, Refusal, RelaySnapshot, kinds};
-use caravel_core::relays::Relay;
+use caravel_core::events::kinds::{self, DELETION, VANISH};
+use caravel_core::events::{self, Saved, StoredEvent};
+use caravel_core::relay_policy::{self, EventFacts, Refusal, RelaySnapshot};
+use caravel_core::relays::{self, Relay};
 use caravel_core::{Core, Error};
 use caravel_core::{memberships, notifications, rooms};
 use coracle_lib::events::{Event, EventId};
@@ -50,7 +51,7 @@ impl InstanceState {
         };
 
         Ok(Self {
-            key: RelayKey::decrypt(&core.config.platform_key, &relay.secret)?,
+            key: core.relay_key(&relay)?,
             snapshot: relay_policy::load_snapshot(core.db.pool(), &relay).await?,
             push,
             relay,
@@ -123,8 +124,13 @@ impl RelayInstance {
         }
     }
 
-    pub fn limits(&self) -> &RelayLimits {
-        &self.limits
+    /// Reload the relay after a change to its access lists or rooms made outside
+    /// it, then deliver what it published about the change.
+    pub async fn apply_access_change(&self, published: &[Event]) {
+        self.refresh().await;
+        for event in published {
+            self.fanout(event);
+        }
     }
 
     /// Cancelled once the relay is no longer served.
@@ -190,14 +196,12 @@ impl RelayInstance {
         }
 
         if event.kind == kinds::PUSH_SUBSCRIPTION {
-            let hosts = [state.relay.canonical_host(), state.relay.host()];
             relay_policy::check_push_subscription(
                 event,
-                &hosts,
+                &state.relay.hosts(),
                 push::held_by(&state.push, event),
             )?;
-            // A callback naming a local address outright is refused now for a clear
-            // answer; delivery refuses every local address however it is named.
+            // Refused now for a clear answer; delivery refuses local addresses however named.
             let callback = event.tags.value("callback").unwrap_or_default();
             if self.core.outbound.check(callback).is_err() {
                 return Err(Refusal::invalid(
@@ -208,7 +212,7 @@ impl RelayInstance {
 
         let published = match event.kind {
             kinds::RELAY_JOIN => self.join(&state, event, now).await?,
-            kinds::RELAY_LEAVE => self.leave(&state, event, now).await,
+            kinds::RELAY_LEAVE => self.leave(&state, event, now).await?,
             kind if !relay_policy::is_stored(kind) => Vec::new(),
             _ => self.store(&state, event, now).await?,
         };
@@ -233,12 +237,11 @@ impl RelayInstance {
     ) -> Result<Vec<Event>, Refusal> {
         let relay_id = state.relay.id.as_str();
         let join = relay_policy::admit_join(&state.snapshot, event)?;
-        let limit = state.snapshot.member_limit;
         let result = self
             .core
             .db
             .with_tx(async |conn| {
-                memberships::admit_join(conn, &state.key, relay_id, event, &join, limit, now).await
+                memberships::admit_join(conn, &state.key, &state.relay, event, &join, now).await
             })
             .await;
 
@@ -253,7 +256,12 @@ impl RelayInstance {
     }
 
     /// Act on a NIP-43 leave request. The owner can't leave, which is no error.
-    async fn leave(&self, state: &InstanceState, event: &Event, now: i64) -> Vec<Event> {
+    async fn leave(
+        &self,
+        state: &InstanceState,
+        event: &Event,
+        now: i64,
+    ) -> Result<Vec<Event>, Refusal> {
         let relay = &state.relay;
         let pubkey = event.pubkey.to_hex();
         let result = self
@@ -272,7 +280,14 @@ impl RelayInstance {
             })
             .await;
 
-        result.unwrap_or_default()
+        match result {
+            Ok(published) => Ok(published),
+            Err(Error::Conflict { .. }) => Ok(Vec::new()),
+            Err(error) => {
+                tracing::warn!(relay = %relay.id, error = %error, "failed to remove a member");
+                Err(Refusal::Error("the leave could not be applied"))
+            }
+        }
     }
 
     /// Keep an event, applying a deletion, a request to vanish, or a change to a
@@ -337,9 +352,9 @@ impl RelayInstance {
 
     /// Whether a NIP-62 request names this relay, by one of its hosts or as all.
     fn is_addressed(&self, relay: &Relay, event: &Event) -> bool {
-        let hosts = [relay.canonical_host(), relay.custom_domain.clone()];
+        let hosts = relay.hosts();
         event.tags.find_all("relay").any(|tag| {
-            tag.value() == "ALL_RELAYS" || hosts.contains(&auth::relay_host(tag.value()))
+            tag.value() == "ALL_RELAYS" || hosts.contains(&relays::url_host(tag.value()))
         })
     }
 
@@ -351,18 +366,17 @@ impl RelayInstance {
         let author = event.pubkey.to_hex();
         let facts = EventFacts::of(event, &author);
         let stored = StoredEvent::from_event(event);
-        let mut rendered: [Option<RawEvent>; 2] = [None, None];
+        let mut signed: Option<RawEvent> = None;
+        let mut stripped: Option<RawEvent> = None;
 
         for matched in self.connections.matching(event) {
-            // A reader banned or removed since subscribing stops receiving at once.
-            if relay_policy::admit_req(&state.snapshot, &matched.pubkeys).is_err()
-                || !relay_policy::can_any_receive(&state.snapshot, &matched.pubkeys, facts)
-            {
+            if !relay_policy::can_deliver(&state.snapshot, &matched.pubkeys, facts) {
                 continue;
             }
 
             let strip = relay_policy::strips_signature(&state.snapshot, &matched.pubkeys);
-            let raw = rendered[usize::from(strip)]
+            let rendered = if strip { &mut stripped } else { &mut signed };
+            let raw = rendered
                 .get_or_insert_with(|| {
                     RawEvent::from_json(stored.to_json(strip)).expect("events render as json")
                 })
@@ -470,7 +484,7 @@ impl RelayInstance {
         }
 
         session
-            .send(RelayMessage::Eose(subscription_id.clone(), vec![]))
+            .send(RelayMessage::Eose(subscription_id.clone()))
             .await;
         Ok(())
     }

@@ -15,13 +15,13 @@ use crate::relays;
 static CUSTOM_DOMAIN_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^([a-z0-9][a-z0-9\-]*\.)+[a-z]{2,}$").unwrap());
 
-/// Lowercase and check a custom domain. Empty clears it. A domain under one of the
-/// relay domains belongs in the subdomain instead.
-pub fn normalize_custom_domain(config: &Config, domain: &str) -> Result<String> {
+/// Lowercase and check a custom domain, where empty means none. A domain under
+/// one of the relay domains belongs in the subdomain instead.
+pub fn normalize_custom_domain(config: &Config, domain: &str) -> Result<Option<String>> {
     let domain = domain.trim().trim_end_matches('.').to_lowercase();
 
     if domain.is_empty() {
-        return Ok(domain);
+        return Ok(None);
     }
 
     if !CUSTOM_DOMAIN_RE.is_match(&domain) {
@@ -38,7 +38,7 @@ pub fn normalize_custom_domain(config: &Config, domain: &str) -> Result<String> 
         ));
     }
 
-    Ok(domain)
+    Ok(Some(domain))
 }
 
 /// Whether the platform serves `host`, which on-demand TLS asks before issuing a
@@ -54,14 +54,16 @@ pub async fn is_served_host(core: &Core, host: &str) -> Result<bool> {
 /// Verify each unverified custom domain that now points at its relay.
 pub async fn verify_custom_domains(core: &Core) -> Result<()> {
     for relay in relays::list_relays_with_custom_domain(core.db.pool(), false).await? {
-        let canonical = relay.canonical_host();
-        match dns::domain_points_to(&relay.custom_domain, &canonical).await {
+        let Some(domain) = relay.custom_domain.as_deref() else {
+            continue;
+        };
+        match dns::domain_points_to(domain, &relay.canonical_host()).await {
             Ok(true) => {
-                tracing::info!(relay = %relay.id, domain = %relay.custom_domain, "custom domain verified");
-                set_verified(core, &relay.id, &relay.custom_domain, true).await;
+                tracing::info!(relay = %relay.id, domain, "custom domain verified");
+                set_verified(core, &relay.id, domain, true).await;
             }
             Ok(false) => {
-                tracing::debug!(relay = %relay.id, domain = %relay.custom_domain, "custom domain not pointing at relay yet");
+                tracing::debug!(relay = %relay.id, domain, "custom domain not pointing at relay yet");
             }
             Err(error) => {
                 tracing::warn!(relay = %relay.id, error = %error, "DNS check failed for custom domain");
@@ -75,12 +77,14 @@ pub async fn verify_custom_domains(core: &Core) -> Result<()> {
 /// its relay, which then answers on its canonical host again.
 pub async fn reverify_custom_domains(core: &Core) -> Result<()> {
     for relay in relays::list_relays_with_custom_domain(core.db.pool(), true).await? {
-        let canonical = relay.canonical_host();
-        match dns::domain_points_to(&relay.custom_domain, &canonical).await {
+        let Some(domain) = relay.custom_domain.as_deref() else {
+            continue;
+        };
+        match dns::domain_points_to(domain, &relay.canonical_host()).await {
             Ok(true) => {}
             Ok(false) => {
-                tracing::warn!(relay = %relay.id, domain = %relay.custom_domain, "custom domain no longer points at relay");
-                set_verified(core, &relay.id, &relay.custom_domain, false).await;
+                tracing::warn!(relay = %relay.id, domain, "custom domain no longer points at relay");
+                set_verified(core, &relay.id, domain, false).await;
             }
             Err(error) => {
                 tracing::warn!(relay = %relay.id, error = %error, "DNS check failed for verified custom domain");

@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
-use caravel_core::auth::{self, Actor};
+use caravel_core::auth;
 use caravel_core::{Core, Error, domains, plans};
 use serde::Serialize;
 
@@ -70,12 +70,6 @@ pub async fn delete_session(State(core): State<Core>, headers: HeaderMap) -> Api
     ok(())
 }
 
-#[derive(Serialize)]
-struct Identity {
-    pubkey: String,
-    is_admin: bool,
-}
-
-pub async fn get_identity(Authed(Actor { pubkey, is_admin }): Authed) -> ApiResult {
-    ok(Identity { pubkey, is_admin })
+pub async fn get_identity(Authed(actor): Authed) -> ApiResult {
+    ok(actor)
 }

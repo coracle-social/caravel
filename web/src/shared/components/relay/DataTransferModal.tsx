@@ -1,6 +1,7 @@
 import { For, Show, createSignal } from "solid-js"
 import Modal from "@/shared/components/Modal"
-import { exportRelayData, importRelayData, type ImportResult, type Relay } from "@/shared/lib/api"
+import { exportRelayData, importRelayData, relayName, type ImportResult, type Relay } from "@/shared/lib/api"
+import { formatError } from "@/shared/lib/format"
 
 type Props = {
   open: boolean
@@ -8,9 +9,7 @@ type Props = {
   relay: () => Relay
 }
 
-// Export and import a relay's events as JSONL: the same format the hosting
-// backend's own dump tools read, so a relay can be backed up, moved between
-// hosts, or seeded from another one.
+// Exporting and importing a relay's events as JSONL, to back a relay up, move it, or seed it from another.
 export default function DataTransferModal(props: Props) {
   const [exporting, setExporting] = createSignal(false)
   const [importing, setImporting] = createSignal(false)
@@ -18,7 +17,7 @@ export default function DataTransferModal(props: Props) {
   const [result, setResult] = createSignal<ImportResult>()
   const [error, setError] = createSignal<string>()
 
-  const relayLabel = () => props.relay().info_name || props.relay().subdomain
+  const relayLabel = () => relayName(props.relay())
   const problems = () => result()?.problems ?? []
 
   function close() {
@@ -44,7 +43,7 @@ export default function DataTransferModal(props: Props) {
       // Revoking synchronously can cancel the download the click just started.
       window.setTimeout(() => URL.revokeObjectURL(url), 1000)
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Export failed")
+      setError(formatError(e, "Export failed"))
     } finally {
       setExporting(false)
     }
@@ -61,7 +60,7 @@ export default function DataTransferModal(props: Props) {
     try {
       setResult(await importRelayData(props.relay().id, selected))
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Import failed")
+      setError(formatError(e, "Import failed"))
     } finally {
       setImporting(false)
     }

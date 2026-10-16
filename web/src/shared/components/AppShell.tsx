@@ -1,11 +1,15 @@
 import { useLocation } from "@solidjs/router"
 import AppLink from "@/shared/components/AppLink"
 import { createMemo, createSignal, For, Show } from "solid-js"
-import { useProfileMetadata, useProfilePicture, useTenantRelays, type Relay } from "@/shared/lib/hooks"
+import { account } from "@/shared/lib/account"
+import { canonicalHost, relayName, type Relay } from "@/shared/lib/api"
 import { PLATFORM_LOGO, PLATFORM_NAME } from "@/shared/lib/config"
-import { account, identity } from "@/shared/lib/state"
+import { profileName, useProfileMetadata } from "@/shared/lib/profiles"
+import { useTenantRelays } from "@/shared/lib/relays"
+import { identity } from "@/shared/lib/state"
 import { fuzzySearch } from "@/shared/lib/search"
 import serverIcon from "@/shared/assets/server.svg"
+import Avatar from "@/shared/components/Avatar"
 import Modal from "@/shared/components/Modal"
 import BillingPrompts from "@/shared/components/BillingPrompts"
 import CopyNpub from "@/shared/components/CopyNpub"
@@ -34,19 +38,17 @@ function AdminIcon() {
 
 export default function AppShell(props: { children?: any }) {
   const location = useLocation()
-  const picture = useProfilePicture(() => account()?.pubkey)
   const metadata = useProfileMetadata(() => account()?.pubkey)
   const [tenantRelays] = useTenantRelays()
   const [searchOpen, setSearchOpen] = createSignal(false)
   const [searchQuery, setSearchQuery] = createSignal("")
   const [adminOpen, setAdminOpen] = createSignal(false)
 
-  const displayName = createMemo(() => metadata()?.name || metadata()?.display_name)
+  const displayName = createMemo(() => profileName(metadata()))
   const username = createMemo(() => {
     const pubkey = account()?.pubkey
     return displayName() || (pubkey ? shortenNpub(pubkey) : "")
   })
-  const initial = createMemo(() => (displayName() || account()?.pubkey || "?").slice(0, 1).toUpperCase())
   const nip05 = createMemo(() => metadata()?.nip05)
   const searchedRelays = createMemo<Relay[]>(() => {
     const list = tenantRelays() ?? []
@@ -110,16 +112,7 @@ export default function AppShell(props: { children?: any }) {
 
         <div class="border-t border-white/15 p-4">
           <AppLink href="/account" class="flex items-center gap-3 rounded-lg p-2 hover:bg-white/10">
-            <Show
-              when={picture()}
-              fallback={
-                <div class="h-10 w-10 rounded-full bg-white/15 text-sm font-medium text-white flex items-center justify-center">
-                  {initial()}
-                </div>
-              }
-            >
-              <img src={picture()} alt="Profile" class="h-10 w-10 rounded-full object-cover" />
-            </Show>
+            <Avatar profile={metadata()} pubkey={account()?.pubkey ?? "?"} alt="Profile" class="h-10 w-10" fallbackClass="bg-white/15 text-sm font-medium text-white" />
             <div class="min-w-0">
               <Show
                 when={displayName()}
@@ -134,7 +127,7 @@ export default function AppShell(props: { children?: any }) {
       </aside>
 
       <div class="md:pl-[260px] min-h-screen pb-20 md:pb-0">
-        <BillingPrompts variant="banner" />
+        <BillingPrompts />
         <main>{props.children}</main>
       </div>
 
@@ -176,12 +169,7 @@ export default function AppShell(props: { children?: any }) {
             </Show>
           </div>
           <AppLink href="/account" aria-label="Account settings" class="rounded-full">
-            <Show
-              when={picture()}
-              fallback={<div class="h-9 w-9 rounded-full bg-gray-200 text-gray-600 flex items-center justify-center text-sm font-medium">{initial()}</div>}
-            >
-              <img src={picture()} alt="Profile" class="h-9 w-9 rounded-full object-cover" />
-            </Show>
+            <Avatar profile={metadata()} pubkey={account()?.pubkey ?? "?"} alt="Profile" class="h-9 w-9" fallbackClass="bg-gray-200 text-gray-600 text-sm font-medium" />
           </AppLink>
         </div>
       </nav>
@@ -232,8 +220,8 @@ export default function AppShell(props: { children?: any }) {
                         class="block rounded-lg border border-gray-200 bg-white p-3"
                         onClick={closeSearchModal}
                       >
-                        <p class="text-sm font-medium text-gray-900">{relay.info_name || relay.subdomain}</p>
-                        <p class="text-xs text-gray-500">{relay.subdomain}.{relay.zooid_domain}</p>
+                        <p class="text-sm font-medium text-gray-900">{relayName(relay)}</p>
+                        <p class="text-xs text-gray-500">{canonicalHost(relay)}</p>
                       </AppLink>
                     </li>
                   )}

@@ -3,9 +3,8 @@
 
 use std::time::Duration;
 
-pub use sqlx::{PgConnection, PgExecutor, PgPool, Postgres};
-
 use sqlx::postgres::PgPoolOptions;
+use sqlx::{PgConnection, PgPool};
 
 #[cfg(feature = "testing")]
 pub mod testing;
@@ -81,7 +80,7 @@ impl Db {
 }
 
 /// The SQLSTATE code of a database error.
-pub fn sqlstate(error: &sqlx::Error) -> Option<String> {
+fn sqlstate(error: &sqlx::Error) -> Option<String> {
     match error {
         sqlx::Error::Database(error) => error.code().map(|code| code.into_owned()),
         _ => None,

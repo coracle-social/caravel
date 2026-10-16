@@ -16,8 +16,7 @@ impl BillingPeriod {
     pub fn at(anchor: Option<i64>, at: i64) -> Option<Self> {
         let anchor = DateTime::<Utc>::from_timestamp(anchor?, 0).unwrap_or_default();
 
-        // Walk forward in whole calendar months from the anchor until the next step
-        // would pass `at`, so boundaries track months rather than a fixed span.
+        // Whole calendar months from the anchor, so boundaries track months, not a fixed span.
         let mut start = anchor;
         let mut months = 1u32;
         while let Some(next) = anchor.checked_add_months(Months::new(months)) {
@@ -28,9 +27,7 @@ impl BillingPeriod {
             months += 1;
         }
 
-        // Derive `end` from the anchor rather than `start + 1 month`: month-add clamps
-        // to the last valid day, so re-adding from a clamped `start` would leave gaps
-        // between periods for anchors on the 29th to 31st.
+        // From the anchor, since a month after a clamped `start` leaves gaps for anchors on the 29th to 31st.
         let end = anchor
             .checked_add_months(Months::new(months))
             .unwrap_or(start);

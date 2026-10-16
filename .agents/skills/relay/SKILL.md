@@ -11,7 +11,7 @@ The test inventory in [references/zooid-tests.md](references/zooid-tests.md) map
 
 ## Hosts and reloads
 
-A request reaches a relay by its host. The app looks the host up in the relay registry before anything else: each live relay answers on its canonical host (`<subdomain>.<domain>`), on its verified custom domain, and on the hosts that redirect to it. A page requested on any host but the relay's primary one redirects there, while the protocol itself is served on all of them, since websocket clients don't follow redirects. A host no relay claims goes to the API.
+A request reaches a relay by its host. The app looks the host up in the relay registry before anything else: each live relay answers on its canonical host (`<subdomain>.<domain>`), on its verified custom domain, and on the hosts that redirect to it. A page requested on any host but the relay's primary one redirects there, while the protocol itself is served on all of them, since websocket clients don't follow redirects. A host no relay claims gets nothing but the health check and on-demand TLS's ask. Any origin may call a relay's HTTP endpoints and read the `X-Reason` media refusals carry.
 
 Only active, unpurged relays are served. The registry loads them when the process starts, and reloads one whenever the core publishes that it changed. A reload builds the relay's new state and swaps it in, so open connections survive a settings change. A relay that stops being served closes its connections. Nothing between a request's host and its relay's rules reads the database.
 
@@ -25,9 +25,9 @@ A subscription is registered before its stored events are read, so nothing publi
 
 `relay_policy` holds the rules as pure functions over a snapshot of the relay's settings and access lists, which the registry keeps in memory. They run in the order zooid established:
 
-- A write passes NIP-70's protected-event check, then refuses kinds the relay writes itself (its membership records, blob descriptors) and events dated more than five minutes ahead, then banned events and authors. A zap receipt or gift wrap addressed to someone with access needs no authentication. Otherwise the publisher must be authenticated as the author (or be publishing the relay's own events), and must have access unless the relay takes public writes.
+- A write passes NIP-70's protected-event check, then refuses kinds the relay writes itself (its membership records) and Blossom authorizations and events dated more than five minutes ahead, then banned events and authors. A zap receipt or gift wrap addressed to someone with access needs no authentication. Otherwise the publisher must be authenticated as the author (or be publishing the relay's own events), and must have access unless the relay takes public writes.
 - A subscription needs authentication unless the relay allows anonymous reads. A private relay admits a connection if any of its pubkeys has access; a public one refuses a connection with a banned pubkey.
-- Which events a reader sees is one function, used for stored queries, live delivery and reconciliation alike. Invite codes, join and leave requests and blob descriptors are never served, and a push subscription goes back only to its author.
+- Which events a reader sees is one function, used for stored queries, live delivery and reconciliation alike. Invite codes, join and leave requests and Blossom authorizations are never served, and a push subscription goes back only to its author.
 - A relay that strips signatures serves events with a zeroed signature to everyone who doesn't manage it. The owner and the relay's own key manage it.
 
 Live delivery re-checks whether each subscriber may still read the relay at all, so a reader banned or removed after subscribing stops receiving at once.
@@ -38,7 +38,7 @@ A relay's members are rows in the core's `access` module, the single record of w
 
 A NIP-43 join request is admitted for a member already, for anyone on a relay that takes open joins, or for the holder of a live claim; a relay that sells memberships takes no open joins, and says so to a joiner without a claim. A join runs under a lock on the relay row: the claim must still be live, a paid invite's claim gives the joiner its membership (the `memberships` skill covers this), and a new member must fit within the plan's member limit, counting the seats unused paid invites hold. Every join that presents a claim is logged against it, whether or not the claim is what let it in, and a claim's log outlives the claim. A leave request removes the member, except the owner.
 
-NIP-86 calls arrive as `POST`s to the relay's url, signed with NIP-98 over the exact body. The owner and the relay's own key hold every method; anyone else holds the methods granted to them, and every member of a relay whose members may invite also holds the two claim methods. A method is checked against the in-memory snapshot before it runs.
+NIP-86 calls arrive as `POST`s to the relay's url, signed with NIP-98 over the exact body. NIP-98 and Blossom authorizations may be encoded in standard or url-safe base64. The owner and the relay's own key hold every method; anyone else holds the methods granted to them, and every member of a relay whose members may invite also holds the two claim methods. A method is checked against the in-memory snapshot before it runs.
 
 ## Rooms
 
@@ -60,11 +60,11 @@ A blob's content type is its uploader's choice and it is served on the relay's o
 
 ## Push
 
-A member registers a NIP-9a push subscription as a kind 30390 event naming this relay, one or more filters, optional ignore filters, and one http(s) callback; a pubkey holds at most ten. Subscriptions are stored as events and indexed with the relay's state, which reloads when one is stored or deleted. Each new event, stored or ephemeral, is pushed to every subscription it matches whose author may read it, except the event's own author: the callback receives the event's id and the relay's url, and the event itself (without its signature, where the relay strips them) if the subscription asks. Deliveries run on a bounded pool. A callback answering 404 drops its subscription at once, and ten failures in a row drop it too.
+A member registers a NIP-9a push subscription as a kind 30390 event naming this relay by any of its hosts, one or more filters, optional ignore filters, and one http(s) callback; a pubkey holds at most ten. Subscriptions are stored as events and indexed with the relay's state, which reloads when one is stored or deleted. Each new event, stored or ephemeral, is pushed to every subscription it matches whose author may read it, except the event's own author: the callback receives the event's id and the relay's url, and the event itself (without its signature, where the relay strips them) if the subscription asks. Deliveries run on a bounded pool. A callback answering 404 drops its subscription at once, and ten failures in a row drop it too.
 
 ## Calls
 
-A room tagged `livekit` has calls, on the platform's LiveKit server, for relays with calls on. A member of the relay asks for a token at `/.well-known/nip29/livekit/<room>` with a NIP-98 signature for exactly that url; a room also tagged `restricted` gives tokens only to its own members and the relay's managers. LiveKit room names lead with the relay's id, so one webhook URL, on any relay host, serves every relay's calls. Each departure the webhook reports credits that participant's time to the relay's call clock, once per LiveKit session, before anything that could fail; then the relay publishes who is in the call (39004), from LiveKit's own list. Call time is billed by how far the clock moves in a period.
+A room tagged `livekit` has calls, on the platform's LiveKit server, for relays with calls on. A member of the relay asks for a token at `/.well-known/nip29/livekit/<room>` with a NIP-98 signature for exactly that url; a room also tagged `restricted` gives tokens only to its own members and the relay's managers. LiveKit room names lead with the relay's id, so one webhook URL, on any relay host, serves every relay's calls. Each departure the webhook reports credits that participant's time to the relay's call clock, once per LiveKit session, before anything that could fail and even if the relay or room has since lost its calls; then the relay publishes who is in the call (39004), from LiveKit's own list. Call time is billed by how far the clock moves in a period.
 
 ## Notifications
 
@@ -80,7 +80,7 @@ A purged relay keeps its row, but a worker erases its events, access lists, room
 
 All relays share one `event` table, and every query is scoped to one relay. Ids, pubkeys and signatures are stored as bytes, tags as the JSON they were signed with, and single-letter tags again as `name:value` strings for indexed matching.
 
-Replaceable and addressable events hold one row per slot, which a newer version overwrites in place in a single statement. A version as old as the stored one replaces it, so the last of several written in one second wins. NIP-09 deletions and NIP-62 vanish requests are applied in the transaction that stores them, and stay stored as tombstones that refuse what they removed if it is published again. Expired events (NIP-40) are excluded from every read and swept every minute. An event is fanned out only if this write stored it, so a duplicate is never broadcast twice.
+Replaceable and addressable events hold one row per slot, which a newer version overwrites in place in a single statement. A version as old as the stored one replaces it, so the last of several written in one second wins. NIP-09 deletions and NIP-62 vanish requests are applied in the transaction that stores them (a vanish request only if it names one of the relay's hosts, or all relays), and stay stored as tombstones that refuse what they removed if it is published again. Expired events (NIP-40) are excluded from every read and swept every minute. An event is fanned out only if this write stored it, so a duplicate is never broadcast twice.
 
 ## History
 

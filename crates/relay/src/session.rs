@@ -15,8 +15,13 @@ use tokio::sync::mpsc;
 use tokio::time::{Instant, interval_at};
 use tokio_util::sync::CancellationToken;
 
+use caravel_core::relay_policy::Refusal;
+
 use crate::instance::RelayInstance;
-use crate::message::{ClientMessage, RelayMessage, SubscriptionId};
+use crate::message::{
+    ClientMessage, RelayMessage, SubscriptionId, refused_event, refused_reconciliation,
+    refused_subscription,
+};
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -49,7 +54,6 @@ impl Default for Transport {
 #[derive(Debug, Clone)]
 pub struct Session {
     id: u64,
-    addr: SocketAddr,
     host: String,
     sender: mpsc::Sender<RelayMessage>,
 }
@@ -58,10 +62,6 @@ impl Session {
     /// This connection's number, unique within the process.
     pub fn id(&self) -> u64 {
         self.id
-    }
-
-    pub fn addr(&self) -> SocketAddr {
-        self.addr
     }
 
     /// The host the client connected to, which its NIP-42 answers name.
@@ -94,12 +94,7 @@ pub async fn run(
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
     let (sink, stream) = socket.split();
     let (sender, receiver) = mpsc::channel(transport.send_buffer);
-    let session = Session {
-        id,
-        addr,
-        host,
-        sender,
-    };
+    let session = Session { id, host, sender };
 
     tracing::debug!(session = id, %addr, relay = %instance.relay_id(), "connected");
 
@@ -124,11 +119,8 @@ async fn read(session: &Session, instance: &RelayInstance, mut stream: SplitStre
         match frame {
             Ok(WsMessage::Text(text)) => dispatch(session, instance, text.as_str()).await,
             Ok(WsMessage::Binary(_)) => {
-                session
-                    .send(RelayMessage::notice(
-                        "invalid: nostr messages are text, not binary",
-                    ))
-                    .await;
+                let refusal = Refusal::invalid("nostr messages are text, not binary");
+                session.send(RelayMessage::Notice(refusal.message())).await;
             }
             Ok(WsMessage::Close(_) | WsMessage::Ping(_) | WsMessage::Pong(_)) => {}
             Err(error) => {
@@ -154,19 +146,13 @@ async fn dispatch(session: &Session, instance: &RelayInstance, text: &str) {
         ClientMessage::Event(event) => {
             // Screened before the signature is checked, which costs far more.
             if let Err(refusal) = instance.screen(&event) {
-                session
-                    .send(crate::message::refused_event(event.id, &refusal))
-                    .await;
+                session.send(refused_event(event.id, &refusal)).await;
                 return;
             }
 
             if let Err(error) = event.verify() {
-                session
-                    .send(RelayMessage::rejected(
-                        event.id,
-                        format!("invalid: {error}"),
-                    ))
-                    .await;
+                let refusal = Refusal::invalid(error.to_string());
+                session.send(refused_event(event.id, &refusal)).await;
                 return;
             }
 
@@ -174,12 +160,8 @@ async fn dispatch(session: &Session, instance: &RelayInstance, text: &str) {
         }
         ClientMessage::Auth(event) => {
             if let Err(error) = event.verify() {
-                session
-                    .send(RelayMessage::rejected(
-                        event.id,
-                        format!("invalid: {error}"),
-                    ))
-                    .await;
+                let refusal = Refusal::invalid(error.to_string());
+                session.send(refused_event(event.id, &refusal)).await;
                 return;
             }
 
@@ -215,9 +197,9 @@ async fn dispatch(session: &Session, instance: &RelayInstance, text: &str) {
 /// How to tell a client its message was no good: on the subscription it named,
 /// where it named one, so a client waiting for an `EOSE` isn't left waiting.
 fn malformed(text: &str, error: &serde_json::Error) -> RelayMessage {
-    let reason = format!("invalid: {error}");
+    let refusal = Refusal::invalid(error.to_string());
     let Ok(parts) = serde_json::from_str::<Vec<&serde_json::value::RawValue>>(text) else {
-        return RelayMessage::notice(reason);
+        return RelayMessage::Notice(refusal.message());
     };
 
     let verb = parts
@@ -228,9 +210,9 @@ fn malformed(text: &str, error: &serde_json::Error) -> RelayMessage {
         .and_then(|id| serde_json::from_str::<SubscriptionId>(id.get()).ok());
 
     match (verb.as_deref(), subscription_id) {
-        (Some("REQ" | "COUNT"), Some(id)) => RelayMessage::closed(id, reason),
-        (Some("NEG-OPEN" | "NEG-MSG"), Some(id)) => RelayMessage::neg_err(id, reason),
-        _ => RelayMessage::notice(reason),
+        (Some("REQ" | "COUNT"), Some(id)) => refused_subscription(id, &refusal),
+        (Some("NEG-OPEN" | "NEG-MSG"), Some(id)) => refused_reconciliation(id, &refusal),
+        _ => RelayMessage::Notice(refusal.message()),
     }
 }
 

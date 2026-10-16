@@ -1,32 +1,57 @@
 //! The moderation feed: the events and uploads every moderated relay saw, newest
-//! first, for admins to review. Relays owned by admins aren't moderated.
+//! first, for admins to review. Relays owned by admins aren't moderated, and
+//! events no relay serves aren't shown.
 
-use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use std::collections::HashMap;
+
+use serde::Serialize;
+use serde_json::Value;
 use sqlx::Row;
 
 use crate::Core;
 use crate::error::Result;
-use crate::events::{EventHead, StoredEvent};
-use crate::relay_policy::kinds;
-use crate::rooms;
+use crate::events;
+use crate::relay_policy::UNREADABLE_KINDS;
+use crate::relays;
 
 /// The most items one page holds.
 const PAGE_SIZE: usize = 1000;
 
-/// One reviewable item: an event, or an upload described as a blob, with the
-/// relay it came from and when that relay first stored it.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+/// One reviewable item, with the relay it came from and when that relay first
+/// stored it.
+#[derive(Clone, Debug, Serialize)]
 pub struct ModerationItem {
-    #[serde(rename = "type")]
-    pub item_type: String,
     pub relay_id: String,
     pub seen_at: i64,
-    pub data: Value,
+    #[serde(flatten)]
+    pub subject: Subject,
+}
+
+/// What is up for review.
+#[derive(Clone, Debug, Serialize)]
+#[serde(tag = "type", content = "data", rename_all = "lowercase")]
+pub enum Subject {
+    /// An event, as NIP-01 JSON.
+    Event(Value),
+    Upload(Upload),
+}
+
+/// A blob a member uploaded.
+#[derive(Clone, Debug, Serialize)]
+pub struct Upload {
+    pub sha256: String,
+    /// Where the relay serves it.
+    pub url: String,
+    #[serde(rename = "type")]
+    pub content_type: String,
+    pub size: i64,
+    /// The uploader.
+    pub pubkey: String,
+    pub created_at: i64,
 }
 
 /// One page of the feed, and whether its window held more than fit.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct ModerationPage {
     pub items: Vec<ModerationItem>,
     pub truncated: bool,
@@ -40,16 +65,7 @@ pub async fn list_moderation(
     until: Option<i64>,
 ) -> Result<ModerationPage> {
     let admins = core.config.admin_pubkeys.clone();
-    let hidden: Vec<i32> = [
-        kinds::RELAY_INVITE,
-        rooms::kinds::CREATE_INVITE,
-        kinds::RELAY_JOIN,
-        kinds::RELAY_LEAVE,
-        kinds::PUSH_SUBSCRIPTION,
-    ]
-    .into_iter()
-    .map(i32::from)
-    .collect();
+    let hidden: Vec<i32> = UNREADABLE_KINDS.into_iter().map(i32::from).collect();
     let since = since.unwrap_or(0);
     let until = until.unwrap_or(i64::MAX);
 
@@ -68,8 +84,7 @@ pub async fn list_moderation(
     .await?;
 
     let uploads = sqlx::query(
-        "SELECT o.relay_id, o.created_at AS seen_at, o.pubkey, b.sha256, b.type, b.size,
-                r.subdomain, r.domain, r.custom_domain, r.custom_domain_verified
+        "SELECT o.relay_id, o.created_at AS seen_at, o.pubkey, b.sha256, b.type, b.size
          FROM blob_owner o
          JOIN blob b ON b.relay_id = o.relay_id AND b.sha256 = o.blob_sha256
          JOIN relay r ON r.id = o.relay_id
@@ -83,55 +98,41 @@ pub async fn list_moderation(
     .fetch_all(core.db.pool())
     .await?;
 
+    let hosts: HashMap<String, String> = relays::list_relays(core.db.pool())
+        .await?
+        .into_iter()
+        .map(|relay| (relay.id.clone(), relay.host()))
+        .collect();
+
     let mut items = Vec::with_capacity(events.len() + uploads.len());
     for row in &events {
-        let stored = StoredEvent {
-            head: EventHead {
-                id: row.get::<Vec<u8>, _>("id").try_into().unwrap_or_default(),
-                pubkey: row
-                    .get::<Vec<u8>, _>("pubkey")
-                    .try_into()
-                    .unwrap_or_default(),
-                created_at: row.get("created_at"),
-                kind: u16::try_from(row.get::<i32, _>("kind")).unwrap_or_default(),
-                tag_values: row.get("tag_values"),
-            },
-            content: row.get("content"),
-            tags: row.get("tags"),
-            sig: row.get::<Vec<u8>, _>("sig").try_into().unwrap_or([0; 64]),
+        let Some(stored) = events::stored_event(row) else {
+            continue;
         };
         items.push(ModerationItem {
-            item_type: "event".to_string(),
             relay_id: row.get("relay_id"),
             seen_at: row.get("seen_at"),
-            data: serde_json::from_str(&stored.to_json(false)).map_err(anyhow::Error::from)?,
+            subject: Subject::Event(
+                serde_json::from_str(&stored.to_json(false)).map_err(anyhow::Error::from)?,
+            ),
         });
     }
     for row in &uploads {
-        let custom_domain: String = row.get("custom_domain");
-        let host = if row.get::<bool, _>("custom_domain_verified") && !custom_domain.is_empty() {
-            custom_domain
-        } else {
-            format!(
-                "{}.{}",
-                row.get::<String, _>("subdomain"),
-                row.get::<String, _>("domain")
-            )
-        };
+        let relay_id: String = row.get("relay_id");
         let sha256: String = row.get("sha256");
         let seen_at: i64 = row.get("seen_at");
+        let host = hosts.get(&relay_id).cloned().unwrap_or_default();
         items.push(ModerationItem {
-            item_type: "upload".to_string(),
-            relay_id: row.get("relay_id"),
-            seen_at,
-            data: json!({
-                "sha256": sha256,
-                "url": format!("https://{host}/{sha256}"),
-                "type": row.get::<String, _>("type"),
-                "size": row.get::<i64, _>("size"),
-                "pubkey": row.get::<String, _>("pubkey"),
-                "created_at": seen_at,
+            subject: Subject::Upload(Upload {
+                url: format!("https://{host}/{sha256}"),
+                sha256,
+                content_type: row.get("type"),
+                size: row.get("size"),
+                pubkey: row.get("pubkey"),
+                created_at: seen_at,
             }),
+            relay_id,
+            seen_at,
         });
     }
 

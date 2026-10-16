@@ -1,20 +1,19 @@
 //! Metered usage: hourly readings of each paid relay's storage and A/V call time,
 //! rolled up per billing period for overage.
 
-use serde::{Deserialize, Serialize};
 use sqlx::PgExecutor;
 
 use crate::Core;
 use crate::error::Result;
 use crate::plans;
-use crate::relays::{self, RelayStatus};
+use crate::relays;
 use crate::{calls, media};
 
 /// One reading of a relay's metered usage. `storage_bytes` is a level, so a
 /// period bills its peak; `participant_seconds` is a lifetime clock of time spent
 /// in calls, so a period bills how far it advanced, which stays right across
 /// readings that were missed.
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+#[derive(Debug, Clone, sqlx::FromRow)]
 pub struct UsageSample {
     pub id: String,
     pub relay_id: String,
@@ -26,7 +25,7 @@ pub struct UsageSample {
 
 /// One relay's usage across a closed billing period: storage at its peak, and the
 /// call time its clock advanced.
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+#[derive(Debug, Clone, sqlx::FromRow)]
 pub struct RelayUsageTotals {
     pub relay_id: String,
     pub peak_storage_bytes: i64,
@@ -87,13 +86,10 @@ pub async fn sample_usage(core: &Core) -> Result<()> {
     let now = core.clock.now();
 
     for relay in relays::list_relays(core.db.pool()).await? {
-        if relay.is_purged() || relay.status != RelayStatus::Active {
+        if !relay.is_served() || (!relay.blossom_enabled && !relay.livekit_enabled) {
             continue;
         }
-        if !relay.blossom_enabled && !relay.livekit_enabled {
-            continue;
-        }
-        if plans::get_plan(&relay.plan_id).is_none_or(|plan| plan.amount <= 0) {
+        if !plans::get_plan(&relay.plan_id).is_some_and(|plan| plan.is_paid()) {
             continue;
         }
 

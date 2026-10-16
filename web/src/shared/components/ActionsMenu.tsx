@@ -1,10 +1,8 @@
 import { createEffect, createSignal, onCleanup, type JSX } from "solid-js"
 import menuDotsIcon from "@/shared/assets/menu-dots-2.svg"
 
-// The shared dropdown actions menu: a dots button plus a panel that closes on
-// click-outside or Escape. Children receive a `close` callback so menu items
-// can dismiss the panel before running their action. Pair with ActionsMenuItem
-// for consistent item styling.
+// A dots button opening a menu of ActionsMenuItems, which closes on a click
+// outside, Escape, or the `close` its children are given.
 export default function ActionsMenu(props: { children: (close: () => void) => JSX.Element }) {
   const [open, setOpen] = createSignal(false)
 

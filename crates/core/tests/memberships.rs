@@ -6,7 +6,7 @@ mod common;
 
 use anyhow::Result;
 use caravel_core::access::{self, MemberSource};
-use caravel_core::crypto::RelayKey;
+use caravel_core::events::kinds;
 use caravel_core::hosting::{self, RelaySettings};
 use caravel_core::memberships::{self, Membership, MembershipStatus};
 use caravel_core::notifications;
@@ -101,10 +101,10 @@ async fn buy_invite(f: &Fixture) -> Result<String> {
 
 /// Join the relay presenting `code`, as the relay does for a NIP-43 request.
 async fn join(core: &Core, relay: &Relay, joiner: &SecretKey, code: &str) -> Result<(), Error> {
-    let key = RelayKey::decrypt(&core.config.platform_key, &relay.secret)?;
+    let key = core.relay_key(relay)?;
     let event = sign_event(
         joiner,
-        28934,
+        kinds::RELAY_JOIN,
         "",
         &[&["-"], &["claim", code]],
         core.clock.now(),
@@ -112,9 +112,7 @@ async fn join(core: &Core, relay: &Relay, joiner: &SecretKey, code: &str) -> Res
     let join = Join::Claim(code.to_string());
     let now = core.clock.now();
     core.db
-        .with_tx(async |conn| {
-            memberships::admit_join(conn, &key, &relay.id, &event, &join, Some(10), now).await
-        })
+        .with_tx(async |conn| memberships::admit_join(conn, &key, relay, &event, &join, now).await)
         .await
         .map(drop)
 }
@@ -241,7 +239,7 @@ async fn an_invite_goes_to_whoever_joins_with_it_first() -> Result<()> {
     let code = buy_invite(&f).await?;
 
     let invite = memberships::get_invite(&f.core, &code).await?;
-    assert!(!invite.claimed);
+    assert!(!invite.bound);
     assert_eq!(
         invite.invite_url.as_deref(),
         Some(
@@ -264,10 +262,10 @@ async fn an_invite_goes_to_whoever_joins_with_it_first() -> Result<()> {
         .await?
         .expect("the invite wasn't bound");
     assert_eq!(bound.invite_code.as_deref(), Some(code.as_str()));
-    assert_eq!(bound.claimed_at, Some(f.core.clock.now()));
+    assert_eq!(bound.bound_at, Some(f.core.clock.now()));
 
     let invite = memberships::get_invite(&f.core, &code).await?;
-    assert!(invite.claimed);
+    assert!(invite.bound);
     assert_eq!(invite.invite_url, None);
 
     // The code is spent.
@@ -335,8 +333,10 @@ async fn a_renewed_membership_carries_on() -> Result<()> {
     let membership = pay(&f, &member).await?;
 
     let period_end = membership.current_period_end.unwrap();
-    f.stripe
-        .set_period_end(&membership.stripe_subscription_id, period_end + 30 * DAY);
+    f.stripe.set_period_end(
+        membership.stripe_subscription_id.as_deref().unwrap(),
+        period_end + 30 * DAY,
+    );
     travel(&f.core, period_end + 1);
     memberships::sweep(&f.core).await?;
 
@@ -427,7 +427,7 @@ async fn a_canceled_membership_keeps_access_until_its_period_ends() -> Result<()
     assert_eq!(canceled.status, MembershipStatus::Canceled);
     assert!(
         f.stripe
-            .subscription(&membership.stripe_subscription_id)
+            .subscription(membership.stripe_subscription_id.as_deref().unwrap())
             .cancel_at_period_end
     );
     assert!(member_source(&f, &member).await?.is_some());
@@ -456,7 +456,7 @@ async fn memberships_are_released_when_their_relay_stops_charging() -> Result<()
     assert!(live(&f, &member).await?.is_none());
     assert!(
         f.stripe
-            .subscription(&membership.stripe_subscription_id)
+            .subscription(membership.stripe_subscription_id.as_deref().unwrap())
             .canceled
     );
     // The member stays; the unused invite stops working.
@@ -571,7 +571,7 @@ async fn a_tenant_onboards_for_payouts() -> Result<()> {
     let tenant_pubkey = create_tenant(&f.core).await?;
     let tenant = get_tenant(&f.core, &tenant_pubkey).await?;
 
-    let status = caravel_core::payouts::get_status(&f.core, &tenant).await?;
+    let status = caravel_core::payouts::refresh_status(&f.core, &tenant).await?;
     assert_eq!((status.account_id, status.ready), (None, false));
 
     let link = caravel_core::payouts::onboard(&f.core, &tenant, "https://app.test/account").await?;
@@ -580,12 +580,13 @@ async fn a_tenant_onboards_for_payouts() -> Result<()> {
         link,
         format!(
             "https://connect.stripe.test/onboard/{}",
-            tenant.stripe_account_id
+            tenant.stripe_account_id.as_deref().unwrap()
         )
     );
 
-    f.stripe.set_account_ready(&tenant.stripe_account_id, true);
-    let status = caravel_core::payouts::get_status(&f.core, &tenant).await?;
+    f.stripe
+        .set_account_ready(tenant.stripe_account_id.as_deref().unwrap(), true);
+    let status = caravel_core::payouts::refresh_status(&f.core, &tenant).await?;
     assert!(status.ready);
     assert!(
         get_tenant(&f.core, &tenant_pubkey)

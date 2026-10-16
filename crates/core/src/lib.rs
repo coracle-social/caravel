@@ -4,6 +4,7 @@
 pub mod access;
 pub mod auth;
 pub mod billing;
+pub mod blank;
 pub mod bus;
 pub mod calls;
 pub mod clock;
@@ -64,5 +65,13 @@ impl Core {
     /// The same core on another pool, so background work can't starve requests.
     pub fn with_db(&self, db: Db) -> Self {
         Self { db, ..self.clone() }
+    }
+
+    /// A relay's own key, decrypted with the platform key.
+    pub fn relay_key(&self, relay: &relays::Relay) -> Result<crypto::RelayKey> {
+        Ok(crypto::RelayKey::decrypt(
+            &self.config.platform_key,
+            &relay.secret,
+        )?)
     }
 }

@@ -3,15 +3,13 @@
 
 mod common;
 
+use caravel_core::events::kinds;
 use caravel_core::hosting;
 use caravel_core::management::{self, Call};
 use caravel_core::testing::sign_event;
 use common::*;
 use coracle_lib::keys::SecretKey;
 use serde_json::json;
-
-const JOIN: u16 = 28934;
-const LEAVE: u16 = 28936;
 
 #[tokio::test]
 async fn a_claim_lets_a_stranger_join_and_read() {
@@ -25,18 +23,30 @@ async fn a_claim_lets_a_stranger_join_and_read() {
     let mut client = server.connect(&relay.canonical_host()).await;
     client.auth(&stranger, server.now()).await;
 
-    let bare = sign_event(&stranger, JOIN, "", &[], server.now());
+    let bare = sign_event(&stranger, kinds::RELAY_JOIN, "", &[], server.now());
     assert_eq!(
         client.publish(&bare).await,
         (false, "restricted: no claim tag".to_string())
     );
 
-    let wrong = sign_event(&stranger, JOIN, "", &[&["claim", "nope"]], server.now());
+    let wrong = sign_event(
+        &stranger,
+        kinds::RELAY_JOIN,
+        "",
+        &[&["claim", "nope"]],
+        server.now(),
+    );
     let (accepted, message) = client.publish(&wrong).await;
     assert!(!accepted);
     assert_eq!(message, "restricted: failed to validate invite code");
 
-    let join = sign_event(&stranger, JOIN, "", &[&["claim", "welcome"]], server.now());
+    let join = sign_event(
+        &stranger,
+        kinds::RELAY_JOIN,
+        "",
+        &[&["claim", "welcome"]],
+        server.now(),
+    );
     assert!(client.publish(&join).await.0);
 
     let (_, eose) = client.req("sub", json!({"kinds": [1]})).await;
@@ -72,7 +82,7 @@ async fn an_open_relay_takes_joins_up_to_its_plans_member_limit() {
     let latecomer = SecretKey::generate();
     let mut client = server.connect(&relay.canonical_host()).await;
     client.auth(&latecomer, server.now()).await;
-    let join = sign_event(&latecomer, JOIN, "", &[], server.now());
+    let join = sign_event(&latecomer, kinds::RELAY_JOIN, "", &[], server.now());
     assert_eq!(
         client.publish(&join).await,
         (
@@ -95,13 +105,25 @@ async fn leaving_takes_away_access() {
     client.auth(&member, server.now()).await;
     assert!(
         client
-            .publish(&sign_event(&member, JOIN, "", &[], server.now()))
+            .publish(&sign_event(
+                &member,
+                kinds::RELAY_JOIN,
+                "",
+                &[],
+                server.now()
+            ))
             .await
             .0
     );
     assert!(
         client
-            .publish(&sign_event(&member, LEAVE, "", &[], server.now()))
+            .publish(&sign_event(
+                &member,
+                kinds::RELAY_LEAVE,
+                "",
+                &[],
+                server.now()
+            ))
             .await
             .0
     );
@@ -180,7 +202,7 @@ async fn a_management_call_must_be_signed_over_its_body() {
 
     let auth = sign_event(
         &owner,
-        27235,
+        kinds::HTTP_AUTH,
         "",
         &[
             &["u", &format!("https://{host}/")],
@@ -195,7 +217,7 @@ async fn a_management_call_must_be_signed_over_its_body() {
             json!({"method": "listclaims", "params": []}).to_string(),
         )
         .await;
-    assert_eq!(response["error"], "invalid auth event payload hash");
+    assert_eq!(response["error"], "authorization payload mismatch");
 }
 
 #[tokio::test]

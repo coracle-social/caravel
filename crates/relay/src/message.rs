@@ -15,13 +15,8 @@ use serde_json::value::RawValue;
 /// The longest subscription id NIP-01 permits.
 pub const MAX_SUBSCRIPTION_ID_LEN: usize = 64;
 
-/// A subscription id, as agreed between one client and one relay.
-///
-/// The id means whatever the client that chose it wants, but NIP-01
-/// fixes its length at between one and [`MAX_SUBSCRIPTION_ID_LEN`]
-/// characters. Validating on the way in lets the rest of the server
-/// treat one as a key without checking whether it is empty or
-/// unbounded.
+/// A subscription id a client chose, between one and [`MAX_SUBSCRIPTION_ID_LEN`]
+/// characters long as NIP-01 requires.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct SubscriptionId(String);
 
@@ -35,20 +30,6 @@ impl SubscriptionId {
         }
 
         Ok(Self(id))
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-
-    pub fn into_string(self) -> String {
-        self.0
-    }
-}
-
-impl fmt::Display for SubscriptionId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
     }
 }
 
@@ -107,36 +88,14 @@ pub fn refused_reconciliation(subscription_id: SubscriptionId, refusal: &Refusal
     }
 }
 
-/// An event as the relay stores and serves it: the json, kept whole.
-///
-/// A relay's work on the read side is handing back events it was given.
-/// Parsing one into a struct and building the json again reproduces
-/// bytes it already had, so what comes out of the store stays in this
-/// form all the way to the socket, and is only parsed when a filter asks
-/// something the index cannot answer.
+/// An event's json as the store rendered it, sent on without parsing it again.
 #[derive(Debug, Clone)]
 pub struct RawEvent(Box<RawValue>);
 
 impl RawEvent {
-    /// Render an event once, for storing and for sending.
-    pub fn new(event: &Event) -> Self {
-        let json = serde_json::to_string(event).expect("an event serializes");
-
-        Self(RawValue::from_string(json).expect("serde_json emits valid json"))
-    }
-
     /// Take json that is already an event.
     pub fn from_json(json: String) -> Result<Self, serde_json::Error> {
         RawValue::from_string(json).map(Self)
-    }
-
-    pub fn as_str(&self) -> &str {
-        self.0.get()
-    }
-
-    /// The parsed event, for the constraints an index cannot check.
-    pub fn parse(&self) -> Result<Event, serde_json::Error> {
-        serde_json::from_str(self.0.get())
     }
 }
 
@@ -151,12 +110,6 @@ impl Eq for RawEvent {}
 impl Serialize for RawEvent {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         self.0.serialize(serializer)
-    }
-}
-
-impl<'de> Deserialize<'de> for RawEvent {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        Box::<RawValue>::deserialize(deserializer).map(Self)
     }
 }
 
@@ -183,13 +136,8 @@ pub enum ClientMessage {
     },
     /// `["AUTH", <event>]` — answer an auth challenge (NIP-42).
     Auth(Event),
-    /// `["NEG-OPEN", <id>, <filter>, <message>]` — start reconciling a
-    /// set of events (NIP-77).
-    ///
-    /// The negentropy message stays hex here rather than being decoded.
-    /// A message that does not decode is answered with `NEG-ERR` under
-    /// this subscription id, which is only possible while the id is
-    /// still in hand.
+    /// `["NEG-OPEN", <id>, <filter>, <message>]` — start reconciling a set of
+    /// events (NIP-77), with the negentropy message still hex.
     NegOpen {
         subscription_id: SubscriptionId,
         filter: Filter,
@@ -202,22 +150,6 @@ pub enum ClientMessage {
     },
     /// `["NEG-CLOSE", <id>]` — release a reconciliation.
     NegClose(SubscriptionId),
-}
-
-impl ClientMessage {
-    /// The verb this message arrived under, for logs and metrics.
-    pub fn verb(&self) -> &'static str {
-        match self {
-            ClientMessage::Event(_) => "EVENT",
-            ClientMessage::Req { .. } => "REQ",
-            ClientMessage::Close(_) => "CLOSE",
-            ClientMessage::Count { .. } => "COUNT",
-            ClientMessage::Auth(_) => "AUTH",
-            ClientMessage::NegOpen { .. } => "NEG-OPEN",
-            ClientMessage::NegMsg { .. } => "NEG-MSG",
-            ClientMessage::NegClose(_) => "NEG-CLOSE",
-        }
-    }
 }
 
 impl<'de> Deserialize<'de> for ClientMessage {
@@ -300,22 +232,15 @@ pub enum RelayMessage {
         subscription_id: SubscriptionId,
         event: RawEvent,
     },
-    /// `["OK", <id>, <accepted>, <message>]` — the verdict on a published
-    /// event.
-    ///
-    /// The message is prefixed with a machine-readable reason whenever
-    /// the event was refused: `duplicate:`, `invalid:`, `blocked:`,
-    /// `rate-limited:`, `restricted:`, `auth-required:`, `pow:`, or
-    /// `error:` for anything else.
+    /// `["OK", <id>, <accepted>, <message>]` — the verdict on a published event,
+    /// its message prefixed with a machine-readable reason when refused.
     Ok {
         event_id: EventId,
         accepted: bool,
         message: String,
     },
-    /// `["EOSE", <id>, [<hint>...]]` — stored events are exhausted; what
-    /// follows is live. The hints are NIP-67's, and an empty list is left
-    /// off the wire.
-    Eose(SubscriptionId, Vec<String>),
+    /// `["EOSE", <id>]` — stored events are exhausted; what follows is live.
+    Eose(SubscriptionId),
     /// `["CLOSED", <id>, <message>]` — the relay ended a subscription.
     Closed {
         subscription_id: SubscriptionId,
@@ -324,16 +249,6 @@ pub enum RelayMessage {
     /// `["NOTICE", <message>]` — a human-readable aside, tied to no
     /// subscription.
     Notice(String),
-    /// `["COUNT", <id>, {"count": <n>}]` — the answer to a `COUNT`
-    /// (NIP-45). `approximate` says the relay stopped counting short of
-    /// everything that matched.
-    Count {
-        subscription_id: SubscriptionId,
-        count: u64,
-        approximate: bool,
-        /// NIP-45 HyperLogLog registers, hex-encoded.
-        hll: Option<String>,
-    },
     /// `["AUTH", <challenge>]` — an auth challenge (NIP-42).
     Auth { challenge: String },
     /// `["NEG-MSG", <id>, <message>]` — one round of reconciliation
@@ -345,10 +260,8 @@ pub enum RelayMessage {
     /// `["NOTIFY", <message>]` — a message for the account the connection is
     /// authenticated as, rather than about the connection.
     Notify(String),
-    /// `["NEG-ERR", <id>, <reason>]` — the reconciliation is over.
-    ///
-    /// The reason carries a machine-readable prefix as an `OK` message
-    /// does; NIP-77 names `blocked:` and `closed:` in particular.
+    /// `["NEG-ERR", <id>, <reason>]` — the reconciliation is over, for a reason
+    /// prefixed as an `OK` message's is.
     NegErr {
         subscription_id: SubscriptionId,
         reason: String,
@@ -365,34 +278,6 @@ impl RelayMessage {
         }
     }
 
-    /// An event was refused, for the stated reason.
-    pub fn rejected(event_id: EventId, message: impl Into<String>) -> Self {
-        RelayMessage::Ok {
-            event_id,
-            accepted: false,
-            message: message.into(),
-        }
-    }
-
-    /// A reconciliation ended, for the stated reason.
-    pub fn neg_err(subscription_id: SubscriptionId, reason: impl Into<String>) -> Self {
-        RelayMessage::NegErr {
-            subscription_id,
-            reason: reason.into(),
-        }
-    }
-
-    pub fn notice(message: impl Into<String>) -> Self {
-        RelayMessage::Notice(message.into())
-    }
-
-    pub fn closed(subscription_id: SubscriptionId, message: impl Into<String>) -> Self {
-        RelayMessage::Closed {
-            subscription_id,
-            message: message.into(),
-        }
-    }
-
     /// The verb this message goes out under, for logs and metrics.
     pub fn verb(&self) -> &'static str {
         match self {
@@ -401,7 +286,6 @@ impl RelayMessage {
             RelayMessage::Eose(..) => "EOSE",
             RelayMessage::Closed { .. } => "CLOSED",
             RelayMessage::Notice(_) => "NOTICE",
-            RelayMessage::Count { .. } => "COUNT",
             RelayMessage::Auth { .. } => "AUTH",
             RelayMessage::NegMsg { .. } => "NEG-MSG",
             RelayMessage::NegErr { .. } => "NEG-ERR",
@@ -435,15 +319,10 @@ impl Serialize for RelayMessage {
                 seq.serialize_element(message)?;
                 seq.end()
             }
-            RelayMessage::Eose(subscription_id, hints) => {
-                let mut seq = serializer.serialize_seq(Some(2 + !hints.is_empty() as usize))?;
+            RelayMessage::Eose(subscription_id) => {
+                let mut seq = serializer.serialize_seq(Some(2))?;
                 seq.serialize_element("EOSE")?;
                 seq.serialize_element(subscription_id)?;
-
-                if !hints.is_empty() {
-                    seq.serialize_element(hints)?;
-                }
-
                 seq.end()
             }
             RelayMessage::Closed {
@@ -460,22 +339,6 @@ impl Serialize for RelayMessage {
                 let mut seq = serializer.serialize_seq(Some(2))?;
                 seq.serialize_element("NOTICE")?;
                 seq.serialize_element(message)?;
-                seq.end()
-            }
-            RelayMessage::Count {
-                subscription_id,
-                count,
-                approximate,
-                hll,
-            } => {
-                let mut seq = serializer.serialize_seq(Some(3))?;
-                seq.serialize_element("COUNT")?;
-                seq.serialize_element(subscription_id)?;
-                seq.serialize_element(&CountBody {
-                    count: *count,
-                    approximate: *approximate,
-                    hll: hll.clone(),
-                })?;
                 seq.end()
             }
             RelayMessage::Auth { challenge } => {
@@ -512,89 +375,6 @@ impl Serialize for RelayMessage {
             }
         }
     }
-}
-
-impl<'de> Deserialize<'de> for RelayMessage {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        deserializer.deserialize_seq(RelayMessageVisitor)
-    }
-}
-
-struct RelayMessageVisitor;
-
-impl<'de> Visitor<'de> for RelayMessageVisitor {
-    type Value = RelayMessage;
-
-    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("a nostr relay message array")
-    }
-
-    fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<RelayMessage, A::Error> {
-        let verb: String = required(&mut seq, 0)?;
-
-        let message = match verb.as_str() {
-            "EVENT" => RelayMessage::Event {
-                subscription_id: required(&mut seq, 1)?,
-                event: required(&mut seq, 2)?,
-            },
-            "OK" => RelayMessage::Ok {
-                event_id: required(&mut seq, 1)?,
-                accepted: required(&mut seq, 2)?,
-                message: required(&mut seq, 3)?,
-            },
-            "EOSE" => RelayMessage::Eose(
-                required(&mut seq, 1)?,
-                seq.next_element()?.unwrap_or_default(),
-            ),
-            "CLOSED" => RelayMessage::Closed {
-                subscription_id: required(&mut seq, 1)?,
-                message: required(&mut seq, 2)?,
-            },
-            "NOTICE" => RelayMessage::Notice(required(&mut seq, 1)?),
-            "NOTIFY" => RelayMessage::Notify(required(&mut seq, 1)?),
-            "COUNT" => {
-                let subscription_id = required(&mut seq, 1)?;
-                let body: CountBody = required(&mut seq, 2)?;
-
-                RelayMessage::Count {
-                    subscription_id,
-                    count: body.count,
-                    approximate: body.approximate,
-                    hll: body.hll,
-                }
-            }
-            "AUTH" => RelayMessage::Auth {
-                challenge: required(&mut seq, 1)?,
-            },
-            "NEG-MSG" => RelayMessage::NegMsg {
-                subscription_id: required(&mut seq, 1)?,
-                message: required(&mut seq, 2)?,
-            },
-            "NEG-ERR" => RelayMessage::NegErr {
-                subscription_id: required(&mut seq, 1)?,
-                reason: required(&mut seq, 2)?,
-            },
-            other => {
-                return Err(de::Error::custom(format!(
-                    "unknown relay message type: {other}"
-                )));
-            }
-        };
-
-        drain(&mut seq)?;
-
-        Ok(message)
-    }
-}
-
-/// The object a `COUNT` answer carries.
-#[derive(Serialize, Deserialize)]
-struct CountBody {
-    count: u64,
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    approximate: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    hll: Option<String>,
 }
 
 /// The element at `index`, or an error naming the message that was too
@@ -676,7 +456,7 @@ mod tests {
             panic!("expected a REQ");
         };
 
-        assert_eq!(subscription_id.as_str(), "sub");
+        assert_eq!(subscription_id, SubscriptionId::new("sub").unwrap());
         assert_eq!(filters.len(), 2);
         assert_eq!(filters[1].limit, Some(10));
     }
@@ -691,21 +471,6 @@ mod tests {
         let message = parse(r#"["COUNT","sub",{"kinds":[7]}]"#);
 
         assert!(matches!(message, ClientMessage::Count { filters, .. } if filters.len() == 1));
-    }
-
-    #[test]
-    fn writes_a_count() {
-        let message = RelayMessage::Count {
-            subscription_id: SubscriptionId::new("sub").unwrap(),
-            count: 3,
-            approximate: false,
-            hll: None,
-        };
-
-        assert_eq!(
-            serde_json::to_string(&message).unwrap(),
-            r#"["COUNT","sub",{"count":3}]"#
-        );
     }
 
     #[test]
@@ -755,67 +520,20 @@ mod tests {
 
     #[test]
     fn writes_an_eose() {
-        let message = RelayMessage::Eose(SubscriptionId::new("sub").unwrap(), vec![]);
+        let message = RelayMessage::Eose(SubscriptionId::new("sub").unwrap());
 
         assert_eq!(
             serde_json::to_string(&message).unwrap(),
             r#"["EOSE","sub"]"#
-        );
-
-        let hinted = RelayMessage::Eose(
-            SubscriptionId::new("sub").unwrap(),
-            vec!["auth".to_string(), "finish".to_string()],
-        );
-
-        assert_eq!(
-            serde_json::to_string(&hinted).unwrap(),
-            r#"["EOSE","sub",["auth","finish"]]"#
         );
     }
 
     #[test]
     fn writes_a_notice() {
         assert_eq!(
-            serde_json::to_string(&RelayMessage::notice("careful")).unwrap(),
+            serde_json::to_string(&RelayMessage::Notice("careful".to_string())).unwrap(),
             r#"["NOTICE","careful"]"#
         );
-    }
-
-    #[test]
-    fn relay_messages_round_trip() {
-        let subscription_id = SubscriptionId::new("sub").unwrap();
-        let event = event();
-
-        let messages = [
-            RelayMessage::Event {
-                subscription_id: subscription_id.clone(),
-                event: RawEvent::new(&event),
-            },
-            RelayMessage::accepted(event.id),
-            RelayMessage::rejected(event.id, "invalid: bad signature"),
-            RelayMessage::Eose(subscription_id.clone(), vec!["finish".to_string()]),
-            RelayMessage::closed(subscription_id, "error: no reason"),
-            RelayMessage::notice("careful"),
-            RelayMessage::Auth {
-                challenge: "abc123".to_string(),
-            },
-            RelayMessage::Count {
-                subscription_id: SubscriptionId::new("sub").unwrap(),
-                count: 7,
-                approximate: true,
-                hll: Some("00".repeat(256)),
-            },
-        ];
-
-        for message in messages {
-            let json = serde_json::to_string(&message).unwrap();
-
-            assert_eq!(
-                serde_json::from_str::<RelayMessage>(&json).unwrap(),
-                message,
-                "round tripping {json}"
-            );
-        }
     }
 
     #[test]

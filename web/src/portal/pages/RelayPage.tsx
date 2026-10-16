@@ -6,7 +6,6 @@ import Page from "@/portal/components/Page"
 import RelayHeader from "@/portal/components/RelayHeader"
 import SignIn from "@/portal/components/SignIn"
 import {
-  ApiError,
   cancelRenewal,
   createCheckout,
   getIdentity,
@@ -14,24 +13,24 @@ import {
   getOffer,
   reconcileCheckout,
 } from "@/portal/lib/api"
-import { formatDate, formatPrice } from "@/portal/lib/format"
+import { formatError, formatLongDate, formatPrice } from "@/shared/lib/format"
+import { hasStatus } from "@/shared/lib/http"
+import { loaded } from "@/shared/lib/resource"
 import { shortNpub } from "@/portal/lib/nostr"
 import { returnLink, useParam } from "@/portal/lib/params"
 import { portalRelay } from "@/portal/lib/relay"
 import { session, signIn, signOut } from "@/portal/lib/session"
 import { FLOTILLA_URL } from "@/shared/lib/config"
 
-// A relay's page on its own host, which it publishes as its NIP-11 payments_url.
-// A relay that sells memberships offers one here: a member arrives signed in
-// from a notice link, signs in, or is sent to buy an invite if they have no
-// Nostr account yet. Any other relay just says what it is.
+// A relay's page on its own host, its NIP-11 payments_url: where a relay that
+// sells memberships sells and manages them, and any other says what it is.
 export default function RelayPage() {
   const [param, setSearch] = useParam()
   const relay = portalRelay()
 
-  const [offer] = createResource(() => relay?.id ?? false, getOffer)
+  const [offer] = createResource(() => relay?.relay_id ?? false, getOffer)
   const [current, { refetch }] = createResource(
-    () => (relay && session() ? { id: relay.id, session: session() } : false),
+    () => (relay && session() ? { id: relay.relay_id, session: session() } : false),
     ({ id }) => getMembership(id),
   )
   const [identity] = createResource(() => session() || false, getIdentity)
@@ -41,11 +40,10 @@ export default function RelayPage() {
   const [unsettled, setUnsettled] = createSignal(false)
   const [error, setError] = createSignal("")
 
-  // A resource throws when read in error, so each read checks first.
-  const sells = () => (offer.error ? undefined : offer())
-  const free = () => offer.error instanceof ApiError && offer.error.status === 404
-  const membership = () => (current.error ? undefined : current()?.membership)
-  const pubkey = () => (identity.error ? undefined : identity()?.pubkey)
+  const sells = () => loaded(offer)
+  const free = () => hasStatus(offer.error, 404)
+  const membership = () => loaded(current)?.membership
+  const pubkey = () => loaded(identity)?.pubkey
   const status = () => membership()?.status
   const back = () => returnLink(param("return_url"))
   const joinHref = () => {
@@ -55,11 +53,11 @@ export default function RelayPage() {
 
   // A session that no longer works ends.
   createEffect(() => {
-    if (current.error instanceof ApiError && current.error.status === 401) signOut()
+    if (hasStatus(current.error, 401)) signOut()
   })
 
   onMount(async () => {
-    // A notice link carries a session, which is adopted and kept out of the address bar.
+    // A notification's link carries a session, which is adopted and kept out of the address bar.
     const token = param("token")
     if (token) {
       signIn(token)
@@ -72,12 +70,12 @@ export default function RelayPage() {
 
     setSettling(true)
     try {
-      const { paid } = await reconcileCheckout(relay.id, checkout)
+      const { paid } = await reconcileCheckout(relay.relay_id, checkout)
       setUnsettled(!paid)
       if (paid) setSearch({ checkout: undefined }, { replace: true })
       await refetch()
     } catch (e) {
-      setError(e instanceof Error ? e.message : "We couldn't confirm your payment")
+      setError(formatError(e, "We couldn't confirm your payment"))
     } finally {
       setSettling(false)
     }
@@ -88,9 +86,9 @@ export default function RelayPage() {
     setBusy(true)
     setError("")
     try {
-      window.location.href = (await createCheckout(relay.id, param("return_url"))).url
+      window.location.href = (await createCheckout(relay.relay_id, param("return_url"))).url
     } catch (e) {
-      setError(e instanceof Error ? e.message : "We couldn't start checkout")
+      setError(formatError(e, "We couldn't start checkout"))
       setBusy(false)
     }
   }
@@ -100,11 +98,11 @@ export default function RelayPage() {
     setBusy(true)
     setError("")
     try {
-      await cancelRenewal(relay.id)
+      await cancelRenewal(relay.relay_id)
       setConfirming(false)
       await refetch()
     } catch (e) {
-      setError(e instanceof Error ? e.message : "We couldn't cancel your renewal")
+      setError(formatError(e, "We couldn't cancel your renewal"))
     } finally {
       setBusy(false)
     }
@@ -166,7 +164,7 @@ export default function RelayPage() {
                         <Notice tone="success">
                           <p class="font-medium">You're a member.</p>
                           <Show when={membership()?.current_period_end}>
-                            {(end) => <p>Your membership renews on {formatDate(end())}.</p>}
+                            {(end) => <p>Your membership renews on {formatLongDate(end())}.</p>}
                           </Show>
                         </Notice>
                         <Show
@@ -206,7 +204,7 @@ export default function RelayPage() {
                         <Notice tone="warning">
                           <p class="font-medium">Your membership won't renew.</p>
                           <Show when={membership()?.current_period_end}>
-                            {(end) => <p>You have access until {formatDate(end())}. Renew now and you won't be charged until then.</p>}
+                            {(end) => <p>You have access until {formatLongDate(end())}. Renew now and you won't be charged until then.</p>}
                           </Show>
                         </Notice>
                       </Show>

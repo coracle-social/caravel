@@ -1,31 +1,22 @@
-import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js"
+import { createMemo, createResource, createSignal, For, Show } from "solid-js"
 import { fuzzySearch } from "@/shared/lib/search"
 import PageContainer from "@/shared/components/PageContainer"
 import RelayListItem from "@/shared/components/RelayListItem"
 import ResourceState from "@/shared/components/ResourceState"
 import SearchInput from "@/shared/components/SearchInput"
 import useMinLoading from "@/shared/lib/useMinLoading"
-import { primeProfiles, useAdminRelays } from "@/shared/lib/hooks"
+import { listRelays } from "@/shared/lib/api"
+import { usePrimeProfiles } from "@/shared/lib/profiles"
 
 export default function AdminRelayList() {
   const [query, setQuery] = createSignal("")
-  const [relays] = useAdminRelays()
+  const [relays] = createResource(listRelays)
   const loading = useMinLoading(() => relays.loading)
 
-  // Each list item shows its tenant's profile; prime them all in one batch so
-  // we don't open a separate outbox subscription per relay.
-  createEffect(() => {
-    const list = relays() ?? []
-    if (!list.length) return
-    const sub = primeProfiles(list.map(r => r.tenant_pubkey))
-    onCleanup(() => sub.unsubscribe())
-  })
+  usePrimeProfiles(() => (relays() ?? []).map(r => r.tenant_pubkey))
 
   const filtered = createMemo(() => {
-    const list = relays() ?? []
-    const q = query().trim()
-    if (!q) return list
-    return fuzzySearch(list, ["info_name", "subdomain", "tenant_pubkey"], q)
+    return fuzzySearch(relays() ?? [], ["info_name", "subdomain", "tenant_pubkey"], query().trim())
   })
 
   return (

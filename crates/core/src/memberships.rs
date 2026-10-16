@@ -4,7 +4,7 @@
 //! as a claim for whoever joins with it; lapsing removes a member who got in by
 //! paying, and tells them why. A sweep keeps every membership in step with Stripe.
 
-use caravel_adapters::stripe::MembershipCheckoutParams;
+use caravel_adapters::stripe::{MembershipCheckoutParams, Subscription};
 use coracle_lib::events::Event;
 use serde::{Deserialize, Serialize};
 use sqlx::{PgConnection, PgExecutor};
@@ -14,11 +14,8 @@ use crate::bus::Change;
 use crate::crypto::RelayKey;
 use crate::error::{Error, Result};
 use crate::relay_policy::Join;
-use crate::relays::{self, MemberInterval, Relay};
-use crate::{Core, auth, notifications, plans, tenants};
-
-/// How long a lapse notice, and the session its link carries, stays good.
-const NOTICE_TTL: i64 = 30 * 24 * 60 * 60;
+use crate::relays::{self, MemberInterval, Relay, RelayProfile};
+use crate::{Core, auth, notifications, tenants};
 
 /// A checkout not completed in this long never will be: Stripe expires Checkout
 /// sessions after a day.
@@ -43,6 +40,16 @@ impl MembershipStatus {
     pub fn is_paid(self) -> bool {
         matches!(self, MembershipStatus::Active | MembershipStatus::Canceled)
     }
+
+    /// The status of a membership paying through a subscription with a period
+    /// still running.
+    fn of_subscription(subscription: &Subscription) -> Self {
+        if subscription.cancel_at_period_end {
+            MembershipStatus::Canceled
+        } else {
+            MembershipStatus::Active
+        }
+    }
 }
 
 /// One member's paid access to one relay. A membership bought without a pubkey
@@ -56,26 +63,33 @@ pub struct Membership {
     pub pubkey: Option<String>,
     /// The code of a membership bought as an invite.
     pub invite_code: Option<String>,
-    /// The Stripe customer the membership pays as, or empty before checkout.
-    pub stripe_customer_id: String,
-    /// The subscription paying for it, or empty before it is paid.
-    pub stripe_subscription_id: String,
+    /// The Stripe customer the membership pays as, once a checkout opens.
+    pub stripe_customer_id: Option<String>,
+    /// The subscription paying for it, once it is paid.
+    pub stripe_subscription_id: Option<String>,
     pub status: MembershipStatus,
     /// When the period paid for ends.
     pub current_period_end: Option<i64>,
-    /// When an invite's membership went to the pubkey that joined with it.
-    pub claimed_at: Option<i64>,
+    /// When an invite's membership was bound to the pubkey that joined with it.
+    pub bound_at: Option<i64>,
     pub created_at: i64,
+}
+
+impl Membership {
+    /// The customer and subscription a paid membership pays through.
+    fn subscription(&self) -> Result<(&str, &str)> {
+        match (&self.stripe_customer_id, &self.stripe_subscription_id) {
+            (Some(customer_id), Some(subscription_id)) => Ok((customer_id, subscription_id)),
+            _ => Err(Error::internal("a paid membership has no subscription")),
+        }
+    }
 }
 
 /// What anyone may see of a relay that sells memberships.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Offer {
-    pub relay_id: String,
-    pub host: String,
-    pub name: String,
-    pub icon: String,
-    pub description: String,
+    #[serde(flatten)]
+    pub relay: RelayProfile,
     /// In cents per `interval`.
     pub price: i64,
     pub interval: MemberInterval,
@@ -83,13 +97,14 @@ pub struct Offer {
     pub accepting_payment: bool,
 }
 
-/// What an invite's buyer sees: its relay, whether it is paid for and used, and
-/// the link that accepts it while it is paid for and unused.
+/// What an invite's buyer sees: its relay, whether it is paid for and bound to
+/// whoever joined with it, and the link that accepts it while it is paid for and
+/// unbound.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct InviteView {
     pub offer: Offer,
     pub status: MembershipStatus,
-    pub claimed: bool,
+    pub bound: bool,
     pub invite_url: Option<String>,
 }
 
@@ -97,7 +112,7 @@ pub struct InviteView {
 
 const SELECT_MEMBERSHIP: &str =
     "SELECT id, relay_id, pubkey, invite_code, stripe_customer_id, stripe_subscription_id,
-    status, current_period_end, claimed_at, created_at FROM membership";
+    status, current_period_end, bound_at, created_at FROM membership";
 
 /// A pubkey's membership of a relay that hasn't lapsed.
 pub async fn get_live_membership(
@@ -164,7 +179,7 @@ pub async fn count_reserved_seats(db: impl PgExecutor<'_>, relay_id: &str) -> Re
 }
 
 /// Live memberships of relays that no longer sell them: free, paused or purged.
-pub async fn list_memberships_needing_release(db: impl PgExecutor<'_>) -> Result<Vec<Membership>> {
+async fn list_memberships_needing_release(db: impl PgExecutor<'_>) -> Result<Vec<Membership>> {
     Ok(sqlx::query_as::<_, Membership>(&format!(
         "{SELECT_MEMBERSHIP} WHERE status <> 'lapsed' AND relay_id IN (
            SELECT id FROM relay WHERE member_price = 0 OR status <> 'active' OR purged_at IS NOT NULL
@@ -187,7 +202,7 @@ async fn list_memberships_with_status(
 }
 
 /// Paid memberships whose period has ended by `now`.
-pub async fn list_memberships_past_period(
+async fn list_memberships_past_period(
     db: impl PgExecutor<'_>,
     now: i64,
 ) -> Result<Vec<Membership>> {
@@ -201,10 +216,10 @@ pub async fn list_memberships_past_period(
 
 // --- Writes ---
 
-pub async fn insert_membership(db: impl PgExecutor<'_>, membership: &Membership) -> Result<()> {
+async fn insert_membership(db: impl PgExecutor<'_>, membership: &Membership) -> Result<()> {
     sqlx::query(
         "INSERT INTO membership (id, relay_id, pubkey, invite_code, stripe_customer_id, stripe_subscription_id,
-           status, current_period_end, claimed_at, created_at)
+           status, current_period_end, bound_at, created_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
     )
     .bind(&membership.id)
@@ -215,7 +230,7 @@ pub async fn insert_membership(db: impl PgExecutor<'_>, membership: &Membership)
     .bind(&membership.stripe_subscription_id)
     .bind(membership.status)
     .bind(membership.current_period_end)
-    .bind(membership.claimed_at)
+    .bind(membership.bound_at)
     .bind(membership.created_at)
     .execute(db)
     .await?;
@@ -232,7 +247,7 @@ async fn set_customer(db: impl PgExecutor<'_>, id: &str, customer_id: &str) -> R
 }
 
 /// Move a membership to `status`, and to a new period end if one is given.
-pub async fn set_status(
+async fn set_status(
     db: impl PgExecutor<'_>,
     id: &str,
     status: MembershipStatus,
@@ -253,12 +268,8 @@ pub async fn set_status(
 
 /// Whether a relay has room for one more paying member. A pubkey already on the
 /// relay takes no new seat, and each invite paid for and unused holds one.
-pub async fn has_seat(
-    conn: &mut PgConnection,
-    relay: &Relay,
-    pubkey: Option<&str>,
-) -> Result<bool> {
-    let Some(limit) = plans::get_plan(&relay.plan_id).and_then(|plan| plan.members) else {
+async fn has_seat(conn: &mut PgConnection, relay: &Relay, pubkey: Option<&str>) -> Result<bool> {
+    let Some(limit) = relay.member_limit() else {
         return Ok(true);
     };
 
@@ -284,18 +295,15 @@ pub async fn has_seat(
 pub async fn admit_join(
     conn: &mut PgConnection,
     key: &RelayKey,
-    relay_id: &str,
+    relay: &Relay,
     event: &Event,
     join: &Join,
-    limit: Option<usize>,
     now: i64,
 ) -> Result<Vec<Event>> {
+    let relay_id = relay.id.as_str();
     let pubkey = event.pubkey.to_hex();
     let pubkey = pubkey.as_str();
-    sqlx::query("SELECT 1 FROM relay WHERE id = $1 FOR UPDATE")
-        .bind(relay_id)
-        .execute(&mut *conn)
-        .await?;
+    relays::lock_relay(&mut *conn, relay_id).await?;
 
     let source = match join {
         Join::AlreadyMember => None,
@@ -317,19 +325,11 @@ pub async fn admit_join(
 
     let mut published = Vec::new();
     if let Some(source) = source {
-        if let Some(limit) = limit
-            && access::get_member(&mut *conn, relay_id, pubkey)
-                .await?
-                .is_none()
-        {
-            let taken = access::count_members(&mut *conn, relay_id).await?
-                + count_reserved_seats(&mut *conn, relay_id).await?;
-            if taken >= limit as i64 {
-                return Err(Error::conflict(
-                    "member-limit",
-                    "this relay has reached its member limit",
-                ));
-            }
+        if !has_seat(&mut *conn, relay, Some(pubkey)).await? {
+            return Err(Error::conflict(
+                "member-limit",
+                "this relay has reached its member limit",
+            ));
         }
         published = access::admit(&mut *conn, key, relay_id, pubkey, source, now).await?;
     }
@@ -358,7 +358,7 @@ async fn bind_invite(
     }
 
     let bound = sqlx::query(
-        "UPDATE membership SET pubkey = $3, claimed_at = $4
+        "UPDATE membership SET pubkey = $3, bound_at = $4
          WHERE relay_id = $1 AND invite_code = $2 AND pubkey IS NULL AND status IN ('active', 'canceled')",
     )
     .bind(relay_id)
@@ -415,14 +415,10 @@ fn checkout_success_url(page: &str) -> String {
 pub async fn get_offer(core: &Core, relay: &Relay) -> Result<Offer> {
     let accepting_payment = tenants::get_tenant(core.db.pool(), &relay.tenant_pubkey)
         .await?
-        .is_some_and(|tenant| tenant.stripe_account_ready);
+        .is_some_and(|tenant| tenant.payout_account().is_some());
 
     Ok(Offer {
-        relay_id: relay.id.clone(),
-        host: relay.host(),
-        name: relay.display_name(),
-        icon: relay.info_icon.clone(),
-        description: relay.info_description.clone(),
+        relay: relay.profile(),
         price: relay.member_price,
         interval: relay.member_interval,
         accepting_payment: accepting_payment && relay.charges_members(),
@@ -439,16 +435,17 @@ pub async fn get_invite(core: &Core, code: &str) -> Result<InviteView> {
         .ok_or(Error::NotFound("invite not found"))?;
     let offer = get_offer(core, &relay).await?;
 
-    let claimed = membership.pubkey.is_some();
-    let invite_url = match membership.status.is_paid() && !claimed {
-        true => Some(invite_url(core, &relay, code)?),
-        false => None,
+    let bound = membership.pubkey.is_some();
+    let invite_url = if membership.status.is_paid() && !bound {
+        Some(invite_url(core, &relay, code)?)
+    } else {
+        None
     };
 
     Ok(InviteView {
         offer,
         status: membership.status,
-        claimed,
+        bound,
         invite_url,
     })
 }
@@ -459,8 +456,7 @@ pub async fn get_invite(core: &Core, code: &str) -> Result<InviteView> {
 async fn payout_account(core: &Core, relay: &Relay) -> Result<String> {
     tenants::get_tenant(core.db.pool(), &relay.tenant_pubkey)
         .await?
-        .filter(|tenant| tenant.stripe_account_ready && !tenant.stripe_account_id.is_empty())
-        .map(|tenant| tenant.stripe_account_id)
+        .and_then(|tenant| tenant.payout_account().map(str::to_string))
         .ok_or_else(|| Error::conflict("payouts-not-ready", "this relay can't take payments yet"))
 }
 
@@ -562,11 +558,11 @@ fn new_membership(
         relay_id: relay_id.to_string(),
         pubkey: pubkey.map(str::to_string),
         invite_code: invite_code.map(str::to_string),
-        stripe_customer_id: String::new(),
-        stripe_subscription_id: String::new(),
+        stripe_customer_id: None,
+        stripe_subscription_id: None,
         status: MembershipStatus::Pending,
         current_period_end: None,
-        claimed_at: None,
+        bound_at: None,
         created_at: now,
     }
 }
@@ -579,19 +575,19 @@ async fn checkout(
     success_url: &str,
     cancel_url: &str,
 ) -> Result<String> {
-    let customer_id = if membership.stripe_customer_id.is_empty() {
-        let customer_id = core
-            .stripe
-            .create_member_customer(&membership.id, &relay.id)
-            .await?;
-        set_customer(core.db.pool(), &membership.id, &customer_id).await?;
-        customer_id
-    } else {
-        membership.stripe_customer_id.clone()
+    let customer_id = match &membership.stripe_customer_id {
+        Some(customer_id) => customer_id.clone(),
+        None => {
+            let customer_id = core
+                .stripe
+                .create_member_customer(&membership.id, &relay.id)
+                .await?;
+            set_customer(core.db.pool(), &membership.id, &customer_id).await?;
+            customer_id
+        }
     };
 
-    // A canceled membership has a period it already paid for, so renewing starts
-    // charging when that ends rather than now.
+    // Renewing a canceled membership charges from the end of the period it paid for.
     let now = core.clock.now();
     let billing_cycle_anchor = Some(membership)
         .filter(|m| m.status == MembershipStatus::Canceled)
@@ -639,7 +635,8 @@ pub async fn reconcile_checkout(
         (true, Some(subscription_id)) => {
             let customer_id = checkout
                 .customer_id
-                .unwrap_or_else(|| membership.stripe_customer_id.clone());
+                .or_else(|| membership.stripe_customer_id.clone())
+                .ok_or_else(|| Error::internal("a paid checkout has no customer"))?;
             activate(core, membership, &customer_id, &subscription_id).await
         }
         _ => Ok(false),
@@ -660,14 +657,10 @@ pub async fn activate(
     let Some(period_end) = subscription.current_period_end.filter(|end| *end > now) else {
         return Ok(false);
     };
-    let status = if subscription.cancel_at_period_end {
-        MembershipStatus::Canceled
-    } else {
-        MembershipStatus::Active
-    };
+    let status = MembershipStatus::of_subscription(&subscription);
 
-    let relay = load_relay(core, &membership.relay_id).await?;
-    let key = RelayKey::decrypt(&core.config.platform_key, &relay.secret)?;
+    let relay = relays::require_relay(core.db.pool(), &membership.relay_id).await?;
+    let key = core.relay_key(&relay)?;
     let published = core
         .db
         .with_tx(async |conn| {
@@ -698,7 +691,10 @@ pub async fn activate(
         })
         .await?;
 
-    publish_access_change(core, &relay.id, published);
+    core.bus.publish(Change::AccessChanged {
+        relay_id: relay.id.clone(),
+        published,
+    });
     Ok(true)
 }
 
@@ -710,8 +706,9 @@ pub async fn cancel_renewal(core: &Core, relay: &Relay, pubkey: &str) -> Result<
         .filter(|m| m.status == MembershipStatus::Active)
         .ok_or(Error::NotFound("membership not found"))?;
 
+    let (_, subscription_id) = membership.subscription()?;
     core.stripe
-        .cancel_subscription_at_period_end(&membership.stripe_subscription_id)
+        .cancel_subscription_at_period_end(subscription_id)
         .await?;
     set_status(
         core.db.pool(),
@@ -732,7 +729,7 @@ pub async fn cancel_renewal(core: &Core, relay: &Relay, pubkey: &str) -> Result<
 /// End a membership whose paid period ran out: remove a member who got in by
 /// paying and tell them how to renew, or revoke an unused invite's claim.
 async fn lapse(core: &Core, membership: &Membership, relay: &Relay) -> Result<()> {
-    let key = RelayKey::decrypt(&core.config.platform_key, &relay.secret)?;
+    let key = core.relay_key(relay)?;
     let now = core.clock.now();
     let published = core
         .db
@@ -758,7 +755,10 @@ async fn lapse(core: &Core, membership: &Membership, relay: &Relay) -> Result<()
             }
         })
         .await?;
-    publish_access_change(core, &relay.id, published);
+    core.bus.publish(Change::AccessChanged {
+        relay_id: relay.id.clone(),
+        published,
+    });
 
     if let Some(pubkey) = &membership.pubkey {
         let (token, _) = auth::create_session(core.db.pool(), pubkey, now).await?;
@@ -768,7 +768,14 @@ async fn lapse(core: &Core, membership: &Membership, relay: &Relay) -> Result<()
             "Your membership of {} has ended. Renew at {renew}",
             relay.display_name()
         );
-        notifications::notify(core, &relay.id, pubkey, &message, Some(now + NOTICE_TTL)).await?;
+        notifications::notify(
+            core,
+            &relay.id,
+            pubkey,
+            &message,
+            Some(now + auth::SESSION_TTL),
+        )
+        .await?;
     }
 
     Ok(())
@@ -778,19 +785,11 @@ async fn lapse(core: &Core, membership: &Membership, relay: &Relay) -> Result<()
 /// nothing is refunded; a member stays on the relay, and an unused invite stops
 /// working.
 async fn release(core: &Core, membership: &Membership) -> Result<()> {
-    if !membership.stripe_customer_id.is_empty() {
-        for session_id in core
-            .stripe
-            .list_open_checkout_sessions(&membership.stripe_customer_id)
-            .await?
-        {
+    if let Some(customer_id) = &membership.stripe_customer_id {
+        for session_id in core.stripe.list_open_checkout_sessions(customer_id).await? {
             core.stripe.expire_checkout_session(&session_id).await?;
         }
-        for subscription_id in core
-            .stripe
-            .list_live_subscriptions(&membership.stripe_customer_id)
-            .await?
-        {
+        for subscription_id in core.stripe.list_live_subscriptions(customer_id).await? {
             core.stripe.cancel_subscription(&subscription_id).await?;
         }
     }
@@ -852,23 +851,17 @@ async fn settle_pending(core: &Core, membership: &Membership) -> Result<()> {
         .await;
     }
 
-    if membership.stripe_customer_id.is_empty() {
+    let Some(customer_id) = &membership.stripe_customer_id else {
         return Ok(());
-    }
+    };
 
     if let Some(subscription_id) = core
         .stripe
-        .list_live_subscriptions(&membership.stripe_customer_id)
+        .list_live_subscriptions(customer_id)
         .await?
         .first()
     {
-        activate(
-            core,
-            membership,
-            &membership.stripe_customer_id,
-            subscription_id,
-        )
-        .await?;
+        activate(core, membership, customer_id, subscription_id).await?;
     }
     Ok(())
 }
@@ -877,52 +870,27 @@ async fn settle_pending(core: &Core, membership: &Membership) -> Result<()> {
 /// carries on, a renewal paid in a newer checkout takes over, and anything else
 /// lapses it.
 async fn renew_or_lapse(core: &Core, membership: &Membership) -> Result<()> {
-    let relay = load_relay(core, &membership.relay_id).await?;
+    let relay = relays::require_relay(core.db.pool(), &membership.relay_id).await?;
+    let (customer_id, subscription_id) = membership.subscription()?;
     let now = core.clock.now();
 
-    let subscription = core
-        .stripe
-        .get_subscription(&membership.stripe_subscription_id)
-        .await?;
+    let subscription = core.stripe.get_subscription(subscription_id).await?;
     if let Some(period_end) = subscription.current_period_end.filter(|end| *end > now) {
-        let status = if subscription.cancel_at_period_end {
-            MembershipStatus::Canceled
-        } else {
-            MembershipStatus::Active
-        };
+        let status = MembershipStatus::of_subscription(&subscription);
         return set_status(core.db.pool(), &membership.id, status, Some(period_end)).await;
     }
 
     let renewal = core
         .stripe
-        .list_live_subscriptions(&membership.stripe_customer_id)
+        .list_live_subscriptions(customer_id)
         .await?
         .into_iter()
-        .find(|id| *id != membership.stripe_subscription_id);
-    if let Some(subscription_id) = renewal
-        && activate(
-            core,
-            membership,
-            &membership.stripe_customer_id,
-            &subscription_id,
-        )
-        .await?
+        .find(|id| id != subscription_id);
+    if let Some(renewal) = renewal
+        && activate(core, membership, customer_id, &renewal).await?
     {
         return Ok(());
     }
 
     lapse(core, membership, &relay).await
-}
-
-async fn load_relay(core: &Core, relay_id: &str) -> Result<Relay> {
-    relays::get_relay(core.db.pool(), relay_id)
-        .await?
-        .ok_or(Error::NotFound("relay not found"))
-}
-
-fn publish_access_change(core: &Core, relay_id: &str, published: Vec<Event>) {
-    core.bus.publish(Change::AccessChanged {
-        relay_id: relay_id.to_string(),
-        published,
-    });
 }

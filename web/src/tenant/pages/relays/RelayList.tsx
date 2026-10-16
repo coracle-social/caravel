@@ -5,7 +5,7 @@ import RelayListItem from "@/shared/components/RelayListItem"
 import ResourceState from "@/shared/components/ResourceState"
 import SearchInput from "@/shared/components/SearchInput"
 import useMinLoading from "@/shared/lib/useMinLoading"
-import { useTenantRelays } from "@/shared/lib/hooks"
+import { useTenantRelays } from "@/shared/lib/relays"
 import { fuzzySearch } from "@/shared/lib/search"
 
 export default function RelayList() {
@@ -15,9 +15,7 @@ export default function RelayList() {
   const loading = useMinLoading(() => relays.loading)
 
   const filtered = createMemo(() => {
-    const list = relays() ?? []
-    const q = query().trim()
-    const searched = fuzzySearch(list, ["info_name", "subdomain"], q)
+    const searched = fuzzySearch(relays() ?? [], ["info_name", "subdomain"], query().trim())
     return status() === "all" ? searched : searched.filter(r => r.status === status())
   })
 

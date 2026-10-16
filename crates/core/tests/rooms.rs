@@ -27,7 +27,7 @@ struct Fixture {
 async fn fixture() -> Fixture {
     let core = testing::core(&SecretKey::generate().public_key().to_hex()).await;
     let (relay, owner) = create_relay(&core).await;
-    let key = RelayKey::decrypt(&core.config.platform_key, &relay.secret).unwrap();
+    let key = core.relay_key(&relay).unwrap();
     Fixture {
         core,
         relay,

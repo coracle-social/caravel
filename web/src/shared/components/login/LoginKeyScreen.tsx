@@ -1,11 +1,8 @@
 import { Show } from "solid-js"
+import SegmentedTabs from "@/shared/components/SegmentedTabs"
 
 type KeyTab = "plaintext" | "encrypted"
 
-// Presentational key-login panel. The actual login (loginWithKeyMaterial) stays
-// in Login.tsx and is invoked via onSubmit; preventDefault is handled here so the
-// parent only supplies the async login. Props are reactive only when read lazily,
-// so access props.* inside JSX, never destructure signal-bearing props at the top.
 type LoginKeyScreenProps = {
   keyTab: () => KeyTab
   setKeyTab: (tab: KeyTab) => void
@@ -20,6 +17,7 @@ type LoginKeyScreenProps = {
   onSubmit: () => void
 }
 
+// Logging in with a pasted nsec, or an ncryptsec and its password.
 export default function LoginKeyScreen(props: LoginKeyScreenProps) {
   return (
     <>
@@ -33,22 +31,11 @@ export default function LoginKeyScreen(props: LoginKeyScreenProps) {
       </button>
       <h2 class="mt-3 text-lg font-semibold text-gray-900">Log in with key</h2>
       <div class="mt-4 space-y-4">
-        <div class="flex gap-2 border border-gray-200 rounded-lg p-1">
-          <button
-            type="button"
-            class={`flex-1 rounded-md px-3 py-2 text-sm ${props.keyTab() === "plaintext" ? "bg-gray-900 text-white" : "text-gray-700"}`}
-            onClick={() => props.setKeyTab("plaintext")}
-          >
-            Plaintext
-          </button>
-          <button
-            type="button"
-            class={`flex-1 rounded-md px-3 py-2 text-sm ${props.keyTab() === "encrypted" ? "bg-gray-900 text-white" : "text-gray-700"}`}
-            onClick={() => props.setKeyTab("encrypted")}
-          >
-            Encrypted
-          </button>
-        </div>
+        <SegmentedTabs
+          tabs={[{ value: "plaintext", label: "Plaintext" }, { value: "encrypted", label: "Encrypted" }]}
+          selected={props.keyTab()}
+          onSelect={props.setKeyTab}
+        />
 
         <form
           class="space-y-3"

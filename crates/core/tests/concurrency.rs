@@ -5,7 +5,7 @@
 mod common;
 
 use anyhow::Result;
-use caravel_core::billing;
+use caravel_core::billing::{self, Collection};
 use caravel_core::plans::PLAN_BASIC;
 use common::*;
 use futures_util::future::try_join_all;
@@ -14,8 +14,10 @@ const RACERS: usize = 8;
 
 async fn race_reconciles(core: &caravel_core::Core, tenant_pubkey: &str) -> Result<()> {
     let tenant = get_tenant(core, tenant_pubkey).await?;
-    try_join_all((0..RACERS).map(|_| billing::reconcile_subscription(core, &tenant, false)))
-        .await?;
+    try_join_all(
+        (0..RACERS).map(|_| billing::reconcile_subscription(core, &tenant, Collection::Settle)),
+    )
+    .await?;
     Ok(())
 }
 

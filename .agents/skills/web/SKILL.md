@@ -1,6 +1,6 @@
 ---
 name: web
-description: Architecture and conventions for Caravel's web apps in web/ — three SolidJS + Vite + TypeScript single-page apps (the tenant dashboard, the admin dashboard, and the member portal each relay serves on its own host) built from one project and embedded in the binary. Covers the shared/tenant/admin/portal layout, how the server picks an app and writes its configuration into the page, links between the two dashboards, the `@/` import alias, strict TS rules (verbatimModuleSyntax), the createResource + api.ts data layer, lazy tenant provisioning, applesauce Nostr singletons, the Tailwind v4 brand remap (blue utilities render brown), the shared component/modal/toast kit, and the `bun run build` verification gate. Use this whenever working anywhere in web/ — adding a page, hook, API call, component, or style.
+description: Architecture and conventions for Caravel's web apps in web/ — three SolidJS + Vite + TypeScript single-page apps (the tenant dashboard, the admin dashboard, and the member portal each relay serves on its own host) built from one project and embedded in the binary. Covers the shared/tenant/admin/portal layout, how the server picks an app and writes its configuration into the page, links between the two dashboards, the `@/` import alias, strict TS rules (verbatimModuleSyntax), the API client and session tokens, createResource reads and optimistic writes, lazy tenant provisioning, the post-paid billing prompts, applesauce Nostr singletons, the Tailwind v4 brand remap (blue utilities render brown), the shared component kit, and the `bun run build` verification gate. Use this whenever working anywhere in web/ — adding a page, hook, API call, component, or style.
 ---
 
 # Caravel's web apps
@@ -11,107 +11,73 @@ description: Architecture and conventions for Caravel's web apps in web/ — thr
 - **the admin dashboard** (`admin.html`, `src/admin`), on the platform host under `/admin`;
 - **the member portal** (`portal.html`, `src/portal`), on each relay's own host, where members pay for, renew and manage memberships and buy invites.
 
-Code the dashboards share lives in `src/shared`. The portal has its own small `lib` and components, ported from the merchant sidecar it replaces, and shares only the configuration module. The deep, lookup-style topics live in `references/`.
+`src/shared` holds what the apps share. The dashboards share nearly everything; the portal keeps its own pages, components and member API calls, and shares the configuration, the API transport, the wire types, the formatters and a few hooks. The deep, lookup-style topics live in `references/`.
 
 ## How the apps are served
 
-The build lands in `web/dist`, which the `caravel` binary embeds. The server picks an app by host and path (the `architecture` skill describes host dispatch) and writes its runtime configuration into the page as JSON in a `<script id="config">` element: the API's url, the relay domains, the platform's name and logo, Flotilla's url, and for the portal, the relay it is served for. `src/shared/lib/config.ts` reads it, falling back to the build's `VITE_*` variables under `vite dev`, where no server writes the page. So nothing is configured at build time, and one build runs anywhere.
+The build lands in `web/dist`, which the `caravel` binary embeds. The server picks an app by host and path (the `architecture` skill describes host dispatch) and writes its runtime configuration into the page as JSON: the API's url, the relay domains, the platform's name and logo, Flotilla's url, and for the portal, the relay it is served for. `shared/lib/config.ts` reads it, falling back to the build's `VITE_*` variables under `vite dev`, where no server writes the page. Nothing is configured at build time, so one build runs anywhere.
 
-The two dashboards are separate apps, so a link from one to the other must load the page rather than route within the app: use `AppLink` from `src/shared/components/AppLink.tsx` wherever a link may cross between them, as `AppShell` does. Under `vite dev`, a middleware in `vite.config.ts` picks the app per path the way the server does, and the portal runs under `/portal` with `?relay=<id>` standing in for the relay.
+The two dashboards are separate apps, so a link from one to the other loads the page rather than routing within the app. `AppLink` makes that choice for any link that may cross between them. Under `vite dev`, a middleware in `vite.config.ts` picks the app per path the way the server does, and the portal runs under `/portal` with `?relay=<id>` standing in for its relay.
 
-## It's SolidJS, not React
+## The stack
 
-Before touching anything, internalize the actual stack, because the wrong defaults here are exactly the ones an agent reaches for:
-
-- **SolidJS, not React.** Use `class`, not `className`. Use `<Show>`/`<For>` for conditional and list rendering, not ternaries and `.map()`. Access props lazily as `props.foo` — never destructure props at the top, because that breaks reactivity (see `src/components/relay/PlanGatedToggle.tsx`, whose own header comment says so). State is `createSignal`/`createResource`/`createMemo`/`createEffect`.
-- **Data fetching is hand-rolled `fetch` in `shared/lib/api.ts` wrapped in SolidJS `createResource` — NOT TanStack Query.** `@tanstack/solid-query` is in `package.json` but imported nowhere. Do not introduce it.
-- **Login is built directly on `applesauce-accounts` / `applesauce-signers`.** The portal signs in with `applesauce-signers` alone and keeps nothing but its session token.
-- **`applesauce-wallet-connect` and `@tailwindcss/forms` are declared dependencies that are never imported.** NWC in the tenant dashboard is just a text input whose value is POSTed to the backend; form inputs are styled with explicit utility classes.
-
-Bottom line: follow the `createResource` + applesauce patterns the codebase actually uses.
+- **SolidJS, not React.** Use `class`, not `className`, and `Show`, `For`, `Switch` and `Match` for conditional and list rendering. Read props lazily as `props.x`; destructuring props breaks reactivity. State is signals, resources, memos and effects.
+- **Reads are SolidJS resources** over the API client's functions; there is no query library.
+- **Login is built on applesauce** accounts and signers. The portal signs in with applesauce signers alone and keeps only its session token.
 
 ## Where things live
 
-Each app directory holds its `index.tsx` entry, its `App.tsx` route table, and its `pages/` (and `components/` for UI only it uses). `src/shared` holds what the dashboards share:
+Each app directory holds its `index.tsx` entry, its `App.tsx` route table, its `pages/`, and `components/` for UI only it uses. Shared UI lives in `shared/components`, with feature folders for login, payment, the account page and relays; page-level components both dashboards route to (login, editing a relay) live in `shared/views`. Non-UI code lives in `shared/lib`, one module per concept:
 
-- **`components/`** — shared, reusable UI, with feature subfolders `login/`, `payment/`, `account/`, `relay/`, plus `Layout` (the dashboards' frame and route guards) and `AppLink`.
-- **`lib/`** — all non-UI logic.
-- **`views/`** — holds only `Login.tsx` (see the quirk below).
+- **`config.ts`** — the runtime configuration.
+- **`http.ts`** — the API transport every app uses: the error type, sending a request, unwrapping the response envelope, and buying a session token with one NIP-98 signature.
+- **`api.ts`** — the dashboards' wire types, the session tokens they keep per pubkey, and one function per API route. The portal's member routes are in `portal/lib/api.ts`, which reuses these types.
+- **`account.ts`** — the signed-in account, which the client reads for its session.
+- **`state.ts`** — the applesauce singletons, restoring and following the signed-in account, the identity, plans and billing resources, and the toast.
+- **`profiles.ts`** — reading Nostr profiles; **`relays.ts`** — relay resources and creating a relay; **`billing.ts`** — the billing prompts and status; **`format.ts`** — every display formatter, error messages included.
 
-Within `shared/lib/`, five modules are the load-bearing pillars:
+The rest of `shared/lib` is small pure modules and `use*` hooks. A concrete inventory and the route tables are in [references/file-inventory.md](references/file-inventory.md).
 
-- **`config.ts`** — the runtime configuration the server writes into the page.
-- **`api.ts`** — the *only* place the dashboards' backend wire types and `fetch` wrappers live.
-- **`state.ts`** — app-lifetime singletons plus global signals/resources.
-- **`hooks.ts`** — the `use*` `createResource` read hooks and the active-tenant action helpers.
-- **`nostr.ts`** — the `useNostr()` DI seam for reaching the Nostr singletons.
-
-The rest of `shared/lib/` is camelCase pure-helper modules and `use*` hook files. One quirk to know: **Login lives in `src/shared/views/Login.tsx`, not a `pages/` directory** — it is the lone occupant of `views/`.
-
-Where a *new* thing goes: a route page → that app's `pages/`; UI one app uses → that app's `components/`; UI both dashboards use → `shared/components/`; a hook → `shared/lib/use*.ts`; a backend call → an `api.ts` wrapper (the portal's own `portal/lib/api.ts` for portal calls); pure decision logic → its own `lib` module. A concrete file inventory and the entrypoint/route wiring are in [references/file-inventory.md](references/file-inventory.md) if you need it.
+Where a new thing goes: a route page goes in its app's `pages/`; UI one app uses goes in its `components/`; UI several apps use goes in `shared/components/`; a backend call becomes a function in `api.ts`, or `portal/lib/api.ts` for member routes; a reusable stateful behavior becomes a `use*` hook; a rule or derivation becomes a function in the module that owns its concept.
 
 ## Naming, imports, and TypeScript rules
 
-To compile and fit in, an edit must satisfy these:
+- **Files.** Components, pages and views are PascalCase `.tsx` with a default-exported function named after the file; a component file may also export small siblings it owns. Lib modules are camelCase `.ts` with named exports.
+- **Imports always use the `@/` alias** for `src/`; there are no relative imports. The alias is configured in both `vite.config.ts` and `tsconfig.app.json`.
+- **One export site per symbol.** There are no barrel files or re-export shims; when something moves, every import moves with it (root `AGENTS.md`).
+- **Strict TS.** `verbatimModuleSyntax` is on, so type-only imports are marked as such. Unused locals and parameters fail the build.
+- **One type per concept.** Wire types are declared once, in `api.ts`, and variants are derived from them: the relay settings a tenant may write are a partial pick of the relay, the portal's offer extends the relay profile the portal is served with, and a member's view of a membership is a pick of the membership. Relay settings are `0`/`1` flags on the wire, typed as such, and a relay's status, an activity's type and an invoice's status are unions.
+- **`tenant_pubkey` naming**, and don't over-DRY (root `AGENTS.md`).
+- **Comments** are one line where possible: a component or function says what it is, and a comment inside code explains only what the code can't.
 
-- **File naming.** Components/pages/views are PascalCase `.tsx` with one default-exported function named after the file. Lib modules are camelCase `.ts` (no default exports). Hooks are camelCase `use*.ts`. Files that export multiple hooks/symbols use named exports (e.g. `PaymentSetupShell.tsx` exports `PaymentSetupShell` plus sibling components). Single-hook files are inconsistent: `useRelayToggles.ts` and `useMinLoading.ts` default-export, but `useInvoicePdf.ts` uses a named export — so don't assume a single-purpose hook default-exports.
-- **Imports always use the `@/` alias** (maps to `src/`), e.g. `import RelayList from "@/tenant/pages/relays/RelayList"`. There are no relative imports. The alias is configured in **two places that must stay in sync**: `vite.config.ts` and `tsconfig.app.json`.
-- **No barrel `index` files.** The `index.tsx` files are each app's entrypoint, which renders the app rather than re-exporting a module. Import each symbol from its concrete module.
-- **One canonical export per symbol — no re-export shims.** When code moves, update every call site (root `AGENTS.md`). Note one existing wrinkle: `hooks.ts` re-exports four `api.ts` wire types (`Activity`, `Invoice`, `Relay`, `Tenant`), so each is importable from two paths — **prefer `@/shared/lib/api`** for wire types. `hooks.ts` also re-exports `ProfileContent`, but that type comes from `applesauce-core/helpers/profile` (not `api.ts`), so import it from there.
-- **Strict TS.** `verbatimModuleSyntax` is on, so type-only symbols need `import type` or an inline `type` specifier, e.g. `import { invoiceStatus, type Invoice } from "@/shared/lib/api"`. `noUnusedLocals`/`noUnusedParameters` and `erasableSyntaxOnly` are also on.
-- **`tenant_pubkey` naming.** Name a tenant's pubkey `tenant_pubkey` on FK fields/inputs; the exception is already-tenant-scoped contexts (`Tenant.pubkey`, `getTenant(pubkey)`). See root `AGENTS.md`.
-- **Don't over-DRY.** Extract a helper only when it's a distinct concern, repeated 3+ times, or complex enough that naming it clarifies the flow (root `AGENTS.md`). `relayFlags.ts` is the canonical example — it was extracted because the 0/1↔bool conversion recurred across toggle UI and mutations.
+## Talking to the API
 
-A strong idiom: keep **pure decision logic** (payload shapes, validation ladders, discriminated-union decisions) in dedicated `lib` modules with no signals/effects/awaits (`relayPlanFlow.ts`, `loginInput.ts`), and keep the effect layer in the importing hook/component. These modules carry a header comment stating they are pure.
+Every request goes through `http.ts`, which throws the API's own error message with its status when a request fails, so callers can check for a status such as 401 or 404. The dashboards' client in `api.ts` adds the signed-in account's session token, signing in once when it has none and again once if the server rejects it; the portal adds its member's token. Both build urls by appending the path to the API's url, so an API served under a path on the platform host works. [references/data-and-state-lifecycle.md](references/data-and-state-lifecycle.md) has the session mechanics.
 
-## The data layer: api.ts + createResource
+Pages read through resources, with the id as the resource's source so it refetches when the id changes, and render them with `ResourceState`, `useMinLoading` and `Show`. A resource throws when read after it failed, so code that only wants a value reads it through `loaded`. Writes to a relay go through `useRelayActions`: it updates the page's copy first, writes, refetches, and on failure restores the copy and reports in the toast. A redirect to a page the API names, such as Stripe Checkout or the billing portal, goes through `useRedirect`, which tracks the redirect in flight and its error.
 
-Every dashboard backend call goes through `shared/lib/api.ts`. A generic `callApi(method, path, body)` sends the request with the account's session token, unwraps the `{ data, code }` envelope (returning `.data`), and throws `ApiError(message, status)` on a non-2xx response. Each endpoint is a thin exported wrapper with explicit generics; add new endpoints the same way (use an `undefined` request type for bodyless requests — both GETs and parameterless POSTs). The lone exception is `listPlans`, which bypasses `callApi` and does its own raw `fetch` with no auth machinery. (The public routes are `/plans` and `/plans/:id`; `getPlan` still goes through `callApi`, which simply omits the `Authorization` header when logged out.)
+## Global state and lazy tenant provisioning
 
-Wire types are snake_case. Two modeling choices to respect: relay boolean settings are **numeric 0/1 flags**, not JS booleans — toggle them through the `relayFlags` helpers; and an invoice's lifecycle is **derived from nullable timestamps** via `invoiceStatus`, not read from a status column.
+A tenant row is created lazily. When an account becomes active, `state.ts` locks the billing reads, makes the pubkey a tenant (idempotently), and unlocks them, because reads of the tenant and its draft invoice fail until it exists. Any new tenant-scoped read is gated the same way, and code that changes billing calls `refetchBilling` when the banner should notice.
 
-Screen reads expose a `use*` `createResource` hook in `hooks.ts` (again: not TanStack Query). Pass an accessor as the resource source when it should refetch on id change; pass a thunk reading `account()!.pubkey` for active-tenant reads. Render with `ResourceState` + `useMinLoading` + `Show`/`For`, defaulting the value with `?? []`.
+After a tenant picks a paid plan, whether creating a relay or upgrading one, `PostPaidPrompts` asks them to pay the invoice it opened and then to set up automatic payments, unless they already pay automatically; the banner stays quiet while it does. The billing domain itself is the `billing-model` skill's; the portal and member pricing are the `memberships` skill's.
 
-Mutations are optimistic and follow one shape: `mutate(next)` → `await update` → `await refetch()`, and on error `mutate(previous)` + `setToastMessage(...)` to roll back and report.
+## Nostr
 
-The deeper mechanics — the `ApiOk` envelope and `ApiError` shape, NIP-98 auth caching, and the `api.ts`↔`state.ts` circular-import DI seam — are in [references/data-and-state-lifecycle.md](references/data-and-state-lifecycle.md).
-
-## Global state, the session, and lazy tenant provisioning
-
-`state.ts` holds app-lifetime singletons and global reactive state: the `account` signal, the `plans`/`identity` resources, the `billing*` resources, and the toast signals.
-
-The one ordering rule you must respect: **a tenant row is provisioned lazily.** `ensureSessionTenant()` does a `POST /tenants`, run by the account-activation subscriber on every account switch (it's idempotent — later runs just return the existing row). Some tenant-scoped reads 404 before the row exists: `getTenant` and `getDraftInvoice` 404 via `get_tenant_or_404`. (Note `listTenantInvoices` and `listTenantRelays` do *not* 404 — they query directly and return empty results — so the gate mainly protects the tenant/draft reads.) That is why the billing resources are gated on a separate `billingPubkey` signal rather than directly on `account()` — `billingPubkey` is cleared (set to `undefined`) on every account switch and re-set only once the tenant is ensured. Convention: gate any new tenant-scoped resource behind `billingPubkey` (or run `ensureSessionTenant()` first), and after a billing-affecting mutation call `refetchBilling()` where the flow needs it.
-
-For the billing *domain* (why proration, dunning, churn, and reactivation behave as they do), read the [billing-model skill](../billing-model/SKILL.md) — that skill owns the intent. This skill only documents the dashboards' data-layer wiring; the `memberships` skill owns what the portal and the member pricing UI do. The detailed account-switch lifecycle is in [references/data-and-state-lifecycle.md](references/data-and-state-lifecycle.md).
-
-## Nostr integration (applesauce)
-
-Most agents touch this rarely. Three app-lifetime applesauce singletons live in `state.ts`: `eventStore`, `pool` (a `RelayPool`), and `accountManager`. The reactive `account` signal mirrors `accountManager.active$` — never set `account` directly; activate accounts through `accountManager`.
-
-To reach the singletons: inside a SolidJS reactive scope use `const nostr = useNostr()` (the DI seam in `nostr.ts`, which falls back to the module singletons when no provider is mounted); outside one (event handlers, plain async, `api.ts`) import the module singletons directly.
-
-Render profiles through the `useProfileMetadata` / `useProfileMetadataMap` / `useProfilePicture` hooks, which subscribe to `eventStore.profile(...)` and optionally prime over the network — never hand-roll relay queries. When a parent batch-primes a list, children subscribe with `{ prime: false }` so they don't each re-prime.
-
-Pubkeys are hex strings; shorten them for display with `shortenPubkey` or `shortenNpub` in `shared/lib/pubkey.ts`. Signing in signs one NIP-98 event for exactly `POST <API_URL>/session` and keeps the session token it buys; the data-and-state-lifecycle reference has the details.
+`state.ts` holds three applesauce singletons: the event store, the relay pool and the account manager. The account signal follows the account manager; activate accounts through the manager, never by setting the signal. Profiles are read with the hooks in `profiles.ts`, which subscribe to the event store and fetch from each pubkey's outbox relays; a list that shows many profiles fetches them in one batch and its items subscribe without fetching. `profileName` and `Avatar` are how a profile is shown. Pubkeys are hex strings, shortened for display with the helpers in `pubkey.ts`.
 
 ## Routing and auth gating
 
-Each dashboard declares its routes in its own `App.tsx` under one `Router` with `root={Layout}`. Protected pages are wrapped in `requireTenant()` (logged in) or `requireAdmin()` (`identity().is_admin`), both built on a `requireCondition` HOC in `shared/components/Layout.tsx` that waits on the `identity` resource and sends a failed check to the tenant dashboard's `/`. A new gated page must be wired into its app's `App.tsx` with the right wrapper. `AppShell` wraps the authenticated paths (matched by a path regex in `Layout`). The portal's routes sit at the root of its relay's host: the relay's page at `/`, buying an invite at `/join`, an invite at `/invites/:code`, and every membership the member holds at `/account`.
+Each dashboard declares its routes in its `App.tsx` under one router whose root is `Layout`. Protected pages are wrapped with `requireTenant` or `requireAdmin`, which wait for the identity resource and send everyone else home. `Layout` frames the signed-in pages in `AppShell`. The gates only decide what renders; the API authorizes every request. Login is a component, shown as a modal from the home page, not a route. The portal's routes sit at the root of its relay's host.
 
-The gate is **rendering-only** (it just conditionally renders the page and client-redirects). Real security is server-side: the API authenticates the session token (or a NIP-98 header signed for its base url) to a pubkey, then each handler checks that pubkey against the admin list or the tenant that owns what the request names. Login is a modal/embedded component, not a route.
+## Styling and the component kit
 
-## Styling: Tailwind v4 + the brand remap + shared kit
+Styling is Tailwind v4 utility classes inline, configured CSS-first in `shared/index.css` for the dashboards and `portal/index.css` for the portal.
 
-Styling is inline Tailwind v4 utility strings in `class=` — no CSS modules, no `@apply`, no `tailwind.config.js` (config is CSS-first, in `src/shared/index.css` for the dashboards and `src/portal/index.css` for the portal, wired via the `@tailwindcss/vite` plugin).
+**The pitfall:** the dashboards' stylesheet remaps the whole blue scale to the brown brand palette, so blue utilities render brown and are the intended brand accent. Don't replace them with a brown hex.
 
-**THE pitfall:** the dashboards' `index.css` remaps the entire `--color-blue-*` scale to a brown brand palette, so `bg-blue-600`, `text-blue-700`, and `focus:ring-blue-500` render **brown** (`#c18254`) and *are* the intended brand accent. Do not "fix" them to a brown hex, and do reach for blue utilities for any primary accent.
-
-Compose from the shared kit rather than bespoke markup: `PageContainer` (page wrapper), `ResourceState`/`LoadingState` (paired with `createResource` + `useMinLoading`), `Modal` plus `ConfirmDialog`/`PaymentDialog`, and the form primitives `Field`/`ToggleField`/`Checkbox`/`SearchInput`/`ToggleButton`/`RelayForm`. Most transient/global errors and successes go through `setToastMessage(message, variant)` (a single bottom-right `Toast` in `shared/components/Toast.tsx`, mounted once in `Layout`; default variant `"error"` = red, `"success"` = green) — prefer it over ad-hoc alert UI. It is not the only error surface, though: contextual/inline errors bypass the toast — e.g. Login's local `error()` signal (`views/Login.tsx`), the payment flow (`PaymentDialog` bolt11 error, `PaymentSetupShell`), resource-load failures (`ResourceState` errorText), and the `PromptBanner` banner.
-
-Preline's `HSStaticMethods.autoInit()` is re-run on pathname changes by a `createEffect` in `Layout`. However, this codebase does not actually use any `data-hs-*` markup — all dropdowns, tabs, and overlays are hand-rolled with SolidJS signals and manual listeners (see `RelayCardHeader.tsx`, `LoginTabsScreen.tsx`, `PaymentSetup.tsx`). Don't assume `data-hs-*` needs no wiring: the effect fires only on full-path changes (not same-path query/hash navigation), and because SolidJS renders DOM lazily via `<Show>`, any Preline markup that mounts after the effect last ran will be uninitialized. If you do use Preline `data-hs-*` components, wire initialization explicitly rather than relying on this route-level effect.
+Build from the kit rather than bespoke markup: `PageContainer`, `ResourceState` and `LoadingState`; `Modal`, which is a centered dialog unless given other classes, with `ModalHeader` for a titled dialog; `ConfirmDialog`, which takes the confirmation to ask and keeps it on screen while closing; `SegmentedTabs`; `StatusBadge`, which knows the colors of every status the apps show; `Avatar`; and the form pieces (`Field`, `ToggleField`, `ToggleButton`, `SearchInput`, `RelayForm`). Transient errors and successes go to the toast with `setToastMessage`; errors that belong to a form or dialog are shown in it.
 
 ## Building and verifying a change
 
-There is no lint or test step for the web apps. The verification gate is the **build**, which runs a strict typecheck (`tsc -b`, project references, `noEmit`) then a production bundle of all three apps (`vite build`). Verify with `just build-web` (which runs `bun i && bun run build`) or, inside `web/`, `bun run build`. **Bun is the package manager** (`bun.lock`; no npm/yarn/pnpm lockfile).
-
-A new configuration value is added on the server, in what the app's web settings write into each page, read in `shared/lib/config.ts`, and given a `VITE_*` fallback for `vite dev`, declared in `src/global.d.ts` and `.env.template`. The details are in [references/build-and-config.md](references/build-and-config.md).
+There is no lint or test step for the web apps. The gate is the build: a strict typecheck of every app, then a production bundle of all three. Run `just build-web`, or `bun run build` inside `web/`. Bun is the package manager. Never open a browser to check a change. [references/build-and-config.md](references/build-and-config.md) covers the build and adding a configuration value.

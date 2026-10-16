@@ -5,7 +5,7 @@ mod common;
 
 use axum::http::StatusCode;
 use bytes::Bytes;
-use caravel_core::media::{self, Blob};
+use caravel_core::media;
 use caravel_core::testing::{create_relay, sign_event};
 use caravel_core::{events, hosting};
 use common::*;
@@ -100,16 +100,21 @@ async fn admins_review_the_feed_and_its_blobs() {
     let admin = api.bearer(&api.admin).await;
     let now = api.core.clock.now();
 
-    let blob = Blob {
-        sha256: "a".repeat(64),
-        content_type: "image/png".to_string(),
-        size: 5,
-        created_at: 0,
-    };
-    api.core
+    let owner_pubkey = owner.public_key().to_hex();
+    let blob = api
+        .core
         .db
         .with_tx(async |conn| {
-            media::record_upload(conn, &relay.id, &blob, &owner.public_key().to_hex(), now).await
+            media::record_upload(
+                conn,
+                &relay.id,
+                &"a".repeat(64),
+                "image/png",
+                5,
+                &owner_pubkey,
+                now,
+            )
+            .await
         })
         .await
         .unwrap();
@@ -153,5 +158,10 @@ async fn admins_review_the_feed_and_its_blobs() {
     assert_eq!(
         api.raw("GET", &missing, &admin, Vec::new()).await.0,
         StatusCode::NOT_FOUND
+    );
+    let malformed = format!("/moderation/blob/{}/not-a-hash", relay.id);
+    assert_eq!(
+        api.raw("GET", &malformed, &admin, Vec::new()).await.0,
+        StatusCode::UNPROCESSABLE_ENTITY
     );
 }

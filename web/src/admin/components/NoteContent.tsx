@@ -18,15 +18,13 @@ import {
 } from "@welshman/content"
 import { shortenNpub } from "@/shared/lib/pubkey"
 
-// Long entity strings (invoices, nevents) are unreadable in full and only need
-// to be recognizable at a glance.
+// Long entities, such as invoices and nevents, only need to be recognizable.
 const shorten = (value: string) => (value.length > 24 ? `${value.slice(0, 24)}…` : value)
 
 function Link(props: { value: ParsedLinkValue; raw: string }) {
   const url = props.value.url
 
-  // Only hand the browser a scheme it should follow. Anything else — javascript:,
-  // data:, whatever else a poster invented — stays inert text.
+  // Any scheme but http and https, such as javascript:, stays inert text.
   if (url.protocol !== "http:" && url.protocol !== "https:") {
     return <>{props.raw}</>
   }
@@ -36,8 +34,7 @@ function Link(props: { value: ParsedLinkValue; raw: string }) {
       href={url.toString()}
       target="_blank"
       rel="noreferrer nofollow"
-      // Show what was written, but reveal where it actually goes on hover: the
-      // two differing is itself worth seeing when you're moderating.
+      // The link text as written, with where it really goes on hover.
       title={url.toString()}
       class="text-blue-600 hover:underline"
     >
@@ -67,8 +64,7 @@ function Segment(props: { parsed: Parsed }) {
     return <span class="text-gray-500">{shorten(parsed.raw)}</span>
   }
 
-  // Custom emoji resolve to an image on a poster-controlled host; render the
-  // shortcode instead of fetching from one.
+  // Custom emoji are images on the poster's host, so the shortcode shows instead.
   if (isEmoji(parsed)) {
     return <span class="text-gray-500">:{parsed.value.name}:</span>
   }
@@ -83,8 +79,7 @@ function Segment(props: { parsed: Parsed }) {
 
   if (isEllipsis(parsed)) return <>…</>
 
-  // Whatever's left — text, newlines, emails — is a plain string, and the
-  // container preserves the whitespace.
+  // Anything else is plain text, whose whitespace the container keeps.
   return <>{parsed.value}</>
 }
 
@@ -93,12 +88,10 @@ type NoteContentProps = {
   tags: string[][]
 }
 
-// Renders note content as text with clickable links, hashtags and mentions.
-// Built up from parsed segments rather than welshman's HTML renderer, so
-// nothing a stranger authored is ever handed to innerHTML.
+// A note's content with clickable links, hashtags and mentions, built from
+// parsed segments so nothing a stranger wrote reaches innerHTML.
 export default function NoteContent(props: NoteContentProps) {
-  // Truncated as well as line-clamped: the clamp only hides overflow, while a
-  // feed page can carry a thousand of these and each one's DOM is real.
+  // Truncated as well as clamped, since a clamp only hides what is still rendered.
   const parsed = createMemo(() =>
     truncate(parse({content: props.content, tags: props.tags}), {minLength: 300, maxLength: 500}),
   )

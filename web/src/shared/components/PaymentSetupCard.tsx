@@ -1,23 +1,12 @@
 import { PaymentSetupShell, PaymentSetupBody, SetupFooter, CardSetupBody } from "@/shared/components/PaymentSetupShell"
-import { useCardPortal } from "@/shared/lib/usePaymentSetup"
+import { useRedirect } from "@/shared/lib/useRedirect"
 
-type PaymentSetupCardProps = {
-  open: boolean
-  onClose: () => void
-  // The tenant already has a card on file, so the copy frames this as managing
-  // the existing one rather than adding a first card.
-  isUpdate?: boolean
-}
-
-// Focused card dialog. PaymentSetup offers both methods behind tabs for the
-// general setup flow; here the entry point is explicitly "manage your card", so
-// there's no method switcher — adding/updating a card is a redirect to the
-// Stripe billing portal, which returns to wherever it was opened from.
-export default function PaymentSetupCard(props: PaymentSetupCardProps) {
-  const card = useCardPortal()
+// Adding or managing the card on file. `isUpdate` is for a tenant who already has one.
+export default function PaymentSetupCard(props: { open: boolean; onClose: () => void; isUpdate?: boolean }) {
+  const billingPortal = useRedirect()
 
   function handleClose() {
-    card.reset()
+    billingPortal.reset()
     props.onClose()
   }
 
@@ -31,11 +20,11 @@ export default function PaymentSetupCard(props: PaymentSetupCardProps) {
           ? "Manage your saved card in the Stripe billing portal."
           : "Add a card via the Stripe billing portal to pay invoices automatically."
       }
-      error={card.error()}
+      error={billingPortal.error()}
       footer={<SetupFooter cancelLabel="Cancel" onClose={handleClose} />}
     >
       <PaymentSetupBody>
-        <CardSetupBody card={card} isUpdate={props.isUpdate} />
+        <CardSetupBody billingPortal={billingPortal} isUpdate={props.isUpdate} />
       </PaymentSetupBody>
     </PaymentSetupShell>
   )

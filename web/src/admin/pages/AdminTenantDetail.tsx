@@ -1,46 +1,68 @@
 import { useParams } from "@solidjs/router"
-import { createSignal, For, Show } from "solid-js"
-import { getProfilePicture } from "applesauce-core/helpers/profile"
+import { createResource, createSignal, For, Show } from "solid-js"
 import BackLink from "@/shared/components/BackLink"
 import PageContainer from "@/shared/components/PageContainer"
 import RelayListItem from "@/shared/components/RelayListItem"
 import AdminInvoiceListItem from "@/admin/components/AdminInvoiceListItem"
 import ResourceState from "@/shared/components/ResourceState"
 import ActionsMenu, { ActionsMenuItem } from "@/shared/components/ActionsMenu"
-import ConfirmDialog from "@/shared/components/ConfirmDialog"
-import { StatusBadge } from "@/shared/components/relay/RelayCardHeader"
-import useMinLoading from "@/shared/lib/useMinLoading"
-import { useAdminTenant, useAdminTenantInvoices, useAdminTenantRelays, useProfileMetadata } from "@/shared/lib/hooks"
-import { banTenant, tenantStatus, unbanTenant } from "@/shared/lib/api"
-import { setToastMessage } from "@/shared/lib/state"
+import Avatar from "@/shared/components/Avatar"
+import ConfirmDialog, { type Confirmation } from "@/shared/components/ConfirmDialog"
 import CopyNpub from "@/shared/components/CopyNpub"
+import StatusBadge from "@/shared/components/StatusBadge"
+import useMinLoading from "@/shared/lib/useMinLoading"
+import { profileName, useProfileMetadata } from "@/shared/lib/profiles"
+import { banTenant, getTenant, listTenantInvoices, listTenantRelays, tenantStatus, unbanTenant } from "@/shared/lib/api"
+import { formatDateTime, formatError } from "@/shared/lib/format"
+import { setToastMessage } from "@/shared/lib/state"
 import { shortenNpub } from "@/shared/lib/pubkey"
+
+type Action = "ban" | "unban"
+
+function confirmation(action: Action, label: string): Confirmation {
+  switch (action) {
+    case "ban":
+      return {
+        title: "Ban tenant?",
+        description: `${label} will be banned immediately.`,
+        details: [
+          "All of the tenant's relays will be permanently purged — data and config deleted.",
+          "Billing is canceled: open invoices are voided and outstanding charges forgiven.",
+          "The tenant can no longer create relays.",
+          "Lifting the ban later does not restore purged relays.",
+        ],
+        confirmLabel: "Yes, ban tenant",
+        busyLabel: "Banning...",
+        tone: "danger",
+      }
+    case "unban":
+      return {
+        title: "Unban tenant?",
+        description: `${label} will be able to use the service again.`,
+        details: [
+          "The tenant can create relays again, and billing resumes on new activity.",
+          "Purged relays and forgiven invoices are not restored.",
+        ],
+        confirmLabel: "Yes, unban tenant",
+        busyLabel: "Unbanning...",
+        tone: "primary",
+      }
+  }
+}
 
 export default function AdminTenantDetail() {
   const params = useParams()
   const tenantId = () => params.id ?? ""
-  const [tenant, { refetch: refetchTenant }] = useAdminTenant(tenantId)
-  const [relays, { refetch: refetchRelays }] = useAdminTenantRelays(tenantId)
-  const [invoices, { refetch: refetchInvoices }] = useAdminTenantInvoices(tenantId)
+  const [tenant, { refetch: refetchTenant }] = createResource(tenantId, getTenant)
+  const [relays, { refetch: refetchRelays }] = createResource(tenantId, listTenantRelays)
+  const [invoices, { refetch: refetchInvoices }] = createResource(tenantId, listTenantInvoices)
   const loading = useMinLoading(() => tenant.loading || relays.loading || invoices.loading)
   const metadata = useProfileMetadata(tenantId)
 
-  const [pendingAction, setPendingAction] = createSignal<"ban" | "unban" | null>(null)
+  const [pendingAction, setPendingAction] = createSignal<Action>()
   const [busy, setBusy] = createSignal(false)
 
-  const tenantLabel = () => (metadata()?.name || metadata()?.display_name) || shortenNpub(tenantId())
-
-  const bannedLabel = () => {
-    const ts = tenant()?.banned_at
-    if (!ts) return null
-    return new Date(ts * 1000).toLocaleString()
-  }
-
-  const churnedLabel = () => {
-    const ts = tenant()?.churned_at
-    if (!ts) return null
-    return new Date(ts * 1000).toLocaleString()
-  }
+  const tenantLabel = () => profileName(metadata()) || shortenNpub(tenantId())
 
   async function confirmAction() {
     const action = pendingAction()
@@ -57,9 +79,9 @@ export default function AdminTenantDetail() {
       }
       // Banning purges the tenant's relays and voids its open invoices.
       await Promise.all([refetchTenant(), refetchRelays(), refetchInvoices()])
-      setPendingAction(null)
+      setPendingAction(undefined)
     } catch (e) {
-      setToastMessage(e instanceof Error ? e.message : `Failed to ${action} tenant`)
+      setToastMessage(formatError(e, `Failed to ${action} tenant`))
     } finally {
       setBusy(false)
     }
@@ -70,16 +92,7 @@ export default function AdminTenantDetail() {
       <BackLink label="Back" />
       <div class="flex items-start justify-between gap-4 mb-6 py-2">
         <div class="flex items-center gap-4 min-w-0">
-          <Show
-            when={getProfilePicture(metadata())}
-            fallback={
-              <div class="h-14 w-14 flex-shrink-0 rounded-full bg-gray-200 flex items-center justify-center text-gray-500 text-lg">
-                {((metadata()?.name || metadata()?.display_name) || tenantId()).slice(0, 1).toUpperCase()}
-              </div>
-            }
-          >
-            <img src={getProfilePicture(metadata())} alt="Profile" class="h-14 w-14 flex-shrink-0 rounded-full object-cover" />
-          </Show>
+          <Avatar profile={metadata()} pubkey={tenantId()} alt="Profile" class="h-14 w-14 flex-shrink-0" fallbackClass="bg-gray-200 text-gray-500 text-lg" />
           <div class="min-w-0">
             <h1 class="text-2xl font-bold text-gray-900 truncate">{tenantLabel()}</h1>
             <p class="mt-0.5">
@@ -140,17 +153,21 @@ export default function AdminTenantDetail() {
                       <dd class="font-mono">{t().stripe_customer_id}</dd>
                     </div>
                   </Show>
-                  <Show when={bannedLabel()}>
-                    <div class="flex gap-2">
-                      <dt class="text-gray-500">Banned Since:</dt>
-                      <dd class="text-red-600 font-medium">{bannedLabel()}</dd>
-                    </div>
+                  <Show when={t().banned_at}>
+                    {(at) => (
+                      <div class="flex gap-2">
+                        <dt class="text-gray-500">Banned Since:</dt>
+                        <dd class="text-red-600 font-medium">{formatDateTime(at())}</dd>
+                      </div>
+                    )}
                   </Show>
-                  <Show when={churnedLabel()}>
-                    <div class="flex gap-2">
-                      <dt class="text-gray-500">Delinquent Since:</dt>
-                      <dd class="text-red-600 font-medium">{churnedLabel()}</dd>
-                    </div>
+                  <Show when={t().churned_at}>
+                    {(at) => (
+                      <div class="flex gap-2">
+                        <dt class="text-gray-500">Delinquent Since:</dt>
+                        <dd class="text-red-600 font-medium">{formatDateTime(at())}</dd>
+                      </div>
+                    )}
                   </Show>
                   <Show when={t().nwc_error}>
                     <div class="flex gap-2">
@@ -191,33 +208,11 @@ export default function AdminTenantDetail() {
         </div>
       </Show>
       <ConfirmDialog
-        open={pendingAction() !== null}
-        title={pendingAction() === "ban" ? "Ban tenant?" : "Unban tenant?"}
-        description={
-          pendingAction() === "ban"
-            ? `${tenantLabel()} will be banned immediately.`
-            : `${tenantLabel()} will be able to use the service again.`
-        }
-        details={
-          pendingAction() === "ban"
-            ? [
-                "All of the tenant's relays will be permanently purged — data and config deleted.",
-                "Billing is canceled: open invoices are voided and outstanding charges forgiven.",
-                "The tenant can no longer create relays.",
-                "Lifting the ban later does not restore purged relays.",
-              ]
-            : [
-                "The tenant can create relays again, and billing resumes on new activity.",
-                "Purged relays and forgiven invoices are not restored.",
-              ]
-        }
-        confirmLabel={pendingAction() === "ban" ? "Yes, ban tenant" : "Yes, unban tenant"}
-        busyLabel={pendingAction() === "ban" ? "Banning..." : "Unbanning..."}
+        confirmation={pendingAction() && confirmation(pendingAction()!, tenantLabel())}
         busy={busy()}
-        tone={pendingAction() === "ban" ? "danger" : "primary"}
         onConfirm={confirmAction}
         onClose={() => {
-          if (!busy()) setPendingAction(null)
+          if (!busy()) setPendingAction(undefined)
         }}
       />
     </PageContainer>

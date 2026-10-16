@@ -1,13 +1,25 @@
-// Pure decision module for Login's input handling. No signers are constructed
-// here (that's effectful/async and stays in the component) — only the input
-// normalization, the key-material validation ladder, and the initial-tab choice.
-// Keeping these pure makes them testable independently of the DOM/signer stack.
+// Reading what someone types into the login form.
 
 export type Tab = "nip07" | "nip46" | "key"
 
-// Normalize a pasted signer link into a bunker:// URI. nostrconnect:// links are
-// rewritten to the equivalent bunker:// form; anything else is passed through
-// trimmed. Pure string transform.
+// What's wrong with a pasted signer link, if anything.
+export function validateBunkerUri(value: string): string | null {
+  const trimmed = value.trim()
+  if (!trimmed) return "Enter a bunker or nostrconnect link"
+
+  if (trimmed.startsWith("nostrconnect://") || trimmed.startsWith("bunker://")) {
+    try {
+      new URL(trimmed)
+    } catch {
+      return "That doesn't look like a valid link"
+    }
+    return null
+  }
+
+  return "Link must start with bunker:// or nostrconnect://"
+}
+
+// A pasted signer link as a bunker:// url, rewriting a nostrconnect:// one.
 export function normalizeBunkerUrl(value: string): string {
   const trimmed = value.trim()
   if (!trimmed) return ""
@@ -26,10 +38,7 @@ export function normalizeBunkerUrl(value: string): string {
   return trimmed
 }
 
-// Discriminated plan for key-material login, encoding the validation ladder:
-// an ncryptsec requires a password; otherwise an nsec is required; otherwise it's
-// an error. The component constructs the actual signer/account on the data
-// branches and throws on the error branch.
+// How to log in with the keys entered: an ncryptsec with its password, or else an nsec.
 export type KeyLoginPlan =
   | { kind: "ncryptsec"; ncryptsec: string; password: string }
   | { kind: "nsec"; key: string }
@@ -47,10 +56,4 @@ export function decideKeyLogin(input: { ncryptsec: string; nsec: string; passwor
   const key = input.nsec.trim()
   if (!key) return { kind: "error", message: "Enter an nsec or ncryptsec key" }
   return { kind: "nsec", key }
-}
-
-// Default login tab: prefer the extension when one is present, otherwise the
-// remote signer tab.
-export function initialLoginTab(hasExtension: boolean): Tab {
-  return hasExtension ? "nip07" : "nip46"
 }

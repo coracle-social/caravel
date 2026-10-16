@@ -4,9 +4,7 @@ import { formatUsd } from "@/shared/lib/format"
 
 const MAX_VISIBLE_ITEMS = 8
 
-// Presentational "On this invoice" line-items block. The createResource that
-// fetches items stays in PaymentDialog; this only renders the parsed list. Props
-// are reactive only when read lazily, so access props.* inside JSX/derivations.
+// What an invoice charges for, the first few items of it.
 type InvoiceItemsListProps = {
   items: InvoiceItem[]
 }

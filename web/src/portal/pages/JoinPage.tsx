@@ -1,37 +1,31 @@
 import { A } from "@solidjs/router"
-import { createResource, createSignal, Show } from "solid-js"
+import { createResource, Show } from "solid-js"
 import Card from "@/portal/components/Card"
 import Notice from "@/portal/components/Notice"
 import Page from "@/portal/components/Page"
 import RelayHeader from "@/portal/components/RelayHeader"
-import { ApiError, createInvite, getOffer } from "@/portal/lib/api"
+import { hasStatus } from "@/shared/lib/http"
+import { loaded } from "@/shared/lib/resource"
+import { useRedirect } from "@/shared/lib/useRedirect"
+import { createInvite, getOffer } from "@/portal/lib/api"
 import { useParam } from "@/portal/lib/params"
 import { portalRelay } from "@/portal/lib/relay"
 
-// Buying a membership as someone new to Nostr. They pay first and get an invite
-// link, which creates their account and joins the relay in Flotilla.
+// Buying a membership without a Nostr account, for an invite that makes one in Flotilla.
 export default function JoinPage() {
   const [param] = useParam()
   const relay = portalRelay()
   const returnUrl = () => param("return_url")
 
-  const [offer] = createResource(() => relay?.id ?? false, getOffer)
-  const [busy, setBusy] = createSignal(false)
-  const [error, setError] = createSignal("")
+  const [offer] = createResource(() => relay?.relay_id ?? false, getOffer)
+  const checkout = useRedirect()
 
-  const sells = () => (offer.error ? undefined : offer())
-  const notFound = () => !relay || (offer.error instanceof ApiError && offer.error.status === 404)
+  const sells = () => loaded(offer)
+  const notFound = () => !relay || hasStatus(offer.error, 404)
 
-  async function buy() {
+  function buy() {
     if (!relay) return
-    setBusy(true)
-    setError("")
-    try {
-      window.location.href = (await createInvite(relay.id, returnUrl())).url
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "We couldn't start checkout")
-      setBusy(false)
-    }
+    void checkout.go(() => createInvite(relay.relay_id, returnUrl()), "We couldn't start checkout")
   }
 
   return (
@@ -59,15 +53,15 @@ export default function JoinPage() {
             >
               <button
                 type="button"
-                onClick={() => void buy()}
-                disabled={busy()}
+                onClick={buy}
+                disabled={checkout.redirecting()}
                 class="w-full rounded-xl bg-indigo-600 px-4 py-3 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
               >
-                {busy() ? "Opening checkout…" : "Continue to payment"}
+                {checkout.redirecting() ? "Opening checkout…" : "Continue to payment"}
               </button>
             </Show>
-            <Show when={error()}>
-              <Notice tone="error">{error()}</Notice>
+            <Show when={checkout.error()}>
+              <Notice tone="error">{checkout.error()}</Notice>
             </Show>
             <div class="border-t border-zinc-100 pt-6 text-center text-sm text-zinc-600">
               Already use Nostr?{" "}

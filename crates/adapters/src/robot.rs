@@ -1,4 +1,8 @@
+//! The robot: the platform's own Nostr identity, which publishes its profile and
+//! relay lists and sends tenants direct messages.
+
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Result, anyhow};
@@ -22,10 +26,13 @@ pub struct RobotProfile {
 #[derive(Clone)]
 pub struct Robot {
     keys: Keys,
-    profile: std::sync::Arc<RobotProfile>,
-    outbox_cache: std::sync::Arc<Mutex<HashMap<String, CacheEntry>>>,
-    dm_cache: std::sync::Arc<Mutex<HashMap<String, CacheEntry>>>,
+    profile: Arc<RobotProfile>,
+    outbox_cache: RelayListCache,
+    dm_cache: RelayListCache,
 }
+
+/// Pubkeys' relay lists of one kind, as last fetched.
+type RelayListCache = Arc<Mutex<HashMap<String, CacheEntry>>>;
 
 #[derive(Clone)]
 struct CacheEntry {
@@ -39,7 +46,7 @@ impl Robot {
     pub fn new(secret: &str, profile: RobotProfile) -> Result<Self> {
         Ok(Self {
             keys: Keys::parse(secret)?,
-            profile: std::sync::Arc::new(profile),
+            profile: Arc::new(profile),
             outbox_cache: Default::default(),
             dm_cache: Default::default(),
         })
@@ -99,13 +106,21 @@ impl Robot {
 
     /// Send an encrypted direct message to a recipient over their messaging relays.
     pub async fn send_dm(&self, recipient: &str, message: &str) -> Result<()> {
-        let outbox = self.fetch_outbox_relays(recipient).await?;
+        let outbox = self
+            .fetch_relay_list(
+                &self.outbox_cache,
+                recipient,
+                &self.profile.indexer_relays,
+                10002,
+                "r",
+            )
+            .await?;
         if outbox.is_empty() {
             return Err(anyhow!("no outbox relays found for recipient"));
         }
 
         let dm_relays = self
-            .fetch_messaging_relays_from_outbox(recipient, &outbox)
+            .fetch_relay_list(&self.dm_cache, recipient, &outbox, 10050, "relay")
             .await?;
         if dm_relays.is_empty() {
             return Err(anyhow!("no messaging relays found for recipient"));
@@ -119,28 +134,36 @@ impl Robot {
         Ok(())
     }
 
-    async fn fetch_outbox_relays(&self, recipient: &str) -> Result<Vec<String>> {
-        if let Some(values) = get_cached(&self.outbox_cache, recipient).await {
+    /// The relays a pubkey's latest relay list of `kind`, looked up on `relays`,
+    /// names in its `tag` tags, cached for five minutes.
+    async fn fetch_relay_list(
+        &self,
+        cache: &RelayListCache,
+        pubkey: &str,
+        relays: &[String],
+        kind: u16,
+        tag: &str,
+    ) -> Result<Vec<String>> {
+        if let Some(values) = get_cached(cache, pubkey).await {
             return Ok(values);
         }
 
-        let pubkey = PublicKey::parse(recipient)?;
-        let filter = Filter::new().author(pubkey).kind(Kind::Custom(10002));
-        let client = self.make_client(&self.profile.indexer_relays).await?;
+        let author = PublicKey::parse(pubkey)?;
+        let filter = Filter::new().author(author).kind(Kind::Custom(kind));
+        let client = self.make_client(relays).await?;
         let events = client.fetch_events(filter, Duration::from_secs(5)).await?;
 
-        let mut relays = Vec::new();
+        let mut list = Vec::new();
         if let Some(event) = events.into_iter().max_by_key(|e| e.created_at) {
-            for tag in event.tags.iter() {
-                let values = tag.as_slice();
-                if values.len() >= 2 && values[0] == "r" {
-                    relays.push(values[1].to_string());
+            for values in event.tags.iter().map(|tag| tag.as_slice()) {
+                if values.len() >= 2 && values[0] == tag {
+                    list.push(values[1].to_string());
                 }
             }
         }
 
-        set_cached(&self.outbox_cache, recipient, relays.clone()).await;
-        Ok(relays)
+        set_cached(cache, pubkey, list.clone()).await;
+        Ok(list)
     }
 
     /// The recipient's display name from their Nostr profile, if they have one.
@@ -162,40 +185,9 @@ impl Robot {
             .filter(|s| !s.is_empty())?;
         Some(name)
     }
-
-    async fn fetch_messaging_relays_from_outbox(
-        &self,
-        recipient: &str,
-        outbox_relays: &[String],
-    ) -> Result<Vec<String>> {
-        if let Some(values) = get_cached(&self.dm_cache, recipient).await {
-            return Ok(values);
-        }
-
-        let pubkey = PublicKey::parse(recipient)?;
-        let client = self.make_client(outbox_relays).await?;
-        let filter = Filter::new().author(pubkey).kind(Kind::Custom(10050));
-        let events = client.fetch_events(filter, Duration::from_secs(5)).await?;
-
-        let mut relays = Vec::new();
-        if let Some(event) = events.into_iter().max_by_key(|e| e.created_at) {
-            for tag in event.tags.iter() {
-                let values = tag.as_slice();
-                if values.len() >= 2 && values[0] == "relay" {
-                    relays.push(values[1].to_string());
-                }
-            }
-        }
-
-        set_cached(&self.dm_cache, recipient, relays.clone()).await;
-        Ok(relays)
-    }
 }
 
-async fn get_cached(
-    cache: &std::sync::Arc<Mutex<HashMap<String, CacheEntry>>>,
-    key: &str,
-) -> Option<Vec<String>> {
+async fn get_cached(cache: &RelayListCache, key: &str) -> Option<Vec<String>> {
     let guard = cache.lock().await;
     guard.get(key).and_then(|entry| {
         if entry.fetched_at.elapsed() < Duration::from_secs(300) {
@@ -206,11 +198,7 @@ async fn get_cached(
     })
 }
 
-async fn set_cached(
-    cache: &std::sync::Arc<Mutex<HashMap<String, CacheEntry>>>,
-    key: &str,
-    values: Vec<String>,
-) {
+async fn set_cached(cache: &RelayListCache, key: &str, values: Vec<String>) {
     let mut guard = cache.lock().await;
     guard.insert(
         key.to_string(),

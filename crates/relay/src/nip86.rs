@@ -1,24 +1,17 @@
 //! NIP-86: managing a relay over HTTP. Each call carries a NIP-98 signature over
 //! its own body, and runs only if its signer holds the method.
 
+use axum::body::Bytes;
+use axum::extract::Extension;
 use axum::http::header::AUTHORIZATION;
 use axum::http::{HeaderMap, HeaderValue, header};
 use axum::response::{IntoResponse, Response};
-use base64::Engine;
-use caravel_core::bus::Change;
-use caravel_core::management::{self, Call};
-use coracle_lib::events::Event;
+use caravel_core::auth;
+use caravel_core::management::{self, Call, Outcome};
 use serde::Deserialize;
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
 
 use crate::Route;
-use crate::auth::relay_host;
-
-const HTTP_AUTH_KIND: u16 = 27235;
-
-/// How far a call's signature may be from the relay's clock.
-const MAX_SKEW: i64 = 60;
 
 #[derive(Deserialize)]
 struct Request {
@@ -27,29 +20,28 @@ struct Request {
     params: Vec<Value>,
 }
 
-/// Answer a management call: `{"result": …}`, or `{"error": …}`.
-pub async fn handle(route: &Route, headers: &HeaderMap, body: &[u8]) -> Response {
+/// Answer a management call, which arrives as a `POST` to the relay's url:
+/// `{"result": …}`, or `{"error": …}`.
+pub async fn handle(
+    Extension(route): Extension<Route>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
     let state = route.instance.state();
     if !state.relay.management_enabled {
         return axum::http::StatusCode::NOT_FOUND.into_response();
     }
 
-    let response = match call(route, headers, body).await {
+    let response = match call(&route, &headers, &body).await {
         Ok(result) => json!({ "result": result }),
         Err(error) => json!({ "error": error }),
     };
 
     (
-        [
-            (
-                header::CONTENT_TYPE,
-                HeaderValue::from_static("application/nostr+json+rpc"),
-            ),
-            (
-                header::ACCESS_CONTROL_ALLOW_ORIGIN,
-                HeaderValue::from_static("*"),
-            ),
-        ],
+        [(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/nostr+json+rpc"),
+        )],
         response.to_string(),
     )
         .into_response()
@@ -77,60 +69,22 @@ async fn call(route: &Route, headers: &HeaderMap, body: &[u8]) -> Result<Value, 
     }
 
     let call = Call::decode(&request.method, &request.params).map_err(|error| error.to_string())?;
-    let changes_info = matches!(
-        call,
-        Call::ChangeRelayName(_) | Call::ChangeRelayDescription(_) | Call::ChangeRelayIcon(_)
-    );
     let outcome = management::call(core, &state.relay, call)
         .await
         .map_err(|error| error.to_string())?;
 
-    if changes_info {
-        core.bus.publish(Change::RelayChanged {
-            relay_id: state.relay.id.clone(),
-        });
-    } else if !request.method.starts_with("list") {
-        instance.refresh().await;
-        for event in &outcome.published {
-            instance.fanout(event);
-        }
+    if let Outcome::AccessChanged(published) = &outcome {
+        instance.apply_access_change(published).await;
     }
 
-    Ok(outcome.result)
+    Ok(outcome.result())
 }
 
-/// The signer of a NIP-98 header made for this relay's url and this body, within a
-/// minute of now.
+/// The signer of a NIP-98 header made for this relay's url and this body.
 fn authenticate(headers: &HeaderMap, body: &[u8], host: &str, now: i64) -> Result<String, String> {
-    let encoded = headers
+    let header = headers
         .get(AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.strip_prefix("Nostr "))
-        .ok_or("blocked: please authenticate in order to manage this relay")?
-        .trim();
-    let json = base64::engine::general_purpose::STANDARD
-        .decode(encoded)
-        .or_else(|_| base64::engine::general_purpose::URL_SAFE.decode(encoded))
-        .map_err(|_| "invalid base64 auth")?;
-    let event: Event = serde_json::from_slice(&json).map_err(|_| "invalid auth event json")?;
-
-    if event.kind != HTTP_AUTH_KIND || event.verify().is_err() {
-        return Err("invalid auth event".to_string());
-    }
-
-    let url = event.tags.value("u").ok_or("missing \"u\" tag")?;
-    if relay_host(url) != host {
-        return Err(format!("invalid \"u\" tag, expected '{host}', got '{url}'"));
-    }
-
-    let payload = hex::encode(Sha256::digest(body));
-    if event.tags.value("payload") != Some(payload.as_str()) {
-        return Err("invalid auth event payload hash".to_string());
-    }
-
-    if (event.created_at - now).abs() > MAX_SKEW {
-        return Err("auth event is too old".to_string());
-    }
-
-    Ok(event.pubkey.to_hex())
+        .ok_or("blocked: please authenticate in order to manage this relay")?;
+    auth::verify_payload_auth(header, host, body, now).map_err(|error| error.to_string())
 }

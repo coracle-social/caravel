@@ -1,7 +1,5 @@
 # Build, TypeScript config and runtime configuration (deep detail)
 
-Lookup-depth companion to the SKILL.md "Building and verifying" section.
-
 ## Build and typecheck
 
 The only `package.json` scripts are `dev` (`vite`), `build` (`tsc -b && vite build`), and `preview` (`vite preview`). There is no lint or test script — the build *is* the verification gate.
@@ -39,4 +37,4 @@ The server writes each app's configuration into its page as JSON in `<script id=
 
 A new configuration value is added in four places: what the server's web settings write into each page, `config.ts`, `global.d.ts`, and `.env.template`.
 
-`global.d.ts` is the single ambient-declarations file: it also declares `Window.HSStaticMethods` (Preline) and `Window.nostr?` (NIP-07). Extend the existing interfaces there rather than re-declaring elsewhere.
+`global.d.ts` is the single ambient-declarations file: it also declares `Window.nostr` (NIP-07). Extend the existing interfaces there rather than re-declaring elsewhere.

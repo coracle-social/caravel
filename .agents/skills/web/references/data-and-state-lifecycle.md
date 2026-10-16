@@ -1,60 +1,35 @@
-# Data and state lifecycle (deep detail)
+# Data and state lifecycle
 
-This is the lookup-depth companion to the SKILL.md "data layer" and "global state" sections. It documents the exact mechanics of the API client, NIP-98 auth, the circular-import seam, the session/provisioning lifecycle, and the optimistic-mutation flow. All of it lives in `web/src/shared/lib/api.ts`, `state.ts`, and `useRelayToggles.ts`.
+The API transport, the session tokens, how the signed-in account is restored and followed, lazy tenant provisioning, the post-paid prompts, and the optimistic write. It lives in `web/src/shared/lib/http.ts`, `api.ts`, `account.ts`, `state.ts`, `useRelayActions.ts` and `shared/components/PostPaidPrompts.tsx`.
 
-## The API envelope and errors
+## The transport
 
-`callApi<TRequest, TResponse>(method, path, body?)` is the single fetch wrapper (`api.ts`). It calls `makeAuth()`, builds the URL with `new URL(path, API_URL)`, sets `Content-Type: application/json` and an `Authorization` header *only when auth is present*, and JSON-stringifies the body — an `undefined` body sends no body at all.
+`http.ts` is shared by all three apps and depends on nothing but the configuration. Sending a request joins the API's url, without a trailing slash, to the path. A response that isn't a success throws an `ApiError` carrying the status and the `error` field of the API's JSON body, or a fallback message the caller names, such as "Failed to load plans". A successful response is unwrapped from the API's `{ data, code }` envelope; a `204` has no payload. `hasStatus` tells whether an error is an `ApiError` with a given status.
 
-Responses are unwrapped from an `ApiOk<T> = { data: T; code: string }` envelope: `callApi` returns `payload.data`, not the raw payload. A `204` returns `undefined` cast to `TResponse`.
+Buying a session signs one kind-27235 event for exactly `POST <API_URL>/session`, with a `u` tag and a `method` tag, sends it as a `Nostr` authorization header, and returns the pubkey, token and expiry the API issues. A session lasts thirty days.
 
-On a non-2xx response it throws `new ApiError(message, response.status)`. `ApiError extends Error` and carries a numeric `status`. The message comes from the JSON body's `error` field when present, otherwise `Request failed (<status>)`.
+## The dashboards' sessions
 
-`listPlans()` deliberately bypasses `callApi`: it does its own raw `fetch` with no auth and unwraps `{ data: Plan[] }` directly. It is the only wrapper that bypasses `callApi`, but not the only public endpoint — `/plans` and `/plans/:id` are both public; `getPlan` reaches its public route through `callApi`, which omits the `Authorization` header when logged out.
+`api.ts` keeps one session token per pubkey in `localStorage` under `caravel.sessions`, with its expiry. A request for the signed-in account uses its token, signing a new session when there is none or it has expired; concurrent requests share one sign-in. Signing uses the account's own signer. A request that comes back `401` forgets the token and is sent once more with a fresh one. With no account signed in, requests go without authorization and authenticated routes refuse them. `signOut` ends the session on the server and forgets it here.
 
-## Sessions
+Blobs, exports and imports go through the same authenticated sending, because an `<img>` or `<a href>` can't carry the session; an export arrives as a blob, an upload preview as an object URL the caller revokes, and an import reports what it refused rather than failing.
 
-`makeAuth()` returns a bearer header for the active account's session. It reads the active account via the injected getter (see the DI seam below), and if none is logged in it returns `undefined` — so `callApi` silently sends an *unauthenticated* request rather than failing fast, and authed endpoints then 401 from the backend.
+The portal keeps its single member's token in `localStorage` under `caravel.portal.session`, and a notification's link can carry a fresh one, which the relay page adopts and removes from the address bar. A member's page that reads with a token the API no longer accepts signs out.
 
-Sessions are kept per pubkey in `localStorage` under `caravel.sessions`. When the account has no live session, `makeAuth()` signs one **kind-27235** event for exactly `POST <API_URL>/session` (a `u` tag and a `method` tag) and exchanges it for a token that lasts thirty days, so the signer is asked once rather than per request; concurrent callers share one pending sign-in. A request that comes back `401` forgets the session and retries once with a fresh one. Logging out calls `signOut()`, which ends the session on the server too.
+## The signed-in account
 
-## The api.ts ↔ state.ts circular-import seam
+`account.ts` holds only the signed-in account's signal, so the API client can read it without depending on the rest of the state. `state.ts` restores the saved accounts and the active one from `localStorage` when it loads, before any app renders, and follows the account manager's active account from then on: it sets the signal, saves the accounts, refetches the identity, and provisions the tenant.
 
-`api.ts` needs the active account to build auth, but `state.ts` (which owns the `account` signal) imports from `api.ts` — a cycle. It is broken by dependency injection: `api.ts` holds a private module-level `getAccount` and exposes `registerAccountGetter(fn)`; `state.ts` calls `registerAccountGetter(account)` to inject the signal.
+## Lazy tenant provisioning
 
-Side-effecting initialization in `state.ts` (localStorage hydration + the `accountManager.active$` subscription) is wrapped in `queueMicrotask(...)` to defer it past module evaluation and avoid temporal-dead-zone errors from the cycle. When adding new cross-module state that both files touch, follow the same pattern: a `register*Getter` injection plus deferred init.
+`ensureSessionTenant` makes the signed-in pubkey a tenant (`POST /tenants`, idempotent) and then, if that pubkey is still signed in, unlocks the billing reads by setting the pubkey they read for. Concurrent calls for one pubkey share a run. Each account switch locks the billing reads first, so they never run against a tenant that doesn't exist yet. Login waits for provisioning and removes the account again if it fails.
 
-## Session and lazy tenant provisioning
+The billing resources (the tenant, its invoices, its relays and its draft invoice) read for that gated pubkey. `refetchBilling` refetches all four and toasts if any fails. `autopayBilling` brings billing up to date, and when the tenant has a payment method and no page is prompting for an invoice itself, pays every open invoice oldest first, then refetches; concurrent calls for one pubkey share a run. The billing page runs it on landing, since Stripe returns there.
 
-The tenant row is created lazily, which drives the whole session ordering.
+## Post-paid prompts
 
-`ensureSessionTenant()` is idempotent lazy provisioning: it reads the active pubkey, `await`s `createTenant()` (`POST /tenants`), then — only if the active pubkey is still the same — sets `billingPubkey` to unlock billing reads. The in-flight promise is shared per-pubkey via a module-level `tenantEnsure` object, so the login flow and the activation subscriber don't double-provision; `createTenant` is itself idempotent.
+A page that lets a tenant pick a paid plan holds a post-paid flow and renders `PostPaidPrompts`. Starting the flow brings the tenant's billing up to date; a tenant with a payment method needs nothing more. Otherwise the tenant is shown the newest invoice they owe, then asked to set up automatic payments, or asked straight away when there's no invoice. While the flow runs it marks billing as handled by the page, which quiets the banner and keeps autopay from paying the invoice under it. Closing each dialog refetches billing, and the page may act when the flow ends, as creating a relay does by opening it.
 
-The `accountManager.active$` subscriber runs on **every account switch** and performs this ordering: `setAccount(account)` → persist accounts + active id to `localStorage` → `refetchIdentity()` → `setBillingPubkey(undefined)` to **lock** billing reads → `void ensureSessionTenant()` to re-unlock once provisioned. Locking first is what stops billing reads from firing against a not-yet-provisioned tenant during signup.
+## The optimistic write
 
-Login's `completeLogin` (`shared/views/Login.tsx`) `await`s `ensureSessionTenant()` and rolls back via `accountManager.removeAccount(...)` if it throws — so a failed provision aborts the login.
-
-This is why the billing resources (`billingTenant`, `billingInvoices`, `billingRelays`, `billingDraftInvoice`) are gated on a `billingPubkey` signal, not on `account()` directly. The gate matters because `getTenant` and `getDraftInvoice` (which use `get_tenant_or_404`) 404 before the row exists; `listTenantInvoices` and `listTenantRelays` instead return empty results, so the gate primarily protects the tenant/draft reads.
-
-`refetchBilling()` refetches all four via `Promise.allSettled`, and on any rejected result it `console.error`s and toasts `"Failed to refresh billing data"`. It is the pure billing refresh that callers invoke after select billing-affecting flows (payment dialog/setup close, paid relay create, `autopayBilling`'s `finally` block) — it is **not** called after every billing-affecting mutation: relay deactivate/reactivate, plan toggles, and plan changes (including downgrade-to-free) in `useRelayToggles` only run the per-relay `refetch()`, and creating a free relay in `tenant/pages/Home.tsx` skips it.
-
-## The optimistic mutation flow
-
-The canonical mutation shape (`useRelayToggles.ts`):
-
-1. `mutate(next)` — optimistically push the new value into the resource.
-2. `await updateRelayById(...)` — perform the API write.
-3. `await refetch()` — reconcile against the server's truth.
-4. On error: `mutate(previous)` to roll back, and `setToastMessage(e instanceof Error ? e.message : <fallback>)`.
-
-`setToastMessage` defaults the variant to `"error"`; pass `"success"` for confirmations and `setToastMessage("")` to clear. Rethrow only when a caller needs to react (e.g. the plan-upgrade flow continues into `resolvePostPaidFlow()` for paid upgrades).
-
-## Sources
-
-- API client, envelope, `ApiError`, `listPlans` bypass — `web/src/shared/lib/api.ts:9-32,208-248`
-- NIP-98 `makeAuth` + 10-minute cache — `web/src/shared/lib/api.ts:181-206`
-- circular-import DI seam — `web/src/shared/lib/api.ts:3-7` and `web/src/shared/lib/state.ts:48,168-211`
-- billing-resource gating + `refetchBilling` — `web/src/shared/lib/state.ts:74-103`
-- `ensureSessionTenant` + activation ordering — `web/src/shared/lib/state.ts:149-165,187-208`
-- login rollback — `web/src/shared/views/Login.tsx:57-67`
-- optimistic mutation — `web/src/shared/lib/useRelayToggles.ts:27-36`
+`useRelayActions` gives a relay's page its actions. A setting toggle or plan change updates the page's copy of the relay first, writes, and refetches; on failure it restores the copy and toasts the error. A free plan also turns off media storage and calls. Deactivating, reactivating and purging run one at a time, refetch, and toast a failure; purging also toasts its success.

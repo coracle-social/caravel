@@ -4,7 +4,7 @@
 mod common;
 
 use axum::http::StatusCode;
-use caravel_core::billing;
+use caravel_core::billing::{self, Collection};
 use caravel_core::testing::RELAY_DOMAIN;
 use common::*;
 use coracle_lib::keys::SecretKey;
@@ -115,8 +115,7 @@ async fn a_relay_reads_back_in_the_shape_clients_expect() {
             "billed_at",
             "created_at",
             "id",
-            "resource_id",
-            "resource_type",
+            "relay_id",
             "snapshot",
             "tenant_pubkey"
         ]
@@ -255,7 +254,7 @@ async fn a_tenant_and_its_invoices_read_back_in_the_shape_clients_expect() {
         .await
         .unwrap()
         .unwrap();
-    billing::reconcile_subscription(&api.core, &row, false)
+    billing::reconcile_subscription(&api.core, &row, Collection::Settle)
         .await
         .unwrap();
 
@@ -330,7 +329,6 @@ async fn plans_read_back_in_the_shape_clients_expect() {
             "av_hours",
             "av_overage",
             "blossom",
-            "hidden",
             "id",
             "livekit",
             "members",

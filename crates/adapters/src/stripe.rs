@@ -1,5 +1,7 @@
 //! The subset of the Stripe REST API caravel uses, returning plain values.
 
+use std::time::Duration;
+
 use anyhow::{Result, anyhow};
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
@@ -8,6 +10,12 @@ const STRIPE_API: &str = "https://api.stripe.com/v1";
 
 /// Every request pins this version rather than inheriting the account's default.
 const STRIPE_VERSION: &str = "2026-09-30.endive";
+
+/// The currency everything is charged in.
+const CURRENCY: &str = "usd";
+
+/// How long a request may take, so a hung one can't stall billing.
+const TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Clone)]
 pub struct Stripe {
@@ -24,7 +32,10 @@ impl Stripe {
     /// A client of a Stripe-compatible API at `api`, such as a fake in tests.
     pub fn with_api(secret_key: &str, api: &str) -> Self {
         Self {
-            http: reqwest::Client::new(),
+            http: reqwest::Client::builder()
+                .timeout(TIMEOUT)
+                .build()
+                .expect("a client with a timeout builds"),
             secret_key: secret_key.to_string(),
             api: api.trim_end_matches('/').to_string(),
         }
@@ -76,18 +87,12 @@ impl Stripe {
             .form(&[("name", name), ("metadata[tenant_pubkey]", tenant_pubkey)])
             .send_json()
             .await?;
-        let customer_id = body["id"]
-            .as_str()
-            .ok_or_else(|| anyhow!("missing customer id"))?;
-        Ok(customer_id.to_string())
+        field(&body, "id", "customer id")
     }
 
     // --- Payment methods ---
 
-    /// Return the id of the customer's first saved payment method, or `None` if
-    /// they have none. The returned `pm_…` id can be charged off-session via
-    /// [`Self::create_payment_intent`]. We don't track a Stripe "default" payment
-    /// method, so the first one Stripe lists is the one we'll charge.
+    /// The customer's first saved card, which is the one charged, or `None`.
     pub async fn get_saved_payment_method(&self, customer_id: &str) -> Result<Option<String>> {
         let body = self
             .get("/payment_methods")
@@ -103,24 +108,16 @@ impl Stripe {
 
     // --- Intents ---
 
-    /// Create and immediately confirm an off-session PaymentIntent charging a
-    /// saved payment method. `amount` is in the currency's minor units (cents for
-    /// `usd`). Returns the PaymentIntent id on success.
-    ///
-    /// A decline or an issuer authentication demand (`authentication_required`,
-    /// which we can't satisfy off-session) comes back from Stripe as an HTTP
-    /// error, so the caller naturally falls through to another payment method.
-    /// The charge is made idempotent on `invoice_id` and `payment_method_id`,
-    /// so a retried collection against the same method reuses the same charge
-    /// instead of billing twice, while a fall-back to a different method issues
-    /// a distinct charge instead of colliding on the original key.
+    /// Charge `amount` cents to a saved card off-session, returning the
+    /// PaymentIntent's id. A decline, or a charge that needs the customer, fails.
+    /// Idempotent on the invoice and the card, so a retry against one card reuses
+    /// its charge while a fall-back to another card makes a new one.
     pub async fn create_payment_intent(
         &self,
         customer_id: &str,
         payment_method_id: &str,
         invoice_id: &str,
         amount: i64,
-        currency: &str,
     ) -> Result<String> {
         let amount = amount.to_string();
         let body = self
@@ -131,7 +128,7 @@ impl Stripe {
             )
             .form(&[
                 ("amount", amount.as_str()),
-                ("currency", currency),
+                ("currency", CURRENCY),
                 ("customer", customer_id),
                 ("payment_method", payment_method_id),
                 ("metadata[invoice_id]", invoice_id),
@@ -141,37 +138,28 @@ impl Stripe {
             .send_json()
             .await?;
 
-        // A successful off-session charge settles synchronously. Anything
-        // else (e.g. `requires_action`) can't be completed without the customer,
-        // so treat it as a failure and let the caller fall back.
+        // Anything but success, such as `requires_action`, needs the customer.
         let status = body["status"].as_str().unwrap_or_default();
         if status != "succeeded" {
             return Err(anyhow!("payment intent not succeeded (status: {status})"));
         }
 
-        body["id"]
-            .as_str()
-            .map(str::to_string)
-            .ok_or_else(|| anyhow!("missing payment intent id"))
+        field(&body, "id", "payment intent id")
     }
 
     // --- Checkout ---
 
-    /// Open a hosted Stripe Checkout session that charges `amount` (in the
-    /// currency's minor units) for a single invoice on-session, so the customer
-    /// can satisfy a 3D Secure authentication that an off-session saved-card
-    /// charge can't. Returns the session id, its hosted URL, and its expiry. The
-    /// session and the PaymentIntent it creates both carry `invoice_id` in
-    /// metadata so the charge is traceable back to our ledger.
+    /// Open a Checkout session paying `amount` cents for one invoice on-session,
+    /// which can clear a 3D Secure challenge an off-session charge can't. It and
+    /// the PaymentIntent it creates carry the invoice's id.
     pub async fn create_checkout_session(
         &self,
         customer_id: &str,
         invoice_id: &str,
         amount: i64,
-        currency: &str,
         success_url: &str,
         cancel_url: &str,
-    ) -> Result<(String, String, i64)> {
+    ) -> Result<CheckoutSession> {
         let amount = amount.to_string();
         let body = self
             .post("/checkout/sessions")
@@ -181,7 +169,7 @@ impl Stripe {
                 ("success_url", success_url),
                 ("cancel_url", cancel_url),
                 ("line_items[0][quantity]", "1"),
-                ("line_items[0][price_data][currency]", currency),
+                ("line_items[0][price_data][currency]", CURRENCY),
                 ("line_items[0][price_data][unit_amount]", amount.as_str()),
                 (
                     "line_items[0][price_data][product_data][name]",
@@ -193,20 +181,16 @@ impl Stripe {
             .send_json()
             .await?;
 
-        let session_id = body["id"]
-            .as_str()
-            .ok_or_else(|| anyhow!("missing checkout session id"))?;
-        let url = body["url"]
-            .as_str()
-            .ok_or_else(|| anyhow!("missing checkout session url"))?;
-        let expires_at = body["expires_at"]
-            .as_i64()
-            .ok_or_else(|| anyhow!("missing checkout session expiry"))?;
-        Ok((session_id.to_string(), url.to_string(), expires_at))
+        Ok(CheckoutSession {
+            id: field(&body, "id", "checkout session id")?,
+            url: field(&body, "url", "checkout session url")?,
+            expires_at: body["expires_at"]
+                .as_i64()
+                .ok_or_else(|| anyhow!("missing checkout session expiry"))?,
+        })
     }
 
-    /// Whether a Checkout session has been paid. Used to reconcile an invoice
-    /// once the customer returns from (or later completes) the hosted page.
+    /// Whether a Checkout session has been paid.
     pub async fn is_checkout_paid(&self, session_id: &str) -> Result<bool> {
         let body = self
             .get(&format!("/checkout/sessions/{session_id}"))
@@ -215,10 +199,8 @@ impl Stripe {
         Ok(body["payment_status"].as_str() == Some("paid"))
     }
 
-    /// Expire a Checkout session so it can no longer be completed. Used to close
-    /// out a still-open session once its invoice has been paid another way,
-    /// preventing a double charge. Errors if the session isn't open (already
-    /// completed or expired), which the caller treats as best-effort.
+    /// Expire a Checkout session so it can't be completed, which fails for one
+    /// that isn't open.
     pub async fn expire_checkout_session(&self, session_id: &str) -> Result<()> {
         self.post(&format!("/checkout/sessions/{session_id}/expire"))
             .send_ok()
@@ -246,10 +228,7 @@ impl Stripe {
             ])
             .send_json()
             .await?;
-        body["id"]
-            .as_str()
-            .map(str::to_string)
-            .ok_or_else(|| anyhow!("missing connect account id"))
+        field(&body, "id", "connect account id")
     }
 
     /// Whether a Connect account can both take charges and receive payouts.
@@ -279,10 +258,7 @@ impl Stripe {
             ])
             .send_json()
             .await?;
-        body["url"]
-            .as_str()
-            .map(str::to_string)
-            .ok_or_else(|| anyhow!("missing account link url"))
+        field(&body, "url", "account link url")
     }
 
     /// Open a login link to an account's Express dashboard, where its payouts are.
@@ -291,10 +267,7 @@ impl Stripe {
             .post(&format!("/accounts/{account_id}/login_links"))
             .send_json()
             .await?;
-        body["url"]
-            .as_str()
-            .map(str::to_string)
-            .ok_or_else(|| anyhow!("missing login link url"))
+        field(&body, "url", "login link url")
     }
 
     // --- Memberships ---
@@ -318,10 +291,7 @@ impl Stripe {
             ])
             .send_json()
             .await?;
-        body["id"]
-            .as_str()
-            .map(str::to_string)
-            .ok_or_else(|| anyhow!("missing customer id"))
+        field(&body, "id", "customer id")
     }
 
     /// Open a Checkout session subscribing a membership's customer. The charge is
@@ -341,7 +311,7 @@ impl Stripe {
             ("success_url", params.success_url),
             ("cancel_url", params.cancel_url),
             ("line_items[0][quantity]", "1"),
-            ("line_items[0][price_data][currency]", "usd"),
+            ("line_items[0][price_data][currency]", CURRENCY),
             ("line_items[0][price_data][unit_amount]", &amount),
             (
                 "line_items[0][price_data][recurring][interval]",
@@ -374,10 +344,7 @@ impl Stripe {
             .form(&form)
             .send_json()
             .await?;
-        body["url"]
-            .as_str()
-            .map(str::to_string)
-            .ok_or_else(|| anyhow!("missing checkout session url"))
+        field(&body, "url", "checkout session url")
     }
 
     /// Where a membership's Checkout session stands.
@@ -411,7 +378,12 @@ impl Stripe {
             ])
             .send_json()
             .await?;
-        Ok(ids(&body))
+        Ok(body["data"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|session| session["id"].as_str().map(str::to_string))
+            .collect())
     }
 
     /// When a subscription's current period ends, and whether it stops then.
@@ -459,11 +431,11 @@ impl Stripe {
         Ok(())
     }
 
-    // --- Portal ---
+    // --- Billing portal ---
 
-    /// Open a Stripe billing-portal session for the customer, returning the URL
-    /// where they can manage their saved payment methods.
-    pub async fn create_portal_session(
+    /// Open a billing portal session where the customer manages their saved cards,
+    /// returning its url.
+    pub async fn create_billing_portal_session(
         &self,
         customer_id: &str,
         return_url: Option<&str>,
@@ -477,10 +449,7 @@ impl Stripe {
             .form(&params)
             .send_json()
             .await?;
-        body["url"]
-            .as_str()
-            .map(str::to_string)
-            .ok_or_else(|| anyhow!("missing portal session url"))
+        field(&body, "url", "billing portal session url")
     }
 }
 
@@ -501,6 +470,13 @@ pub struct MembershipCheckoutParams<'a> {
     pub cancel_url: &'a str,
 }
 
+/// An invoice's Checkout session.
+pub struct CheckoutSession {
+    pub id: String,
+    pub url: String,
+    pub expires_at: i64,
+}
+
 pub struct MembershipCheckout {
     /// Completed and paid for.
     pub complete: bool,
@@ -514,16 +490,13 @@ pub struct Subscription {
     pub cancel_at_period_end: bool,
 }
 
-fn ids(body: &serde_json::Value) -> Vec<String> {
-    body["data"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|item| item["id"].as_str().map(str::to_string))
-        .collect()
+/// A string field of a response, which Stripe always sends.
+fn field(body: &serde_json::Value, key: &str, what: &str) -> Result<String> {
+    body[key]
+        .as_str()
+        .map(str::to_string)
+        .ok_or_else(|| anyhow!("missing {what}"))
 }
-
-// Stripe request util
 
 trait StripeRequest {
     async fn send_ok(self) -> Result<reqwest::Response>;
@@ -540,7 +513,7 @@ impl StripeRequest for reqwest::RequestBuilder {
     }
 }
 
-/// Give callers an actionable message instead of a bare "400 Bad Request"
+/// A failed response as an error carrying Stripe's own message.
 async fn error_for_status(resp: reqwest::Response) -> Result<reqwest::Response> {
     let status = resp.status();
     if !status.is_client_error() && !status.is_server_error() {

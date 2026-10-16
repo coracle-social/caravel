@@ -8,6 +8,7 @@ use caravel_core::relays::{self, Relay};
 use caravel_core::{Core, Error};
 use serde::{Deserialize, Serialize};
 
+use crate::ReturnTo;
 use crate::auth::Authed;
 use crate::response::{ApiResult, ok};
 
@@ -35,14 +36,10 @@ async fn load_selling_relay(core: &Core, id: &str) -> Result<Relay, Error> {
         .ok_or(Error::NotFound("relay not found"))
 }
 
-#[derive(Deserialize)]
-pub struct CheckoutRequest {
-    return_url: Option<String>,
-}
-
+/// The Stripe Checkout session a payer came back from.
 #[derive(Deserialize)]
 pub struct ReconcileRequest {
-    session: String,
+    checkout: String,
 }
 
 /// Every live membership the caller holds, with what each relay offers.
@@ -84,7 +81,7 @@ pub async fn create_checkout(
     State(core): State<Core>,
     Authed(actor): Authed,
     Path(id): Path<String>,
-    Json(request): Json<CheckoutRequest>,
+    Json(request): Json<ReturnTo>,
 ) -> ApiResult {
     let relay = load_selling_relay(&core, &id).await?;
     let url =
@@ -104,7 +101,7 @@ pub async fn reconcile_checkout(
     let membership = memberships::get_live_membership(core.db.pool(), &relay.id, &actor.pubkey)
         .await?
         .ok_or(Error::NotFound("membership not found"))?;
-    let paid = memberships::reconcile_checkout(&core, &membership, &request.session).await?;
+    let paid = memberships::reconcile_checkout(&core, &membership, &request.checkout).await?;
     ok(serde_json::json!({ "paid": paid }))
 }
 
@@ -123,7 +120,7 @@ pub async fn cancel_renewal(
 pub async fn create_invite(
     State(core): State<Core>,
     Path(id): Path<String>,
-    Json(request): Json<CheckoutRequest>,
+    Json(request): Json<ReturnTo>,
 ) -> ApiResult {
     let relay = load_selling_relay(&core, &id).await?;
     let url =
@@ -146,6 +143,6 @@ pub async fn reconcile_invite(
     let membership = memberships::get_membership_by_invite(core.db.pool(), &code)
         .await?
         .ok_or(Error::NotFound("invite not found"))?;
-    let paid = memberships::reconcile_checkout(&core, &membership, &request.session).await?;
+    let paid = memberships::reconcile_checkout(&core, &membership, &request.checkout).await?;
     ok(serde_json::json!({ "paid": paid }))
 }

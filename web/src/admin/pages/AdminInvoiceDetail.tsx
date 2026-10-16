@@ -6,13 +6,12 @@ import InvoiceItemsList from "@/shared/components/payment/InvoiceItemsList"
 import PageContainer from "@/shared/components/PageContainer"
 import ResourceState from "@/shared/components/ResourceState"
 import useMinLoading from "@/shared/lib/useMinLoading"
-import { listInvoiceItems } from "@/shared/lib/api"
-import { useInvoice } from "@/shared/lib/hooks"
+import { getInvoice, listInvoiceItems } from "@/shared/lib/api"
 
 export default function AdminInvoiceDetail() {
   const params = useParams()
   const invoiceId = () => params.id ?? ""
-  const [invoice] = useInvoice(invoiceId)
+  const [invoice] = createResource(invoiceId, getInvoice)
   const [items] = createResource(invoiceId, async (id) => {
     if (!id) return []
 

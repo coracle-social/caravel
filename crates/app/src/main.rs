@@ -1,5 +1,5 @@
-//! The `caravel` binary: one process serving the API and running the platform's
-//! background work.
+//! The `caravel` binary: one process serving the relays, the API and the web
+//! apps, and running the platform's background work.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -10,7 +10,7 @@ use caravel_adapters::livekit::Livekit;
 use caravel_adapters::outbound::Outbound;
 use caravel_adapters::{robot::Robot, stripe::Stripe, wallet::Wallet};
 use caravel_app::dispatch::Hosts;
-use caravel_app::web::Web;
+use caravel_app::web::{PageConfig, Web};
 use caravel_app::{config, dispatch, workers};
 use caravel_core::Core;
 use caravel_db::Db;
@@ -53,13 +53,17 @@ async fn serve() -> Result<()> {
         .await
         .context("failed to migrate the database")?;
 
+    let robot = Robot::new(
+        &settings.config.platform_key.secret_hex(),
+        settings.robot_profile,
+    )?;
     let core = Core {
         db,
         config: Arc::new(settings.config),
         clock: Default::default(),
         bus: Default::default(),
         stripe: Stripe::new(&settings.stripe_secret_key),
-        robot: Robot::new(&settings.robot_secret, settings.robot_profile)?,
+        robot,
         wallet: Wallet::from_url(&settings.robot_wallet)
             .context("ROBOT_WALLET is not an NWC url")?,
         blobs: match &settings.media {
@@ -71,7 +75,7 @@ async fn serve() -> Result<()> {
             .as_ref()
             .map(|livekit| Livekit::new(&livekit.url, &livekit.api_key, &livekit.api_secret))
             .transpose()?,
-        outbound: Outbound::new(Duration::from_secs(10), false)?,
+        outbound: Outbound::new(Duration::from_secs(10))?,
     };
     let background = core.with_db(Db::connect(&settings.database_url, 5).await?);
 
@@ -90,7 +94,7 @@ async fn serve() -> Result<()> {
         .allow_methods(Any)
         .allow_headers(Any);
     let hosts = Hosts::from_urls(&core.config.api_url, settings.web.platform_url.as_deref())?;
-    let web = Web::new(settings.web.shell_config(&core.config));
+    let web = Web::new(PageConfig::new(&core.config, &settings.web));
     let app = dispatch::router(caravel_api::router(core).layer(cors), relays, web, hosts);
 
     let listener = tokio::net::TcpListener::bind(("0.0.0.0", settings.port)).await?;

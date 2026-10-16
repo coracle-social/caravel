@@ -1,22 +1,13 @@
-// The configuration the server writes into each app's page, or under `vite dev`,
-// where there is no server page, the build's VITE_* variables.
+import type { RelayProfile } from "@/shared/lib/api"
 
+// The configuration the server writes into each app's page, or under `vite dev`, VITE_* variables.
 type Injected = {
   api_url?: string
   relay_domains?: string[]
   platform_name?: string
   platform_logo?: string
   flotilla_url?: string
-  relay?: PortalRelay
-}
-
-// The relay a member portal is served for.
-export type PortalRelay = {
-  id: string
-  host: string
-  name: string
-  icon: string
-  description: string
+  relay?: RelayProfile
 }
 
 function readInjected(): Injected {
@@ -40,4 +31,5 @@ export const PLATFORM_LOGO = injected.platform_logo ?? import.meta.env.VITE_PLAT
 
 export const FLOTILLA_URL = injected.flotilla_url ?? import.meta.env.VITE_FLOTILLA_URL ?? "https://app.flotilla.social"
 
+// The relay a member portal is served for.
 export const PORTAL_RELAY = injected.relay

@@ -1,19 +1,19 @@
 import { createEffect, createResource, createSignal, Show } from "solid-js"
 import QRCode from "qrcode"
 import Modal from "@/shared/components/Modal"
+import ModalHeader from "@/shared/components/ModalHeader"
 import PaymentSetup from "@/shared/components/PaymentSetup"
+import SegmentedTabs from "@/shared/components/SegmentedTabs"
 import InvoiceItemsList from "@/shared/components/payment/InvoiceItemsList"
-import LightningPayBody from "@/shared/components/payment/LightningPayBody"
-import { setToastMessage } from "@/shared/lib/state"
+import LightningPayBody, { type Lightning } from "@/shared/components/payment/LightningPayBody"
+import { billingTenant, setToastMessage } from "@/shared/lib/state"
 import { copyToClipboard } from "@/shared/lib/clipboard"
-import { useInvoiceCheckout } from "@/shared/lib/usePaymentSetup"
-import { ensureInvoiceBolt11, listInvoiceItems, reconcileInvoice, type Invoice } from "@/shared/lib/api"
+import { useRedirect } from "@/shared/lib/useRedirect"
+import { createInvoiceCheckout, ensureInvoiceBolt11, listInvoiceItems, reconcileInvoice, type Invoice } from "@/shared/lib/api"
 import { autopayConfigured } from "@/shared/lib/paymentMethod"
-import { billingTenant } from "@/shared/lib/state"
-import { formatUsd, formatPeriod } from "@/shared/lib/format"
+import { formatError, formatPeriod, formatUsd } from "@/shared/lib/format"
 
 type PayStatus = "idle" | "loading" | "success" | "error"
-type Bolt11Status = "idle" | "loading" | "ready" | "error"
 type PayMethod = "lightning" | "card"
 
 type PaymentInvoice = Pick<Invoice, "id" | "amount"> &
@@ -26,10 +26,7 @@ type PaymentDialogProps = {
 }
 
 export default function PaymentDialog(props: PaymentDialogProps) {
-  const [bolt11, setBolt11] = createSignal("")
-  const [qrDataUrl, setQrDataUrl] = createSignal("")
-  const [bolt11Status, setBolt11Status] = createSignal<Bolt11Status>("idle")
-  const [bolt11Error, setBolt11Error] = createSignal("")
+  const [lightning, setLightning] = createSignal<Lightning>({ status: "loading" })
   const [payStatus, setPayStatus] = createSignal<PayStatus>("idle")
   const [payMethod, setPayMethod] = createSignal<PayMethod>("lightning")
   const [showPaymentSetup, setShowPaymentSetup] = createSignal(false)
@@ -39,11 +36,8 @@ export default function PaymentDialog(props: PaymentDialogProps) {
     listInvoiceItems,
   )
 
-  // Paying by card opens a Stripe Checkout session scoped to this invoice (which
-  // can clear a 3D Secure challenge the off-session charge can't), then returns
-  // here where the payment is reconciled. Distinct from PaymentSetup, which
-  // manages the recurring card on file via the billing portal.
-  const checkout = useInvoiceCheckout(() => props.invoice.id)
+  // Stripe Checkout can clear a 3D Secure challenge that charging a saved card can't.
+  const checkout = useRedirect()
 
   const hasAutopay = () => {
     const t = billingTenant()
@@ -52,19 +46,13 @@ export default function PaymentDialog(props: PaymentDialogProps) {
 
   async function loadBolt11() {
     if (!props.invoice.id) return
-    setBolt11Status("loading")
-    setBolt11Error("")
-    setBolt11("")
-    setQrDataUrl("")
+    setLightning({ status: "loading" })
 
     try {
       const { lnbc } = await ensureInvoiceBolt11(props.invoice.id)
-      setBolt11(lnbc)
-      setQrDataUrl(await QRCode.toDataURL(lnbc, { width: 256, margin: 2 }))
-      setBolt11Status("ready")
+      setLightning({ status: "ready", lnbc, qr: await QRCode.toDataURL(lnbc, { width: 256, margin: 2 }) })
     } catch (e) {
-      setBolt11Status("error")
-      setBolt11Error(e instanceof Error ? e.message : "Failed to generate Lightning invoice")
+      setLightning({ status: "error", message: formatError(e, "Failed to generate Lightning invoice") })
     }
   }
 
@@ -73,16 +61,10 @@ export default function PaymentDialog(props: PaymentDialogProps) {
     void loadBolt11()
   })
 
-  // The checkout redirect lives in a shared hook, so surface its failures here
-  // by mirroring its error signal into the toast.
   createEffect(() => {
     const err = checkout.error()
     if (err) setToastMessage(err)
   })
-
-  function copyBolt11() {
-    void copyToClipboard(bolt11(), { successMessage: "Invoice copied" })
-  }
 
   async function checkPayment() {
     setPayStatus("loading")
@@ -96,16 +78,13 @@ export default function PaymentDialog(props: PaymentDialogProps) {
       }
     } catch (e) {
       setPayStatus("error")
-      setToastMessage(e instanceof Error ? e.message : "Failed to check payment status")
+      setToastMessage(formatError(e, "Failed to check payment status"))
     }
   }
 
   function handleClose() {
     setPayStatus("idle")
-    setBolt11Status("idle")
-    setBolt11Error("")
-    setBolt11("")
-    setQrDataUrl("")
+    setLightning({ status: "loading" })
     setPayMethod("lightning")
     checkout.reset()
     props.onClose()
@@ -117,77 +96,37 @@ export default function PaymentDialog(props: PaymentDialogProps) {
 
   return (
     <>
-    <Modal
-      open={props.open}
-      onClose={handleClose}
-      wrapperClass="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-      panelClass="w-full max-w-md rounded-2xl bg-white shadow-xl overflow-hidden"
-    >
-      {/* Header */}
-      <div class="px-6 pt-6 pb-4 border-b border-gray-100">
-        <div class="flex items-start justify-between gap-3">
-          <div>
-            <h2 class="text-lg font-semibold text-gray-900">Pay Invoice</h2>
-            <p class="text-2xl font-bold text-gray-900 mt-1">{amountLabel()}</p>
-            <Show when={periodLabel()}>
-              <p class="text-xs text-gray-500 mt-0.5">Billing period {periodLabel()}</p>
-            </Show>
-          </div>
-          <button
-            type="button"
-            onClick={handleClose}
-            class="text-gray-400 hover:text-gray-700 rounded p-1 hover:bg-gray-100 flex-shrink-0"
-            aria-label="Close"
-          >
-            <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M18 6L6 18M6 6l12 12" />
-            </svg>
-          </button>
-        </div>
-      </div>
+    <Modal open={props.open} onClose={handleClose}>
+      <ModalHeader title="Pay Invoice" onClose={handleClose}>
+        <p class="text-2xl font-bold text-gray-900 mt-1">{amountLabel()}</p>
+        <Show when={periodLabel()}>
+          <p class="text-xs text-gray-500 mt-0.5">Billing period {periodLabel()}</p>
+        </Show>
+      </ModalHeader>
 
-      {/* Content */}
       <div class="px-6 py-4 min-h-[240px] flex flex-col items-center justify-center">
         <Show
           when={payStatus() === "success"}
           fallback={
             <div class="w-full space-y-4">
-              {/* What's being paid for — the invoice's actual line items */}
               <Show when={(items() ?? []).length > 0}>
                 <InvoiceItemsList items={items() ?? []} />
               </Show>
 
-              {/* Method switcher */}
-              <div class="flex gap-2 border border-gray-200 rounded-lg p-1">
-                <button
-                  type="button"
-                  class={`flex-1 rounded-md px-3 py-2 text-sm transition-colors ${payMethod() === "lightning" ? "bg-gray-900 text-white" : "text-gray-700 hover:bg-gray-50"}`}
-                  onClick={() => setPayMethod("lightning")}
-                >
-                  Lightning
-                </button>
-                <button
-                  type="button"
-                  class={`flex-1 rounded-md px-3 py-2 text-sm transition-colors ${payMethod() === "card" ? "bg-gray-900 text-white" : "text-gray-700 hover:bg-gray-50"}`}
-                  onClick={() => setPayMethod("card")}
-                >
-                  Card
-                </button>
-              </div>
+              <SegmentedTabs
+                tabs={[{ value: "lightning", label: "Lightning" }, { value: "card", label: "Card" }]}
+                selected={payMethod()}
+                onSelect={setPayMethod}
+              />
 
-              {/* Lightning: pay this invoice via a bolt11 QR */}
               <Show when={payMethod() === "lightning"}>
                 <LightningPayBody
-                  bolt11Status={bolt11Status}
-                  bolt11={bolt11}
-                  qrDataUrl={qrDataUrl}
-                  bolt11Error={bolt11Error}
+                  lightning={lightning()}
                   onRetry={() => void loadBolt11()}
-                  onCopy={copyBolt11}
+                  onCopy={(lnbc) => void copyToClipboard(lnbc, { successMessage: "Invoice copied" })}
                 />
               </Show>
 
-              {/* Card: redirect to a Stripe Checkout session for this invoice */}
               <Show when={payMethod() === "card"}>
                 <div class="text-center space-y-4">
                   <div class="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-gray-100">
@@ -201,7 +140,7 @@ export default function PaymentDialog(props: PaymentDialogProps) {
                   </p>
                   <button
                     type="button"
-                    onClick={checkout.openCheckout}
+                    onClick={() => void checkout.go(() => createInvoiceCheckout(props.invoice.id, window.location.href), "Failed to open checkout")}
                     disabled={checkout.redirecting()}
                     class="w-full py-2 px-4 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
                   >
@@ -233,7 +172,6 @@ export default function PaymentDialog(props: PaymentDialogProps) {
         </Show>
       </div>
 
-      {/* Footer */}
       <div class="px-6 py-4 flex justify-between gap-3 border-t border-gray-100">
         <Show
           when={payStatus() !== "success"}
@@ -260,7 +198,7 @@ export default function PaymentDialog(props: PaymentDialogProps) {
             <button
               type="button"
               onClick={checkPayment}
-              disabled={payStatus() === "loading" || bolt11Status() !== "ready"}
+              disabled={payStatus() === "loading" || lightning().status !== "ready"}
               class="py-2 px-4 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
             >
               {payStatus() === "loading" ? "Checking..." : "Complete Payment"}

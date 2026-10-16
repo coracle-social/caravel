@@ -1,9 +1,10 @@
 import { createResource, createSignal, For, Show } from "solid-js"
 import MemberPriceModal from "@/shared/components/relay/MemberPriceModal"
-import { StatusBadge } from "@/shared/components/relay/RelayCardHeader"
+import StatusBadge from "@/shared/components/StatusBadge"
 import { listRelayMemberships, relayPortalUrl, type Relay } from "@/shared/lib/api"
 import { copyToClipboard } from "@/shared/lib/clipboard"
-import { formatUsd } from "@/shared/lib/format"
+import { loaded } from "@/shared/lib/resource"
+import { formatDate, formatUsd } from "@/shared/lib/format"
 import { shortenNpub } from "@/shared/lib/pubkey"
 
 type Props = {
@@ -11,14 +12,12 @@ type Props = {
   mutateRelay: (relay: Relay) => void
 }
 
-const formatDate = (secs: number) => new Date(secs * 1000).toLocaleDateString()
-
 // What a relay charges its members, where they pay, and who is paying.
 export default function MemberPayments(props: Props) {
   const [modalOpen, setModalOpen] = createSignal(false)
   const [memberships] = createResource(() => props.relay().id, listRelayMemberships)
 
-  const paying = () => (memberships.error ? [] : memberships() ?? []).filter(m => m.status === "active" || m.status === "canceled")
+  const paying = () => (loaded(memberships) ?? []).filter(m => m.status === "active" || m.status === "canceled")
   const isPaid = () => props.relay().member_price > 0
   const payUrl = () => relayPortalUrl(props.relay())
 

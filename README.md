@@ -8,7 +8,7 @@ The backend is a Rust workspace whose crates are layered, each depending only on
 
 - `crates/db` — the Postgres pool, migrations and transactions
 - `crates/adapters` — clients for Stripe, Nostr Wallet Connect, the robot's Nostr identity, DNS, media storage, LiveKit and outbound HTTP
-- `crates/core` — the domain: tenants, relays, access, rooms, events, media, calls, billing, usage, custom domains, sessions
+- `crates/core` — the domain: tenants, relays, access, rooms, events, media, calls, notifications, moderation, transfer, billing, usage, paid memberships, payouts, custom domains, sessions
 - `crates/relay` — the virtual relays: websockets, NIP-11 and NIP-86, Blossom, push, LiveKit tokens and webhooks, and resolving hosts to relays
 - `crates/api` — the JSON API, documented in [crates/api/README.md](./crates/api/README.md)
 - `crates/app` — the `caravel` binary, which reads the environment, serves each request by its host and runs the background workers

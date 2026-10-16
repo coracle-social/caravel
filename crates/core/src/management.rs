@@ -7,7 +7,8 @@ use sqlx::PgConnection;
 
 use crate::Core;
 use crate::access::{self, MANAGED_METHODS, Role};
-use crate::crypto::RelayKey;
+use crate::bus::Change;
+use crate::crypto::{RelayKey, is_hex64};
 use crate::error::{Error, Result};
 use crate::relays::{self, Relay};
 use crate::rooms;
@@ -40,10 +41,23 @@ pub enum Call {
     DeleteClaim(String),
 }
 
-/// What a call returned, and the events the relay signed to publish what it changed.
-pub struct Outcome {
-    pub result: Value,
-    pub published: Vec<Event>,
+/// What a call did.
+pub enum Outcome {
+    /// It answered without touching the relay's access lists or rooms.
+    Answer(Value),
+    /// It changed the relay's access lists or rooms, publishing these events about
+    /// it, for the caller to reload the relay and deliver them.
+    AccessChanged(Vec<Event>),
+}
+
+impl Outcome {
+    /// What the call answers with.
+    pub fn result(&self) -> Value {
+        match self {
+            Outcome::Answer(result) => result.clone(),
+            Outcome::AccessChanged(_) => json!(true),
+        }
+    }
 }
 
 impl Call {
@@ -66,7 +80,7 @@ impl Call {
         };
         let hex64 = |i: usize, what: &str| {
             let value = required(i, what)?;
-            if value.len() == 64 && value.chars().all(|c| c.is_ascii_hexdigit()) {
+            if is_hex64(&value) {
                 Ok(value.to_lowercase())
             } else {
                 Err(invalid_params(&format!(
@@ -139,99 +153,107 @@ fn invalid_params(reason: &str) -> Error {
 pub async fn call(core: &Core, relay: &Relay, call: Call) -> Result<Outcome> {
     let pool = core.db.pool();
     let relay_id = relay.id.as_str();
-    let owner = relay.tenant_pubkey.as_str();
+    let tenant_pubkey = relay.tenant_pubkey.as_str();
     let now = core.clock.now();
 
-    let result = match &call {
+    match &call {
         Call::ListBannedPubkeys => {
             let bans = access::list_banned_pubkeys(pool, relay_id).await?;
-            return done(json!(
+            Ok(Outcome::Answer(json!(
                 bans.into_iter()
                     .map(|ban| json!({"pubkey": ban.subject, "reason": ban.reason}))
                     .collect::<Vec<_>>()
-            ));
+            )))
         }
         Call::ListAllowedPubkeys => {
             let members = access::list_members(pool, relay_id).await?;
-            return done(json!(
+            Ok(Outcome::Answer(json!(
                 members
                     .into_iter()
                     .map(|member| json!({"pubkey": member.pubkey, "reason": "relay member"}))
                     .collect::<Vec<_>>()
-            ));
+            )))
         }
         Call::ListBannedEvents => {
             let bans = access::list_banned_events(pool, relay_id).await?;
-            return done(json!(
+            Ok(Outcome::Answer(json!(
                 bans.into_iter()
                     .map(|ban| json!({"id": ban.subject, "reason": ban.reason}))
                     .collect::<Vec<_>>()
-            ));
+            )))
         }
         Call::ListMethodAssignees => {
             let all: Vec<&str> = MANAGED_METHODS.to_vec();
             let mut assignees = vec![
-                json!({"pubkey": owner, "methods": all}),
+                json!({"pubkey": tenant_pubkey, "methods": all}),
                 json!({"pubkey": relay.pubkey, "methods": all}),
             ];
             for (pubkey, methods) in access::list_method_grants(pool, relay_id).await? {
-                if pubkey != owner && pubkey != relay.pubkey {
+                if pubkey != tenant_pubkey && pubkey != relay.pubkey {
                     assignees.push(json!({"pubkey": pubkey, "methods": methods}));
                 }
             }
             assignees.sort_by(|a, b| a["pubkey"].as_str().cmp(&b["pubkey"].as_str()));
-            return done(json!(assignees));
+            Ok(Outcome::Answer(json!(assignees)))
         }
-        Call::ListClaims => return done(json!(access::list_claims(pool, relay_id).await?)),
-        Call::ChangeRelayName(name) => {
-            relays::set_relay_info(pool, relay_id, Some(name), None, None).await?;
-            json!(true)
-        }
+        Call::ListClaims => Ok(Outcome::Answer(json!(
+            access::list_claims(pool, relay_id).await?
+        ))),
+        Call::ChangeRelayName(name) => change_info(core, relay_id, Some(name), None, None).await,
         Call::ChangeRelayDescription(description) => {
-            relays::set_relay_info(pool, relay_id, None, Some(description), None).await?;
-            json!(true)
+            change_info(core, relay_id, None, Some(description), None).await
         }
-        Call::ChangeRelayIcon(icon) => {
-            relays::set_relay_info(pool, relay_id, None, None, Some(icon)).await?;
-            json!(true)
-        }
+        Call::ChangeRelayIcon(icon) => change_info(core, relay_id, None, None, Some(icon)).await,
         Call::UnbanPubkey(pubkey) => {
             access::unban_pubkey(pool, relay_id, pubkey).await?;
-            json!(true)
+            Ok(Outcome::AccessChanged(Vec::new()))
         }
         Call::AllowEvent(id) => {
             access::allow_event(pool, relay_id, id).await?;
-            json!(true)
+            Ok(Outcome::AccessChanged(Vec::new()))
         }
         Call::CreateClaim(code) => {
             access::create_claim(pool, relay_id, code, now).await?;
-            json!(true)
+            Ok(Outcome::AccessChanged(Vec::new()))
         }
         Call::DeleteClaim(code) => {
             access::revoke_claim(pool, relay_id, code, now).await?;
-            json!(true)
+            Ok(Outcome::AccessChanged(Vec::new()))
         }
-        _ => {
-            let key = RelayKey::decrypt(&core.config.platform_key, &relay.secret)?;
+        Call::BanPubkey(..)
+        | Call::AllowPubkey(_)
+        | Call::UnallowPubkey(_)
+        | Call::BanEvent(..)
+        | Call::CreateRole(_)
+        | Call::EditRole(_)
+        | Call::DeleteRole(_)
+        | Call::AssignRole(..)
+        | Call::UnassignRole(..)
+        | Call::AssignMethod(..)
+        | Call::UnassignMethod(..) => {
+            let key = core.relay_key(relay)?;
             let published = core
                 .db
                 .with_tx(async |conn| write(conn, &key, relay, &call, now).await)
                 .await?;
-            return Ok(Outcome {
-                result: json!(true),
-                published,
-            });
+            Ok(Outcome::AccessChanged(published))
         }
-    };
-
-    done(result)
+    }
 }
 
-fn done(result: Value) -> Result<Outcome> {
-    Ok(Outcome {
-        result,
-        published: Vec::new(),
-    })
+/// Change what the relay says about itself, which reloads it from its row.
+async fn change_info(
+    core: &Core,
+    relay_id: &str,
+    name: Option<&str>,
+    description: Option<&str>,
+    icon: Option<&str>,
+) -> Result<Outcome> {
+    relays::set_relay_info(core.db.pool(), relay_id, name, description, icon).await?;
+    core.bus.publish(Change::RelayChanged {
+        relay_id: relay_id.to_string(),
+    });
+    Ok(Outcome::Answer(json!(true)))
 }
 
 /// The calls that change what the relay publishes about itself.
@@ -243,19 +265,27 @@ async fn write(
     now: i64,
 ) -> Result<Vec<Event>> {
     let relay_id = relay.id.as_str();
-    let owner = relay.tenant_pubkey.as_str();
+    let tenant_pubkey = relay.tenant_pubkey.as_str();
 
     match call {
         Call::BanPubkey(pubkey, reason) => {
-            let mut published =
-                access::ban_pubkey(&mut *conn, key, relay_id, owner, pubkey, reason, now).await?;
+            let mut published = access::ban_pubkey(
+                &mut *conn,
+                key,
+                relay_id,
+                tenant_pubkey,
+                pubkey,
+                reason,
+                now,
+            )
+            .await?;
             published.extend(publish_room_admins(conn, key, relay_id, now).await?);
             Ok(published)
         }
         Call::AllowPubkey(pubkey) => access::allow_pubkey(conn, key, relay_id, pubkey, now).await,
         Call::UnallowPubkey(pubkey) => {
             let mut published =
-                access::remove(&mut *conn, key, relay_id, owner, pubkey, now).await?;
+                access::remove(&mut *conn, key, relay_id, tenant_pubkey, pubkey, now).await?;
             published.extend(publish_room_admins(conn, key, relay_id, now).await?);
             Ok(published)
         }
@@ -273,16 +303,32 @@ async fn write(
             access::unassign_role(conn, key, relay_id, pubkey, role_id, now).await
         }
         Call::AssignMethod(pubkey, method) => {
-            let mut published =
-                access::grant_method(&mut *conn, key, relay_id, owner, pubkey, method, now).await?;
+            let mut published = access::grant_method(
+                &mut *conn,
+                key,
+                relay_id,
+                tenant_pubkey,
+                pubkey,
+                method,
+                now,
+            )
+            .await?;
             published.extend(publish_room_admins(conn, key, relay_id, now).await?);
             Ok(published)
         }
         Call::UnassignMethod(pubkey, method) => {
-            access::revoke_method(&mut *conn, relay_id, owner, pubkey, method).await?;
+            access::revoke_method(
+                &mut *conn,
+                relay_id,
+                tenant_pubkey,
+                &relay.pubkey,
+                pubkey,
+                method,
+            )
+            .await?;
             publish_room_admins(conn, key, relay_id, now).await
         }
-        _ => Ok(Vec::new()),
+        _ => unreachable!("{call:?} doesn't write in a transaction"),
     }
 }
 
@@ -312,14 +358,7 @@ pub async fn rebuild_derived(
     let mut published = vec![access::publish_member_list(&mut *conn, key, relay_id, now).await?];
 
     for role in access::list_roles(&mut *conn, relay_id).await? {
-        let event = key.sign(
-            crate::relay_policy::kinds::RELAY_ROLE,
-            access::role_tags(&role),
-            "",
-            now,
-        );
-        access::store(&mut *conn, relay_id, &event, now).await?;
-        published.push(event);
+        published.push(access::publish_role(&mut *conn, key, relay_id, &role, now).await?);
     }
 
     for room in rooms::list_rooms(&mut *conn, relay_id).await? {

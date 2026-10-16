@@ -11,11 +11,13 @@ use coracle_lib::kinds::{is_addressable, is_replaceable};
 use sqlx::postgres::PgRow;
 use sqlx::{PgConnection, PgExecutor, Postgres, QueryBuilder, Row};
 
+use crate::Core;
+use crate::crypto::RelayKey;
 use crate::error::Result;
 
-pub const DELETION: u16 = 5;
-pub const GIFT_WRAP: u16 = 1059;
-pub const VANISH: u16 = 62;
+pub mod kinds;
+
+use kinds::{DELETION, VANISH};
 
 /// What a relay's policy reads about an event without its content: who wrote it,
 /// when, what kind it is, and its single-letter tags as `name:value`.
@@ -68,10 +70,10 @@ impl EventHead {
     }
 
     /// The first value of a single-letter tag.
-    pub fn tag(&self, name: char) -> Option<&str> {
+    pub fn tag(&self, name: &str) -> Option<&str> {
         self.tag_values.iter().find_map(|value| {
             let (key, value) = value.split_once(':')?;
-            (key.len() == 1 && key.starts_with(name)).then_some(value)
+            (key == name).then_some(value)
         })
     }
 }
@@ -157,9 +159,29 @@ pub async fn save_event(
     save_relay_event(conn, relay_id, event, now).await
 }
 
+/// Sign an event as the relay and store it, for the caller to deliver once its
+/// transaction commits.
+pub async fn publish(
+    conn: &mut PgConnection,
+    key: &RelayKey,
+    relay_id: &str,
+    kind: u16,
+    tags: Vec<Vec<String>>,
+    now: i64,
+) -> Result<Event> {
+    let event = key.sign(kind, tags, "", now);
+    save_relay_event(conn, relay_id, &event, now).await?;
+    Ok(event)
+}
+
+/// A tag from its values.
+pub fn tag(values: &[&str]) -> Vec<String> {
+    values.iter().map(|value| value.to_string()).collect()
+}
+
 /// Store an event the relay signed to publish its own state, which no tombstone
 /// refuses: the state it describes is the authority.
-pub async fn save_relay_event(
+async fn save_relay_event(
     conn: &mut PgConnection,
     relay_id: &str,
     event: &Event,
@@ -349,6 +371,30 @@ pub async fn query_event_heads(
     Ok(Some(rows.iter().filter_map(event_head).collect()))
 }
 
+/// A page of a relay's events, newest first with ties broken by id, starting
+/// after the event at `created_at` with id `id`.
+pub async fn list_events_after(
+    db: impl PgExecutor<'_>,
+    relay_id: &str,
+    created_at: i64,
+    id: &[u8],
+    limit: i64,
+) -> Result<Vec<StoredEvent>> {
+    let rows = sqlx::query(
+        "SELECT id, pubkey, created_at, kind, tag_values, content, tags, sig FROM event
+         WHERE relay_id = $1 AND (created_at < $2 OR (created_at = $2 AND id > $3))
+         ORDER BY created_at DESC, id LIMIT $4",
+    )
+    .bind(relay_id)
+    .bind(created_at)
+    .bind(id)
+    .bind(limit)
+    .fetch_all(db)
+    .await?;
+
+    Ok(rows.iter().filter_map(stored_event).collect())
+}
+
 /// Events of one relay by id, in no order.
 pub async fn get_events(
     db: impl PgExecutor<'_>,
@@ -375,6 +421,36 @@ pub async fn delete_event(db: impl PgExecutor<'_>, relay_id: &str, id: &[u8; 32]
         .execute(db)
         .await?;
     Ok(())
+}
+
+/// Delete everything a pubkey wrote on a relay.
+pub async fn delete_events_by_author(
+    db: impl PgExecutor<'_>,
+    relay_id: &str,
+    pubkey: &[u8; 32],
+) -> Result<()> {
+    sqlx::query("DELETE FROM event WHERE relay_id = $1 AND pubkey = $2")
+        .bind(relay_id)
+        .bind(pubkey.to_vec())
+        .execute(db)
+        .await?;
+    Ok(())
+}
+
+/// Delete every relay's events whose NIP-40 expiration passed, a batch at a time
+/// so other writers get between them.
+pub async fn sweep_expired_events(core: &Core) -> Result<()> {
+    const BATCH: i64 = 1000;
+
+    loop {
+        let removed = delete_expired_events(core.db.pool(), core.clock.now(), BATCH).await?;
+        if removed > 0 {
+            tracing::info!(removed, "swept expired events");
+        }
+        if removed < BATCH as u64 {
+            return Ok(());
+        }
+    }
 }
 
 /// Delete up to `batch` events whose NIP-40 expiration has passed, across every
@@ -469,7 +545,8 @@ fn event_head(row: &PgRow) -> Option<EventHead> {
     })
 }
 
-fn stored_event(row: &PgRow) -> Option<StoredEvent> {
+/// An event from a row holding the event table's columns.
+pub(crate) fn stored_event(row: &PgRow) -> Option<StoredEvent> {
     Some(StoredEvent {
         head: event_head(row)?,
         content: row.get("content"),

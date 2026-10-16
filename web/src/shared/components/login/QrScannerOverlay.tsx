@@ -1,9 +1,6 @@
 import { Show } from "solid-js"
 
-// Presentational scanner overlay chrome. The <video> ref is owned by the parent
-// via the videoRef setter so the QrScanner instance and its lifecycle stay in
-// Login.tsx (openScanner waits a microtask for this element to mount). Props are
-// reactive only when read lazily, so access props.* inside JSX.
+// The camera view for scanning a QR code, whose scanner Login runs on `videoRef`.
 type QrScannerOverlayProps = {
   open: boolean
   onClose: () => void

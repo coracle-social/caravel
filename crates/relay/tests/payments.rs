@@ -5,13 +5,12 @@ mod common;
 
 use axum::body::Body;
 use axum::http::Request;
+use caravel_core::events::kinds;
 use caravel_core::management::{self, Call};
 use caravel_core::testing::sign_event;
 use common::*;
 use coracle_lib::keys::SecretKey;
 use serde_json::json;
-
-const JOIN: u16 = 28934;
 
 async fn info(server: &Server, host: &str) -> serde_json::Value {
     server
@@ -65,7 +64,7 @@ async fn a_paid_relay_takes_joins_only_with_a_claim() {
     let mut client = server.connect(&relay.canonical_host()).await;
     client.auth(&stranger, server.now()).await;
 
-    let bare = sign_event(&stranger, JOIN, "", &[], server.now());
+    let bare = sign_event(&stranger, kinds::RELAY_JOIN, "", &[], server.now());
     assert_eq!(
         client.publish(&bare).await,
         (
@@ -74,6 +73,12 @@ async fn a_paid_relay_takes_joins_only_with_a_claim() {
         )
     );
 
-    let comped = sign_event(&stranger, JOIN, "", &[&["claim", "comped"]], server.now());
+    let comped = sign_event(
+        &stranger,
+        kinds::RELAY_JOIN,
+        "",
+        &[&["claim", "comped"]],
+        server.now(),
+    );
     assert!(client.publish(&comped).await.0);
 }

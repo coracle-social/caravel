@@ -64,6 +64,7 @@ pub fn document(state: &InstanceState, limits: &RelayLimits, transport: &Transpo
     if paid {
         document["payments_url"] = json!(memberships::portal_url(relay, "/"));
         document["fees"] = json!({
+            // A currency amount is in its minor units, as Flotilla reads it.
             "subscription": [{
                 "amount": relay.member_price,
                 "unit": "USD",
@@ -77,16 +78,10 @@ pub fn document(state: &InstanceState, limits: &RelayLimits, transport: &Transpo
 
 pub fn response(document: Value) -> Response {
     (
-        [
-            (
-                header::CONTENT_TYPE,
-                HeaderValue::from_static("application/nostr+json"),
-            ),
-            (
-                header::ACCESS_CONTROL_ALLOW_ORIGIN,
-                HeaderValue::from_static("*"),
-            ),
-        ],
+        [(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/nostr+json"),
+        )],
         document.to_string(),
     )
         .into_response()

@@ -1,8 +1,15 @@
 import type { PlanId } from "@/shared/lib/api"
 
-// Plan ids are permanent billing keys: past charges are priced by resolving the id
-// recorded on them, so an id is never reused or repriced. Mirrored in the
-// backend's models.rs.
+// Permanent billing keys, never reused or repriced; the catalog is crates/core/src/plans.rs.
 export const FREE: PlanId = "free"
 export const BASIC: PlanId = "basic"
-export const GROWTH: PlanId = "growth"
+
+export function priceLabel(amount: number) {
+  if (amount === 0) return "Free"
+  return `$${amount / 100}`
+}
+
+export function memberLabel(members: number | null) {
+  if (members === null) return "Unlimited members"
+  return `Up to ${members} members`
+}

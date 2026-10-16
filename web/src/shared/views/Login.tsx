@@ -7,8 +7,8 @@ import QRCode from "qrcode"
 import { PLATFORM_NAME } from "@/shared/lib/config"
 import { accountManager, ensureSessionTenant, identity } from "@/shared/lib/state"
 import { copyToClipboard } from "@/shared/lib/clipboard"
-import { validateBunkerUri } from "@/shared/lib/validation"
-import { decideKeyLogin, initialLoginTab, normalizeBunkerUrl, type Tab } from "@/shared/lib/loginInput"
+import { formatError } from "@/shared/lib/format"
+import { decideKeyLogin, normalizeBunkerUrl, validateBunkerUri, type Tab } from "@/shared/lib/loginInput"
 import useMinLoading from "@/shared/lib/useMinLoading"
 import LoginTabsScreen from "@/shared/components/login/LoginTabsScreen"
 import LoginSignerScreen from "@/shared/components/login/LoginSignerScreen"
@@ -35,7 +35,7 @@ type LoginPageProps = LoginProps & Partial<RouteSectionProps<unknown>>
 
 export default function Login(props: LoginPageProps = {}) {
   const navigate = useNavigate()
-  const [tab, setTab] = createSignal<Tab>(initialLoginTab(Boolean(window.nostr)))
+  const [tab, setTab] = createSignal<Tab>(window.nostr ? "nip07" : "nip46")
   const [rawLoading, setRawLoading] = createSignal(false)
   const loading = useMinLoading(() => rawLoading())
   const [error, setError] = createSignal("")
@@ -67,16 +67,14 @@ export default function Login(props: LoginPageProps = {}) {
     await props.onAuthenticated?.()
   }
 
-  // Shared effect wrapper for the four login handlers: clear the error, hold the
-  // loading flag for the duration, and surface any thrown error with a per-handler
-  // fallback message. The signer construction / completeLogin lives in `fn`.
+  // Run one way of logging in, showing it as loading and reporting its failure.
   async function runLogin(fn: () => Promise<void>, fallbackMessage: string) {
     setError("")
     setRawLoading(true)
     try {
       await fn()
     } catch (e) {
-      setError(e instanceof Error ? e.message : fallbackMessage)
+      setError(formatError(e, fallbackMessage))
     } finally {
       setRawLoading(false)
     }
@@ -174,7 +172,7 @@ export default function Login(props: LoginPageProps = {}) {
     try {
       await scanner.start()
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Unable to access camera")
+      setError(formatError(e, "Unable to access camera"))
       closeScanner()
     }
   }

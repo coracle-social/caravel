@@ -6,27 +6,15 @@ import useMinLoading from "@/shared/lib/useMinLoading"
 import { useInvoicePdf } from "@/shared/lib/useInvoicePdf"
 import PaymentSetupNWC from "@/shared/components/PaymentSetupNWC"
 import PaymentSetupCard from "@/shared/components/PaymentSetupCard"
-import { useBillingStatus, accountStatus, type AccountStatus } from "@/shared/lib/billing"
+import { useBillingStatus, accountStatus } from "@/shared/lib/billing"
+import { account } from "@/shared/lib/account"
 import { invoiceStatus, listDraftInvoiceItems, signOut, type Invoice } from "@/shared/lib/api"
 import { cardState, methodLabel, nwcState, type PaymentMethodState } from "@/shared/lib/paymentMethod"
-import { account } from "@/shared/lib/state"
 import { formatPeriod } from "@/shared/lib/format"
 import PaymentMethodRow from "@/shared/components/account/PaymentMethodRow"
 import PayoutsSection from "@/tenant/components/PayoutsSection"
 import InvoiceListItem from "@/shared/components/account/InvoiceListItem"
-
-const invoiceStatusStyles: Record<string, string> = {
-  draft: "bg-blue-50 text-blue-700 border-blue-200",
-  open: "bg-yellow-50 text-yellow-700 border-yellow-200",
-  paid: "bg-green-50 text-green-700 border-green-200",
-  void: "bg-gray-100 text-gray-500 border-gray-200",
-}
-
-const accountStatusStyles: Record<AccountStatus, string> = {
-  active: "bg-green-50 text-green-700 border-green-200",
-  inactive: "bg-gray-100 text-gray-500 border-gray-200",
-  delinquent: "bg-red-50 text-red-700 border-red-200",
-}
+import StatusBadge from "@/shared/components/StatusBadge"
 
 const INVOICE_PAGE_SIZE = 10
 
@@ -43,21 +31,12 @@ export default function Account() {
   const invoicesLoading = useMinLoading(() => billing.loading())
   const { printInvoice, printing } = useInvoicePdf()
 
-  // On landing here (the billing portal returns to this page), run the autopay
-  // composite: reconcile the subscription, sync a card just added in the portal,
-  // and collect the open invoice if a method is now on file — then refresh. This
-  // is what pays the outstanding invoice after the user adds a card and returns.
-  // Reconciles on landing (including after returning from a Stripe Checkout or
-  // the billing portal): reconcile_tenant settles any out-of-band payment — a
-  // completed Checkout or a bolt11 paid elsewhere — and collects when a method
-  // is on file, then refreshes. No per-invoice return marker needed.
+  // Stripe returns here, so landing settles what was paid there and collects with a new method.
   createEffect(() => {
     const pubkey = account()?.pubkey
     if (pubkey) void billing.autopay(pubkey)
   })
 
-  // Coarse account-health summary for the badge. Same snapshot the inline prompt
-  // consumes, so the two can never disagree.
   const status = createMemo(() =>
     accountStatus({
       tenant: billing.tenant(),
@@ -66,9 +45,6 @@ export default function Account() {
     }),
   )
 
-  // Per-method state, reported independently so a concurrent error on one method
-  // isn't masked by the other. Derived from the shared boundary helpers so the
-  // badge surface can't drift from the billing prompts.
   const nwc = createMemo<PaymentMethodState>(() => {
     const t = billing.tenant()
     if (!t) return { kind: "not_set_up" }
@@ -105,17 +81,13 @@ export default function Account() {
           <div class="flex items-center justify-between gap-3 mb-4">
             <h2 class="text-lg font-semibold text-gray-900">Payment Methods</h2>
             <Show when={billing.tenant()}>
-              <span class={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium capitalize ${accountStatusStyles[status()]}`}>
-                Your account is {status()}
-              </span>
+              <StatusBadge status={status()}>Your account is {status()}</StatusBadge>
             </Show>
           </div>
 
           <ul class="space-y-3">
-            {/* Lightning / NWC row — CTA opens the NWC modal */}
             <PaymentMethodRow title="Lightning (NWC)" state={nwc()} onAction={() => setNwcModalOpen(true)} />
 
-            {/* Card / Stripe row — CTA opens the card modal (which redirects to the Stripe portal) */}
             <PaymentMethodRow title="Card" state={card()} onAction={() => setCardModalOpen(true)} />
           </ul>
         </section>
@@ -132,14 +104,12 @@ export default function Account() {
           <Show when={!invoicesLoading()}>
             <Show when={billing.invoices().length > 0 || billing.draftInvoice()} fallback={<p class="text-gray-500 text-sm">No invoices yet.</p>}>
               <ul class="space-y-3">
-                {/* Draft: this period's in-progress charges, not yet a real invoice. */}
                 <Show when={billing.draftInvoice()}>
                   {(draft) => (
                     <InvoiceListItem
                       isDraft
                       amount={draft().amount}
-                      statusLabel="draft"
-                      statusStyle={invoiceStatusStyles.draft}
+                      status="draft"
                       periodLabel={formatPeriod(draft().period_start, draft().period_end)}
                       onPrintPdf={() => void printInvoice(draft(), () => listDraftInvoiceItems(draft().tenant_pubkey))}
                       printing={printing()}
@@ -152,8 +122,7 @@ export default function Account() {
                     return (
                       <InvoiceListItem
                         amount={invoice.amount}
-                        statusLabel={status()}
-                        statusStyle={invoiceStatusStyles[status()] ?? "bg-gray-100 text-gray-500 border-gray-200"}
+                        status={status()}
                         periodLabel={formatPeriod(invoice.period_start, invoice.period_end)}
                         method={invoice.method ? methodLabel(invoice.method) : undefined}
                         isOpen={status() === "open"}

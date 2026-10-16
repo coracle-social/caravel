@@ -8,8 +8,8 @@ use std::sync::{Arc, Mutex};
 
 use caravel_core::Core;
 use caravel_core::bus::Change;
-use caravel_core::events::{self, StoredEvent};
-use caravel_core::relay_policy::{self, EventFacts, RelaySnapshot, kinds};
+use caravel_core::events::{self, StoredEvent, kinds};
+use caravel_core::relay_policy::{self, EventFacts, RelaySnapshot};
 use coracle_lib::events::{Event, EventId};
 use coracle_lib::filters::{Filter, matches_any};
 use serde_json::{Value, json};
@@ -156,8 +156,7 @@ impl Pusher {
         for subscription in subscriptions {
             let reader = [subscription.pubkey.clone()];
             if subscription.pubkey == author
-                || relay_policy::admit_req(snapshot, &reader).is_err()
-                || !relay_policy::can_receive(snapshot, Some(&subscription.pubkey), facts)
+                || !relay_policy::can_deliver(snapshot, &reader, facts)
                 || !matches_any(&subscription.filters, event)
                 || matches_any(&subscription.ignore, event)
             {

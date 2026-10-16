@@ -12,6 +12,7 @@ use axum::routing::post;
 use axum::{Json, Router};
 use caravel_adapters::livekit::Livekit;
 use caravel_core::calls;
+use caravel_core::events::kinds;
 use caravel_core::relays::Relay;
 use caravel_core::testing::{self, sign_event};
 use common::*;
@@ -86,12 +87,12 @@ async fn token(
         let url = format!("https://{}{path}", relay.canonical_host());
         let auth = sign_event(
             signer,
-            27235,
+            kinds::HTTP_AUTH,
             "",
             &[&["u", &url], &["method", "GET"]],
             server.now(),
         );
-        request = request.header("authorization", nostr_authorization(&auth));
+        request = request.header("authorization", testing::authorization(&auth));
     }
     server.http(request.body(Body::empty()).unwrap()).await
 }
@@ -299,5 +300,29 @@ async fn a_webhook_must_be_signed_and_name_a_known_call() {
             .await
             .status,
         StatusCode::NO_CONTENT
+    );
+}
+
+#[tokio::test]
+async fn a_departure_is_metered_even_from_a_room_without_calls() {
+    let (server, _, url) = start().await;
+    let (relay, owner) = call_relay(&server).await;
+    let livekit = Livekit::new(&url, "test-key", "test-secret").unwrap();
+
+    let left = json!({
+        "event": "participant_left",
+        "room": {"name": calls::livekit_room(&relay.id, "quiet")},
+        "participant": {"sid": "PA_quiet", "identity": format!("{}:n", owner.public_key().to_hex()), "joinedAt": "1000"},
+        "createdAt": "1030",
+    });
+    assert_eq!(
+        webhook(&server, &relay, &livekit, left).await.status,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        calls::participant_seconds(server.core.db.pool(), &relay.id)
+            .await
+            .unwrap(),
+        30
     );
 }

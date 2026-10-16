@@ -9,12 +9,12 @@ use sqlx::{PgConnection, PgExecutor};
 
 use crate::crypto::RelayKey;
 use crate::error::{Error, Result};
-use crate::events::{self, DELETION};
-use crate::relay_policy::kinds::{
-    RELAY_ADD_MEMBER, RELAY_MEMBERS, RELAY_REMOVE_MEMBER, RELAY_ROLE,
+use crate::events::kinds::{
+    DELETION, RELAY_ADD_MEMBER, RELAY_MEMBERS, RELAY_REMOVE_MEMBER, RELAY_ROLE,
 };
+use crate::events::{self, tag};
 
-/// Every NIP-86 method a relay's managers may be granted.
+/// Every NIP-86 method a pubkey may be granted on a relay.
 pub const MANAGED_METHODS: [&str; 23] = [
     "changerelayname",
     "changerelaydescription",
@@ -51,7 +51,7 @@ pub const INVITE_METHODS: [&str; 2] = ["listclaims", "createclaim"];
 pub enum MemberSource {
     /// The relay's tenant, who is always a member.
     Owner,
-    /// Added by the tenant, an admin, or a manager.
+    /// Added by the tenant, an admin, or a pubkey granted the method.
     Manual,
     /// Joined with an invite claim.
     Claim,
@@ -260,13 +260,15 @@ pub async fn admit(
         return Ok(Vec::new());
     }
 
-    let added = key.sign(
+    let added = events::publish(
+        &mut *conn,
+        key,
+        relay_id,
         RELAY_ADD_MEMBER,
         vec![tag(&["-"]), tag(&["p", pubkey])],
-        "",
         now,
-    );
-    store(&mut *conn, relay_id, &added, now).await?;
+    )
+    .await?;
     let list = publish_member_list(conn, key, relay_id, now).await?;
     Ok(vec![added, list])
 }
@@ -277,37 +279,39 @@ pub async fn remove(
     conn: &mut PgConnection,
     key: &RelayKey,
     relay_id: &str,
-    owner: &str,
+    tenant_pubkey: &str,
     pubkey: &str,
     now: i64,
 ) -> Result<Vec<Event>> {
-    if pubkey == owner || pubkey == key.pubkey() {
+    if pubkey == tenant_pubkey || pubkey == key.pubkey() {
         return Err(Error::conflict(
             "owner",
             "Can't remove the relay owner from the relay.",
         ));
     }
 
-    let removed = sqlx::query("DELETE FROM relay_member WHERE relay_id = $1 AND pubkey = $2")
+    let deleted = sqlx::query("DELETE FROM relay_member WHERE relay_id = $1 AND pubkey = $2")
         .bind(relay_id)
         .bind(pubkey)
         .execute(&mut *conn)
         .await?
         .rows_affected();
 
-    if removed == 0 {
+    if deleted == 0 {
         return Ok(Vec::new());
     }
 
-    let event = key.sign(
+    let removed = events::publish(
+        &mut *conn,
+        key,
+        relay_id,
         RELAY_REMOVE_MEMBER,
         vec![tag(&["-"]), tag(&["p", pubkey])],
-        "",
         now,
-    );
-    store(&mut *conn, relay_id, &event, now).await?;
+    )
+    .await?;
     let list = publish_member_list(conn, key, relay_id, now).await?;
-    Ok(vec![event, list])
+    Ok(vec![removed, list])
 }
 
 pub async fn count_members(db: impl PgExecutor<'_>, relay_id: &str) -> Result<i64> {
@@ -325,12 +329,12 @@ pub async fn ban_pubkey(
     conn: &mut PgConnection,
     key: &RelayKey,
     relay_id: &str,
-    owner: &str,
+    tenant_pubkey: &str,
     pubkey: &str,
     reason: &str,
     now: i64,
 ) -> Result<Vec<Event>> {
-    let published = remove(&mut *conn, key, relay_id, owner, pubkey, now).await?;
+    let published = remove(&mut *conn, key, relay_id, tenant_pubkey, pubkey, now).await?;
 
     sqlx::query(
         "INSERT INTO banned_pubkey (relay_id, pubkey, reason, created_at) VALUES ($1, $2, $3, $4)
@@ -343,13 +347,9 @@ pub async fn ban_pubkey(
     .execute(&mut *conn)
     .await?;
 
-    let pubkey_bytes =
-        hex::decode(pubkey).map_err(|_| Error::invalid("invalid-pubkey", "invalid pubkey"))?;
-    sqlx::query("DELETE FROM event WHERE relay_id = $1 AND pubkey = $2")
-        .bind(relay_id)
-        .bind(pubkey_bytes)
-        .execute(&mut *conn)
-        .await?;
+    let author =
+        decode_id(pubkey).ok_or_else(|| Error::invalid("invalid-pubkey", "invalid pubkey"))?;
+    events::delete_events_by_author(&mut *conn, relay_id, &author).await?;
 
     Ok(published)
 }
@@ -384,12 +384,8 @@ pub async fn ban_event(
     reason: &str,
     now: i64,
 ) -> Result<()> {
-    let id = hex::decode(event_id).map_err(|_| Error::invalid("invalid-id", "invalid event id"))?;
-    sqlx::query("DELETE FROM event WHERE relay_id = $1 AND id = $2")
-        .bind(relay_id)
-        .bind(id)
-        .execute(&mut *conn)
-        .await?;
+    let id = decode_id(event_id).ok_or_else(|| Error::invalid("invalid-id", "invalid event id"))?;
+    events::delete_event(&mut *conn, relay_id, &id).await?;
 
     sqlx::query(
         "INSERT INTO banned_event (relay_id, event_id, reason, created_at) VALUES ($1, $2, $3, $4)
@@ -502,13 +498,15 @@ pub async fn delete_role(
     let mut published = Vec::new();
     if deleted > 0 {
         let address = format!("{RELAY_ROLE}:{}:{role_id}", key.pubkey());
-        let deletion = key.sign(
+        let deletion = events::publish(
+            &mut *conn,
+            key,
+            relay_id,
             DELETION,
             vec![tag(&["a", &address]), tag(&["k", &RELAY_ROLE.to_string()])],
-            "",
             now,
-        );
-        store(&mut *conn, relay_id, &deletion, now).await?;
+        )
+        .await?;
         events::apply_deletion(&mut *conn, relay_id, &deletion).await?;
         published.push(deletion);
     }
@@ -586,6 +584,11 @@ pub async fn unassign_role(
     Ok(vec![publish_member_list(conn, key, relay_id, now).await?])
 }
 
+/// A 32-byte id or pubkey from its hex.
+fn decode_id(hex: &str) -> Option<[u8; 32]> {
+    hex::decode(hex).ok()?.try_into().ok()
+}
+
 fn validate_role(role: &Role) -> Result<()> {
     if role.id.is_empty() {
         return Err(Error::invalid("role-id-required", "role id is required"));
@@ -626,7 +629,7 @@ pub async fn grant_method(
     conn: &mut PgConnection,
     key: &RelayKey,
     relay_id: &str,
-    owner: &str,
+    tenant_pubkey: &str,
     pubkey: &str,
     method: &str,
     now: i64,
@@ -637,7 +640,7 @@ pub async fn grant_method(
             format!("unknown method {method:?}"),
         ));
     }
-    if pubkey == owner || pubkey == key.pubkey() {
+    if pubkey == tenant_pubkey || pubkey == key.pubkey() {
         return Err(Error::conflict(
             "implicit-methods",
             "the relay owner and the relay's own key always have every management method",
@@ -659,14 +662,17 @@ pub async fn grant_method(
     Ok(published)
 }
 
+/// Take a NIP-86 method back from a pubkey. The owner and the relay's own key
+/// hold every method regardless.
 pub async fn revoke_method(
     db: impl PgExecutor<'_>,
     relay_id: &str,
-    owner: &str,
+    tenant_pubkey: &str,
+    relay_pubkey: &str,
     pubkey: &str,
     method: &str,
 ) -> Result<()> {
-    if pubkey == owner {
+    if pubkey == tenant_pubkey || pubkey == relay_pubkey {
         return Err(Error::conflict(
             "implicit-methods",
             "the relay owner and the relay's own key always have every management method",
@@ -764,27 +770,23 @@ pub async fn publish_member_list(
         tags.push(member_tag);
     }
 
-    let event = key.sign(RELAY_MEMBERS, tags, "", now);
-    store(conn, relay_id, &event, now).await?;
-    Ok(event)
+    events::publish(conn, key, relay_id, RELAY_MEMBERS, tags, now).await
 }
 
 /// Rewrite a role's definition (kind 33534).
-async fn publish_role(
+pub async fn publish_role(
     conn: &mut PgConnection,
     key: &RelayKey,
     relay_id: &str,
     role: &Role,
     now: i64,
 ) -> Result<Event> {
-    let event = key.sign(RELAY_ROLE, role_tags(role), "", now);
-    store(conn, relay_id, &event, now).await?;
-    Ok(event)
+    events::publish(conn, key, relay_id, RELAY_ROLE, role_tags(role), now).await
 }
 
 /// A role's definition as tags. A zero hue or position is left out, for the client
 /// to fall back on its own default.
-pub fn role_tags(role: &Role) -> Vec<Vec<String>> {
+fn role_tags(role: &Role) -> Vec<Vec<String>> {
     let mut tags = vec![tag(&["-"]), tag(&["d", &role.id])];
     if !role.label.is_empty() {
         tags.push(tag(&["label", &role.label]));
@@ -799,19 +801,4 @@ pub fn role_tags(role: &Role) -> Vec<Vec<String>> {
         tags.push(tag(&["order", &role.position.to_string()]));
     }
     tags
-}
-
-/// Store an event the relay signed.
-pub(crate) async fn store(
-    conn: &mut PgConnection,
-    relay_id: &str,
-    event: &Event,
-    now: i64,
-) -> Result<()> {
-    events::save_relay_event(conn, relay_id, event, now).await?;
-    Ok(())
-}
-
-pub(crate) fn tag(values: &[&str]) -> Vec<String> {
-    values.iter().map(|value| value.to_string()).collect()
 }

@@ -1,15 +1,8 @@
 import { For } from "solid-js"
+import CheckIcon from "@/shared/components/CheckIcon"
 import type { PlanId } from "@/shared/lib/api"
-import { BASIC } from "@/shared/lib/plans"
+import { BASIC, memberLabel, priceLabel } from "@/shared/lib/plans"
 import { plans } from "@/shared/lib/state"
-
-function CheckIcon() {
-  return (
-    <svg class="w-4 h-4 text-blue-500 shrink-0 mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M20 6L9 17l-5-5" />
-    </svg>
-  )
-}
 
 function XIcon() {
   return (
@@ -19,16 +12,6 @@ function XIcon() {
       </svg>
     </span>
   )
-}
-
-function priceLabel(amount: number) {
-  if (amount === 0) return "Free"
-  return `$${amount / 100}`
-}
-
-function memberLabel(members: number | null) {
-  if (members === null) return "Unlimited members"
-  return `Up to ${members} members`
 }
 
 // Paid tiers sell an allowance, not a cap, so the rate past it belongs next to it.
@@ -45,14 +28,8 @@ type PricingTableProps = {
 }
 
 export default function PricingTable(props: PricingTableProps) {
-  // Hidden plans (e.g. the legacy "basic" tier) stay resolvable for billing via
-  // the backend but never show up in the public pricing table or plan selector.
-  // This is the only place the hidden flag is honored.
-  const visiblePlans = () => plans().filter((plan) => !plan.hidden)
-
-  // The full pricing page also shows the synthetic "Custom" card, so the column
-  // count tracks the real number of cards (literal classes so Tailwind keeps them).
-  const cardCount = () => visiblePlans().length + (props.selectable ? 0 : 1)
+  // One column per card, counting the "Custom" card; the classes are literal so Tailwind keeps them.
+  const cardCount = () => plans().length + (props.selectable ? 0 : 1)
   const gridCols: Record<number, string> = {
     1: "lg:grid-cols-1",
     2: "lg:grid-cols-2",
@@ -62,7 +39,7 @@ export default function PricingTable(props: PricingTableProps) {
 
   return (
     <div class={`grid grid-cols-1 gap-6 items-start ${gridCols[cardCount()] ?? "lg:grid-cols-4"}`}>
-      <For each={visiblePlans()}>
+      <For each={plans()}>
         {(plan) => {
           const isPopular = plan.id === BASIC
           const isSelected = () => props.selectable && props.selectedPlanId === plan.id

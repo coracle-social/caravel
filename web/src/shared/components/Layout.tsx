@@ -2,21 +2,15 @@ import { createEffect, Show } from "solid-js"
 import { useLocation, useNavigate } from "@solidjs/router"
 import type { Component } from "solid-js"
 import AppShell from "@/shared/components/AppShell"
+import { isAdminPath } from "@/shared/components/AppLink"
 import Toast from "@/shared/components/Toast"
 import { identity } from "@/shared/lib/state"
 
-// The frame the tenant and admin dashboards share: their navigation once signed
-// in, and the toast.
+// The frame both dashboards share: navigation once signed in, and the toast.
 export default function Layout(props: { children?: any }) {
   const location = useLocation()
 
   const usesAppShell = () => location.pathname.match(/^\/(relays|account|admin)/)
-
-  createEffect(() => {
-    // Reinitialize Preline components on route change
-    location.pathname
-    window.HSStaticMethods?.autoInit()
-  })
 
   return (
     <div class="min-h-screen bg-gray-50">
@@ -28,9 +22,8 @@ export default function Layout(props: { children?: any }) {
   )
 }
 
-// A page shown only while `condition` holds, sending everyone else to the tenant
-// dashboard's home page.
-export function requireCondition(Page: Component, condition: () => boolean): Component {
+// A page shown only while `condition` holds, sending everyone else to the home page.
+function requireCondition(Page: Component, condition: () => boolean): Component {
   return () => {
     const navigate = useNavigate()
     const location = useLocation()
@@ -38,7 +31,7 @@ export function requireCondition(Page: Component, condition: () => boolean): Com
     createEffect(() => {
       if (identity.loading || condition()) return
       // The admin dashboard is another app, so leaving it is a page load.
-      if (location.pathname.startsWith("/admin")) window.location.replace("/")
+      if (isAdminPath(location.pathname)) window.location.replace("/")
       else navigate("/", { replace: true })
     })
 

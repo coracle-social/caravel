@@ -3,8 +3,10 @@ import Card from "@/portal/components/Card"
 import Notice from "@/portal/components/Notice"
 import Page from "@/portal/components/Page"
 import SignIn from "@/portal/components/SignIn"
-import { ApiError, getAccount } from "@/portal/lib/api"
-import { formatDate } from "@/portal/lib/format"
+import { formatLongDate } from "@/shared/lib/format"
+import { hasStatus } from "@/shared/lib/http"
+import { loaded } from "@/shared/lib/resource"
+import { getAccount } from "@/portal/lib/api"
 import { shortNpub } from "@/portal/lib/nostr"
 import { session, signOut } from "@/portal/lib/session"
 
@@ -19,10 +21,11 @@ const STATUS_LABELS = {
 export default function AccountPage() {
   const [account] = createResource(() => session() || false, getAccount)
 
-  const current = () => (account.error ? undefined : account())
+  const current = () => loaded(account)
 
+  // A session that no longer works ends.
   createEffect(() => {
-    if (account.error instanceof ApiError && account.error.status === 401) signOut()
+    if (hasStatus(account.error, 401)) signOut()
   })
 
   return (
@@ -41,7 +44,7 @@ export default function AccountPage() {
           <Show when={account.loading && !current()}>
             <p class="text-sm text-zinc-500">Loading…</p>
           </Show>
-          <Show when={account.error && !(account.error instanceof ApiError && account.error.status === 401)}>
+          <Show when={account.error && !hasStatus(account.error, 401)}>
             <Notice tone="error">We couldn't load your memberships. Try again in a moment.</Notice>
           </Show>
           <Show when={current()}>
@@ -71,7 +74,7 @@ export default function AccountPage() {
                               <p class="text-xs text-zinc-500">
                                 {STATUS_LABELS[membership.status]}
                                 <Show when={membership.current_period_end && membership.status !== "pending"}>
-                                  {" "}{formatDate(membership.current_period_end!)}
+                                  {" "}{formatLongDate(membership.current_period_end!)}
                                 </Show>
                               </p>
                             </div>

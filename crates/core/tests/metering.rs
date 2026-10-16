@@ -5,21 +5,17 @@
 mod common;
 
 use anyhow::Result;
-use caravel_core::media::{self, Blob};
+use caravel_core::media;
 use caravel_core::plans::{GB, PLAN_BASIC, SECONDS_PER_HOUR};
 use caravel_core::{Core, calls, usage};
 use common::*;
 
 async fn upload(core: &Core, relay_id: &str, sha256: &str, size: i64, pubkey: &str) -> Result<()> {
-    let blob = Blob {
-        sha256: sha256.to_string(),
-        content_type: "video/mp4".to_string(),
-        size,
-        created_at: 0,
-    };
     let now = core.clock.now();
     core.db
-        .with_tx(async |conn| media::record_upload(conn, relay_id, &blob, pubkey, now).await)
+        .with_tx(async |conn| {
+            media::record_upload(conn, relay_id, sha256, "video/mp4", size, pubkey, now).await
+        })
         .await?;
     Ok(())
 }

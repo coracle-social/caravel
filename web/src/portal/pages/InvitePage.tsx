@@ -4,11 +4,13 @@ import Card from "@/portal/components/Card"
 import Notice from "@/portal/components/Notice"
 import Page from "@/portal/components/Page"
 import RelayHeader from "@/portal/components/RelayHeader"
-import { ApiError, getInvite, reconcileInvite } from "@/portal/lib/api"
+import { formatError } from "@/shared/lib/format"
+import { hasStatus } from "@/shared/lib/http"
+import { loaded } from "@/shared/lib/resource"
+import { getInvite, reconcileInvite } from "@/portal/lib/api"
 import { useParam } from "@/portal/lib/params"
 
-// Where a buyer lands after paying for an invite. It hands them the link that
-// creates their account and joins the relay.
+// Where a buyer lands after paying for an invite, which hands them its link.
 export default function InvitePage() {
   const params = useParams()
   const [param, setSearch] = useParam()
@@ -19,8 +21,8 @@ export default function InvitePage() {
   const [copied, setCopied] = createSignal(false)
   const [error, setError] = createSignal("")
 
-  const current = () => (invite.error ? undefined : invite())
-  const notFound = () => invite.error instanceof ApiError && invite.error.status === 404
+  const current = () => loaded(invite)
+  const notFound = () => hasStatus(invite.error, 404)
 
   // Stripe sends the buyer back with the checkout session they paid in.
   onMount(async () => {
@@ -33,7 +35,7 @@ export default function InvitePage() {
       if (paid) setSearch({ checkout: undefined }, { replace: true })
       await refetch()
     } catch (e) {
-      setError(e instanceof Error ? e.message : "We couldn't confirm your payment")
+      setError(formatError(e, "We couldn't confirm your payment"))
     } finally {
       setSettling(false)
     }
@@ -106,7 +108,7 @@ export default function InvitePage() {
               )}
             </Show>
 
-            <Show when={i().claimed}>
+            <Show when={i().bound}>
               <Notice tone="neutral">
                 <p>This invite has been accepted.</p>
                 <A href="/" class="font-medium underline">
@@ -115,7 +117,7 @@ export default function InvitePage() {
               </Notice>
             </Show>
 
-            <Show when={i().status === "lapsed" && !i().claimed}>
+            <Show when={i().status === "lapsed" && !i().bound}>
               <Notice tone="neutral">This invite has expired.</Notice>
             </Show>
 

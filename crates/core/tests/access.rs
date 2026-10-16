@@ -5,8 +5,9 @@ use anyhow::Result;
 use caravel_core::access::{self, MANAGED_METHODS, MemberSource, Role};
 use caravel_core::crypto::RelayKey;
 use caravel_core::events;
-use caravel_core::management::{self, Call};
-use caravel_core::relay_policy::{self, kinds};
+use caravel_core::events::kinds;
+use caravel_core::management::{self, Call, Outcome};
+use caravel_core::relay_policy;
 use caravel_core::relays::Relay;
 use caravel_core::testing::{self, create_relay, sign_event};
 use caravel_core::{Core, Error};
@@ -25,7 +26,7 @@ struct Fixture {
 async fn fixture() -> Fixture {
     let core = testing::core(&SecretKey::generate().public_key().to_hex()).await;
     let (relay, owner) = create_relay(&core).await;
-    let key = RelayKey::decrypt(&core.config.platform_key, &relay.secret).unwrap();
+    let key = core.relay_key(&relay).unwrap();
     Fixture {
         core,
         relay,
@@ -42,7 +43,7 @@ impl Fixture {
     async fn call(&self, call: Call) -> Result<serde_json::Value> {
         Ok(management::call(&self.core, &self.relay, call)
             .await?
-            .result)
+            .result())
     }
 
     async fn members(&self) -> Result<Vec<String>> {
@@ -315,9 +316,12 @@ async fn deleting_a_role_takes_it_from_its_holders_and_publishes_a_deletion() ->
     f.call(Call::AssignRole(alice.clone(), "temp".into()))
         .await?;
 
-    let outcome = management::call(&f.core, &f.relay, Call::DeleteRole("temp".into())).await?;
-    let deletion = outcome
-        .published
+    let Outcome::AccessChanged(published) =
+        management::call(&f.core, &f.relay, Call::DeleteRole("temp".into())).await?
+    else {
+        panic!("deleting a role changes access");
+    };
+    let deletion = published
         .iter()
         .find(|event| event.kind == 5)
         .expect("no deletion");

@@ -1,10 +1,7 @@
 import { Show } from "solid-js"
+import SegmentedTabs from "@/shared/components/SegmentedTabs"
 import type { Tab } from "@/shared/lib/loginInput"
 
-// Presentational tab-selection panel for the login screen. All login logic stays
-// in Login.tsx; this only renders tabs and surfaces continue callbacks. Props are
-// reactive only when read lazily, so access props.* inside JSX, never destructure
-// signal-bearing props at the top.
 type LoginTabsScreenProps = {
   tab: () => Tab
   setTab: (tab: Tab) => void
@@ -15,6 +12,7 @@ type LoginTabsScreenProps = {
   onContinueKey: () => void
 }
 
+// Choosing how to log in: a browser extension, a remote signer, or a key.
 export default function LoginTabsScreen(props: LoginTabsScreenProps) {
   return (
     <>
@@ -23,30 +21,15 @@ export default function LoginTabsScreen(props: LoginTabsScreenProps) {
         Use any Nostr signer method. New users are automatically onboarded.
       </p>
       <div class="mt-6 space-y-4">
-        <div class="flex gap-2 border border-gray-200 rounded-lg p-1">
-          <button
-            type="button"
-            class={`flex-1 rounded-md px-3 py-2 text-sm ${props.tab() === "nip07" ? "bg-gray-900 text-white" : "text-gray-700"}`}
-            onClick={() => props.setTab("nip07")}
-            disabled={!props.hasExtension}
-          >
-            Extension
-          </button>
-          <button
-            type="button"
-            class={`flex-1 rounded-md px-3 py-2 text-sm ${props.tab() === "nip46" ? "bg-gray-900 text-white" : "text-gray-700"}`}
-            onClick={() => props.setTab("nip46")}
-          >
-            Signer
-          </button>
-          <button
-            type="button"
-            class={`flex-1 rounded-md px-3 py-2 text-sm ${props.tab() === "key" ? "bg-gray-900 text-white" : "text-gray-700"}`}
-            onClick={() => props.setTab("key")}
-          >
-            Key
-          </button>
-        </div>
+        <SegmentedTabs
+          tabs={[
+            { value: "nip07", label: "Extension", disabled: !props.hasExtension },
+            { value: "nip46", label: "Signer" },
+            { value: "key", label: "Key" },
+          ]}
+          selected={props.tab()}
+          onSelect={props.setTab}
+        />
 
         <Show when={props.tab() === "nip07"}>
           <button

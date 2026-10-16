@@ -12,6 +12,7 @@ use anyhow::Result;
 use caravel_core::billing::ledger::InvoiceMethod;
 use caravel_core::plans::{PLAN_BASIC, PLAN_GROWTH};
 use caravel_core::relays::RelayStatus;
+use caravel_core::testing;
 use common::*;
 
 #[tokio::test]
@@ -429,7 +430,7 @@ async fn operators_are_invoiced_but_never_collected_or_churned() -> Result<()> {
     let operator = admin_pubkey(&core);
 
     travel(&core, day(2026, 1, 7));
-    create_tenant_with(&core, &operator).await?;
+    testing::insert_tenant(&core, &operator).await;
     let relay = create_relay(&core, &operator, PLAN_BASIC).await?;
     reconcile(&core, &operator).await?;
 

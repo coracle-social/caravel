@@ -5,10 +5,10 @@
 mod common;
 
 use anyhow::Result;
-use caravel_core::media::{self, Blob};
-use caravel_core::moderation;
-use caravel_core::relay_policy::kinds;
-use caravel_core::testing::sign_event;
+use caravel_core::events::kinds;
+use caravel_core::media;
+use caravel_core::moderation::{self, Subject};
+use caravel_core::testing::{self, sign_event};
 use caravel_core::{Core, events};
 use common::*;
 use coracle_lib::events::Event;
@@ -28,15 +28,11 @@ async fn save(core: &Core, relay_id: &str, events: &[Event]) -> Result<()> {
 }
 
 async fn upload(core: &Core, relay_id: &str, sha256: &str, pubkey: &str) -> Result<()> {
-    let blob = Blob {
-        sha256: sha256.to_string(),
-        content_type: "image/png".to_string(),
-        size: 10,
-        created_at: 0,
-    };
     let now = core.clock.now();
     core.db
-        .with_tx(async |conn| media::record_upload(conn, relay_id, &blob, pubkey, now).await)
+        .with_tx(async |conn| {
+            media::record_upload(conn, relay_id, sha256, "image/png", 10, pubkey, now).await
+        })
         .await?;
     Ok(())
 }
@@ -49,7 +45,7 @@ async fn the_feed_holds_moderated_events_and_uploads_newest_first() -> Result<()
 
     let tenant = create_tenant(&core).await?;
     let relay = create_relay(&core, &tenant, "free").await?;
-    create_tenant_with(&core, &admin_pubkey(&core)).await?;
+    testing::insert_tenant(&core, &admin_pubkey(&core)).await;
     let unmoderated = create_relay(&core, &admin_pubkey(&core), "free").await?;
 
     travel(&core, start);
@@ -69,20 +65,22 @@ async fn the_feed_holds_moderated_events_and_uploads_newest_first() -> Result<()
 
     let page = moderation::list_moderation(&core, Some(start), Some(start + 10)).await?;
     assert!(!page.truncated);
-    let kinds: Vec<(&str, i64)> = page
-        .items
-        .iter()
-        .map(|item| (item.item_type.as_str(), item.seen_at))
-        .collect();
-    assert_eq!(kinds, vec![("upload", start + 10), ("event", start)]);
-
+    let seen: Vec<i64> = page.items.iter().map(|item| item.seen_at).collect();
+    assert_eq!(seen, vec![start + 10, start]);
     assert!(page.items.iter().all(|item| item.relay_id == relay.id));
-    assert_eq!(page.items[1].data["id"], note.id.to_hex());
-    assert_eq!(page.items[0].data["sha256"], "abc");
+
+    let Subject::Upload(upload) = &page.items[0].subject else {
+        panic!("expected an upload first");
+    };
+    assert_eq!(upload.sha256, "abc");
     assert_eq!(
-        page.items[0].data["url"],
+        upload.url,
         format!("https://{}/abc", relay.canonical_host())
     );
+    let Subject::Event(event) = &page.items[1].subject else {
+        panic!("expected an event second");
+    };
+    assert_eq!(event["id"], note.id.to_hex());
     Ok(())
 }
 

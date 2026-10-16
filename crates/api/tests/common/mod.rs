@@ -6,13 +6,9 @@
 use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use base64::Engine;
 use caravel_core::Core;
-use caravel_core::tenants::{self, Tenant};
 use caravel_core::testing::{self, API_URL};
-use coracle_lib::events::EventContent;
 use coracle_lib::keys::SecretKey;
-use coracle_lib::tags::Tags;
 use http_body_util::BodyExt;
 use serde_json::Value;
 use tower::ServiceExt;
@@ -104,7 +100,7 @@ impl TestApi {
 
     /// A bearer authorization for a fresh session of `secret`'s pubkey.
     pub async fn bearer(&self, secret: &SecretKey) -> String {
-        let auth = sign_http_auth(
+        let auth = testing::http_auth(
             secret,
             &format!("{API_URL}/session"),
             "POST",
@@ -121,38 +117,9 @@ impl TestApi {
     /// Make `secret`'s pubkey a tenant without reaching Stripe.
     pub async fn create_tenant(&self, secret: &SecretKey) -> String {
         let pubkey = secret.public_key().to_hex();
-        tenants::insert_tenant(
-            self.core.db.pool(),
-            &Tenant {
-                pubkey: pubkey.clone(),
-                return_url: "http://localhost/account".to_string(),
-                created_at: self.core.clock.now(),
-                stripe_customer_id: format!("cus_{}", &pubkey[..12]),
-                ..Default::default()
-            },
-        )
-        .await
-        .expect("failed to insert tenant");
+        testing::insert_tenant(&self.core, &pubkey).await;
         pubkey
     }
-}
-
-/// A NIP-98 `Authorization` header signed by `secret`.
-pub fn sign_http_auth(secret: &SecretKey, url: &str, method: &str, created_at: i64) -> String {
-    let hashed = EventContent::new()
-        .with_tags(Tags::new().add("u", [url]).add("method", [method]))
-        .with_kind(27235)
-        .with_created_at(created_at)
-        .with_pubkey(secret.public_key())
-        .with_id();
-    let sig = secret.sign(hashed.id.as_bytes());
-    let event = hashed.with_sig(sig);
-
-    format!(
-        "Nostr {}",
-        base64::engine::general_purpose::STANDARD
-            .encode(serde_json::to_string(&event).expect("unserializable event"))
-    )
 }
 
 /// The keys of a JSON object, sorted.

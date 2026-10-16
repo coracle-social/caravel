@@ -48,7 +48,9 @@ pub async fn get_blob(
 pub async fn record_upload(
     conn: &mut PgConnection,
     relay_id: &str,
-    blob: &Blob,
+    sha256: &str,
+    content_type: &str,
+    size: i64,
     pubkey: &str,
     now: i64,
 ) -> Result<Blob> {
@@ -57,9 +59,9 @@ pub async fn record_upload(
          ON CONFLICT (relay_id, sha256) DO NOTHING",
     )
     .bind(relay_id)
-    .bind(&blob.sha256)
-    .bind(&blob.content_type)
-    .bind(blob.size)
+    .bind(sha256)
+    .bind(content_type)
+    .bind(size)
     .bind(now)
     .execute(&mut *conn)
     .await?;
@@ -69,13 +71,13 @@ pub async fn record_upload(
          ON CONFLICT DO NOTHING",
     )
     .bind(relay_id)
-    .bind(&blob.sha256)
+    .bind(sha256)
     .bind(pubkey)
     .bind(now)
     .execute(&mut *conn)
     .await?;
 
-    get_blob(conn, relay_id, &blob.sha256)
+    get_blob(conn, relay_id, sha256)
         .await?
         .ok_or_else(|| crate::Error::internal("blob missing after upload"))
 }

@@ -4,9 +4,11 @@ import RelayForm, { type RelayFormValues } from "@/shared/components/RelayForm"
 import BackLink from "@/shared/components/BackLink"
 import PageContainer from "@/shared/components/PageContainer"
 import ResourceState from "@/shared/components/ResourceState"
+import { updateRelay } from "@/shared/lib/api"
+import { useRelay } from "@/shared/lib/relays"
 import useMinLoading from "@/shared/lib/useMinLoading"
-import { updateRelayById, useRelay } from "@/shared/lib/hooks"
 
+// Editing a relay's name, subdomain, icon and description, returning under `basePath`.
 export default function RelayEdit(props: { basePath?: string; title?: string }) {
   const basePath = () => props.basePath ?? "/relays"
   const navigate = useNavigate()
@@ -16,7 +18,7 @@ export default function RelayEdit(props: { basePath?: string; title?: string }) 
   const loading = useMinLoading(() => relay.loading)
 
   async function handleSubmit(values: RelayFormValues) {
-    await updateRelayById(relayId(), {
+    await updateRelay(relayId(), {
       subdomain: values.subdomain,
       info_name: values.info_name.trim(),
       info_icon: values.info_icon.trim(),
@@ -33,7 +35,7 @@ export default function RelayEdit(props: { basePath?: string; title?: string }) 
       <Show when={relay() && !loading()}>
         <RelayForm
           initialValues={relay()!}
-          zooidDomain={relay()!.zooid_domain}
+          domain={relay()!.zooid_domain}
           showPlanSelector={false}
           onSubmit={handleSubmit}
           submitLabel="Save Changes"

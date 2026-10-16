@@ -1,20 +1,20 @@
 import { A } from "@solidjs/router"
-import { createMemo, createSignal, For, Show } from "solid-js"
-import { getProfilePicture } from "applesauce-core/helpers/profile"
+import { createMemo, createResource, createSignal, For, Show } from "solid-js"
 import PageContainer from "@/shared/components/PageContainer"
 import ResourceState from "@/shared/components/ResourceState"
 import SearchInput from "@/shared/components/SearchInput"
 import useMinLoading from "@/shared/lib/useMinLoading"
-import { useAdminTenants, useProfileMetadataMap } from "@/shared/lib/hooks"
-import { tenantStatus } from "@/shared/lib/api"
-import { StatusBadge } from "@/shared/components/relay/RelayCardHeader"
+import { profileName, useProfileMetadataMap } from "@/shared/lib/profiles"
+import { listTenants, tenantStatus } from "@/shared/lib/api"
+import Avatar from "@/shared/components/Avatar"
+import StatusBadge from "@/shared/components/StatusBadge"
 import CopyNpub from "@/shared/components/CopyNpub"
 import { shortenNpub } from "@/shared/lib/pubkey"
 import { fuzzySearch } from "@/shared/lib/search"
 
 export default function AdminTenantList() {
   const [query, setQuery] = createSignal("")
-  const [tenants] = useAdminTenants()
+  const [tenants] = createResource(listTenants)
   const profiles = useProfileMetadataMap(() => (tenants() ?? []).map((t) => t.pubkey))
   const loading = useMinLoading(() => tenants.loading)
 
@@ -23,14 +23,12 @@ export default function AdminTenantList() {
       const profile = profiles()[tenant.pubkey]
       return {
         ...tenant,
-        profileName: profile?.name || profile?.display_name,
+        profileName: profileName(profile),
         profileAbout: profile?.about,
         profileNip05: profile?.nip05,
       }
     })
-    const q = query().trim()
-    if (!q) return list
-    return fuzzySearch(list, ["pubkey", "status", "profileName", "profileAbout", "profileNip05"], q)
+    return fuzzySearch(list, ["pubkey", "status", "profileName", "profileAbout", "profileNip05"], query().trim())
   })
 
   return (
@@ -46,20 +44,15 @@ export default function AdminTenantList() {
             <For each={filtered()}>
               {(tenant) => {
                 const profile = () => profiles()[tenant.pubkey]
-                const profileName = () => profile()?.name || profile()?.display_name
+                const name = () => profileName(profile())
                 return (
                   <li>
                     <A href={`/admin/tenants/${tenant.pubkey}`} class="block border border-gray-200 rounded-lg p-4 bg-white hover:border-gray-300">
                       <div class="flex items-start justify-between gap-3">
                         <div class="min-w-0 flex items-start gap-3">
-                          <Show
-                            when={getProfilePicture(profile())}
-                            fallback={<div class="h-10 w-10 rounded-full bg-gray-200 flex items-center justify-center text-gray-500 text-xs">{(profileName() || tenant.pubkey).slice(0, 1).toUpperCase()}</div>}
-                          >
-                            <img src={getProfilePicture(profile())} alt="Profile" class="h-10 w-10 rounded-full object-cover" />
-                          </Show>
+                          <Avatar profile={profile()} pubkey={tenant.pubkey} alt="Profile" class="h-10 w-10" fallbackClass="bg-gray-200 text-gray-500 text-xs" />
                           <div class="min-w-0">
-                            <p class="font-medium text-gray-900 truncate">{profileName() || shortenNpub(tenant.pubkey)}</p>
+                            <p class="font-medium text-gray-900 truncate">{name() || shortenNpub(tenant.pubkey)}</p>
                             <p class="-mt-1">
                               <CopyNpub pubkey={tenant.pubkey} class="text-xs text-gray-500" />
                             </p>

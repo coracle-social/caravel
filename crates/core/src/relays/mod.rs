@@ -6,8 +6,8 @@ pub mod activity;
 use serde::{Deserialize, Serialize};
 use sqlx::{PgConnection, PgExecutor};
 
-use crate::error::Result;
-use crate::flag;
+use crate::error::{Error, Result};
+use crate::{flag, plans};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
 #[serde(rename_all = "lowercase")]
@@ -101,9 +101,10 @@ pub struct Relay {
     pub livekit_enabled: bool,
     #[serde(with = "flag")]
     pub push_enabled: bool,
-    /// A tenant's own domain for the relay, or empty. It serves the relay once DNS
-    /// verification sees it pointing at the canonical host.
-    pub custom_domain: String,
+    /// A tenant's own domain for the relay, if they set one. It serves the relay
+    /// once DNS verification sees it pointing at the canonical host.
+    #[serde(with = "crate::blank")]
+    pub custom_domain: Option<String>,
     #[serde(with = "flag")]
     pub custom_domain_verified: bool,
     /// What a membership costs in cents per `member_interval`, or 0 if joining is
@@ -122,15 +123,53 @@ pub struct Relay {
     pub created_at: i64,
 }
 
+/// The host a url or `Host` header names, lowercased, without scheme, port, path
+/// or trailing dot.
+pub fn url_host(url: &str) -> String {
+    let rest = url.split_once("://").map_or(url, |(_, rest)| rest);
+    let authority = rest.split('/').next().unwrap_or_default();
+    let host = authority
+        .rsplit_once(':')
+        .map_or(authority, |(host, port)| {
+            if port.chars().all(|c| c.is_ascii_digit()) {
+                host
+            } else {
+                authority
+            }
+        });
+    host.trim_end_matches('.').to_lowercase()
+}
+
+/// What anyone may see of a relay: where it is and how it describes itself.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RelayProfile {
+    pub relay_id: String,
+    pub host: String,
+    /// Its name, or its host if it has none.
+    pub name: String,
+    pub icon: String,
+    pub description: String,
+}
+
 impl Relay {
     /// The host the relay answers on: its verified custom domain if it has one,
     /// otherwise its canonical host.
     pub fn host(&self) -> String {
-        if self.custom_domain_verified && !self.custom_domain.is_empty() {
-            self.custom_domain.clone()
-        } else {
-            self.canonical_host()
+        match &self.custom_domain {
+            Some(domain) if self.custom_domain_verified => domain.clone(),
+            _ => self.canonical_host(),
         }
+    }
+
+    /// Every host the relay answers on: its canonical host, its verified custom
+    /// domain, and the hosts that redirect to it.
+    pub fn hosts(&self) -> Vec<String> {
+        let mut hosts = vec![self.canonical_host()];
+        if self.host() != hosts[0] {
+            hosts.push(self.host());
+        }
+        hosts.extend(self.redirect_from.iter().cloned());
+        hosts
     }
 
     /// `<subdomain>.<domain>`, which the relay always answers on and which a custom
@@ -143,9 +182,27 @@ impl Relay {
         self.purged_at.is_some()
     }
 
+    /// Refuse to act on the relay once it is purged.
+    pub fn require_unpurged(&self) -> Result<()> {
+        if self.is_purged() {
+            return Err(Error::conflict("relay-is-purged", "relay has been purged"));
+        }
+        Ok(())
+    }
+
+    /// Whether the platform serves the relay: it is active and not purged.
+    pub fn is_served(&self) -> bool {
+        self.status == RelayStatus::Active && !self.is_purged()
+    }
+
     /// Whether the relay sells memberships: it has a price and is still served.
     pub fn charges_members(&self) -> bool {
-        self.member_price > 0 && self.status == RelayStatus::Active && !self.is_purged()
+        self.member_price > 0 && self.is_served()
+    }
+
+    /// The most members the relay's plan allows, if it has a limit.
+    pub fn member_limit(&self) -> Option<i64> {
+        plans::get_plan(&self.plan_id).and_then(|plan| plan.members)
     }
 
     /// What to call the relay in prose, falling back to its host.
@@ -154,6 +211,16 @@ impl Relay {
             self.host()
         } else {
             self.info_name.clone()
+        }
+    }
+
+    pub fn profile(&self) -> RelayProfile {
+        RelayProfile {
+            relay_id: self.id.clone(),
+            host: self.host(),
+            name: self.display_name(),
+            icon: self.info_icon.clone(),
+            description: self.info_description.clone(),
         }
     }
 }
@@ -191,6 +258,22 @@ pub async fn get_relay(db: impl PgExecutor<'_>, id: &str) -> Result<Option<Relay
     )
 }
 
+/// A relay that must exist.
+pub async fn require_relay(db: impl PgExecutor<'_>, id: &str) -> Result<Relay> {
+    get_relay(db, id)
+        .await?
+        .ok_or(Error::NotFound("relay not found"))
+}
+
+/// Lock a relay's row until the transaction ends, which serializes its joins.
+pub async fn lock_relay(conn: &mut PgConnection, id: &str) -> Result<()> {
+    sqlx::query("SELECT 1 FROM relay WHERE id = $1 FOR UPDATE")
+        .bind(id)
+        .execute(conn)
+        .await?;
+    Ok(())
+}
+
 /// The live relay a host belongs to: as its canonical host, its verified custom
 /// domain, or one of the hosts that redirect to it.
 pub async fn get_relay_by_host(db: impl PgExecutor<'_>, host: &str) -> Result<Option<Relay>> {
@@ -215,7 +298,7 @@ pub async fn list_relays_with_custom_domain(
     verified: bool,
 ) -> Result<Vec<Relay>> {
     Ok(sqlx::query_as::<_, Relay>(&format!(
-        "{SELECT_RELAY} WHERE custom_domain <> '' AND custom_domain_verified = $1 AND purged_at IS NULL"
+        "{SELECT_RELAY} WHERE custom_domain IS NOT NULL AND custom_domain_verified = $1 AND purged_at IS NULL"
     ))
     .bind(verified)
     .fetch_all(db)
@@ -267,10 +350,9 @@ pub async fn insert_relay(conn: &mut PgConnection, relay: &Relay) -> Result<()> 
 }
 
 /// Write a relay's settings. Its redirect hosts, status, keys and purge marker
-/// have writers of their own. Verification of its custom
-/// domain is kept unless the custom domain or the domain it must point under
-/// changed, comparing against the stored row so a verification that landed since
-/// the relay was read survives.
+/// have writers of their own. Verification of its custom domain is kept unless
+/// the custom domain or the domain it must point under changed, comparing against
+/// the stored row so a verification that landed since the relay was read survives.
 pub async fn update_relay(conn: &mut PgConnection, relay: &Relay) -> Result<()> {
     sqlx::query(
         "UPDATE relay SET
@@ -281,8 +363,10 @@ pub async fn update_relay(conn: &mut PgConnection, relay: &Relay) -> Result<()> 
             groups_enabled = $12, management_enabled = $13, members_can_invite = $14,
             blossom_enabled = $15, livekit_enabled = $16, push_enabled = $17,
             custom_domain = $18,
-            custom_domain_verified = custom_domain_verified AND custom_domain = $18 AND domain = $3
-                AND subdomain = $2,
+            custom_domain_verified = COALESCE(
+                custom_domain_verified AND custom_domain = $18 AND domain = $3 AND subdomain = $2,
+                false
+            ),
             policy_anonymous_read = $19,
             blossom_authenticated_read = $20, member_price = $21, member_interval = $22
          WHERE id = $1",
@@ -402,6 +486,16 @@ pub async fn add_host_redirect(
 pub async fn remove_host_redirects(db: impl PgExecutor<'_>, hosts: &[String]) -> Result<()> {
     sqlx::query("DELETE FROM host_redirect WHERE host = ANY($1)")
         .bind(hosts)
+        .execute(db)
+        .await?;
+    Ok(())
+}
+
+/// Record that a purged relay's data was erased.
+pub async fn set_relay_erased_at(db: impl PgExecutor<'_>, id: &str, now: i64) -> Result<()> {
+    sqlx::query("UPDATE relay SET erased_at = $2 WHERE id = $1")
+        .bind(id)
+        .bind(now)
         .execute(db)
         .await?;
     Ok(())

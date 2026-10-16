@@ -1,6 +1,6 @@
 ---
 name: memberships
-description: How caravel sells memberships of relays that charge for them — member pricing on the relay, tenants' Stripe Connect payout accounts and the platform's fee, member checkouts and renewals, invites bought without an account and bound to whoever joins with them, how a membership drives the relay's access list, seats under the plan's member limit, lapses with a renewal notice, releasing memberships when a relay stops charging, the sweep that keeps everything in step with Stripe, NIP-11's payment fields, and the member API the portal uses. Use it whenever working on the core's memberships or payouts modules, the API's member routes, or anything about paid access to a relay.
+description: How caravel sells memberships of relays that charge for them — member pricing on the relay, tenants' Stripe Connect payout accounts and the platform's fee, member checkouts and renewals, invites bought without an account and bound to whoever joins with them, how a membership drives the relay's access list, seats under the plan's member limit, lapses with a renewal notification, releasing memberships when a relay stops charging, the sweep that keeps everything in step with Stripe, NIP-11's payment fields, and the member API the portal uses. Use it whenever working on the core's memberships or payouts modules, the API's member routes, or anything about paid access to a relay.
 ---
 
 # Memberships
@@ -15,7 +15,7 @@ The test inventory in [references/merchant-tests.md](references/merchant-tests.m
 
 A membership is pending until paid, then active, or canceled once its member stops renewal (it keeps access until its paid period ends), and finally lapsed, which is history: paying again opens a new membership. A relay and pubkey hold one live membership at a time.
 
-A membership drives the relay's access list in the same transaction that changes it. Paying admits the member, recorded as a member by payment, and clears any lapse notice. A lapse removes the member only if payment is how they got in, so someone added by hand or let in by a claim keeps their place.
+A membership drives the relay's access list in the same transaction that changes it. Paying admits the member, recorded as a member by payment, and clears any lapse notification. A lapse removes the member only if payment is how they got in, so someone added by hand or let in by a claim keeps their place.
 
 ## Invites
 
@@ -33,4 +33,4 @@ When a relay stops charging (its price set to zero, paused, or purged), the swee
 
 ## The member API
 
-The member portal and any other client use the API's member routes, signed in with a session token like every other API route: the caller's memberships, a relay's offer, checkout, settling a checkout on return, canceling renewal, and buying and settling invites. A checkout returns to the portal on the relay's own host, carrying the session for the page to settle and any `return_url` the client asked to be sent back to.
+The member portal and any other client use the API's member routes, signed in with a session token like every other API route: the caller's memberships, a relay's offer, checkout, settling a checkout on return, canceling renewal, and buying and settling invites. A checkout returns to the portal on the relay's own host, carrying the Checkout session for the page to settle and any `return_url` the client asked to be sent back to.

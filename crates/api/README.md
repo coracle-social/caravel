@@ -4,7 +4,7 @@ The headless JSON API, which the platform's dashboards, relays' member portals a
 
 Responses wrap their payload as `{"data": ..., "code": "ok"}`, and errors as `{"error": "...", "code": "..."}`. A `401` means the caller isn't authenticated, `403` that they may not do this, `404` that the thing named doesn't exist, `400` that it is in a state that doesn't allow the request (such as `relay-is-purged`), and `422` that the input isn't acceptable (such as `subdomain-exists`).
 
-Boolean relay settings are written and read as `0` or `1`, and a relay's domain is carried as `zooid_domain`, as clients from before the monolith expect.
+Boolean relay settings are written and read as `0` or `1`, a relay's domain is carried as `zooid_domain`, and a relay without a custom domain has `custom_domain` `""`, as clients from before the monolith expect.
 
 ## Authentication
 
@@ -26,8 +26,8 @@ Public:
 - `GET /domains/check?domain=` — `200` if the platform serves the host, for on-demand TLS
 - `GET /relays/{id}/offer` — what a relay sells memberships for: `{relay_id, host, name, icon, description, price, interval, accepting_payment}`, with `price` in cents per `interval` (`month` or `year`); `404` for a relay that doesn't sell them
 - `POST /relays/{id}/invites` — `{return_url?}`: buy an invite, for someone who may have no Nostr account yet, returning `{url}`, a Stripe Checkout url
-- `GET /invites/{code}` — `{offer, status, claimed, invite_url}`; `invite_url` is the Flotilla link that accepts the invite, while it is paid for and unused
-- `POST /invites/{code}/reconcile` — `{session}`: settle the checkout the buyer came back from, returning `{paid}`
+- `GET /invites/{code}` — `{offer, status, bound, invite_url}`; `bound` says whether someone joined with it, and `invite_url` is the Flotilla link that accepts the invite, while it is paid for and unbound
+- `POST /invites/{code}/reconcile` — `{checkout}`: settle the checkout the buyer came back from, returning `{paid}`
 
 Any authenticated pubkey:
 
@@ -35,7 +35,7 @@ Any authenticated pubkey:
 - `GET /account` — `{pubkey, memberships}`, each as `{offer, membership: {status, current_period_end}}`
 - `GET /relays/{id}/membership` — `{membership}`, the caller's, or null
 - `POST /relays/{id}/membership/checkout` — `{return_url?}`: join, or renew, returning `{url}`, a Stripe Checkout url
-- `POST /relays/{id}/membership/reconcile` — `{session}`: settle the checkout the caller came back from, returning `{paid}`
+- `POST /relays/{id}/membership/reconcile` — `{checkout}`: settle the checkout the caller came back from, returning `{paid}`
 - `POST /relays/{id}/membership/cancel` — stop renewing; access lasts until the paid period ends
 - `POST /tenants` — become a tenant, idempotently: `{return_url}`, where the robot's DMs link to
 
@@ -55,7 +55,7 @@ Tenants:
 - `GET /relays/{id}/members` — `{members}`, the member pubkeys, the owner among them
 - `PUT /relays/{id}/members/{pubkey}`, `DELETE /relays/{id}/members/{pubkey}` — add or remove a member; the owner can't be removed
 - `GET /relays/{id}/memberships` — the relay's paid memberships, newest first
-- `GET /relays/{id}/activity`
+- `GET /relays/{id}/activity` — `{activity}`, newest first, each `{id, tenant_pubkey, relay_id, activity_type, snapshot: {plan_id, status}, created_at, billed_at}`
 - `POST /relays/{id}/deactivate`, `/reactivate`, `/purge` — a purged relay's data is erased soon after
 - `GET /relays/{id}/export` — the relay's events as JSONL
 - `POST /relays/{id}/import` — a JSONL body of events, returning `{imported, invalid, skipped, rooms_rebuilt, problems}`

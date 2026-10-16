@@ -1,13 +1,14 @@
 import { createSignal, onCleanup, Show } from "solid-js"
 import QRCode from "qrcode"
 import { ExtensionSigner, NostrConnectSigner, type ISigner } from "applesauce-signers"
-import { NOSTR_CONNECT_RELAYS, signInWith } from "@/portal/lib/nostr"
+import { formatError } from "@/shared/lib/format"
+import { createSession } from "@/shared/lib/http"
+import { NOSTR_CONNECT_RELAYS } from "@/portal/lib/nostr"
 import { signIn } from "@/portal/lib/session"
 
 const PERMISSIONS = NostrConnectSigner.buildSigningPermissions([27235])
 
-// Sign in with Nostr by signing one request, from a browser extension or a
-// remote signer. Nothing is kept but the token it buys.
+// Signing in by signing one request with an extension or a remote signer, keeping only the session it buys.
 export default function SignIn() {
   const [remote, setRemote] = createSignal(false)
   const [uri, setUri] = createSignal("")
@@ -28,9 +29,9 @@ export default function SignIn() {
     setBusy(true)
     setError("")
     try {
-      signIn((await signInWith(using)).token)
+      signIn((await createSession(using)).token)
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Signing in failed")
+      setError(formatError(e, "Signing in failed"))
     } finally {
       setBusy(false)
     }
@@ -50,7 +51,7 @@ export default function SignIn() {
       await signer.waitForSigner(abort.signal)
       await complete(signer)
     } catch (e) {
-      if (!abort.signal.aborted) setError(e instanceof Error ? e.message : "Your signer didn't connect")
+      if (!abort.signal.aborted) setError(formatError(e, "Your signer didn't connect"))
     }
   }
 
@@ -62,7 +63,7 @@ export default function SignIn() {
       signer = await NostrConnectSigner.fromBunkerURI(bunker().trim(), { permissions: PERMISSIONS })
       await complete(signer)
     } catch (e) {
-      setError(e instanceof Error ? e.message : "That bunker link didn't work")
+      setError(formatError(e, "That bunker link didn't work"))
       setBusy(false)
     }
   }

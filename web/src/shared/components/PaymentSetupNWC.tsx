@@ -1,20 +1,8 @@
 import { PaymentSetupShell, PaymentSetupBody, SetupFooter, NwcSetupBody } from "@/shared/components/PaymentSetupShell"
-import { useNwcSetup } from "@/shared/lib/usePaymentSetup"
+import { useNwcSetup } from "@/shared/lib/useNwcSetup"
 
-type PaymentSetupNWCProps = {
-  open: boolean
-  onClose: () => void
-  onSaved?: () => void
-  // The tenant already has a wallet connected, so the copy frames this as
-  // replacing it (the stored URL is write-only and never sent back).
-  isUpdate?: boolean
-}
-
-// Focused Lightning/NWC connect dialog. PaymentSetup offers both methods behind
-// tabs for the general setup flow; here the entry point is explicitly "connect a
-// Lightning wallet", so there's no method switcher — the card path lives on its
-// own row that redirects to Stripe.
-export default function PaymentSetupNWC(props: PaymentSetupNWCProps) {
+// Connecting a Lightning wallet. `isUpdate` replaces one, whose url is never sent back.
+export default function PaymentSetupNWC(props: { open: boolean; onClose: () => void; onSaved?: () => void; isUpdate?: boolean }) {
   const nwc = useNwcSetup(() => props.onSaved?.())
 
   function handleClose() {

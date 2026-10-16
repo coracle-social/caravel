@@ -1,10 +1,11 @@
 import { A } from "@solidjs/router"
 import { Show } from "solid-js"
-import { getProfilePicture } from "applesauce-core/helpers/profile"
-import { relayStatus, type Relay } from "@/shared/lib/api"
-import { PlanBadge, StatusBadge } from "@/shared/components/relay/RelayCardHeader"
+import { canonicalHost, relayName, relayStatus, type Relay } from "@/shared/lib/api"
+import { PlanBadge } from "@/shared/components/relay/RelayCardHeader"
+import Avatar from "@/shared/components/Avatar"
 import CopyNpub from "@/shared/components/CopyNpub"
-import { useProfileMetadata } from "@/shared/lib/hooks"
+import StatusBadge from "@/shared/components/StatusBadge"
+import { profileName, useProfileMetadata } from "@/shared/lib/profiles"
 
 type RelayListItemProps = {
   relay: Relay
@@ -12,10 +13,8 @@ type RelayListItemProps = {
   showTenant?: boolean
 }
 
+// A relay in a list. A list that shows tenants fetches their profiles itself.
 export default function RelayListItem(props: RelayListItemProps) {
-  // Resolve the owning tenant's profile from the event store. The list that
-  // passes `showTenant` is responsible for priming these profiles in one batch,
-  // so this subscription does not prime on its own.
   const metadata = useProfileMetadata(() => (props.showTenant ? props.relay.tenant_pubkey : undefined), { prime: false })
 
   return (
@@ -23,25 +22,16 @@ export default function RelayListItem(props: RelayListItemProps) {
       <A href={props.href} class="block rounded-lg border border-gray-200 bg-white p-4 hover:border-gray-300">
         <div class="flex items-center justify-between gap-3">
           <div class="min-w-0">
-            <p class="font-medium text-gray-900">{props.relay.info_name || props.relay.subdomain}</p>
-            <p class="text-xs text-gray-500">{props.relay.subdomain}.{props.relay.zooid_domain}</p>
+            <p class="font-medium text-gray-900">{relayName(props.relay)}</p>
+            <p class="text-xs text-gray-500">{canonicalHost(props.relay)}</p>
             <Show when={props.showTenant}>
               <div class="mt-1.5 flex items-center gap-2">
+                <Avatar profile={metadata()} pubkey={props.relay.tenant_pubkey} class="h-5 w-5 flex-shrink-0" fallbackClass="bg-gray-200 text-[10px] text-gray-500" />
                 <Show
-                  when={getProfilePicture(metadata())}
-                  fallback={
-                    <div class="h-5 w-5 flex-shrink-0 rounded-full bg-gray-200 flex items-center justify-center text-[10px] text-gray-500">
-                      {((metadata()?.name || metadata()?.display_name) || props.relay.tenant_pubkey).slice(0, 1).toUpperCase()}
-                    </div>
-                  }
-                >
-                  <img src={getProfilePicture(metadata())} alt="" class="h-5 w-5 flex-shrink-0 rounded-full object-cover" />
-                </Show>
-                <Show
-                  when={metadata()?.name || metadata()?.display_name}
+                  when={profileName(metadata())}
                   fallback={<CopyNpub pubkey={props.relay.tenant_pubkey} class="text-xs text-gray-500" />}
                 >
-                  <span class="text-xs text-gray-500 truncate">{metadata()?.name || metadata()?.display_name}</span>
+                  {(name) => <span class="text-xs text-gray-500 truncate">{name()}</span>}
                 </Show>
               </div>
             </Show>

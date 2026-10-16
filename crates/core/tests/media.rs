@@ -31,7 +31,18 @@ async fn upload(core: &Core, relay_id: &str, blob: &Blob, pubkey: &str) -> Resul
     let now = core.clock.now();
     Ok(core
         .db
-        .with_tx(async |conn| media::record_upload(conn, relay_id, blob, pubkey, now).await)
+        .with_tx(async |conn| {
+            media::record_upload(
+                conn,
+                relay_id,
+                &blob.sha256,
+                &blob.content_type,
+                blob.size,
+                pubkey,
+                now,
+            )
+            .await
+        })
         .await?)
 }
 
@@ -139,6 +150,17 @@ async fn livekit_rooms_lead_with_their_relay() {
         calls::split_livekit_room(&name),
         Some(("relay1", "room:with:colons"))
     );
+}
+
+#[test]
+fn participants_are_named_once_by_pubkey() {
+    let pubkey = "a".repeat(64);
+    let identities = vec![
+        calls::participant_identity(&pubkey),
+        calls::participant_identity(&pubkey),
+        "garbage".to_string(),
+    ];
+    assert_eq!(calls::participant_pubkeys(&identities), vec![pubkey]);
 }
 
 #[tokio::test]

@@ -11,7 +11,7 @@ use caravel_adapters::{bitcoin, wallet::Wallet};
 use crate::Core;
 use crate::bus::Change;
 use crate::error::{Error, Result};
-use crate::plans::{self, GB, SECONDS_PER_HOUR};
+use crate::plans::{self, GB, Plan, SECONDS_PER_HOUR};
 use crate::relays::activity::{self, Activity, ActivityType, Snapshot};
 use crate::relays::{self, RelayStatus};
 use crate::tenants::{self, Tenant};
@@ -27,6 +27,17 @@ const MANUAL_PAYMENT_DM_INTERVAL_SECS: i64 = 12 * 24 * 60 * 60;
 const MANUAL_PAYMENT_DM: &str = "Payment is due for your relay subscription. Open the link below to review the invoice and pay by Lightning or card:";
 const CHURN_DM: &str = "Your relay subscription is past due, so your relays have been paused. You can restore service any time by adding a payment method or paying an invoice from your dashboard:";
 
+/// How far collecting an open invoice goes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Collection {
+    /// Only settle what the tenant already paid out of band.
+    Settle,
+    /// Also charge the tenant's wallet, then their saved card.
+    Charge,
+    /// Also send a payment reminder when neither charge goes through.
+    ChargeAndRemind,
+}
+
 /// Sample usage, then reconcile and collect every tenant's subscription.
 pub async fn reconcile_subscriptions(core: &Core) -> Result<()> {
     // Sample first, so a period closing on this tick rolls up a fresh reading.
@@ -41,7 +52,8 @@ pub async fn reconcile_subscriptions(core: &Core) -> Result<()> {
     );
 
     for tenant in tenants {
-        if let Err(error) = reconcile_subscription(core, &tenant, true).await {
+        if let Err(error) = reconcile_subscription(core, &tenant, Collection::ChargeAndRemind).await
+        {
             tracing::error!(tenant = %tenant.pubkey, error = ?error, "failed to reconcile subscription");
         }
     }
@@ -52,13 +64,12 @@ pub async fn reconcile_subscriptions(core: &Core) -> Result<()> {
 /// Bring a tenant's billing up to date: re-activate them if they churned and came
 /// back, fold billable activity into line items, bill the closed period's overage,
 /// renew the current period, claim outstanding items onto an invoice, churn them
-/// if an invoice is past due, and otherwise try to collect. Payment is only
-/// attempted with `attempt_payment`, but invoices already paid out of band are
-/// always settled.
+/// if an invoice is past due, and otherwise collect each open invoice as far as
+/// `collection` goes.
 pub async fn reconcile_subscription(
     core: &Core,
     tenant: &Tenant,
-    attempt_payment: bool,
+    collection: Collection,
 ) -> Result<()> {
     // A ban forgave the tenant's charges and purged its relays, so nothing is owed.
     if tenant.banned_at.is_some() {
@@ -69,8 +80,7 @@ pub async fn reconcile_subscription(
     let mut activities =
         activity::list_billable_activity_for_tenant(core.db.pool(), &tenant.pubkey).await?;
 
-    // A churned tenant with new billable activity is using the service again.
-    // Restoring their relays records activity of its own, priced in this pass.
+    // A churned tenant with new activity is back, and restoring their relays is priced now.
     if tenant.churned_at.is_some() && !activities.is_empty() {
         activities.extend(reactivate_tenant(core, &tenant.pubkey).await?);
         tenant.churned_at = None;
@@ -90,15 +100,14 @@ pub async fn reconcile_subscription(
         reconcile_activity(core, &tenant, &activity).await?;
     }
 
-    // Admins are comped: their invoices are cut, so the ledger shows their usage,
-    // but issued paid rather than collected.
-    if let Some(period) = BillingPeriod::at(tenant.billing_anchor, core.clock.now()) {
+    // Admins' invoices are cut, so the ledger shows their usage, but issued paid.
+    let now = core.clock.now();
+    if let Some(period) = BillingPeriod::at(tenant.billing_anchor, now) {
         // The closed period's overage lands on the same invoice as the renewal.
         reconcile_overage(core, &tenant, &period).await?;
         reconcile_renewal(core, &tenant, &period).await?;
 
         let comped = core.config.is_admin(&tenant.pubkey);
-        let now = core.clock.now();
         core.db
             .with_tx(async |conn| {
                 tenants::lock_tenant(conn, &tenant.pubkey).await?;
@@ -120,12 +129,12 @@ pub async fn reconcile_subscription(
         return Ok(());
     }
 
-    if attempt_payment {
+    if collection != Collection::Settle {
         tenant.stripe_payment_method_id = sync_stripe_customer(core, &tenant).await;
     }
 
     for invoice in &invoices {
-        reconcile_payments(core, &tenant, invoice, attempt_payment, true).await?;
+        reconcile_payments(core, &tenant, invoice, collection).await?;
     }
 
     Ok(())
@@ -134,7 +143,7 @@ pub async fn reconcile_subscription(
 /// Price one activity and claim it, in one transaction so it is billed once.
 /// Activity that costs nothing, such as a change on a free plan, is claimed too.
 async fn reconcile_activity(core: &Core, tenant: &Tenant, activity: &Activity) -> Result<()> {
-    let Snapshot::Relay { status, .. } = &*activity.snapshot;
+    let status = &activity.snapshot.status;
 
     let item = match activity.activity_type {
         ActivityType::CreateRelay => prorated_item(tenant, activity, 1, "New relay created")?,
@@ -142,8 +151,7 @@ async fn reconcile_activity(core: &Core, tenant: &Tenant, activity: &Activity) -
             prorated_item(tenant, activity, 1, "Relay reactivated")?
         }
         ActivityType::DeactivateRelay => prorated_item(tenant, activity, -1, "Relay deactivated")?,
-        // Only purging an active relay is credited: the snapshot holds the status it
-        // was purged from, and an inactive or delinquent relay was already not billed.
+        // Only an active relay's purge is credited; an inactive or delinquent one wasn't billed.
         ActivityType::PurgeRelay if *status == RelayStatus::Active => {
             prorated_item(tenant, activity, -1, "Relay purged")?
         }
@@ -172,28 +180,37 @@ fn prorated_item(
     sign: i64,
     description: &str,
 ) -> Result<Option<InvoiceItem>> {
-    let Snapshot::Relay { plan: plan_id, .. } = &*activity.snapshot;
-    let plan = plans::get_plan(plan_id)
-        .ok_or_else(|| Error::internal(format!("unknown plan {plan_id}")))?;
-    if plan.amount <= 0 {
+    let plan_id = &activity.snapshot.plan_id;
+    let plan = recorded_plan(plan_id)?;
+    if !plan.is_paid() {
         return Ok(None);
     }
 
-    let period = BillingPeriod::at(tenant.billing_anchor, activity.created_at)
-        .ok_or_else(|| Error::internal("billing anchor must be set before pricing activity"))?;
+    let period = activity_period(tenant, activity)?;
 
     Ok(Some(InvoiceItem {
         id: uuid::Uuid::new_v4().to_string(),
         invoice_id: None,
         activity_id: Some(activity.id.clone()),
         tenant_pubkey: activity.tenant_pubkey.clone(),
-        relay_id: activity.resource_id.clone(),
+        relay_id: activity.relay_id.clone(),
         plan_id: plan.id,
         amount: sign * period.prorate(plan.amount, activity.created_at),
         description: description.to_string(),
         created_at: activity.created_at,
         voided_at: None,
     }))
+}
+
+/// The plan an activity recorded, which billing can't price if the catalog lost it.
+fn recorded_plan(id: &str) -> Result<Plan> {
+    plans::get_plan(id).ok_or_else(|| Error::internal(format!("unknown plan {id}")))
+}
+
+/// The period an activity fell in, by the tenant's billing anchor.
+fn activity_period(tenant: &Tenant, activity: &Activity) -> Result<BillingPeriod> {
+    BillingPeriod::at(tenant.billing_anchor, activity.created_at)
+        .ok_or_else(|| Error::internal("billing anchor must be set before pricing activity"))
 }
 
 /// The prorated difference a plan change makes, between the plan this update
@@ -204,26 +221,20 @@ async fn plan_change_item(
     tenant: &Tenant,
     activity: &Activity,
 ) -> Result<Option<InvoiceItem>> {
-    let Snapshot::Relay {
-        plan: new_plan_id, ..
-    } = &*activity.snapshot;
+    let new_plan_id = &activity.snapshot.plan_id;
     let previous = activity::get_previous_relay_activity(core.db.pool(), activity)
         .await?
         .ok_or_else(|| Error::internal("no previous plan found for relay update activity"))?;
-    let Snapshot::Relay {
-        plan: old_plan_id, ..
-    } = &*previous.snapshot;
+    let old_plan_id = &previous.snapshot.plan_id;
 
     if old_plan_id == new_plan_id {
         return Ok(None);
     }
 
-    let unknown = |id: &str| Error::internal(format!("unknown plan {id}"));
-    let new_plan = plans::get_plan(new_plan_id).ok_or_else(|| unknown(new_plan_id))?;
-    let old_plan = plans::get_plan(old_plan_id).ok_or_else(|| unknown(old_plan_id))?;
+    let new_plan = recorded_plan(new_plan_id)?;
+    let old_plan = recorded_plan(old_plan_id)?;
 
-    let period = BillingPeriod::at(tenant.billing_anchor, activity.created_at)
-        .ok_or_else(|| Error::internal("billing anchor must be set before pricing activity"))?;
+    let period = activity_period(tenant, activity)?;
     let amount = period.prorate(new_plan.amount, activity.created_at)
         - period.prorate(old_plan.amount, activity.created_at);
     if amount == 0 {
@@ -235,7 +246,7 @@ async fn plan_change_item(
         invoice_id: None,
         activity_id: Some(activity.id.clone()),
         tenant_pubkey: activity.tenant_pubkey.clone(),
-        relay_id: activity.resource_id.clone(),
+        relay_id: activity.relay_id.clone(),
         plan_id: new_plan.id,
         amount,
         description: format!("Plan changed from {} to {}", old_plan.name, new_plan.name),
@@ -264,14 +275,11 @@ async fn reconcile_renewal(core: &Core, tenant: &Tenant, period: &BillingPeriod)
         else {
             continue;
         };
-        let Snapshot::Relay {
-            plan: plan_id,
-            status,
-        } = &*activity.snapshot;
+        let Snapshot { plan_id, status } = &*activity.snapshot;
         if *status != RelayStatus::Active {
             continue;
         }
-        let Some(plan) = plans::get_plan(plan_id).filter(|plan| plan.amount > 0) else {
+        let Some(plan) = plans::get_plan(plan_id).filter(Plan::is_paid) else {
             continue;
         };
 
@@ -289,8 +297,7 @@ async fn reconcile_renewal(core: &Core, tenant: &Tenant, period: &BillingPeriod)
         });
     }
 
-    // A tenant with nothing to renew keeps its marker, so a relay that becomes
-    // renewable later in the period is still picked up at the next boundary.
+    // The marker stays, so a relay renewable later this period is renewed at the next boundary.
     if items.is_empty() {
         return Ok(());
     }
@@ -347,13 +354,12 @@ async fn reconcile_overage(core: &Core, tenant: &Tenant, period: &BillingPeriod)
         else {
             continue;
         };
-        let Snapshot::Relay { plan: plan_id, .. } = &*activity.snapshot;
-        let Some(plan) = plans::get_plan(plan_id).filter(|plan| plan.amount > 0) else {
+        let plan_id = &activity.snapshot.plan_id;
+        let Some(plan) = plans::get_plan(plan_id).filter(Plan::is_paid) else {
             continue;
         };
 
-        // Round each meter up to a whole unit before taking off the allowance, so an
-        // allowance used exactly to its limit is free.
+        // Rounding up before the allowance comes off leaves an allowance used exactly free.
         let used_gb = (total.peak_storage_bytes.max(0) as u64).div_ceil(GB as u64) as i64;
         let used_hours =
             (total.participant_seconds.max(0) as u64).div_ceil(SECONDS_PER_HOUR as u64) as i64;
@@ -455,7 +461,7 @@ async fn churn_tenant(core: &Core, tenant_pubkey: &str) -> Result<()> {
 
             let mut changed = Vec::new();
             for relay in relays::list_relays_for_tenant(&mut *conn, tenant_pubkey).await? {
-                if relay.status == RelayStatus::Active && !relay.is_purged() {
+                if relay.is_served() {
                     activity::record_status_change(
                         conn,
                         &relay,
@@ -512,7 +518,7 @@ async fn reactivate_tenant(core: &Core, tenant_pubkey: &str) -> Result<Vec<Activ
 
     for activity in &activities {
         core.bus.publish(Change::RelayChanged {
-            relay_id: activity.resource_id.clone(),
+            relay_id: activity.relay_id.clone(),
         });
     }
     Ok(activities)
@@ -520,17 +526,15 @@ async fn reactivate_tenant(core: &Core, tenant_pubkey: &str) -> Result<Vec<Activ
 
 // --- Payments ---
 
-/// Collect an invoice. Payments that may already be in flight, a Lightning invoice
-/// or a Checkout session the tenant paid, are settled first, so a fresh charge is
-/// never made on top of one. With `autopay`, the tenant's NWC wallet and then their
-/// saved card are charged; failing both, a reminder DM is sent if `notify`. A
-/// failed charge's error is stored on the tenant but never stops the cascade.
-pub async fn reconcile_payments(
+/// Collect an invoice as far as `collection` goes. Payments that may already be in
+/// flight, a Lightning invoice or a Checkout session the tenant paid, are settled
+/// first, so a fresh charge is never made on top of one. A failed charge's error is
+/// stored on the tenant but never stops the cascade.
+async fn reconcile_payments(
     core: &Core,
     tenant: &Tenant,
     invoice: &Invoice,
-    autopay: bool,
-    notify: bool,
+    collection: Collection,
 ) -> Result<()> {
     let now = core.clock.now();
 
@@ -565,11 +569,13 @@ pub async fn reconcile_payments(
         return cleanup_pending_payments(core, invoice).await;
     }
 
-    if !autopay {
+    if collection == Collection::Settle {
         return Ok(());
     }
 
-    if !tenant.nwc_url.is_empty() && pay_with_nwc(core, tenant, invoice).await.is_ok() {
+    if let Some(nwc_url) = &tenant.nwc_url
+        && pay_with_nwc(core, tenant, nwc_url, invoice).await.is_ok()
+    {
         return cleanup_pending_payments(core, invoice).await;
     }
 
@@ -581,16 +587,24 @@ pub async fn reconcile_payments(
         return cleanup_pending_payments(core, invoice).await;
     }
 
-    if notify && let Err(error) = send_payment_reminder(core, tenant, invoice).await {
+    if collection == Collection::ChargeAndRemind
+        && let Err(error) = send_payment_reminder(core, tenant, invoice).await
+    {
         tracing::error!(tenant = %tenant.pubkey, error = %error, "failed to send manual payment DM");
     }
 
     Ok(())
 }
 
-async fn pay_with_nwc(core: &Core, tenant: &Tenant, invoice: &Invoice) -> Result<()> {
+/// Pay an invoice from the tenant's wallet, whose url is stored encrypted.
+async fn pay_with_nwc(
+    core: &Core,
+    tenant: &Tenant,
+    encrypted_nwc_url: &str,
+    invoice: &Invoice,
+) -> Result<()> {
     let result: Result<()> = async {
-        let nwc_url = core.config.platform_key.decrypt(&tenant.nwc_url)?;
+        let nwc_url = core.config.platform_key.decrypt(encrypted_nwc_url)?;
         let tenant_wallet = Wallet::from_url(&nwc_url)?;
         let bolt11 = ensure_bolt11_for_invoice(core, invoice).await?;
 
@@ -642,7 +656,6 @@ async fn pay_with_card(
             &intent.payment_method_id,
             &invoice.id,
             invoice.amount,
-            "usd",
         )
         .await
     {
@@ -728,7 +741,7 @@ pub async fn ensure_bolt11_for_invoice(core: &Core, invoice: &Invoice) -> Result
     }
 
     let expiry: i64 = 3600;
-    let msats = bitcoin::fiat_to_msats(invoice.amount, "usd").await?;
+    let msats = bitcoin::usd_cents_to_msats(invoice.amount).await?;
     let lnbc = core
         .wallet
         .make_invoice(msats, "Relay subscription payment", expiry as u64)
@@ -772,13 +785,12 @@ pub async fn ensure_checkout_for_invoice(
         return Ok(existing);
     }
 
-    let (session_id, url, expires_at) = core
+    let session = core
         .stripe
         .create_checkout_session(
             &tenant.stripe_customer_id,
             &invoice.id,
             invoice.amount,
-            "usd",
             return_url,
             return_url,
         )
@@ -787,17 +799,44 @@ pub async fn ensure_checkout_for_invoice(
     ledger::insert_checkout(
         core.db.pool(),
         &invoice.id,
-        &session_id,
-        &url,
-        expires_at,
+        &session.id,
+        &session.url,
+        session.expires_at,
         now,
     )
     .await
 }
 
+/// Bring a tenant's billing up to date at their request without charging them,
+/// picking up a card they just saved.
+pub async fn reconcile_tenant(core: &Core, tenant: &Tenant) -> Result<()> {
+    sync_stripe_customer(core, tenant).await;
+    let tenant = tenants::require_tenant(core.db.pool(), &tenant.pubkey).await?;
+    reconcile_subscription(core, &tenant, Collection::Settle).await
+}
+
+/// Collect an open invoice at the tenant's request: make it payable by Lightning,
+/// then settle or charge it, without a reminder.
+pub async fn collect_invoice(core: &Core, tenant: &Tenant, invoice: &Invoice) -> Result<()> {
+    ensure_bolt11_for_invoice(core, invoice).await?;
+    reconcile_payments(core, tenant, invoice, Collection::Charge).await
+}
+
+/// A Stripe billing portal where the tenant manages their saved cards.
+pub async fn open_billing_portal(
+    core: &Core,
+    tenant: &Tenant,
+    return_url: Option<&str>,
+) -> Result<String> {
+    Ok(core
+        .stripe
+        .create_billing_portal_session(&tenant.stripe_customer_id, return_url)
+        .await?)
+}
+
 /// Refresh the tenant's cached payment method from Stripe, returning it, or the
 /// cached one if Stripe can't be read.
-pub async fn sync_stripe_customer(core: &Core, tenant: &Tenant) -> Option<String> {
+async fn sync_stripe_customer(core: &Core, tenant: &Tenant) -> Option<String> {
     let result: Result<Option<String>> = async {
         let payment_method_id = core
             .stripe
@@ -832,7 +871,7 @@ pub async fn get_draft_invoice(core: &Core, tenant: &Tenant) -> Result<Option<In
     };
 
     let items =
-        ledger::list_unbilled_invoice_items_for_tenant(core.db.pool(), &tenant.pubkey).await?;
+        ledger::list_outstanding_invoice_items_for_tenant(core.db.pool(), &tenant.pubkey).await?;
     if items.is_empty() {
         return Ok(None);
     }

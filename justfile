@@ -9,8 +9,8 @@ reset-db:
 dev:
   #!/usr/bin/env sh
   trap 'kill 0' EXIT
-  onchange crates -ik -- bash -c 'RUST_LOG=caravel=info,caravel_core=info,caravel_api=info cargo run -p caravel-app' &
-  cd web && bun dev &
+  just dev-backend &
+  just dev-web &
   wait
 
 dev-backend:

@@ -2,16 +2,23 @@
 //! client, such as Flotilla. Handlers load what a request names, authorize the
 //! actor against it with the core's rules, then call the core.
 
-pub mod admin;
-pub mod auth;
-pub mod member;
-pub mod public;
-pub mod response;
-pub mod tenant;
+mod admin;
+mod auth;
+mod member;
+mod public;
+mod response;
+mod tenant;
 
 use axum::Router;
 use axum::routing::{delete, get, post, put};
 use caravel_core::Core;
+use serde::Deserialize;
+
+/// Where a request asks for its caller to be sent back to, if anywhere.
+#[derive(Deserialize)]
+struct ReturnTo {
+    return_url: Option<String>,
+}
 
 /// Every API route, served at the root of whatever path the app mounts it on.
 pub fn router(core: Core) -> Router {

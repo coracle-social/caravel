@@ -13,7 +13,6 @@ pub struct Settings {
     pub port: u16,
     pub database_url: String,
     pub config: Config,
-    pub robot_secret: String,
     pub robot_profile: RobotProfile,
     pub robot_wallet: String,
     pub stripe_secret_key: String,
@@ -29,19 +28,6 @@ pub struct WebSettings {
     pub platform_url: Option<String>,
     pub platform_name: String,
     pub platform_logo: String,
-}
-
-impl WebSettings {
-    /// The configuration every app's shell carries.
-    pub fn shell_config(&self, config: &Config) -> serde_json::Value {
-        serde_json::json!({
-            "api_url": config.api_url,
-            "relay_domains": config.relay_domains,
-            "platform_name": self.platform_name,
-            "platform_logo": self.platform_logo,
-            "flotilla_url": config.flotilla_url,
-        })
-    }
 }
 
 /// Where relays' media is kept.
@@ -84,7 +70,6 @@ pub fn load() -> Result<Settings> {
                 .trim_end_matches('/')
                 .to_string(),
         },
-        robot_secret,
         robot_profile: RobotProfile {
             name: optional("ROBOT_NAME").unwrap_or_default(),
             picture: optional("ROBOT_PICTURE").unwrap_or_default(),

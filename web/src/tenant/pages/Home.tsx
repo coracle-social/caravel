@@ -1,21 +1,64 @@
 import { A, useNavigate } from "@solidjs/router"
-import { createSignal, Show } from "solid-js"
+import { createSignal, For, Show } from "solid-js"
 import CheckIcon from "@/shared/components/CheckIcon"
 import ExternalLinkIcon from "@/shared/components/ExternalLinkIcon"
 import PricingTable from "@/shared/components/PricingTable"
 import RelayForm, { type RelayFormValues } from "@/shared/components/RelayForm"
 import Modal from "@/shared/components/Modal"
-import PaymentDialog from "@/shared/components/PaymentDialog"
-import PaymentSetup from "@/shared/components/PaymentSetup"
+import PostPaidPrompts, { usePostPaidFlow } from "@/shared/components/PostPaidPrompts"
 import Login from "@/shared/views/Login"
-import { createRelayForActiveTenant, resolvePostPaidFlow } from "@/shared/lib/hooks"
-import type { Invoice } from "@/shared/lib/api"
+import { account } from "@/shared/lib/account"
+import { formatError } from "@/shared/lib/format"
 import { FREE } from "@/shared/lib/plans"
 import { PLATFORM_LOGO, PLATFORM_NAME } from "@/shared/lib/config"
-import { account, refetchBilling, setToastMessage } from "@/shared/lib/state"
+import { createRelayForActiveTenant } from "@/shared/lib/relays"
+import { refetchBilling, setToastMessage } from "@/shared/lib/state"
 import FlotillaLogo from "@/shared/assets/flotilla-logo.svg"
 import NostordLogo from "@/shared/assets/nostord-logo.svg"
 import ChachiLogo from "@/shared/assets/chachi-logo.svg"
+
+// The Nostr clients a relay's members can use, with the accent each card takes.
+const CLIENTS = [
+  {
+    name: "Flotilla",
+    url: "https://flotilla.social",
+    host: "flotilla.social",
+    logo: FlotillaLogo,
+    border: "hover:border-blue-300",
+    shadow: "shadow-blue-200",
+    title: "group-hover:text-blue-600",
+    icon: "group-hover:text-blue-400",
+    link: "text-blue-600",
+    description: "A community platform built on Nostr. Flotilla gives your members channels, threads, and a rich social experience — all connected to your relay.",
+    features: ["Nostr-native channels & threads", "Works directly with your relay", "Open source & self-sovereign"],
+  },
+  {
+    name: "Nostrord",
+    url: "https://nostrord.com/",
+    host: "nostrord.com",
+    logo: NostordLogo,
+    border: "hover:border-amber-300",
+    shadow: "shadow-amber-200",
+    title: "group-hover:text-amber-600",
+    icon: "group-hover:text-amber-400",
+    link: "text-amber-600",
+    description: "A NIP-29 client built for decentralized group chat on Nostr. Create censorship-resistant communities with admin roles, moderation, and access control—all powered by your relay.",
+    features: ["Decentralized group chat with NIP-29", "Censorship-resistant communities", "Admin roles & moderation"],
+  },
+  {
+    name: "Chachi",
+    url: "https://chachi.chat",
+    host: "chachi.chat",
+    logo: ChachiLogo,
+    border: "hover:border-purple-300",
+    shadow: "shadow-purple-200",
+    title: "group-hover:text-purple-600",
+    icon: "group-hover:text-purple-400",
+    link: "text-purple-600",
+    description: "A group chat app built on top of Nostr. Chachi makes it easy for your community to have real-time conversations, all flowing through your own relay.",
+    features: ["Real-time group messaging", "Bring your own relay", "No accounts — just your Nostr key"],
+  },
+]
 
 export default function Home() {
   const navigate = useNavigate()
@@ -23,8 +66,7 @@ export default function Home() {
   const [showLoginModal, setShowLoginModal] = createSignal(false)
   const [draftRelay, setDraftRelay] = createSignal<RelayFormValues>()
   const [initialPlanId, setInitialPlanId] = createSignal<RelayFormValues["plan_id"]>(FREE)
-  const [pendingInvoice, setPendingInvoice] = createSignal<Invoice | undefined>()
-  const [paymentSetupOpen, setPaymentSetupOpen] = createSignal(false)
+  const postPaid = usePostPaidFlow()
   let createdRelayId = ""
 
   function openRelayModal(planId: RelayFormValues["plan_id"] = FREE) {
@@ -33,10 +75,7 @@ export default function Home() {
   }
 
   async function onRelayFormSubmit(values: RelayFormValues) {
-    // Not signed in yet: stash the draft and send them through login. The relay
-    // (and any payment prompt) is created in onAuthenticated once the session and
-    // its tenant exist, so signing up and creating a paid relay in one go still
-    // surfaces the invoice.
+    // Someone signed out signs in first, and the relay is created once they have.
     if (!account()) {
       setDraftRelay(values)
       setShowRelayModal(false)
@@ -48,21 +87,9 @@ export default function Home() {
     createdRelayId = relay.id
     setShowRelayModal(false)
 
-    // Paid plans materialize an open invoice on create. A just-signed-up tenant
-    // has no payment method yet, so open the payment dialog here instead of
-    // dropping them on the relay page with no prompt (the shared dashboard banner
-    // only catches up once they navigate and its billing reads refetch).
     if (values.plan_id !== FREE) {
       void refetchBilling()
-      const decision = await resolvePostPaidFlow()
-      if (decision.kind === "pay_invoice") {
-        setPendingInvoice(decision.invoice)
-        return
-      }
-      if (decision.kind === "setup") {
-        setPaymentSetupOpen(true)
-        return
-      }
+      if (await postPaid.start()) return
     }
 
     navigate(`/relays/${relay.id}`)
@@ -81,19 +108,8 @@ export default function Home() {
     try {
       await onRelayFormSubmit(relay)
     } catch (e) {
-      setToastMessage(e instanceof Error ? e.message : "Failed to create relay")
+      setToastMessage(formatError(e, "Failed to create relay"))
     }
-  }
-
-  function handleInvoiceClose() {
-    setPendingInvoice(undefined)
-    setPaymentSetupOpen(true)
-  }
-
-  function handleSetupClose() {
-    setPaymentSetupOpen(false)
-    void refetchBilling()
-    navigate(`/relays/${createdRelayId}`)
   }
 
   return (
@@ -267,120 +283,45 @@ export default function Home() {
         </div>
 
         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {/* Flotilla */}
-          <a
-            href="https://flotilla.social"
-            target="_blank"
-            rel="noopener noreferrer"
-            class="group flex flex-col gap-5 rounded-2xl border border-gray-200 bg-white p-8 hover:border-blue-300 hover:shadow-md transition-all"
-          >
-            <div class="flex items-start justify-between gap-4">
-              <div class="flex items-center gap-3">
-                <img src={FlotillaLogo} alt="Flotilla" class="w-12 h-12 rounded-2xl shadow-md shadow-blue-200" />
-                <div>
-                  <h3 class="text-lg font-bold text-gray-900 group-hover:text-blue-600 transition-colors">Flotilla</h3>
-                  <p class="text-xs text-gray-400">flotilla.social</p>
+          <For each={CLIENTS}>
+            {(client) => (
+              <a
+                href={client.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                class={`group flex flex-col gap-5 rounded-2xl border border-gray-200 bg-white p-8 ${client.border} hover:shadow-md transition-all`}
+              >
+                <div class="flex items-start justify-between gap-4">
+                  <div class="flex items-center gap-3">
+                    <img src={client.logo} alt={client.name} class={`w-12 h-12 rounded-2xl shadow-md ${client.shadow}`} />
+                    <div>
+                      <h3 class={`text-lg font-bold text-gray-900 ${client.title} transition-colors`}>{client.name}</h3>
+                      <p class="text-xs text-gray-400">{client.host}</p>
+                    </div>
+                  </div>
+                  <span class={`text-gray-300 ${client.icon} transition-colors mt-1`}>
+                    <ExternalLinkIcon />
+                  </span>
                 </div>
-              </div>
-              <span class="text-gray-300 group-hover:text-blue-400 transition-colors mt-1">
-                <ExternalLinkIcon />
-              </span>
-            </div>
-            <p class="text-sm text-gray-600 leading-relaxed">
-              A community platform built on Nostr. Flotilla gives your members channels,
-              threads, and a rich social experience — all connected to your relay.
-            </p>
-            <div class="space-y-2">
-              {["Nostr-native channels & threads", "Works directly with your relay", "Open source & self-sovereign"].map(f => (
-                <div class="flex items-start gap-2 text-sm text-gray-600">
-                  <CheckIcon />
-                  {f}
+                <p class="text-sm text-gray-600 leading-relaxed">{client.description}</p>
+                <div class="space-y-2">
+                  <For each={client.features}>
+                    {(feature) => (
+                      <div class="flex items-start gap-2 text-sm text-gray-600">
+                        <CheckIcon />
+                        {feature}
+                      </div>
+                    )}
+                  </For>
                 </div>
-              ))}
-            </div>
-            <div class="mt-auto pt-2">
-              <span class="inline-flex items-center gap-1.5 text-sm font-semibold text-blue-600">
-                Visit flotilla.social <ExternalLinkIcon />
-              </span>
-            </div>
-          </a>
-
-          {/* Nostrord */}
-          <a
-            href="https://nostrord.com/"
-            target="_blank"
-            rel="noopener noreferrer"
-            class="group flex flex-col gap-5 rounded-2xl border border-gray-200 bg-white p-8 hover:border-amber-300 hover:shadow-md transition-all"
-          >
-            <div class="flex items-start justify-between gap-4">
-              <div class="flex items-center gap-3">
-                <img src={NostordLogo} alt="Nostrord" class="w-12 h-12 rounded-2xl shadow-md shadow-amber-200" />
-                <div>
-                  <h3 class="text-lg font-bold text-gray-900 group-hover:text-amber-600 transition-colors">Nostrord</h3>
-                  <p class="text-xs text-gray-400">nostrord.com</p>
+                <div class="mt-auto pt-2">
+                  <span class={`inline-flex items-center gap-1.5 text-sm font-semibold ${client.link}`}>
+                    Visit {client.host} <ExternalLinkIcon />
+                  </span>
                 </div>
-              </div>
-              <span class="text-gray-300 group-hover:text-amber-400 transition-colors mt-1">
-                <ExternalLinkIcon />
-              </span>
-            </div>
-            <p class="text-sm text-gray-600 leading-relaxed">
-              A NIP-29 client built for decentralized group chat on Nostr. Create
-              censorship-resistant communities with admin roles, moderation, and access
-              control—all powered by your relay.
-            </p>
-            <div class="space-y-2">
-              {["Decentralized group chat with NIP-29", "Censorship-resistant communities", "Admin roles & moderation"].map(f => (
-                <div class="flex items-start gap-2 text-sm text-gray-600">
-                  <CheckIcon />
-                  {f}
-                </div>
-              ))}
-            </div>
-            <div class="mt-auto pt-2">
-              <span class="inline-flex items-center gap-1.5 text-sm font-semibold text-amber-600">
-                Visit nostrord.com <ExternalLinkIcon />
-              </span>
-            </div>
-          </a>
-
-          {/* Chachi */}
-          <a
-            href="https://chachi.chat"
-            target="_blank"
-            rel="noopener noreferrer"
-            class="group flex flex-col gap-5 rounded-2xl border border-gray-200 bg-white p-8 hover:border-purple-300 hover:shadow-md transition-all"
-          >
-            <div class="flex items-start justify-between gap-4">
-              <div class="flex items-center gap-3">
-                <img src={ChachiLogo} alt="Chachi" class="w-12 h-12 rounded-2xl shadow-md shadow-purple-200" />
-                <div>
-                  <h3 class="text-lg font-bold text-gray-900 group-hover:text-purple-600 transition-colors">Chachi</h3>
-                  <p class="text-xs text-gray-400">chachi.chat</p>
-                </div>
-              </div>
-              <span class="text-gray-300 group-hover:text-purple-400 transition-colors mt-1">
-                <ExternalLinkIcon />
-              </span>
-            </div>
-            <p class="text-sm text-gray-600 leading-relaxed">
-              A group chat app built on top of Nostr. Chachi makes it easy for your community
-              to have real-time conversations, all flowing through your own relay.
-            </p>
-            <div class="space-y-2">
-              {["Real-time group messaging", "Bring your own relay", "No accounts — just your Nostr key"].map(f => (
-                <div class="flex items-start gap-2 text-sm text-gray-600">
-                  <CheckIcon />
-                  {f}
-                </div>
-              ))}
-            </div>
-            <div class="mt-auto pt-2">
-              <span class="inline-flex items-center gap-1.5 text-sm font-semibold text-purple-600">
-                Visit chachi.chat <ExternalLinkIcon />
-              </span>
-            </div>
-          </a>
+              </a>
+            )}
+          </For>
         </div>
       </section>
 
@@ -424,9 +365,9 @@ export default function Home() {
           </div>
           <p>© {new Date().getFullYear()} {PLATFORM_NAME}. Built on Nostr.</p>
           <div class="flex gap-4">
-            <a href="https://flotilla.social" target="_blank" rel="noopener noreferrer" class="hover:text-gray-600 transition-colors">Flotilla</a>
-            <a href="https://nostrord.com/" target="_blank" rel="noopener noreferrer" class="hover:text-gray-600 transition-colors">Nostrord</a>
-            <a href="https://chachi.chat" target="_blank" rel="noopener noreferrer" class="hover:text-gray-600 transition-colors">Chachi</a>
+            <For each={CLIENTS}>
+              {(client) => <a href={client.url} target="_blank" rel="noopener noreferrer" class="hover:text-gray-600 transition-colors">{client.name}</a>}
+            </For>
           </div>
         </div>
       </footer>
@@ -434,7 +375,6 @@ export default function Home() {
       <Modal
         open={showRelayModal()}
         onClose={() => setShowRelayModal(false)}
-        wrapperClass="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
         panelClass="w-full max-w-2xl rounded-2xl bg-white p-6 sm:p-8 shadow-2xl"
       >
         <div class="mb-6 flex items-start justify-between gap-4">
@@ -474,19 +414,7 @@ export default function Home() {
         />
       </Modal>
 
-      <Show when={pendingInvoice()}>
-        {(inv) => (
-          <PaymentDialog
-            invoice={inv()}
-            open={true}
-            onClose={handleInvoiceClose}
-          />
-        )}
-      </Show>
-      <PaymentSetup
-        open={paymentSetupOpen()}
-        onClose={handleSetupClose}
-      />
+      <PostPaidPrompts flow={postPaid} onDone={() => navigate(`/relays/${createdRelayId}`)} />
     </div>
   )
 }

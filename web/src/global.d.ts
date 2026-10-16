@@ -1,5 +1,3 @@
-import type { IStaticMethods } from "preline"
-
 declare global {
   interface NostrNip07 {
     getPublicKey(): Promise<string>
@@ -15,7 +13,6 @@ declare global {
   }
 
   interface Window {
-    HSStaticMethods: IStaticMethods
     nostr?: NostrNip07
   }
 }

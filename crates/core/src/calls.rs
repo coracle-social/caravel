@@ -5,8 +5,8 @@ use coracle_lib::events::Event;
 use sqlx::PgExecutor;
 
 use crate::Core;
-use crate::crypto::RelayKey;
-use crate::error::{Error, Result};
+use crate::crypto::{RelayKey, is_hex64};
+use crate::error::Result;
 use crate::events;
 use crate::rooms::kinds::LIVEKIT_PARTICIPANTS;
 
@@ -19,6 +19,44 @@ pub fn livekit_room(relay_id: &str, room_id: &str) -> String {
 /// The relay and room a LiveKit room belongs to. Relay ids never hold a colon.
 pub fn split_livekit_room(name: &str) -> Option<(&str, &str)> {
     name.split_once(':')
+}
+
+/// A participant's LiveKit identity, `<pubkey>:<nonce>`, so one pubkey can be in a
+/// call from several devices.
+pub fn participant_identity(pubkey: &str) -> String {
+    format!("{pubkey}:{}", hex::encode(rand::random::<[u8; 8]>()))
+}
+
+/// The distinct pubkeys behind participant identities.
+pub fn participant_pubkeys(identities: &[String]) -> Vec<String> {
+    let mut pubkeys: Vec<String> = Vec::new();
+    for identity in identities {
+        let pubkey = identity
+            .split(':')
+            .next()
+            .unwrap_or_default()
+            .to_lowercase();
+        if is_hex64(&pubkey) && !pubkeys.contains(&pubkey) {
+            pubkeys.push(pubkey);
+        }
+    }
+    pubkeys
+}
+
+/// Credit a participant's time in a call, from when they joined until they left,
+/// unless LiveKit didn't say when they joined.
+pub async fn record_departure(
+    db: impl PgExecutor<'_>,
+    relay_id: &str,
+    room_id: &str,
+    sid: &str,
+    joined_at: i64,
+    left_at: i64,
+) -> Result<()> {
+    if joined_at <= 0 || left_at <= joined_at {
+        return Ok(());
+    }
+    record_session(db, relay_id, sid, room_id, left_at - joined_at, left_at).await
 }
 
 /// Credit one participant's closed session. A redelivered webhook for the same
@@ -73,9 +111,9 @@ pub async fn publish_participants(
     );
 
     let now = core.clock.now();
-    let event = key.sign(LIVEKIT_PARTICIPANTS, tags, "", now);
     core.db
-        .with_tx(async |conn| events::save_relay_event(conn, relay_id, &event, now).await)
-        .await?;
-    Ok::<_, Error>(event)
+        .with_tx(async |conn| {
+            events::publish(conn, key, relay_id, LIVEKIT_PARTICIPANTS, tags.clone(), now).await
+        })
+        .await
 }

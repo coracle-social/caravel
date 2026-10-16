@@ -1,14 +1,11 @@
 import { Show } from "solid-js"
+import StatusBadge from "@/shared/components/StatusBadge"
 import { formatUsd } from "@/shared/lib/format"
 
-// Presentational invoice/draft row for the Payment History list. Status label,
-// style, and period label are computed by the parent (Account.tsx) and passed in;
-// PDF/pay actions are surfaced as callbacks. Props are reactive only when read
-// lazily, so access props.* inside JSX, never destructure at the top.
+// An invoice, or this period's draft, in the tenant's payment history.
 type InvoiceListItemProps = {
   amount: number
-  statusLabel: string
-  statusStyle: string
+  status: string
   periodLabel: string
   method?: string
   isDraft?: boolean
@@ -25,9 +22,7 @@ export default function InvoiceListItem(props: InvoiceListItemProps) {
         <div class="min-w-0">
           <div class="flex items-center gap-2">
             <span class="font-medium text-gray-900">{formatUsd(props.amount)}</span>
-            <span class={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium capitalize ${props.statusStyle}`}>
-              {props.statusLabel}
-            </span>
+            <StatusBadge status={props.status} />
             <Show when={props.method}>
               <span class="text-xs text-gray-500">· paid via {props.method}</span>
             </Show>

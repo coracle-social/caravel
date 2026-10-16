@@ -1,16 +1,11 @@
 import { A } from "@solidjs/router"
 import { Show } from "solid-js"
-import { getProfilePicture } from "applesauce-core/helpers/profile"
 import { invoiceStatus, type Invoice } from "@/shared/lib/api"
+import Avatar from "@/shared/components/Avatar"
 import CopyNpub from "@/shared/components/CopyNpub"
-import { useProfileMetadata } from "@/shared/lib/hooks"
+import StatusBadge from "@/shared/components/StatusBadge"
+import { profileName, useProfileMetadata } from "@/shared/lib/profiles"
 import { formatPeriod, formatUsd } from "@/shared/lib/format"
-
-const invoiceStatusStyles: Record<string, string> = {
-  open: "bg-yellow-50 text-yellow-700 border-yellow-200",
-  paid: "bg-green-50 text-green-700 border-green-200",
-  void: "bg-gray-100 text-gray-500 border-gray-200",
-}
 
 type AdminInvoiceListItemProps = {
   invoice: Invoice
@@ -18,13 +13,9 @@ type AdminInvoiceListItemProps = {
   showTenant?: boolean
 }
 
+// An invoice in a list. A list that shows tenants fetches their profiles itself.
 export default function AdminInvoiceListItem(props: AdminInvoiceListItemProps) {
-  // Resolve the owning tenant's profile from the event store. The list that
-  // passes `showTenant` is responsible for priming these profiles in one batch,
-  // so this subscription does not prime on its own.
   const metadata = useProfileMetadata(() => (props.showTenant ? props.invoice.tenant_pubkey : undefined), { prime: false })
-
-  const status = () => invoiceStatus(props.invoice)
 
   return (
     <li>
@@ -35,28 +26,17 @@ export default function AdminInvoiceListItem(props: AdminInvoiceListItemProps) {
             <p class="text-xs text-gray-500">{formatPeriod(props.invoice.period_start, props.invoice.period_end)}</p>
             <Show when={props.showTenant}>
               <div class="mt-1.5 flex items-center gap-2">
+                <Avatar profile={metadata()} pubkey={props.invoice.tenant_pubkey} class="h-5 w-5 flex-shrink-0" fallbackClass="bg-gray-200 text-[10px] text-gray-500" />
                 <Show
-                  when={getProfilePicture(metadata())}
-                  fallback={
-                    <div class="h-5 w-5 flex-shrink-0 rounded-full bg-gray-200 flex items-center justify-center text-[10px] text-gray-500">
-                      {((metadata()?.name || metadata()?.display_name) || props.invoice.tenant_pubkey).slice(0, 1).toUpperCase()}
-                    </div>
-                  }
-                >
-                  <img src={getProfilePicture(metadata())} alt="" class="h-5 w-5 flex-shrink-0 rounded-full object-cover" />
-                </Show>
-                <Show
-                  when={metadata()?.name || metadata()?.display_name}
+                  when={profileName(metadata())}
                   fallback={<CopyNpub pubkey={props.invoice.tenant_pubkey} class="text-xs text-gray-500" />}
                 >
-                  <span class="text-xs text-gray-500 truncate">{metadata()?.name || metadata()?.display_name}</span>
+                  {(name) => <span class="text-xs text-gray-500 truncate">{name()}</span>}
                 </Show>
               </div>
             </Show>
           </div>
-          <span class={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium capitalize ${invoiceStatusStyles[status()] ?? "bg-gray-100 text-gray-500 border-gray-200"}`}>
-            {status()}
-          </span>
+          <StatusBadge status={invoiceStatus(props.invoice)} />
         </div>
       </A>
     </li>

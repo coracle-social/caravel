@@ -9,8 +9,8 @@ use tokio::sync::broadcast;
 pub enum Change {
     /// A relay's row, hosts or status changed.
     RelayChanged { relay_id: String },
-    /// A relay's members, roles, grants, bans or rooms changed, and it published
-    /// these events about it.
+    /// A relay's members, roles, grants, bans, rooms or push subscriptions changed,
+    /// and it published these events about it.
     AccessChanged {
         relay_id: String,
         published: Vec<Event>,

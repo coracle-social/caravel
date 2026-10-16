@@ -61,7 +61,7 @@ pub fn spawn(tracker: &TaskTracker, shutdown: &CancellationToken, core: &Core) {
         "expiration sweep",
         MINUTE,
         MINUTE,
-        |core| async move { sweep_expired_events(&core).await },
+        |core| async move { events::sweep_expired_events(&core).await },
     );
     every(
         tracker,
@@ -116,23 +116,6 @@ fn every<F, Fut>(
             }
         }
     });
-}
-
-/// Delete events whose NIP-40 expiration passed, a batch at a time so other
-/// writers get between them.
-async fn sweep_expired_events(core: &Core) -> Result<()> {
-    const BATCH: i64 = 1000;
-
-    loop {
-        let removed =
-            events::delete_expired_events(core.db.pool(), core.clock.now(), BATCH).await?;
-        if removed > 0 {
-            tracing::info!(removed, "swept expired events");
-        }
-        if removed < BATCH as u64 {
-            return Ok(());
-        }
-    }
 }
 
 /// Publish the robot's profile and relay lists, retrying with backoff until it

@@ -1,31 +1,22 @@
 import { useParams } from "@solidjs/router"
-import { createResource, Show } from "solid-js"
+import { Show } from "solid-js"
+import ActivityFeed from "@/shared/components/ActivityFeed"
 import BackLink from "@/shared/components/BackLink"
 import PageContainer from "@/shared/components/PageContainer"
 import RelayDetailCard from "@/shared/components/RelayDetailCard"
 import ResourceState from "@/shared/components/ResourceState"
+import { useRelay, useRelayActivity, useRelayMembers } from "@/shared/lib/relays"
 import useMinLoading from "@/shared/lib/useMinLoading"
-import ActivityFeed from "@/shared/components/ActivityFeed"
-import { listRelayMembers } from "@/shared/lib/api"
-import { useRelay, useRelayActivity } from "@/shared/lib/hooks"
-import useRelayToggles from "@/shared/lib/useRelayToggles"
+import useRelayActions from "@/shared/lib/useRelayActions"
 
 export default function AdminRelayDetail() {
   const params = useParams()
   const relayId = () => params.id ?? ""
-  const [relay, { refetch, mutate }] = useRelay(relayId)
-  const [members] = createResource(relayId, async (id) => {
-    if (!id) return []
-
-    try {
-      return (await listRelayMembers(id)).members
-    } catch {
-      return []
-    }
-  })
+  const [relay, actions] = useRelay(relayId)
+  const [members] = useRelayMembers(relayId)
   const loading = useMinLoading(() => relay.loading && !relay())
   const [activity] = useRelayActivity(relayId)
-  const { busy, handleDeactivate, handleReactivate, handlePurge, toggles } = useRelayToggles(relayId, relay, { refetch, mutate })
+  const { busy, deactivate, reactivate, purge, toggle } = useRelayActions(relayId, relay, actions)
 
   return (
     <PageContainer>
@@ -39,16 +30,14 @@ export default function AdminRelayDetail() {
               currentMembers={members()?.length}
               showTenant
               editHref={`/admin/relays/${params.id}/edit`}
-              onDeactivate={handleDeactivate}
-              onReactivate={handleReactivate}
-              deactivating={busy()}
-              reactivating={busy()}
-              onPurge={handlePurge}
-              purging={busy()}
+              busy={busy()}
+              onDeactivate={deactivate}
+              onReactivate={reactivate}
+              onPurge={purge}
+              onToggle={toggle}
               enforcePlanLimits={false}
               showPlanActions={false}
-              mutateRelay={mutate}
-              {...toggles}
+              mutateRelay={actions.mutate}
             />
             <ActivityFeed activity={activity() ?? []} loading={activity.loading} />
           </div>

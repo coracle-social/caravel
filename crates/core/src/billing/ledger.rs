@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::{PgConnection, PgExecutor};
 
 use crate::billing::period::BillingPeriod;
-use crate::error::Result;
+use crate::error::{Error, Result};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
 #[serde(rename_all = "lowercase")]
@@ -111,6 +111,13 @@ pub async fn get_invoice(db: impl PgExecutor<'_>, id: &str) -> Result<Option<Inv
     )
 }
 
+/// An invoice that must exist.
+pub async fn require_invoice(db: impl PgExecutor<'_>, id: &str) -> Result<Invoice> {
+    get_invoice(db, id)
+        .await?
+        .ok_or(Error::NotFound("invoice not found"))
+}
+
 pub async fn list_invoices(db: impl PgExecutor<'_>) -> Result<Vec<Invoice>> {
     Ok(
         sqlx::query_as::<_, Invoice>("SELECT * FROM invoice ORDER BY created_at DESC, seq DESC")
@@ -164,8 +171,7 @@ pub async fn insert_invoice_for_outstanding_items(
     .fetch_one(&mut *conn)
     .await?;
 
-    // Stripe's minimum charge is $0.50; $1 leaves room for a later small credit
-    // without dropping a fresh invoice under it. Smaller balances carry forward.
+    // Up to $1 carries forward, so a small credit can't drop an invoice under Stripe's $0.50.
     if total <= 100 {
         return Ok(None);
     }
@@ -302,7 +308,7 @@ pub async fn list_invoice_items_for_invoice(
 }
 
 /// A tenant's outstanding items, oldest first: what the next invoice would claim.
-pub async fn list_unbilled_invoice_items_for_tenant(
+pub async fn list_outstanding_invoice_items_for_tenant(
     db: impl PgExecutor<'_>,
     tenant_pubkey: &str,
 ) -> Result<Vec<InvoiceItem>> {

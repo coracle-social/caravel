@@ -1,19 +1,18 @@
 //! Tenants: the pubkeys that host relays on the platform and pay for them.
 
-use serde::{Deserialize, Serialize};
 use sqlx::{PgConnection, PgExecutor};
 
-use crate::error::Result;
+use crate::error::{Error, Result};
 
-#[derive(Debug, Default, Clone, Serialize, Deserialize, sqlx::FromRow)]
+#[derive(Debug, Default, Clone, sqlx::FromRow)]
 pub struct Tenant {
     pub pubkey: String,
     /// Where the robot's DMs send this tenant: their account page in whichever
     /// client they signed up through, supplied at creation. Used as-is for the
     /// churn DM, and with `?invoice=<id>` appended for a payment reminder.
     pub return_url: String,
-    /// The tenant's NWC url, encrypted with the platform key, or empty.
-    pub nwc_url: String,
+    /// The tenant's NWC url, encrypted with the platform key, if they set one.
+    pub nwc_url: Option<String>,
     /// Last NWC auto-payment error, or `None` when the wallet last paid or has
     /// never been tried. Shown as a warning; it never blocks a retry. Cleared when
     /// the tenant updates their NWC url.
@@ -41,12 +40,21 @@ pub struct Tenant {
     /// When an admin banned the tenant. A ban blocks relay creation, forgives
     /// outstanding charges and purges every relay; unbanning restores none of it.
     pub banned_at: Option<i64>,
-    /// The Stripe Connect account the tenant's members pay into, or empty before
-    /// they start onboarding.
-    pub stripe_account_id: String,
+    /// The Stripe Connect account the tenant's members pay into, once they start
+    /// onboarding.
+    pub stripe_account_id: Option<String>,
     /// Whether that account can take charges and receive payouts, as Stripe last
     /// said.
     pub stripe_account_ready: bool,
+}
+
+impl Tenant {
+    /// The Connect account the tenant's members can pay into now, if any.
+    pub fn payout_account(&self) -> Option<&str> {
+        self.stripe_account_id
+            .as_deref()
+            .filter(|_| self.stripe_account_ready)
+    }
 }
 
 pub async fn list_tenants(db: impl PgExecutor<'_>) -> Result<Vec<Tenant>> {
@@ -66,21 +74,26 @@ pub async fn get_tenant(db: impl PgExecutor<'_>, pubkey: &str) -> Result<Option<
     )
 }
 
+/// A tenant that must exist.
+pub async fn require_tenant(db: impl PgExecutor<'_>, pubkey: &str) -> Result<Tenant> {
+    get_tenant(db, pubkey)
+        .await?
+        .ok_or(Error::NotFound("tenant not found"))
+}
+
 /// Read a tenant and lock its row until the transaction ends, which serializes
 /// billing writes for one tenant.
 pub async fn lock_tenant(conn: &mut PgConnection, pubkey: &str) -> Result<Tenant> {
-    Ok(
-        sqlx::query_as::<_, Tenant>("SELECT * FROM tenant WHERE pubkey = $1 FOR UPDATE")
-            .bind(pubkey)
-            .fetch_one(conn)
-            .await?,
-    )
+    sqlx::query_as::<_, Tenant>("SELECT * FROM tenant WHERE pubkey = $1 FOR UPDATE")
+        .bind(pubkey)
+        .fetch_optional(conn)
+        .await?
+        .ok_or(Error::NotFound("tenant not found"))
 }
 
-/// Insert a tenant, or do nothing if one with its pubkey exists. Returns whether
-/// this call inserted it.
-pub async fn insert_tenant(db: impl PgExecutor<'_>, tenant: &Tenant) -> Result<bool> {
-    let result = sqlx::query(
+/// Insert a tenant, or do nothing if one with its pubkey exists.
+pub async fn insert_tenant(db: impl PgExecutor<'_>, tenant: &Tenant) -> Result<()> {
+    sqlx::query(
         "INSERT INTO tenant (pubkey, return_url, nwc_url, created_at, stripe_customer_id)
          VALUES ($1, $2, $3, $4, $5)
          ON CONFLICT (pubkey) DO NOTHING",
@@ -92,14 +105,14 @@ pub async fn insert_tenant(db: impl PgExecutor<'_>, tenant: &Tenant) -> Result<b
     .bind(&tenant.stripe_customer_id)
     .execute(db)
     .await?;
-    Ok(result.rows_affected() > 0)
+    Ok(())
 }
 
 /// Replace the tenant's encrypted NWC url, clearing the last NWC error.
 pub async fn set_tenant_nwc_url(
     db: impl PgExecutor<'_>,
     pubkey: &str,
-    nwc_url: &str,
+    nwc_url: Option<&str>,
 ) -> Result<()> {
     sqlx::query("UPDATE tenant SET nwc_url = $1, nwc_error = NULL WHERE pubkey = $2")
         .bind(nwc_url)

@@ -5,33 +5,25 @@ import PaymentDialog from "@/shared/components/PaymentDialog"
 import PaymentSetup from "@/shared/components/PaymentSetup"
 import { getInvoice, type Invoice } from "@/shared/lib/api"
 import { activeBillingPrompt, useBillingStatus, type BillingPromptKind } from "@/shared/lib/billing"
-import { account, billingFlowActive } from "@/shared/lib/state"
+import { account } from "@/shared/lib/account"
+import { billingFlowActive } from "@/shared/lib/state"
 
-type BillingPromptsProps = {
-  // "banner" sits in the dashboard shell (mounted on every page except the
-  // billing page); "inline" is shown contextually on the billing page itself.
-  // Only one is ever mounted at a time, so each can own its own modals + deep link.
-  variant?: "banner" | "inline"
-}
-
-export default function BillingPrompts(props: BillingPromptsProps) {
+// The banner asking a tenant to sort out billing, and its dialogs. A
+// `?invoice=<id>` link, as billing DMs send, opens that invoice's.
+export default function BillingPrompts() {
   const status = useBillingStatus()
   const [dismissed, setDismissed] = createSignal<Set<BillingPromptKind>>(new Set())
   const [payInvoice, setPayInvoice] = createSignal<Invoice | undefined>()
   const [setupOpen, setSetupOpen] = createSignal(false)
   const [setupTab, setSetupTab] = createSignal<"nwc" | "card">("nwc")
 
-  // Deep link: /...?invoice=<id> (e.g. from the billing DM) opens the payment
-  // dialog on whatever dashboard page the link lands on.
   const [searchParams, setSearchParams] = useSearchParams()
   const [deepLinked] = createResource(
     () => searchParams.invoice as string | undefined,
     (id) => getInvoice(id),
   )
 
-  // A resource keeps its last value once its source goes falsy, so deepLinked()
-  // still returns the fetched invoice after the param is cleared. Gate on the
-  // param so clearing it actually closes the dialog (otherwise it can't be).
+  // A resource keeps its value after its source clears, so this reads the param too.
   const deepLinkedInvoice = createMemo(() =>
     searchParams.invoice ? deepLinked() : undefined,
   )
@@ -91,14 +83,11 @@ export default function BillingPrompts(props: BillingPromptsProps) {
     if (searchParams.invoice) setSearchParams({ invoice: undefined })
   }
 
-  // After paying or saving a method, reconcile + sync + (auto)collect, then
-  // refresh — so a card added inside the dialog actually settles the invoice.
+  // After paying or saving a method, collect what's owed with it, then refresh.
   function refreshBilling() {
     const pubkey = account()?.pubkey
     if (pubkey) void status.autopay(pubkey)
   }
-
-  const outerClass = () => (props.variant === "inline" ? "" : "mx-4 mt-4 md:mx-6")
 
   return (
     <>
@@ -109,12 +98,11 @@ export default function BillingPrompts(props: BillingPromptsProps) {
             message={p().message}
             actions={actions()}
             onDismiss={dismissible() ? dismiss : undefined}
-            class={outerClass()}
+            class="mx-4 mt-4 md:mx-6"
           />
         )}
       </Show>
 
-      {/* Pay an invoice — from a prompt action or a deep link. */}
       <Show when={payInvoice() ?? deepLinkedInvoice()}>
         {(invoice) => (
           <PaymentDialog

@@ -7,9 +7,9 @@ use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use caravel_app::dispatch::{self, Hosts};
-use caravel_app::web::Web;
+use caravel_app::web::{PageConfig, Web};
 use caravel_core::relays::{self, Relay};
-use caravel_core::testing::{self, RELAY_DOMAIN};
+use caravel_core::testing;
 use caravel_core::{Core, hosting};
 use caravel_relay::{Relays, RelaysConfig};
 use coracle_lib::keys::SecretKey;
@@ -34,6 +34,24 @@ fn files() -> HashMap<String, Vec<u8>> {
         ("assets/app.js".to_string(), b"console.log(1)".to_vec()),
         ("caravel.png".to_string(), b"png".to_vec()),
     ])
+}
+
+/// The dispatcher the binary serves, over the relays as they stand now.
+async fn app(core: &Core, api_url: &str, platform_url: Option<&str>) -> Router {
+    let relays = Relays::load(
+        core.clone(),
+        RelaysConfig::default(),
+        CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    let config = PageConfig {
+        api_url: api_url.to_string(),
+        ..Default::default()
+    };
+    let web = Web::with_files(config, files());
+    let hosts = Hosts::from_urls(api_url, platform_url).unwrap();
+    dispatch::router(caravel_api::router(core.clone()), relays, web, hosts)
 }
 
 struct Fixture {
@@ -64,16 +82,7 @@ async fn fixture(api_url: &str) -> Fixture {
         .unwrap()
         .unwrap();
 
-    let relays = Relays::load(
-        core.clone(),
-        RelaysConfig::default(),
-        CancellationToken::new(),
-    )
-    .await
-    .unwrap();
-    let web = Web::with_files(json!({"api_url": api_url}), files());
-    let hosts = Hosts::from_urls(api_url, Some(&format!("https://{PLATFORM}"))).unwrap();
-    let app = dispatch::router(caravel_api::router(core.clone()), relays, web, hosts);
+    let app = app(&core, api_url, Some(&format!("https://{PLATFORM}"))).await;
 
     Fixture {
         core,
@@ -178,7 +187,7 @@ async fn each_host_answers_for_what_it_serves() {
     // A relay's primary host serves its portal to browsers and its protocols to clients.
     let portal = get(app, custom, "/", PAGE).await;
     assert_eq!(portal.shell().as_deref(), Some("portal"));
-    assert_eq!(portal.config()["relay"]["id"], f.relay.id);
+    assert_eq!(portal.config()["relay"]["relay_id"], f.relay.id);
     assert_eq!(portal.config()["relay"]["host"], custom);
     assert_eq!(
         get(app, custom, "/invites/abc", PAGE)
@@ -235,7 +244,6 @@ async fn each_host_answers_for_what_it_serves() {
     assert_eq!(ask.status, StatusCode::OK);
     let ask = get(app, UNKNOWN, "/domains/check?domain=nobody.example", "*/*").await;
     assert_eq!(ask.status, StatusCode::NOT_FOUND);
-    drop(f.core);
 }
 
 #[tokio::test]
@@ -262,7 +270,6 @@ async fn the_api_can_share_the_platform_host_under_a_path() {
         )
         .is_err()
     );
-    assert_eq!(RELAY_DOMAIN, "relay.test");
 }
 
 #[tokio::test]
@@ -274,17 +281,8 @@ async fn a_relay_name_cant_break_out_of_the_portal_config() {
         .await
         .unwrap();
 
-    // The dispatcher's relays reload from the bus; a fresh fixture router reads the row.
-    let relays = Relays::load(
-        f.core.clone(),
-        RelaysConfig::default(),
-        CancellationToken::new(),
-    )
-    .await
-    .unwrap();
-    let web = Web::with_files(json!({}), files());
-    let hosts = Hosts::from_urls(&format!("https://{API}"), None).unwrap();
-    let app = dispatch::router(caravel_api::router(f.core.clone()), relays, web, hosts);
+    // The fixture's relays reload from the bus; a fresh router reads the row now.
+    let app = app(&f.core, &format!("https://{API}"), None).await;
 
     let portal = get(&app, &f.custom, "/", PAGE).await;
     assert!(!portal.body.contains("</script><script>"));

@@ -1,7 +1,7 @@
 import { createSignal } from "solid-js"
+import { request } from "@/shared/lib/http"
 
-// The member's session token, kept in this browser so a later visit to this
-// relay's portal needs no sign-in.
+// The member's session token, kept so a later visit needs no sign-in.
 const KEY = "caravel.portal.session"
 
 function read() {
@@ -12,12 +12,12 @@ function read() {
   }
 }
 
-const [token, setToken] = createSignal(read())
+const [session, setSession] = createSignal(read())
 
-export const session = token
+export { session }
 
 export function signIn(next: string) {
-  setToken(next)
+  setSession(next)
   try {
     localStorage.setItem(KEY, next)
   } catch {
@@ -25,11 +25,16 @@ export function signIn(next: string) {
   }
 }
 
+// Forget the session here, and end it on the server.
 export function signOut() {
-  setToken(undefined)
+  const token = session()
+  setSession(undefined)
   try {
     localStorage.removeItem(KEY)
   } catch {
     // Nothing was stored.
+  }
+  if (token) {
+    void request("/session", { method: "DELETE", headers: { Authorization: `Bearer ${token}` } }).catch(() => undefined)
   }
 }

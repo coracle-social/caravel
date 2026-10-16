@@ -11,7 +11,7 @@ use caravel_adapters::stripe::Stripe;
 use serde_json::{Value, json};
 
 #[derive(Clone, Debug)]
-pub struct Session {
+pub struct CheckoutSession {
     pub id: String,
     pub customer: String,
     pub membership_id: String,
@@ -30,31 +30,31 @@ pub struct Subscription {
 }
 
 #[derive(Default)]
-pub struct Ledger {
+pub struct StripeState {
     next: u64,
-    pub sessions: Vec<Session>,
+    pub sessions: Vec<CheckoutSession>,
     pub subscriptions: Vec<Subscription>,
     pub accounts: HashMap<String, bool>,
 }
 
-impl Ledger {
+impl StripeState {
     fn id(&mut self, prefix: &str) -> String {
         self.next += 1;
         format!("{prefix}_{}", self.next)
     }
 }
 
-type Shared = Arc<Mutex<Ledger>>;
+type Shared = Arc<Mutex<StripeState>>;
 
 #[derive(Clone)]
 pub struct FakeStripe {
-    pub ledger: Shared,
+    pub state: Shared,
     url: String,
 }
 
 impl FakeStripe {
     pub async fn start() -> Self {
-        let ledger: Shared = Arc::default();
+        let state: Shared = Arc::default();
         let router = Router::new()
             .route("/customers", post(create_customer))
             .route(
@@ -74,24 +74,24 @@ impl FakeStripe {
             .route("/accounts/{id}", get(get_account))
             .route("/accounts/{id}/login_links", post(login_link))
             .route("/account_links", post(account_link))
-            .with_state(ledger.clone());
+            .with_state(state.clone());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
         tokio::spawn(async move { axum::serve(listener, router).await });
-        Self { ledger, url }
+        Self { state, url }
     }
 
     pub fn stripe(&self) -> Stripe {
         Stripe::with_api("sk_test_fake", &self.url)
     }
 
-    fn ledger(&self) -> std::sync::MutexGuard<'_, Ledger> {
-        self.ledger.lock().unwrap()
+    fn state(&self) -> std::sync::MutexGuard<'_, StripeState> {
+        self.state.lock().unwrap()
     }
 
     /// The checkout session most recently opened.
-    pub fn last_session(&self) -> Session {
-        self.ledger()
+    pub fn last_session(&self) -> CheckoutSession {
+        self.state()
             .sessions
             .last()
             .cloned()
@@ -101,9 +101,9 @@ impl FakeStripe {
     /// Pay for a checkout session with a new subscription running until
     /// `period_end`, returning the subscription's id.
     pub fn complete(&self, session_id: &str, period_end: i64) -> String {
-        let mut ledger = self.ledger();
-        let subscription_id = ledger.id("sub");
-        let session = ledger
+        let mut state = self.state();
+        let subscription_id = state.id("sub");
+        let session = state
             .sessions
             .iter_mut()
             .find(|session| session.id == session_id)
@@ -111,7 +111,7 @@ impl FakeStripe {
         session.status = "complete";
         session.subscription = Some(subscription_id.clone());
         let customer = session.customer.clone();
-        ledger.subscriptions.push(Subscription {
+        state.subscriptions.push(Subscription {
             id: subscription_id.clone(),
             customer,
             period_end,
@@ -122,7 +122,7 @@ impl FakeStripe {
     }
 
     pub fn subscription(&self, id: &str) -> Subscription {
-        self.ledger()
+        self.state()
             .subscriptions
             .iter()
             .find(|subscription| subscription.id == id)
@@ -132,8 +132,8 @@ impl FakeStripe {
 
     /// Move a subscription's period end, as a renewal or a lapse would.
     pub fn set_period_end(&self, id: &str, period_end: i64) {
-        let mut ledger = self.ledger();
-        let subscription = ledger
+        let mut state = self.state();
+        let subscription = state
             .subscriptions
             .iter_mut()
             .find(|subscription| subscription.id == id)
@@ -142,11 +142,11 @@ impl FakeStripe {
     }
 
     pub fn set_account_ready(&self, account_id: &str, ready: bool) {
-        self.ledger().accounts.insert(account_id.to_string(), ready);
+        self.state().accounts.insert(account_id.to_string(), ready);
     }
 }
 
-fn session_json(session: &Session) -> Value {
+fn session_json(session: &CheckoutSession) -> Value {
     json!({
         "id": session.id,
         "url": format!("https://checkout.stripe.test/{}", session.id),
@@ -168,18 +168,18 @@ fn subscription_json(subscription: &Subscription) -> Value {
     })
 }
 
-async fn create_customer(State(ledger): State<Shared>) -> Json<Value> {
-    Json(json!({ "id": ledger.lock().unwrap().id("cus") }))
+async fn create_customer(State(state): State<Shared>) -> Json<Value> {
+    Json(json!({ "id": state.lock().unwrap().id("cus") }))
 }
 
 async fn create_session(
-    State(ledger): State<Shared>,
+    State(state): State<Shared>,
     Form(form): Form<Vec<(String, String)>>,
 ) -> Json<Value> {
     let form: HashMap<String, String> = form.into_iter().collect();
-    let mut ledger = ledger.lock().unwrap();
-    let session = Session {
-        id: ledger.id("cs"),
+    let mut state = state.lock().unwrap();
+    let session = CheckoutSession {
+        id: state.id("cs"),
         customer: form.get("customer").cloned().unwrap_or_default(),
         membership_id: form
             .get("metadata[membership_id]")
@@ -190,16 +190,16 @@ async fn create_session(
         form,
     };
     let body = session_json(&session);
-    ledger.sessions.push(session);
+    state.sessions.push(session);
     Json(body)
 }
 
 async fn list_sessions(
-    State(ledger): State<Shared>,
+    State(state): State<Shared>,
     Query(query): Query<HashMap<String, String>>,
 ) -> Json<Value> {
-    let ledger = ledger.lock().unwrap();
-    let data: Vec<Value> = ledger
+    let state = state.lock().unwrap();
+    let data: Vec<Value> = state
         .sessions
         .iter()
         .filter(|session| {
@@ -210,9 +210,9 @@ async fn list_sessions(
     Json(json!({ "data": data }))
 }
 
-async fn get_session(State(ledger): State<Shared>, Path(id): Path<String>) -> Json<Value> {
-    let ledger = ledger.lock().unwrap();
-    let session = ledger
+async fn get_session(State(state): State<Shared>, Path(id): Path<String>) -> Json<Value> {
+    let state = state.lock().unwrap();
+    let session = state
         .sessions
         .iter()
         .find(|session| session.id == id)
@@ -220,9 +220,9 @@ async fn get_session(State(ledger): State<Shared>, Path(id): Path<String>) -> Js
     Json(session_json(session))
 }
 
-async fn expire_session(State(ledger): State<Shared>, Path(id): Path<String>) -> Json<Value> {
-    let mut ledger = ledger.lock().unwrap();
-    let session = ledger
+async fn expire_session(State(state): State<Shared>, Path(id): Path<String>) -> Json<Value> {
+    let mut state = state.lock().unwrap();
+    let session = state
         .sessions
         .iter_mut()
         .find(|session| session.id == id)
@@ -232,12 +232,12 @@ async fn expire_session(State(ledger): State<Shared>, Path(id): Path<String>) ->
 }
 
 async fn list_subscriptions(
-    State(ledger): State<Shared>,
+    State(state): State<Shared>,
     Query(query): Query<HashMap<String, String>>,
 ) -> Json<Value> {
-    let ledger = ledger.lock().unwrap();
+    let state = state.lock().unwrap();
     // Stripe leaves canceled subscriptions out unless asked for them.
-    let data: Vec<Value> = ledger
+    let data: Vec<Value> = state
         .subscriptions
         .iter()
         .filter(|subscription| {
@@ -248,9 +248,9 @@ async fn list_subscriptions(
     Json(json!({ "data": data }))
 }
 
-async fn get_subscription(State(ledger): State<Shared>, Path(id): Path<String>) -> Json<Value> {
-    let ledger = ledger.lock().unwrap();
-    let subscription = ledger
+async fn get_subscription(State(state): State<Shared>, Path(id): Path<String>) -> Json<Value> {
+    let state = state.lock().unwrap();
+    let subscription = state
         .subscriptions
         .iter()
         .find(|subscription| subscription.id == id)
@@ -259,12 +259,12 @@ async fn get_subscription(State(ledger): State<Shared>, Path(id): Path<String>) 
 }
 
 async fn update_subscription(
-    State(ledger): State<Shared>,
+    State(state): State<Shared>,
     Path(id): Path<String>,
     Form(form): Form<HashMap<String, String>>,
 ) -> Json<Value> {
-    let mut ledger = ledger.lock().unwrap();
-    let subscription = ledger
+    let mut state = state.lock().unwrap();
+    let subscription = state
         .subscriptions
         .iter_mut()
         .find(|subscription| subscription.id == id)
@@ -275,9 +275,9 @@ async fn update_subscription(
     Json(subscription_json(subscription))
 }
 
-async fn cancel_subscription(State(ledger): State<Shared>, Path(id): Path<String>) -> Json<Value> {
-    let mut ledger = ledger.lock().unwrap();
-    let subscription = ledger
+async fn cancel_subscription(State(state): State<Shared>, Path(id): Path<String>) -> Json<Value> {
+    let mut state = state.lock().unwrap();
+    let subscription = state
         .subscriptions
         .iter_mut()
         .find(|subscription| subscription.id == id)
@@ -286,15 +286,15 @@ async fn cancel_subscription(State(ledger): State<Shared>, Path(id): Path<String
     Json(subscription_json(subscription))
 }
 
-async fn create_account(State(ledger): State<Shared>) -> Json<Value> {
-    let mut ledger = ledger.lock().unwrap();
-    let id = ledger.id("acct");
-    ledger.accounts.insert(id.clone(), false);
+async fn create_account(State(state): State<Shared>) -> Json<Value> {
+    let mut state = state.lock().unwrap();
+    let id = state.id("acct");
+    state.accounts.insert(id.clone(), false);
     Json(json!({ "id": id }))
 }
 
-async fn get_account(State(ledger): State<Shared>, Path(id): Path<String>) -> Json<Value> {
-    let ready = ledger
+async fn get_account(State(state): State<Shared>, Path(id): Path<String>) -> Json<Value> {
+    let ready = state
         .lock()
         .unwrap()
         .accounts

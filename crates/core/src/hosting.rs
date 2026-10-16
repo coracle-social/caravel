@@ -17,10 +17,13 @@ use crate::error::{Error, Result};
 use crate::flag::Flag;
 use crate::plans;
 use crate::relays::activity::{self, ActivityType, Snapshot};
-use crate::relays::{self, Relay, RelayStatus};
+use crate::relays::{self, MemberInterval, Relay, RelayStatus};
 use crate::tenants::{self, Tenant};
 
 const RESERVED_SUBDOMAINS: [&str; 3] = ["api", "admin", "internal"];
+
+/// The least Stripe charges, in cents.
+const MIN_MEMBER_PRICE: i64 = 50;
 
 static SUBDOMAIN_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$").unwrap());
@@ -49,6 +52,8 @@ pub struct RelaySettings {
     pub livekit_enabled: Option<Flag>,
     pub push_enabled: Option<Flag>,
     pub custom_domain: Option<String>,
+    pub member_price: Option<i64>,
+    pub member_interval: Option<MemberInterval>,
 }
 
 // --- Tenants ---
@@ -495,6 +500,12 @@ fn apply_settings(core: &Core, mut relay: Relay, settings: RelaySettings) -> Res
     );
     flag(&mut relay.livekit_enabled, settings.livekit_enabled);
     flag(&mut relay.push_enabled, settings.push_enabled);
+    if let Some(price) = settings.member_price {
+        relay.member_price = price;
+    }
+    if let Some(interval) = settings.member_interval {
+        relay.member_interval = interval;
+    }
     if let Some(custom_domain) = settings.custom_domain {
         let custom_domain = normalize_custom_domain(&core.config, &custom_domain)?;
         if custom_domain != relay.custom_domain {
@@ -506,8 +517,9 @@ fn apply_settings(core: &Core, mut relay: Relay, settings: RelaySettings) -> Res
     Ok(relay)
 }
 
-/// Check a relay's subdomain, domain and plan, and that the plan allows the
-/// premium features it has on.
+/// Check a relay's subdomain, domain and plan, that the plan allows the premium
+/// features it has on, and that its member price is one Stripe can charge for a
+/// relay that doesn't let anyone in for free.
 fn validate_relay(core: &Core, relay: Relay) -> Result<Relay> {
     if !SUBDOMAIN_RE.is_match(&relay.subdomain)
         || RESERVED_SUBDOMAINS.contains(&relay.subdomain.as_str())
@@ -528,6 +540,20 @@ fn validate_relay(core: &Core, relay: Relay) -> Result<Relay> {
         return Err(Error::invalid(
             "premium-feature",
             "feature requires a paid plan",
+        ));
+    }
+
+    if relay.member_price != 0 && relay.member_price < MIN_MEMBER_PRICE {
+        return Err(Error::invalid(
+            "invalid-member-price",
+            "a member price must be free or at least $0.50",
+        ));
+    }
+
+    if relay.member_price > 0 && relay.policy_public_join {
+        return Err(Error::invalid(
+            "paid-public-join",
+            "a relay anyone may join can't charge for membership",
         ));
     }
 

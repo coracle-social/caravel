@@ -38,6 +38,8 @@ pub async fn core(admin_pubkey: &str) -> Core {
         api_url: API_URL.to_string(),
         admin_pubkeys: vec![admin_pubkey.to_string()],
         relay_domains: vec![RELAY_DOMAIN.to_string()],
+        member_fee_percent: 10.0,
+        flotilla_url: "https://app.flotilla.test".to_string(),
         platform_key,
     };
 

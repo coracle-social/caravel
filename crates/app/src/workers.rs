@@ -4,7 +4,7 @@
 use std::future::Future;
 use std::time::Duration;
 
-use caravel_core::{Core, Result, auth, billing, domains, events, hosting};
+use caravel_core::{Core, Result, auth, billing, domains, events, hosting, memberships};
 use tokio::time::{Instant, interval_at};
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
@@ -62,6 +62,15 @@ pub fn spawn(tracker: &TaskTracker, shutdown: &CancellationToken, core: &Core) {
         MINUTE,
         MINUTE,
         |core| async move { sweep_expired_events(&core).await },
+    );
+    every(
+        tracker,
+        shutdown,
+        core,
+        "membership sweep",
+        Duration::ZERO,
+        5 * MINUTE,
+        |core| async move { memberships::sweep(&core).await },
     );
     every(
         tracker,

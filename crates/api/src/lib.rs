@@ -4,6 +4,7 @@
 
 pub mod admin;
 pub mod auth;
+pub mod member;
 pub mod public;
 pub mod response;
 pub mod tenant;
@@ -53,6 +54,15 @@ pub fn router(core: Core) -> Router {
             "/tenants/{pubkey}/stripe/session",
             get(tenant::create_stripe_session),
         )
+        .route("/tenants/{pubkey}/payouts", get(tenant::get_payouts))
+        .route(
+            "/tenants/{pubkey}/payouts/onboard",
+            post(tenant::onboard_payouts),
+        )
+        .route(
+            "/tenants/{pubkey}/payouts/dashboard",
+            post(tenant::open_payouts_dashboard),
+        )
         .route("/tenants/{pubkey}/ban", post(admin::ban_tenant))
         .route("/tenants/{pubkey}/unban", post(admin::unban_tenant))
         .route(
@@ -68,6 +78,28 @@ pub fn router(core: Core) -> Router {
             "/relays/{id}/members/{pubkey}",
             put(tenant::add_relay_member).delete(tenant::remove_relay_member),
         )
+        .route(
+            "/relays/{id}/memberships",
+            get(tenant::list_relay_memberships),
+        )
+        .route("/relays/{id}/offer", get(member::get_offer))
+        .route("/relays/{id}/membership", get(member::get_membership))
+        .route(
+            "/relays/{id}/membership/checkout",
+            post(member::create_checkout),
+        )
+        .route(
+            "/relays/{id}/membership/reconcile",
+            post(member::reconcile_checkout),
+        )
+        .route(
+            "/relays/{id}/membership/cancel",
+            post(member::cancel_renewal),
+        )
+        .route("/relays/{id}/invites", post(member::create_invite))
+        .route("/invites/{code}", get(member::get_invite))
+        .route("/invites/{code}/reconcile", post(member::reconcile_invite))
+        .route("/account", get(member::get_account))
         .route("/relays/{id}/activity", get(tenant::list_relay_activity))
         .route("/relays/{id}/deactivate", post(tenant::deactivate_relay))
         .route("/relays/{id}/reactivate", post(tenant::reactivate_relay))

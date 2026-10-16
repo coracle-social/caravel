@@ -5,13 +5,13 @@
 use std::collections::HashSet;
 use std::sync::{Arc, RwLock};
 
-use caravel_core::access::{self, MemberSource};
+use caravel_core::access;
 use caravel_core::crypto::RelayKey;
 use caravel_core::events::{self, DELETION, Saved, StoredEvent, VANISH};
-use caravel_core::relay_policy::{self, EventFacts, Join, Refusal, RelaySnapshot, kinds};
+use caravel_core::relay_policy::{self, EventFacts, Refusal, RelaySnapshot, kinds};
 use caravel_core::relays::Relay;
 use caravel_core::{Core, Error};
-use caravel_core::{notifications, rooms};
+use caravel_core::{memberships, notifications, rooms};
 use coracle_lib::events::{Event, EventId};
 use coracle_lib::filters::Filter;
 use coracle_lib::sync::{FrameBudget, Item, Message as SyncMessage, SyncSet, reconcile_responder};
@@ -223,8 +223,8 @@ impl RelayInstance {
     }
 
     /// Admit a NIP-43 join request: a member already, anyone on an open relay, or
-    /// the holder of a live claim, within the plan's member limit. A join is logged
-    /// against any claim it presents.
+    /// the holder of a live claim, within the plan's member limit. A paid invite's
+    /// claim also gives the joiner its membership.
     async fn join(
         &self,
         state: &InstanceState,
@@ -232,41 +232,13 @@ impl RelayInstance {
         now: i64,
     ) -> Result<Vec<Event>, Refusal> {
         let relay_id = state.relay.id.as_str();
-        let pubkey = event.pubkey.to_hex();
-
-        let source = match relay_policy::admit_join(&state.snapshot, event)? {
-            Join::AlreadyMember => None,
-            Join::Open => Some(MemberSource::PublicJoin),
-            Join::Claim(code) => {
-                let live = access::is_live_claim(self.core.db.pool(), relay_id, &code)
-                    .await
-                    .map_err(|_| Refusal::Error("the invite code could not be checked"))?;
-                if !live {
-                    return Err(Refusal::restricted("failed to validate invite code"));
-                }
-                Some(MemberSource::Claim)
-            }
-        };
-
-        let presented = event.tags.value("claim");
+        let join = relay_policy::admit_join(&state.snapshot, event)?;
         let limit = state.snapshot.member_limit;
         let result = self
             .core
             .db
             .with_tx(async |conn| {
-                let published = match source {
-                    Some(source) => {
-                        access::admit_within_limit(
-                            &mut *conn, &state.key, relay_id, &pubkey, source, limit, now,
-                        )
-                        .await?
-                    }
-                    None => Vec::new(),
-                };
-                if let Some(code) = presented {
-                    access::record_claim_use(conn, relay_id, code, &pubkey, now).await?;
-                }
-                Ok::<_, Error>(published)
+                memberships::admit_join(conn, &state.key, relay_id, event, &join, limit, now).await
             })
             .await;
 

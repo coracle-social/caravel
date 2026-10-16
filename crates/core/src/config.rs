@@ -11,6 +11,11 @@ pub struct Config {
     /// `<subdomain>.<domain>` for one of these.
     pub relay_domains: Vec<String>,
     pub platform_key: PlatformKey,
+    /// The platform's cut of each membership payment, as a percent with at most two
+    /// decimal places.
+    pub member_fee_percent: f64,
+    /// The Flotilla instance invites are accepted in.
+    pub flotilla_url: String,
 }
 
 impl Config {

@@ -54,6 +54,8 @@ pub struct RelaySnapshot {
     pub members_can_invite: bool,
     /// The most members the relay's plan allows, if it has a limit.
     pub member_limit: Option<usize>,
+    /// The relay sells memberships, so joining needs a claim.
+    pub paid: bool,
     pub members: HashSet<String>,
     /// NIP-86 methods granted to pubkeys individually.
     pub method_grants: HashMap<String, BTreeSet<String>>,
@@ -181,6 +183,7 @@ impl RelaySnapshot {
             strip_signatures: relay.policy_strip_signatures,
             groups_enabled: relay.groups_enabled,
             members_can_invite: relay.members_can_invite,
+            paid: relay.charges_members(),
             member_limit: plans::get_plan(&relay.plan_id)
                 .and_then(|plan| plan.members)
                 .and_then(|limit| usize::try_from(limit).ok()),
@@ -554,6 +557,7 @@ pub fn admit_join(snapshot: &RelaySnapshot, event: &Event) -> Result<Join, Refus
 
     match event.tags.value("claim") {
         Some(claim) => Ok(Join::Claim(claim.to_string())),
+        None if snapshot.paid => Err(Refusal::restricted("this space requires a paid membership")),
         None => Err(Refusal::restricted("no claim tag")),
     }
 }

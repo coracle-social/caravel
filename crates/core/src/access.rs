@@ -271,35 +271,6 @@ pub async fn admit(
     Ok(vec![added, list])
 }
 
-/// Admit a new member only if the relay has room for one under `limit`, counting
-/// under a lock on the relay so racing joins can't overshoot it.
-pub async fn admit_within_limit(
-    conn: &mut PgConnection,
-    key: &RelayKey,
-    relay_id: &str,
-    pubkey: &str,
-    source: MemberSource,
-    limit: Option<usize>,
-    now: i64,
-) -> Result<Vec<Event>> {
-    sqlx::query("SELECT 1 FROM relay WHERE id = $1 FOR UPDATE")
-        .bind(relay_id)
-        .execute(&mut *conn)
-        .await?;
-
-    if let Some(limit) = limit
-        && get_member(&mut *conn, relay_id, pubkey).await?.is_none()
-        && count_members(&mut *conn, relay_id).await? >= limit as i64
-    {
-        return Err(Error::conflict(
-            "member-limit",
-            "this relay has reached its member limit",
-        ));
-    }
-
-    admit(conn, key, relay_id, pubkey, source, now).await
-}
-
 /// Remove a member, with the methods granted to them, publishing the removal and
 /// the new member list. The relay's owner and its own key can't be removed.
 pub async fn remove(

@@ -41,6 +41,12 @@ pub struct Tenant {
     /// When an admin banned the tenant. A ban blocks relay creation, forgives
     /// outstanding charges and purges every relay; unbanning restores none of it.
     pub banned_at: Option<i64>,
+    /// The Stripe Connect account the tenant's members pay into, or empty before
+    /// they start onboarding.
+    pub stripe_account_id: String,
+    /// Whether that account can take charges and receive payouts, as Stripe last
+    /// said.
+    pub stripe_account_ready: bool,
 }
 
 pub async fn list_tenants(db: impl PgExecutor<'_>) -> Result<Vec<Tenant>> {
@@ -194,6 +200,23 @@ pub async fn set_tenant_churned_at(
         .bind(pubkey)
         .execute(db)
         .await?;
+    Ok(())
+}
+
+pub async fn set_tenant_stripe_account(
+    db: impl PgExecutor<'_>,
+    pubkey: &str,
+    account_id: &str,
+    ready: bool,
+) -> Result<()> {
+    sqlx::query(
+        "UPDATE tenant SET stripe_account_id = $2, stripe_account_ready = $3 WHERE pubkey = $1",
+    )
+    .bind(pubkey)
+    .bind(account_id)
+    .bind(ready)
+    .execute(db)
+    .await?;
     Ok(())
 }
 

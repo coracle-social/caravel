@@ -19,7 +19,7 @@ pub struct Notification {
 }
 
 /// Replace a pubkey's message on a relay, and send it to them now if they are
-/// connected.
+/// connected and it hasn't expired.
 pub async fn notify(
     core: &Core,
     relay_id: &str,
@@ -31,6 +31,7 @@ pub async fn notify(
         return Err(Error::invalid("message-required", "message is required"));
     }
 
+    let now = core.clock.now();
     sqlx::query(
         "INSERT INTO notification (relay_id, pubkey, message, created_at, expires_at) VALUES ($1, $2, $3, $4, $5)
          ON CONFLICT (relay_id, pubkey) DO UPDATE
@@ -39,16 +40,18 @@ pub async fn notify(
     .bind(relay_id)
     .bind(pubkey)
     .bind(message)
-    .bind(core.clock.now())
+    .bind(now)
     .bind(expires_at)
     .execute(core.db.pool())
     .await?;
 
-    core.bus.publish(Change::Notified {
-        relay_id: relay_id.to_string(),
-        pubkey: pubkey.to_string(),
-        message: message.to_string(),
-    });
+    if expires_at.is_none_or(|expires_at| expires_at > now) {
+        core.bus.publish(Change::Notified {
+            relay_id: relay_id.to_string(),
+            pubkey: pubkey.to_string(),
+            message: message.to_string(),
+        });
+    }
     Ok(())
 }
 

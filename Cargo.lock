@@ -342,6 +342,7 @@ name = "caravel-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "axum",
  "base64",
  "bytes",
  "caravel-adapters",

@@ -7,6 +7,8 @@ description: Conceptual, user-story-level overview of how Caravel bills tenants 
 
 This explains *what* the billing system is supposed to do and *why*, in plain domain terms. It is deliberately free of implementation detail — no functions, tables, or fields — so it stays true as the code evolves. Reach for the code for the *how*; reach for this for the *intent*.
 
+Members paying a tenant for access to a relay are a separate flow, through Stripe Connect, that never touches the tenant's bill; the `memberships` skill covers it.
+
 ## The cast
 
 - **Tenant** — a customer account, identified by a Nostr pubkey. Everything is billed to a tenant.

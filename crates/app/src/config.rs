@@ -52,6 +52,15 @@ pub fn load() -> Result<Settings> {
             admin_pubkeys: list("ADMIN_PUBKEYS"),
             relay_domains: required_list("RELAY_DOMAINS")?,
             platform_key,
+            member_fee_percent: optional("MEMBER_FEE_PERCENT").map_or(Ok(10.0), |value| {
+                parse_percent(&value).context(
+                    "MEMBER_FEE_PERCENT is not a percent from 0 to 100 with at most two decimal places",
+                )
+            })?,
+            flotilla_url: optional("FLOTILLA_URL")
+                .unwrap_or_else(|| "https://app.flotilla.social".to_string())
+                .trim_end_matches('/')
+                .to_string(),
         },
         robot_secret,
         robot_profile: RobotProfile {
@@ -94,6 +103,16 @@ pub fn load() -> Result<Settings> {
     })
 }
 
+/// A percent from 0 to 100 with at most two decimal places, which is what Stripe
+/// takes as an application fee.
+fn parse_percent(raw: &str) -> Option<f64> {
+    let decimals = raw
+        .split_once('.')
+        .map_or(0, |(_, fraction)| fraction.len());
+    let percent: f64 = raw.parse().ok()?;
+    (decimals <= 2 && (0.0..=100.0).contains(&percent)).then_some(percent)
+}
+
 #[allow(clippy::disallowed_methods)]
 fn optional(key: &str) -> Option<String> {
     std::env::var(key)
@@ -121,4 +140,22 @@ fn required_list(key: &str) -> Result<Vec<String>> {
         bail!("{key} is required");
     }
     Ok(values)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_percent;
+
+    #[test]
+    fn a_fee_percent_is_what_stripe_accepts() {
+        assert_eq!(parse_percent("10"), Some(10.0));
+        assert_eq!(parse_percent("2.55"), Some(2.55));
+        assert_eq!(parse_percent("0"), Some(0.0));
+        assert_eq!(parse_percent("100"), Some(100.0));
+        assert_eq!(parse_percent("2.555"), None);
+        assert_eq!(parse_percent("100.01"), None);
+        assert_eq!(parse_percent("-1"), None);
+        assert_eq!(parse_percent("NaN"), None);
+        assert_eq!(parse_percent("ten"), None);
+    }
 }

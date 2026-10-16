@@ -4,6 +4,8 @@
 
 #![allow(dead_code)]
 
+pub mod stripe;
+
 use anyhow::{Result, anyhow};
 use caravel_core::billing::{
     self,

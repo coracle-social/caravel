@@ -1,6 +1,6 @@
 # Caravel
 
-A multi-tenant platform for hosting Nostr community relays. Tenants create relays, choose their plans and settings, and pay for them, and the platform bills them monthly. One process serves every relay on its own hosts, with its rooms, media, push notifications and calls.
+A multi-tenant platform for hosting Nostr community relays. Tenants create relays, choose their plans and settings, and pay for them, and the platform bills them monthly. One process serves every relay on its own hosts, with its rooms, media, push notifications and calls, and sells memberships of relays that charge for them, paying their tenants through Stripe Connect.
 
 ## Layout
 
@@ -35,7 +35,9 @@ The binary reads these from the environment, or from a `.env` file in its workin
 | `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` | The LiveKit server relays' calls run on. Without them no relay has calls |
 | `MEDIA_DIR` | The directory relays' media is kept in when no bucket is set, `data/media` by default |
 | `MEDIA_S3_BUCKET`, `MEDIA_S3_REGION`, `MEDIA_S3_ACCESS_KEY`, `MEDIA_S3_SECRET_KEY`, `MEDIA_S3_ENDPOINT` | The S3 bucket relays' media is kept in instead; the endpoint is needed only for a service other than AWS |
-| `STRIPE_SECRET_KEY` | The Stripe account tenants pay |
+| `STRIPE_SECRET_KEY` | The Stripe account tenants pay, and through whose Connect platform members pay tenants |
+| `MEMBER_FEE_PERCENT` | The platform's cut of each membership payment, `10` by default, with at most two decimal places |
+| `FLOTILLA_URL` | The Flotilla instance invites are accepted in, `https://app.flotilla.social` by default |
 | `FORWARDED_HEADER` | The header a trusted proxy reports a client's address in, such as `X-Forwarded-For` |
 | `CONNECTIONS_PER_MINUTE` | New relay connections allowed per minute from one address, `0` (unlimited) by default |
 

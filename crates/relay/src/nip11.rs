@@ -2,6 +2,7 @@
 
 use axum::http::{HeaderValue, header};
 use axum::response::{IntoResponse, Response};
+use caravel_core::memberships;
 use caravel_core::relay_policy::CREATED_AT_UPPER_LIMIT;
 use serde_json::{Value, json};
 
@@ -33,12 +34,13 @@ fn supported_nips(relay: &caravel_core::relays::Relay) -> Vec<Value> {
     nips
 }
 
-/// A relay's information document: its name and pubkeys, and the rules a client
-/// meets there.
+/// A relay's information document: its name and pubkeys, the rules a client meets
+/// there, and what membership costs and where to pay for it.
 pub fn document(state: &InstanceState, limits: &RelayLimits, transport: &Transport) -> Value {
     let relay = &state.relay;
+    let paid = relay.charges_members();
 
-    json!({
+    let mut document = json!({
         "name": relay.info_name,
         "description": relay.info_description,
         "icon": relay.info_icon,
@@ -50,14 +52,27 @@ pub fn document(state: &InstanceState, limits: &RelayLimits, transport: &Transpo
         "limitation": {
             "auth_required": !relay.policy_anonymous_read,
             "restricted_writes": !relay.policy_public_write,
-            "payment_required": false,
+            "payment_required": paid,
             "created_at_upper_limit": CREATED_AT_UPPER_LIMIT,
             "max_limit": limits.max_limit,
             "max_subscriptions": limits.max_subscriptions,
             "max_message_length": transport.max_message_size,
             "max_subid_length": crate::message::MAX_SUBSCRIPTION_ID_LEN,
         },
-    })
+    });
+
+    if paid {
+        document["payments_url"] = json!(memberships::portal_url(relay, "/"));
+        document["fees"] = json!({
+            "subscription": [{
+                "amount": relay.member_price,
+                "unit": "USD",
+                "period": relay.member_interval.seconds(),
+            }],
+        });
+    }
+
+    document
 }
 
 pub fn response(document: Value) -> Response {

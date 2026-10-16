@@ -72,6 +72,9 @@ export type Relay = {
   push_enabled: number
   blossom_authenticated_read: number
   policy_anonymous_read: number
+  // Cents per member_interval, or 0 if joining is free.
+  member_price: number
+  member_interval: "month" | "year"
   pubkey: string
   created_at: number
   purged_at: number | null

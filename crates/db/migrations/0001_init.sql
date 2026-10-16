@@ -11,7 +11,9 @@ CREATE TABLE tenant (
   renewed_at BIGINT,
   overage_billed_at BIGINT,
   churned_at BIGINT,
-  banned_at BIGINT
+  banned_at BIGINT,
+  stripe_account_id TEXT NOT NULL DEFAULT '',
+  stripe_account_ready BOOLEAN NOT NULL DEFAULT false
 );
 
 CREATE TABLE relay (
@@ -40,6 +42,8 @@ CREATE TABLE relay (
   custom_domain TEXT NOT NULL DEFAULT '',
   custom_domain_verified BOOLEAN NOT NULL DEFAULT false,
   blossom_authenticated_read BOOLEAN NOT NULL DEFAULT false,
+  member_price BIGINT NOT NULL DEFAULT 0,
+  member_interval TEXT NOT NULL DEFAULT 'month' CHECK (member_interval IN ('month', 'year')),
   purged_at BIGINT,
   erased_at BIGINT,
   created_at BIGINT NOT NULL,
@@ -380,3 +384,34 @@ CREATE TABLE notification (
   expires_at BIGINT,
   PRIMARY KEY (relay_id, pubkey)
 );
+
+CREATE TABLE membership (
+  id TEXT PRIMARY KEY,
+  relay_id TEXT NOT NULL REFERENCES relay (id),
+  pubkey TEXT,
+  invite_code TEXT,
+  stripe_customer_id TEXT NOT NULL DEFAULT '',
+  stripe_subscription_id TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL CHECK (status IN ('pending', 'active', 'canceled', 'lapsed')),
+  current_period_end BIGINT,
+  claimed_at BIGINT,
+  created_at BIGINT NOT NULL,
+  CHECK (pubkey IS NOT NULL OR invite_code IS NOT NULL)
+);
+
+-- A relay and pubkey hold one live membership at a time; a lapsed one is history,
+-- so paying again after a lapse opens a new row.
+CREATE UNIQUE INDEX membership_live_key ON membership (relay_id, pubkey)
+  WHERE status <> 'lapsed' AND pubkey IS NOT NULL;
+
+-- Invite pages and joins find an invite's membership by its code.
+CREATE UNIQUE INDEX membership_invite_key ON membership (invite_code) WHERE invite_code IS NOT NULL;
+
+-- A relay's memberships, newest first, and its unclaimed invites holding seats.
+CREATE INDEX membership_relay_idx ON membership (relay_id, created_at);
+
+-- A member's account, listing every membership they hold.
+CREATE INDEX membership_pubkey_idx ON membership (pubkey) WHERE pubkey IS NOT NULL;
+
+-- The sweep's queue: live memberships, by when their paid period ends.
+CREATE INDEX membership_live_idx ON membership (current_period_end) WHERE status <> 'lapsed';

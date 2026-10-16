@@ -148,6 +148,13 @@ async fn every_route_has_an_auth_class() {
         ("GET", "/plans".to_string()),
         ("GET", "/plans/free".to_string()),
     ];
+    // Reached without credentials, and finding nothing.
+    let public_missing = [
+        ("GET", format!("/relays/{id}/offer")),
+        ("POST", format!("/relays/{id}/invites")),
+        ("GET", format!("/invites/{id}")),
+        ("POST", format!("/invites/{id}/reconcile")),
+    ];
     let authed = [
         ("GET", "/identity".to_string()),
         ("POST", "/tenants".to_string()),
@@ -162,6 +169,12 @@ async fn every_route_has_an_auth_class() {
         ),
         ("POST", format!("/tenants/{tenant_pubkey}/reconcile")),
         ("GET", format!("/tenants/{tenant_pubkey}/stripe/session")),
+        ("GET", format!("/tenants/{tenant_pubkey}/payouts")),
+        ("POST", format!("/tenants/{tenant_pubkey}/payouts/onboard")),
+        (
+            "POST",
+            format!("/tenants/{tenant_pubkey}/payouts/dashboard"),
+        ),
         ("POST", "/relays".to_string()),
         ("GET", format!("/relays/{id}")),
         ("PUT", format!("/relays/{id}")),
@@ -174,6 +187,12 @@ async fn every_route_has_an_auth_class() {
         ("POST", format!("/relays/{id}/purge")),
         ("GET", format!("/relays/{id}/export")),
         ("POST", format!("/relays/{id}/import")),
+        ("GET", format!("/relays/{id}/memberships")),
+        ("GET", format!("/relays/{id}/membership")),
+        ("POST", format!("/relays/{id}/membership/checkout")),
+        ("POST", format!("/relays/{id}/membership/reconcile")),
+        ("POST", format!("/relays/{id}/membership/cancel")),
+        ("GET", "/account".to_string()),
         ("GET", format!("/invoices/{id}")),
         ("GET", format!("/invoices/{id}/items")),
         ("POST", format!("/invoices/{id}/reconcile")),
@@ -195,6 +214,12 @@ async fn every_route_has_an_auth_class() {
     for (method, path) in &public {
         let response = api.request(method, path, None, None).await;
         assert_eq!(response.status, StatusCode::OK, "{method} {path}");
+    }
+
+    for (method, path) in &public_missing {
+        let body = serde_json::json!({ "session": "cs_missing" });
+        let response = api.request(method, path, None, Some(body)).await;
+        assert_eq!(response.status, StatusCode::NOT_FOUND, "{method} {path}");
     }
 
     for (method, path) in authed.iter().chain(&admin) {

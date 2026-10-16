@@ -21,7 +21,7 @@ Every test in zooid's suite, and the caravel test that covers the same behavior 
 - `TestAPIHandler_ConfigValidation` — Obsolete: settings are validated by the core's hosting module; `crates/api/tests/wire.rs` validation_failures_carry_a_code
 - `TestAPIHandler_RelayMemberWrites` — `crates/relay/tests/access.rs` a_member_added_through_the_api_can_read_straight_away
 - `TestAPIHandler_RelayNotifications` — `crates/core/tests/notifications.rs` a_message_is_kept_and_announced
-- `TestAPIHandler_RelayClaims` — Pending: ported in P4, where paid memberships create claims.
+- `TestAPIHandler_RelayClaims` — `crates/core/tests/memberships.rs` an_invite_goes_to_whoever_joins_with_it_first
 - `TestNewAPIHandler` — Obsolete: zooid's REST API is gone.
 - `TestAPIHandler_GetRelayUsage` — Obsolete: usage is read in process; `crates/core/tests/metering.rs` overage_is_billed_from_measured_media_and_calls
 - `TestAPIHandler_LivekitWebhook` — `crates/relay/tests/livekit.rs` a_webhook_must_be_signed_and_name_a_known_call
@@ -40,7 +40,7 @@ Every test in zooid's suite, and the caravel test that covers the same behavior 
 
 - `TestConfig_IsOwner` — `crates/core/tests/relay_policy.rs` members_and_managers_may_write_and_strangers_may_not
 - `TestConfig_IsSelf` — `crates/core/tests/relay_policy.rs` writing_needs_authentication_as_the_author
-- `TestValidatePayments` — Pending: ported in P4.
+- `TestValidatePayments` — `crates/core/tests/memberships.rs` a_member_price_must_be_chargeable_and_need_a_claim
 - `TestValidateBlossomFileStorage` — Obsolete: storage is platform configuration, not per relay.
 - `TestValidateMemberMethods` — Obsolete: member methods follow the relay's members-can-invite flag.
 - `TestValidateAnonymousRead` — Obsolete: anonymous reads are a relay setting the API takes as a flag.
@@ -97,8 +97,8 @@ Every test in zooid's suite, and the caravel test that covers the same behavior 
 
 ## instance_test.go
 
-- `TestMakeInstance_Payments` — Pending: ported in P4.
-- `TestMakeInstance_NoPayments` — Pending: ported in P4.
+- `TestMakeInstance_Payments` — `crates/relay/tests/payments.rs` a_paid_relay_states_its_price_and_where_to_pay
+- `TestMakeInstance_NoPayments` — `crates/relay/tests/payments.rs` a_paid_relay_states_its_price_and_where_to_pay
 - `TestMakeInstance_Redirect` — Obsolete: redirect-only configs became `host_redirect` rows, covered with the hosts in `crates/relay/tests/protocol.rs`.
 - `TestInstance_AllowRecipientEvent` — `crates/core/tests/relay_policy.rs` a_gift_wrap_or_zap_for_a_member_needs_no_authentication
 - `TestInstance_PreventBroadcast_PrivateGroup` — `crates/relay/tests/access.rs` a_private_room_is_read_only_by_its_members_stored_and_live
@@ -129,8 +129,8 @@ Every test in zooid's suite, and the caravel test that covers the same behavior 
 
 ## management_test.go
 
-- `TestValidateJoinRequest_PaidRelay` — Pending: ported in P4 with paid memberships.
-- `TestValidateJoinRequest_PaidRelayTakesAnInvite` — Pending: ported in P4 with paid memberships.
+- `TestValidateJoinRequest_PaidRelay` — `crates/relay/tests/payments.rs` a_paid_relay_takes_joins_only_with_a_claim
+- `TestValidateJoinRequest_PaidRelayTakesAnInvite` — `crates/relay/tests/payments.rs` a_paid_relay_takes_joins_only_with_a_claim
 - `TestManagementStore_MembershipChangesAreIdempotent` — `crates/core/tests/access.rs` membership_changes_are_idempotent_and_published
 - `TestManagementStore_BanPubkey` — `crates/core/tests/access.rs` banning_a_pubkey_removes_it_and_everything_it_wrote
 - `TestManagementStore_AllowPubkey` — `crates/core/tests/access.rs` banning_a_pubkey_removes_it_and_everything_it_wrote

@@ -6,32 +6,48 @@ use sha2::Sha256;
 
 const STRIPE_API: &str = "https://api.stripe.com/v1";
 
+/// Every request pins this version rather than inheriting the account's default.
+const STRIPE_VERSION: &str = "2026-09-30.endive";
+
 #[derive(Clone)]
 pub struct Stripe {
     http: reqwest::Client,
     secret_key: String,
+    api: String,
 }
 
 impl Stripe {
     pub fn new(secret_key: &str) -> Self {
+        Self::with_api(secret_key, STRIPE_API)
+    }
+
+    /// A client of a Stripe-compatible API at `api`, such as a fake in tests.
+    pub fn with_api(secret_key: &str, api: &str) -> Self {
         Self {
             http: reqwest::Client::new(),
             secret_key: secret_key.to_string(),
+            api: api.trim_end_matches('/').to_string(),
         }
     }
 
     // --- Request helpers ---
 
     fn get(&self, path: &str) -> reqwest::RequestBuilder {
-        self.http
-            .get(format!("{STRIPE_API}{path}"))
-            .bearer_auth(&self.secret_key)
+        self.authed(self.http.get(format!("{}{path}", self.api)))
     }
 
     fn post(&self, path: &str) -> reqwest::RequestBuilder {
-        self.http
-            .post(format!("{STRIPE_API}{path}"))
+        self.authed(self.http.post(format!("{}{path}", self.api)))
+    }
+
+    fn delete(&self, path: &str) -> reqwest::RequestBuilder {
+        self.authed(self.http.delete(format!("{}{path}", self.api)))
+    }
+
+    fn authed(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        request
             .bearer_auth(&self.secret_key)
+            .header("Stripe-Version", STRIPE_VERSION)
     }
 
     fn idempotency_key(&self, parts: &[&str]) -> String {
@@ -210,6 +226,239 @@ impl Stripe {
         Ok(())
     }
 
+    // --- Connect ---
+
+    /// Create an Express Connect account a tenant's members pay into, and return
+    /// its id. Idempotent on `tenant_pubkey`, so a retried onboarding never
+    /// leaves a tenant with two.
+    pub async fn create_connect_account(&self, tenant_pubkey: &str) -> Result<String> {
+        let body = self
+            .post("/accounts")
+            .header(
+                "Idempotency-Key",
+                self.idempotency_key(&["create_connect_account", tenant_pubkey]),
+            )
+            .form(&[
+                ("type", "express"),
+                ("capabilities[card_payments][requested]", "true"),
+                ("capabilities[transfers][requested]", "true"),
+                ("metadata[tenant_pubkey]", tenant_pubkey),
+            ])
+            .send_json()
+            .await?;
+        body["id"]
+            .as_str()
+            .map(str::to_string)
+            .ok_or_else(|| anyhow!("missing connect account id"))
+    }
+
+    /// Whether a Connect account can both take charges and receive payouts.
+    pub async fn is_connect_account_ready(&self, account_id: &str) -> Result<bool> {
+        let body = self
+            .get(&format!("/accounts/{account_id}"))
+            .send_json()
+            .await?;
+        Ok(body["charges_enabled"].as_bool().unwrap_or(false)
+            && body["payouts_enabled"].as_bool().unwrap_or(false))
+    }
+
+    /// Open a single-use onboarding link for an Express account.
+    pub async fn create_account_link(
+        &self,
+        account_id: &str,
+        return_url: &str,
+        refresh_url: &str,
+    ) -> Result<String> {
+        let body = self
+            .post("/account_links")
+            .form(&[
+                ("account", account_id),
+                ("type", "account_onboarding"),
+                ("return_url", return_url),
+                ("refresh_url", refresh_url),
+            ])
+            .send_json()
+            .await?;
+        body["url"]
+            .as_str()
+            .map(str::to_string)
+            .ok_or_else(|| anyhow!("missing account link url"))
+    }
+
+    /// Open a login link to an account's Express dashboard, where its payouts are.
+    pub async fn create_account_login_link(&self, account_id: &str) -> Result<String> {
+        let body = self
+            .post(&format!("/accounts/{account_id}/login_links"))
+            .send_json()
+            .await?;
+        body["url"]
+            .as_str()
+            .map(str::to_string)
+            .ok_or_else(|| anyhow!("missing login link url"))
+    }
+
+    // --- Memberships ---
+
+    /// Create the customer one membership pays as, idempotent on the membership,
+    /// so cancelling one membership's subscription can't reach another's.
+    pub async fn create_member_customer(
+        &self,
+        membership_id: &str,
+        relay_id: &str,
+    ) -> Result<String> {
+        let body = self
+            .post("/customers")
+            .header(
+                "Idempotency-Key",
+                self.idempotency_key(&["create_member_customer", membership_id]),
+            )
+            .form(&[
+                ("metadata[membership_id]", membership_id),
+                ("metadata[relay_id]", relay_id),
+            ])
+            .send_json()
+            .await?;
+        body["id"]
+            .as_str()
+            .map(str::to_string)
+            .ok_or_else(|| anyhow!("missing customer id"))
+    }
+
+    /// Open a Checkout session subscribing a membership's customer. The charge is
+    /// the platform's and transfers to the tenant's Connect account less the
+    /// platform's fee. A `billing_cycle_anchor` delays the first charge to it.
+    pub async fn create_membership_checkout(
+        &self,
+        params: &MembershipCheckoutParams<'_>,
+    ) -> Result<String> {
+        let amount = params.amount.to_string();
+        let fee = params.application_fee_percent.to_string();
+        let anchor = params.billing_cycle_anchor.map(|anchor| anchor.to_string());
+
+        let mut form = vec![
+            ("mode", "subscription"),
+            ("customer", params.customer_id),
+            ("success_url", params.success_url),
+            ("cancel_url", params.cancel_url),
+            ("line_items[0][quantity]", "1"),
+            ("line_items[0][price_data][currency]", "usd"),
+            ("line_items[0][price_data][unit_amount]", &amount),
+            (
+                "line_items[0][price_data][recurring][interval]",
+                params.interval,
+            ),
+            (
+                "line_items[0][price_data][product_data][name]",
+                params.product_name,
+            ),
+            (
+                "subscription_data[transfer_data][destination]",
+                params.destination_account_id,
+            ),
+            ("subscription_data[application_fee_percent]", &fee),
+            ("subscription_data[metadata][relay_id]", params.relay_id),
+            (
+                "subscription_data[metadata][membership_id]",
+                params.membership_id,
+            ),
+            ("metadata[relay_id]", params.relay_id),
+            ("metadata[membership_id]", params.membership_id),
+        ];
+        if let Some(anchor) = &anchor {
+            form.push(("subscription_data[billing_cycle_anchor]", anchor));
+            form.push(("subscription_data[proration_behavior]", "none"));
+        }
+
+        let body = self
+            .post("/checkout/sessions")
+            .form(&form)
+            .send_json()
+            .await?;
+        body["url"]
+            .as_str()
+            .map(str::to_string)
+            .ok_or_else(|| anyhow!("missing checkout session url"))
+    }
+
+    /// Where a membership's Checkout session stands.
+    pub async fn get_membership_checkout(&self, session_id: &str) -> Result<MembershipCheckout> {
+        let body = self
+            .get(&format!("/checkout/sessions/{session_id}"))
+            .send_json()
+            .await?;
+        Ok(MembershipCheckout {
+            complete: body["status"].as_str() == Some("complete")
+                && matches!(
+                    body["payment_status"].as_str(),
+                    Some("paid" | "no_payment_required")
+                ),
+            customer_id: body["customer"].as_str().map(str::to_string),
+            subscription_id: body["subscription"].as_str().map(str::to_string),
+            membership_id: body["metadata"]["membership_id"]
+                .as_str()
+                .map(str::to_string),
+        })
+    }
+
+    /// The open Checkout sessions of a customer.
+    pub async fn list_open_checkout_sessions(&self, customer_id: &str) -> Result<Vec<String>> {
+        let body = self
+            .get("/checkout/sessions")
+            .query(&[
+                ("customer", customer_id),
+                ("status", "open"),
+                ("limit", "100"),
+            ])
+            .send_json()
+            .await?;
+        Ok(ids(&body))
+    }
+
+    /// When a subscription's current period ends, and whether it stops then.
+    pub async fn get_subscription(&self, subscription_id: &str) -> Result<Subscription> {
+        let body = self
+            .get(&format!("/subscriptions/{subscription_id}"))
+            .send_json()
+            .await?;
+        Ok(Subscription {
+            current_period_end: body["items"]["data"][0]["current_period_end"].as_i64(),
+            cancel_at_period_end: body["cancel_at_period_end"].as_bool().unwrap_or(false),
+        })
+    }
+
+    /// A customer's subscriptions, leaving out those that never started.
+    pub async fn list_live_subscriptions(&self, customer_id: &str) -> Result<Vec<String>> {
+        let body = self
+            .get("/subscriptions")
+            .query(&[("customer", customer_id), ("limit", "100")])
+            .send_json()
+            .await?;
+        Ok(body["data"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|subscription| subscription["status"].as_str() != Some("incomplete_expired"))
+            .filter_map(|subscription| subscription["id"].as_str().map(str::to_string))
+            .collect())
+    }
+
+    /// Stop a subscription renewing, leaving its paid period running.
+    pub async fn cancel_subscription_at_period_end(&self, subscription_id: &str) -> Result<()> {
+        self.post(&format!("/subscriptions/{subscription_id}"))
+            .form(&[("cancel_at_period_end", "true")])
+            .send_ok()
+            .await?;
+        Ok(())
+    }
+
+    /// End a subscription now.
+    pub async fn cancel_subscription(&self, subscription_id: &str) -> Result<()> {
+        self.delete(&format!("/subscriptions/{subscription_id}"))
+            .send_ok()
+            .await?;
+        Ok(())
+    }
+
     // --- Portal ---
 
     /// Open a Stripe billing-portal session for the customer, returning the URL
@@ -233,6 +482,45 @@ impl Stripe {
             .map(str::to_string)
             .ok_or_else(|| anyhow!("missing portal session url"))
     }
+}
+
+/// What a membership's checkout asks Stripe for.
+pub struct MembershipCheckoutParams<'a> {
+    pub customer_id: &'a str,
+    pub destination_account_id: &'a str,
+    pub relay_id: &'a str,
+    pub membership_id: &'a str,
+    pub product_name: &'a str,
+    /// In cents.
+    pub amount: i64,
+    /// `month` or `year`.
+    pub interval: &'a str,
+    pub application_fee_percent: f64,
+    pub billing_cycle_anchor: Option<i64>,
+    pub success_url: &'a str,
+    pub cancel_url: &'a str,
+}
+
+pub struct MembershipCheckout {
+    /// Completed and paid for.
+    pub complete: bool,
+    pub customer_id: Option<String>,
+    pub subscription_id: Option<String>,
+    pub membership_id: Option<String>,
+}
+
+pub struct Subscription {
+    pub current_period_end: Option<i64>,
+    pub cancel_at_period_end: bool,
+}
+
+fn ids(body: &serde_json::Value) -> Vec<String> {
+    body["data"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|item| item["id"].as_str().map(str::to_string))
+        .collect()
 }
 
 // Stripe request util

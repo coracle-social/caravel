@@ -10,7 +10,7 @@ use caravel_core::billing::{self, ledger};
 use caravel_core::hosting::{self, RelaySettings};
 use caravel_core::relays::{self, Relay, activity};
 use caravel_core::tenants::{self, Tenant};
-use caravel_core::{Core, Error, access, transfer};
+use caravel_core::{Core, Error, access, memberships, payouts, transfer};
 use serde::{Deserialize, Serialize};
 
 use crate::auth::Authed;
@@ -249,6 +249,62 @@ pub async fn list_relay_members(
         .map(|member| member.pubkey)
         .collect();
     ok(serde_json::json!({ "members": members }))
+}
+
+/// The relay's paid memberships, newest first.
+pub async fn list_relay_memberships(
+    State(core): State<Core>,
+    Authed(actor): Authed,
+    Path(id): Path<String>,
+) -> ApiResult {
+    let relay = load_relay(&core, &id).await?;
+    actor.require_pubkey_or_admin(&relay.tenant_pubkey)?;
+    ok(memberships::list_memberships_for_relay(core.db.pool(), &relay.id).await?)
+}
+
+// --- Payouts ---
+
+/// Whether the tenant can be paid by their members.
+pub async fn get_payouts(
+    State(core): State<Core>,
+    Authed(actor): Authed,
+    Path(pubkey): Path<String>,
+) -> ApiResult {
+    actor.require_pubkey_or_admin(&pubkey)?;
+    let tenant = load_tenant(&core, &pubkey).await?;
+    ok(payouts::get_status(&core, &tenant).await?)
+}
+
+#[derive(Deserialize)]
+pub struct OnboardPayouts {
+    /// Where Stripe sends the tenant back to; their account page by default.
+    return_url: Option<String>,
+}
+
+/// A Stripe onboarding link, for the tenant to set up being paid.
+pub async fn onboard_payouts(
+    State(core): State<Core>,
+    Authed(actor): Authed,
+    Path(pubkey): Path<String>,
+    Json(request): Json<OnboardPayouts>,
+) -> ApiResult {
+    actor.require_pubkey(&pubkey)?;
+    let tenant = load_tenant(&core, &pubkey).await?;
+    let return_url = request
+        .return_url
+        .unwrap_or_else(|| tenant.return_url.clone());
+    ok(serde_json::json!({ "url": payouts::onboard(&core, &tenant, &return_url).await? }))
+}
+
+/// A login link to the tenant's payouts dashboard on Stripe.
+pub async fn open_payouts_dashboard(
+    State(core): State<Core>,
+    Authed(actor): Authed,
+    Path(pubkey): Path<String>,
+) -> ApiResult {
+    actor.require_pubkey(&pubkey)?;
+    let tenant = load_tenant(&core, &pubkey).await?;
+    ok(serde_json::json!({ "url": payouts::dashboard(&core, &tenant).await? }))
 }
 
 /// Make a pubkey a member of the relay.

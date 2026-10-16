@@ -22,6 +22,34 @@ pub enum RelayStatus {
     Delinquent,
 }
 
+/// How often a membership renews.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[serde(rename_all = "lowercase")]
+#[sqlx(type_name = "text", rename_all = "lowercase")]
+pub enum MemberInterval {
+    #[default]
+    Month,
+    Year,
+}
+
+impl MemberInterval {
+    /// What Stripe calls it.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            MemberInterval::Month => "month",
+            MemberInterval::Year => "year",
+        }
+    }
+
+    /// Its length as NIP-11 states it: thirty days or 365.
+    pub fn seconds(self) -> i64 {
+        match self {
+            MemberInterval::Month => 30 * 24 * 60 * 60,
+            MemberInterval::Year => 365 * 24 * 60 * 60,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Relay {
     pub id: String,
@@ -78,6 +106,10 @@ pub struct Relay {
     pub custom_domain: String,
     #[serde(with = "flag")]
     pub custom_domain_verified: bool,
+    /// What a membership costs in cents per `member_interval`, or 0 if joining is
+    /// free.
+    pub member_price: i64,
+    pub member_interval: MemberInterval,
     /// Hosts that redirect to the relay's current host, collected when a verified
     /// custom domain is replaced so its old links keep working.
     pub redirect_from: Vec<String>,
@@ -109,6 +141,20 @@ impl Relay {
 
     pub fn is_purged(&self) -> bool {
         self.purged_at.is_some()
+    }
+
+    /// Whether the relay sells memberships: it has a price and is still served.
+    pub fn charges_members(&self) -> bool {
+        self.member_price > 0 && self.status == RelayStatus::Active && !self.is_purged()
+    }
+
+    /// What to call the relay in prose, falling back to its host.
+    pub fn display_name(&self) -> String {
+        if self.info_name.is_empty() {
+            self.host()
+        } else {
+            self.info_name.clone()
+        }
     }
 }
 
@@ -184,9 +230,9 @@ pub async fn insert_relay(conn: &mut PgConnection, relay: &Relay) -> Result<()> 
             policy_public_read, policy_public_write, policy_public_join, policy_strip_signatures,
             groups_enabled, management_enabled, members_can_invite, blossom_enabled,
             livekit_enabled, push_enabled, custom_domain, created_at, policy_anonymous_read,
-            blossom_authenticated_read
+            blossom_authenticated_read, member_price, member_interval
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17,
-            $18, $19, $20, $21, $22, $23, $24, $25)",
+            $18, $19, $20, $21, $22, $23, $24, $25, $26, $27)",
     )
     .bind(&relay.id)
     .bind(&relay.tenant_pubkey)
@@ -213,6 +259,8 @@ pub async fn insert_relay(conn: &mut PgConnection, relay: &Relay) -> Result<()> 
     .bind(relay.created_at)
     .bind(relay.policy_anonymous_read)
     .bind(relay.blossom_authenticated_read)
+    .bind(relay.member_price)
+    .bind(relay.member_interval)
     .execute(conn)
     .await?;
     Ok(())
@@ -236,7 +284,7 @@ pub async fn update_relay(conn: &mut PgConnection, relay: &Relay) -> Result<()> 
             custom_domain_verified = custom_domain_verified AND custom_domain = $18 AND domain = $3
                 AND subdomain = $2,
             policy_anonymous_read = $19,
-            blossom_authenticated_read = $20
+            blossom_authenticated_read = $20, member_price = $21, member_interval = $22
          WHERE id = $1",
     )
     .bind(&relay.id)
@@ -259,6 +307,8 @@ pub async fn update_relay(conn: &mut PgConnection, relay: &Relay) -> Result<()> 
     .bind(&relay.custom_domain)
     .bind(relay.policy_anonymous_read)
     .bind(relay.blossom_authenticated_read)
+    .bind(relay.member_price)
+    .bind(relay.member_interval)
     .execute(conn)
     .await?;
     Ok(())

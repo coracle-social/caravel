@@ -31,4 +31,5 @@ url.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+axum.workspace = true
 caravel-core = { path = ".", features = ["testing"] }

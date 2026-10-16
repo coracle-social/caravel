@@ -10,7 +10,7 @@ use common::*;
 use coracle_lib::keys::SecretKey;
 use serde_json::json;
 
-const RELAY_FIELDS: [&str; 28] = [
+const RELAY_FIELDS: [&str; 30] = [
     "blossom_authenticated_read",
     "blossom_enabled",
     "created_at",
@@ -24,6 +24,8 @@ const RELAY_FIELDS: [&str; 28] = [
     "info_name",
     "livekit_enabled",
     "management_enabled",
+    "member_interval",
+    "member_price",
     "members_can_invite",
     "plan_id",
     "policy_anonymous_read",

@@ -316,7 +316,7 @@ CREATE INDEX claim_use_claim_idx ON claim_use (relay_id, claim_code, created_at)
 
 CREATE TABLE room (
   relay_id TEXT NOT NULL REFERENCES relay (id),
-  id TEXT NOT NULL,
+  id TEXT NOT NULL CHECK (id <> ''),
   tags JSONB NOT NULL DEFAULT '[]',
   pins JSONB NOT NULL DEFAULT '[]',
   created_at BIGINT NOT NULL,

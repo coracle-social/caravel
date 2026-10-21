@@ -464,6 +464,35 @@ fn a_closed_room_takes_posts_only_from_its_members() {
     );
 }
 
+// zooid created a room with an empty id from a 9007 like these, and signed its state.
+#[test]
+fn a_room_event_must_name_its_room() {
+    let f = fixture();
+    let snapshot = rooms_fixture(&f);
+    let write = |author: &SecretKey, kind: u16, tags: &[&[&str]]| {
+        let event = sign_event(author, kind, "", tags, NOW);
+        admit_write(&snapshot, &event, &[hex(author)], NOW)
+    };
+    let missing = Err(Refusal::invalid("missing group id"));
+
+    for kind in [
+        room_kinds::CREATE_GROUP,
+        room_kinds::EDIT_METADATA,
+        room_kinds::PUT_USER,
+        room_kinds::DELETE_GROUP,
+    ] {
+        assert_eq!(write(&f.owner, kind, &[]), missing, "{kind}");
+        assert_eq!(write(&f.owner, kind, &[&["h", ""]]), missing, "{kind}");
+        assert_eq!(write(&f.owner, kind, &[&["h"]]), missing, "{kind}");
+    }
+    assert_eq!(write(&f.member, room_kinds::JOIN_REQUEST, &[]), missing);
+
+    // A post tagged into no room is refused, not published outside every room.
+    assert_eq!(write(&f.member, 9, &[&["h", ""]]), missing);
+    assert_eq!(write(&f.member, 9, &[]), Ok(()));
+    assert_eq!(write(&f.member, 9, &[&["h", "open"]]), Ok(()));
+}
+
 #[test]
 fn credentials_and_requests_are_never_served() {
     let f = fixture();

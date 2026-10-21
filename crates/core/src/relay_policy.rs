@@ -415,7 +415,8 @@ pub fn admit_write(
         return Err(Refusal::restricted("you are not a member of this relay"));
     }
 
-    if rooms::is_room_event(event.kind, rooms::room_id(event)) {
+    // A room tag naming no room still claims one, so it takes the room checks.
+    if rooms::is_room_event(event.kind, event.tags.value(rooms::room_tag(event.kind))) {
         check_room_write(snapshot, event)?;
     }
 
@@ -459,8 +460,9 @@ fn is_for_member(snapshot: &RelaySnapshot, event: &Event) -> bool {
 }
 
 /// Whether an event may be published into the room machinery: rooms must be on,
-/// the room must exist (unless this creates it) and be visible to the author, only
-/// moderators may change it, and only its members may post in a closed one.
+/// the event must name its room, the room must exist (unless this creates it) and
+/// be visible to the author, only moderators may change it, and only its members
+/// may post in a closed one.
 pub fn check_room_write(snapshot: &RelaySnapshot, event: &Event) -> Result<(), Refusal> {
     if !snapshot.groups_enabled {
         return Err(Refusal::invalid("groups are not enabled"));
@@ -470,7 +472,9 @@ pub fn check_room_write(snapshot: &RelaySnapshot, event: &Event) -> Result<(), R
         return Err(Refusal::invalid("group metadata cannot be set directly"));
     }
 
-    let room_id = rooms::room_id(event).unwrap_or_default();
+    let Some(room_id) = rooms::room_id(event) else {
+        return Err(Refusal::invalid("missing group id"));
+    };
     let room = snapshot.rooms.get(room_id);
     let author = event.pubkey.to_hex();
 

@@ -547,3 +547,56 @@ async fn an_import_that_only_posts_in_a_room_rebuilds_nothing() -> Result<()> {
     );
     Ok(())
 }
+
+// zooid could hold room events with an empty or missing id, and state it signed for them.
+#[tokio::test]
+async fn an_import_refuses_group_events_naming_no_group() -> Result<()> {
+    let core = core().await;
+    let (relay, owner) = create_relay(&core).await;
+    let source = SecretKey::generate();
+
+    let dump = [
+        sign_event(
+            &owner,
+            kinds::CREATE_GROUP,
+            "",
+            &[&["name", "x"]],
+            NOW - 400,
+        ),
+        sign_event(&owner, kinds::EDIT_METADATA, "", &[&["h", ""]], NOW - 300),
+        sign_event(&owner, 9, "hello", &[&["h", ""]], NOW - 200),
+        sign_event(&source, kinds::ADMINS, "", &[&["d", ""]], NOW - 100),
+        sign_event(&owner, kinds::CREATE_GROUP, "", &[&["h", "room"]], NOW - 50),
+    ]
+    .iter()
+    .map(line)
+    .collect::<Vec<_>>()
+    .join("\n");
+
+    let result = import(&core, &relay, &dump).await?;
+    assert_eq!(
+        (
+            result.imported,
+            result.invalid,
+            result.skipped,
+            result.rooms_rebuilt
+        ),
+        (1, 3, 1, 1),
+        "{result:?}"
+    );
+    assert_eq!(
+        result
+            .problems
+            .iter()
+            .map(|problem| problem.line)
+            .collect::<Vec<_>>(),
+        [Some(1), Some(2), Some(3)]
+    );
+    let ids: Vec<String> = rooms::list_rooms(core.db.pool(), &relay.id)
+        .await?
+        .into_iter()
+        .map(|room| room.id)
+        .collect();
+    assert_eq!(ids, ["room"]);
+    Ok(())
+}

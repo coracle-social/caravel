@@ -42,7 +42,7 @@ NIP-86 calls arrive as `POST`s to the relay's url, signed with NIP-98 over the e
 
 ## Rooms
 
-NIP-29 rooms keep their state in tables: each room's metadata tags and pins, its members with their roles, and its invite codes. A client's moderation event, join or leave is stored as history and applied to its room in the same transaction. The relay's owner and its own key moderate every room, and a room member holding the `admin` role moderates that room. Pubkeys granted relay methods are listed as room admins, as zooid listed them, but may not moderate rooms.
+NIP-29 rooms keep their state in tables: each room's metadata tags and pins, its members with their roles, and its invite codes. A client's moderation event, join or leave is stored as history and applied to its room in the same transaction. An event that tags a room must name it: one with a missing or empty room id is refused, live and on import, and the schema allows no room without an id. The relay's owner and its own key moderate every room, and a room member holding the `admin` role moderates that room. Pubkeys granted relay methods are listed as room admins, as zooid listed them, but may not moderate rooms.
 
 A room nobody created shows only its deletion. A hidden room shows nothing to outsiders and refuses their writes as if it didn't exist; a private room shows outsiders only its metadata; a closed room takes posts only from members, and joins only with an invite. A room's moderators may delete its events, but not the events describing the room.
 
@@ -97,3 +97,4 @@ The design keeps the lessons of zooid, the Go relay engine on khatru that served
 - zooid stored a deletion naming another author's event, then refused it and skipped the tags after that one. Here the deletion is accepted and applies to its author's events only.
 - zooid's write check had a refusal for room events on a relay with rooms off that could never run, so it stored them as plain events. Here they are refused.
 - zooid refused `COUNT`, since its read checks ran per event over query results and a database count couldn't apply them. Here a count applies the same rule, to groups of events it can't tell apart.
+- zooid took a room event with a missing or empty `h` tag as naming the room `""`, so a manager's create made that room and the relay signed metadata and admins with `["d", ""]`, and a post with `["h", ""]` was stored outside every room. Here both are refused.

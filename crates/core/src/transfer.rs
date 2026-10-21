@@ -173,8 +173,19 @@ where
                 Line::SourceState => result.skipped += 1,
                 Line::Event(event) => {
                     if relay.groups_enabled
-                        && let Some(room_id) = rooms::room_id(&event)
+                        && rooms::is_room_event(
+                            event.kind,
+                            event.tags.value(rooms::room_tag(event.kind)),
+                        )
                     {
+                        let Some(room_id) = rooms::room_id(&event) else {
+                            result.fail(ImportProblem {
+                                line: Some(line),
+                                event_id: Some(event.id.to_hex()),
+                                message: "the group event names no group".to_string(),
+                            });
+                            continue;
+                        };
                         let history = rooms_touched.entry(room_id.to_string()).or_default();
                         if rooms::is_moderation_kind(event.kind)
                             || matches!(

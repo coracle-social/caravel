@@ -3,17 +3,16 @@
 # ---------- Build the web apps ----------
 # Built once with no configuration: the server writes each page's configuration
 # into it when serving, so one image runs anywhere.
-FROM node:20-slim AS web-build
-
-RUN npm install -g bun
+FROM node:24-slim AS web-build
 
 WORKDIR /app/web
 
-COPY web/package.json web/bun.lock ./
-RUN bun install --frozen-lockfile
+COPY web/package.json web/pnpm-lock.yaml web/pnpm-workspace.yaml ./
+RUN npm install -g "$(node -p 'require("./package.json").packageManager')"
+RUN pnpm install --frozen-lockfile
 
 COPY web ./
-RUN bun run build
+RUN pnpm run build
 
 # ---------- Build the binary ----------
 # cargo-chef caches the compiled dependency graph in its own layer, so a

@@ -17,7 +17,7 @@ dev-backend:
   onchange crates -ik -- bash -c 'RUST_LOG=caravel=info,caravel_core=info,caravel_api=info cargo run -p caravel-app'
 
 dev-web:
-  cd web && bun run dev
+  cd web && pnpm run dev
 
 fmt-backend:
   cargo fmt --all
@@ -32,7 +32,7 @@ build-backend:
   cargo build --workspace
 
 build-web:
-  cd web && bun i && bun run build
+  cd web && pnpm install && pnpm run build
 
 fmt: fmt-backend
 

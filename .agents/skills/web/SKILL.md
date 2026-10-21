@@ -1,6 +1,6 @@
 ---
 name: web
-description: Architecture and conventions for Caravel's web apps in web/ — three SolidJS + Vite + TypeScript single-page apps (the tenant dashboard, the admin dashboard, and the member portal each relay serves on its own host) built from one project and embedded in the binary. Covers the shared/tenant/admin/portal layout, how the server picks an app and writes its configuration into the page, links between the two dashboards, the `@/` import alias, strict TS rules (verbatimModuleSyntax), the API client and session tokens, createResource reads and optimistic writes, lazy tenant provisioning, the post-paid billing prompts, applesauce Nostr singletons, the Tailwind v4 brand remap (blue utilities render brown), the shared component kit, and the `bun run build` verification gate. Use this whenever working anywhere in web/ — adding a page, hook, API call, component, or style.
+description: Architecture and conventions for Caravel's web apps in web/ — three SolidJS + Vite + TypeScript single-page apps (the tenant dashboard, the admin dashboard, and the member portal each relay serves on its own host) built from one project and embedded in the binary. Covers the shared/tenant/admin/portal layout, how the server picks an app and writes its configuration into the page, links between the two dashboards, the `@/` import alias, strict TS rules (verbatimModuleSyntax), the API client and session tokens, createResource reads and optimistic writes, lazy tenant provisioning, the post-paid billing prompts, applesauce Nostr singletons, the Tailwind v4 brand remap (blue utilities render brown), the shared component kit, and the `pnpm run build` verification gate. Use this whenever working anywhere in web/ — adding a page, hook, API call, component, or style.
 ---
 
 # Caravel's web apps
@@ -80,4 +80,4 @@ Build from the kit rather than bespoke markup: `PageContainer`, `ResourceState` 
 
 ## Building and verifying a change
 
-There is no lint or test step for the web apps. The gate is the build: a strict typecheck of every app, then a production bundle of all three. Run `just build-web`, or `bun run build` inside `web/`. Bun is the package manager. Never open a browser to check a change. [references/build-and-config.md](references/build-and-config.md) covers the build and adding a configuration value.
+There is no lint or test step for the web apps. The gate is the build: a strict typecheck of every app, then a production bundle of all three. Run `just build-web`, or `pnpm run build` inside `web/`. pnpm is the package manager. Never open a browser to check a change. [references/build-and-config.md](references/build-and-config.md) covers the build and adding a configuration value.

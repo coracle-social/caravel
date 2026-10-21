@@ -10,15 +10,15 @@ The strict flags a change must satisfy (in `tsconfig.app.json`): `strict`, `noUn
 
 ## Commands and the package manager
 
-Bun is the package manager: `bun.lock` is present and there is no `package-lock.json` / `yarn.lock` / `pnpm-lock.yaml`.
+pnpm is the package manager, pinned by `packageManager` in `package.json`, with `pnpm-lock.yaml` as the lockfile. Its `node_modules` isn't flat, so every package the source imports must be a dependency in `package.json`, even one another dependency already brings in (such as `rxjs`). pnpm runs a dependency's install scripts only when `allowBuilds` in `pnpm-workspace.yaml` approves them, and refuses to install while one is unapproved; `pnpm approve-builds` records the choice.
 
-- `just build-web` → `cd web && bun i && bun run build` — the canonical way to verify a change to the web apps compiles.
+- `just build-web` → `cd web && pnpm install && pnpm run build` — the canonical way to verify a change to the web apps compiles.
 - `just build` → `build-backend build-web`.
-- `just dev-web` → `cd web && bun run dev`, and `just dev` runs it beside the API.
+- `just dev-web` → `cd web && pnpm run dev`, and `just dev` runs it beside the API.
 
 ## Embedding
 
-The `caravel` binary embeds `web/dist` with rust-embed. A release build reads it at compile time, so the Dockerfile builds the web apps first and copies `web/dist` in before compiling. A debug build reads it from disk while running, so `cargo run` serves whatever `bun run build` last produced. Without a build, the binary still compiles, and its pages answer that the web apps aren't built.
+The `caravel` binary embeds `web/dist` with rust-embed. A release build reads it at compile time, so the Dockerfile builds the web apps first and copies `web/dist` in before compiling. A debug build reads it from disk while running, so `cargo run` serves whatever `pnpm run build` last produced. Without a build, the binary still compiles, and its pages answer that the web apps aren't built.
 
 ## Runtime configuration
 

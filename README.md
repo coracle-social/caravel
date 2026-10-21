@@ -74,13 +74,13 @@ Point a wildcard DNS record for each of the `RELAY_DOMAINS` at the Caddy server.
 
 ## Local development
 
-You need [Rust](https://rustup.rs/), [Bun](https://bun.sh/), [just](https://github.com/casey/just), [onchange](https://www.npmjs.com/package/onchange) and [podman](https://podman.io/).
+You need [Rust](https://rustup.rs/), [Node.js](https://nodejs.org/) 22.13 or later with [pnpm](https://pnpm.io/), [just](https://github.com/casey/just), [onchange](https://www.npmjs.com/package/onchange) and [podman](https://podman.io/).
 
 ```sh
 just pg
 cp .env.template .env
 cp web/.env.template web/.env
-cd web && bun install && cd ..
+cd web && pnpm install && cd ..
 just dev
 ```
 

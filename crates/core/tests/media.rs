@@ -1,12 +1,13 @@
 //! Media and calls: blobs owned by their uploaders and counted once per relay,
-//! the call clock, and erasing what a purged relay held.
+//! the call clock, and erasing what a relay holds, purged or not.
 
 use anyhow::Result;
 use bytes::Bytes;
+use caravel_core::access::{self, Role};
+use caravel_core::events::kinds;
 use caravel_core::media::{self, Blob, Deleted};
-use caravel_core::relays;
 use caravel_core::testing::{self, create_relay, sign_event};
-use caravel_core::{Core, calls, events, hosting};
+use caravel_core::{Core, calls, events, hosting, relays, rooms};
 use coracle_lib::filters::Filter;
 use coracle_lib::keys::SecretKey;
 
@@ -221,5 +222,133 @@ async fn erasing_a_purged_relay_removes_what_it_held() -> Result<()> {
 
     // Erasure runs once per relay.
     hosting::erase_purged_relays(&core).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn erasing_a_relay_keeps_only_its_settings_and_owner() -> Result<()> {
+    let core = core().await;
+    let (relay, owner) = create_relay(&core).await;
+    let (kept, _) = create_relay(&core).await;
+    let key = core.relay_key(&relay)?;
+    let member = SecretKey::generate().public_key().to_hex();
+    let banned = SecretKey::generate().public_key().to_hex();
+
+    hosting::add_member(&core, &relay, &member).await?;
+    let note = sign_event(&owner, 1, "hello", &[], NOW);
+    let room = sign_event(
+        &owner,
+        rooms::kinds::CREATE_GROUP,
+        "",
+        &[&["h", "lobby"]],
+        NOW,
+    );
+    let role = Role {
+        id: "mod".to_string(),
+        ..Default::default()
+    };
+    core.db
+        .with_tx(async |conn| {
+            events::save_event(&mut *conn, &relay.id, &note, NOW).await?;
+            rooms::apply_event(&mut *conn, &key, &relay.id, &room, NOW).await?;
+            access::create_role(&mut *conn, &key, &relay.id, &role, NOW).await?;
+            access::ban_pubkey(
+                &mut *conn,
+                &key,
+                &relay.id,
+                &relay.tenant_pubkey,
+                &banned,
+                "spam",
+                NOW,
+            )
+            .await?;
+            access::create_claim(&mut *conn, &relay.id, "sesame", NOW).await
+        })
+        .await?;
+    for relay_id in [&relay.id, &kept.id] {
+        upload(&core, relay_id, &blob("a", 100), &member).await?;
+        core.blobs
+            .put(
+                &media::blob_key(relay_id, "a"),
+                Bytes::from_static(b"bytes"),
+            )
+            .await?;
+    }
+
+    hosting::erase_relay(&core, &relay).await?;
+
+    // Only the member list the relay signed again is left.
+    let pool = core.db.pool();
+    let left = events::query_events(pool, &relay.id, &Filter::new(), 10, NOW).await?;
+    assert_eq!(
+        left.iter().map(|event| event.head.kind).collect::<Vec<_>>(),
+        [kinds::RELAY_MEMBERS]
+    );
+    assert_eq!(
+        access::list_members(pool, &relay.id)
+            .await?
+            .into_iter()
+            .map(|member| member.pubkey)
+            .collect::<Vec<_>>(),
+        std::slice::from_ref(&relay.tenant_pubkey)
+    );
+    assert!(rooms::list_rooms(pool, &relay.id).await?.is_empty());
+    assert!(access::list_roles(pool, &relay.id).await?.is_empty());
+    assert!(
+        access::list_banned_pubkeys(pool, &relay.id)
+            .await?
+            .is_empty()
+    );
+    assert!(access::list_claims(pool, &relay.id).await?.is_empty());
+    assert!(media::get_blob(pool, &relay.id, "a").await?.is_none());
+    assert!(
+        core.blobs
+            .get(&media::blob_key(&relay.id, "a"), None)
+            .await?
+            .is_none()
+    );
+
+    let erased = relays::require_relay(pool, &relay.id).await?;
+    assert_eq!(
+        serde_json::to_value(&erased)?,
+        serde_json::to_value(&relay)?
+    );
+
+    assert!(media::get_blob(pool, &kept.id, "a").await?.is_some());
+    assert!(
+        core.blobs
+            .get(&media::blob_key(&kept.id, "a"), None)
+            .await?
+            .is_some()
+    );
+    Ok(())
+}
+
+// Deleting a relay leaves its subdomain for another.
+#[tokio::test]
+async fn a_purged_relays_subdomain_can_be_taken_again() -> Result<()> {
+    let core = core().await;
+    let (relay, owner) = create_relay(&core).await;
+    let settings = || hosting::RelaySettings {
+        subdomain: Some(relay.subdomain.clone()),
+        domain: Some(relay.domain.clone()),
+        plan_id: Some("free".to_string()),
+        ..Default::default()
+    };
+    let owner = owner.public_key().to_hex();
+
+    let taken = hosting::create_relay(&core, &owner, settings()).await;
+    assert!(matches!(
+        taken,
+        Err(caravel_core::Error::Invalid {
+            code: "subdomain-exists",
+            ..
+        })
+    ));
+
+    hosting::purge_relay(&core, &relay).await?;
+    let again = hosting::create_relay(&core, &owner, settings()).await?;
+    assert_eq!(again.subdomain, relay.subdomain);
+    assert_ne!(again.id, relay.id);
     Ok(())
 }

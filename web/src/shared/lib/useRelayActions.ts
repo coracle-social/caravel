@@ -1,5 +1,5 @@
 import { createSignal, type Resource, type ResourceActions } from "solid-js"
-import { deactivateRelay, purgeRelay, reactivateRelay, updateRelay, type PlanId, type Relay, type RelayFlag, type RelaySettings } from "@/shared/lib/api"
+import { deactivateRelay, eraseRelay, purgeRelay, reactivateRelay, updateRelay, type PlanId, type Relay, type RelayFlag, type RelaySettings } from "@/shared/lib/api"
 import { formatError } from "@/shared/lib/format"
 import { FREE } from "@/shared/lib/plans"
 import { setToastMessage } from "@/shared/lib/state"
@@ -65,6 +65,7 @@ export default function useRelayActions(
     updatePlan,
     deactivate: () => run(deactivateRelay, "Failed to deactivate relay"),
     reactivate: () => run(reactivateRelay, "Failed to reactivate relay"),
-    purge: () => run(purgeRelay, "Failed to purge relay", "Relay purged"),
+    purge: () => run(purgeRelay, "Failed to delete relay", "Relay deleted"),
+    erase: () => run(eraseRelay, "Failed to erase relay", "Relay erased"),
   }
 }

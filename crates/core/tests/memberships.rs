@@ -595,3 +595,30 @@ async fn a_tenant_onboards_for_payouts() -> Result<()> {
     );
     Ok(())
 }
+
+// Erasing a relay leaves paying members in, and paid invites usable.
+#[tokio::test]
+async fn erasing_a_relay_keeps_what_was_paid_for() -> Result<()> {
+    let f = fixture().await?;
+    let paying = pubkey();
+    pay(&f, &paying).await?;
+    let code = buy_invite(&f).await?;
+    let added = pubkey();
+    hosting::add_member(&f.core, &f.relay, &added).await?;
+
+    hosting::erase_relay(&f.core, &f.relay).await?;
+
+    assert_eq!(
+        member_source(&f, &paying).await?,
+        Some(MemberSource::Payment)
+    );
+    assert_eq!(member_source(&f, &added).await?, None);
+
+    let joiner = SecretKey::generate();
+    join(&f.core, &f.relay, &joiner, &code).await?;
+    assert_eq!(
+        member_source(&f, &joiner.public_key().to_hex()).await?,
+        Some(MemberSource::Payment)
+    );
+    Ok(())
+}

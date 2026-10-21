@@ -15,6 +15,8 @@ use crate::crypto::generate_keypair;
 use crate::domains::normalize_custom_domain;
 use crate::error::{Error, Result};
 use crate::flag::Flag;
+use crate::management;
+use crate::media;
 use crate::plans;
 use crate::relays::activity::{self, ActivityType};
 use crate::relays::{self, MemberInterval, Relay, RelayStatus};
@@ -105,9 +107,8 @@ pub async fn set_tenant_nwc_url(core: &Core, pubkey: &str, nwc_url: &str) -> Res
     tenants::set_tenant_nwc_url(core.db.pool(), pubkey, encrypted.as_deref()).await
 }
 
-/// Ban a tenant: block relay creation, forgive what they owe, and purge their
-/// relays. Purges stay unbilled, so their credit is still owed if the tenant is
-/// unbanned.
+/// Ban a tenant: block relay creation, then forgive what they owe and purge their
+/// relays as deleting them does.
 pub async fn ban_tenant(core: &Core, pubkey: &str) -> Result<()> {
     let now = core.clock.now();
     let purged = core
@@ -122,17 +123,7 @@ pub async fn ban_tenant(core: &Core, pubkey: &str) -> Result<()> {
             }
 
             tenants::set_tenant_banned_at(&mut *conn, pubkey, Some(now)).await?;
-            activity::forgive_unbilled_activity_for_tenant(&mut *conn, pubkey, now).await?;
-            ledger::void_open_invoices_for_tenant(conn, pubkey, now).await?;
-
-            let mut purged = Vec::new();
-            for relay in relays::list_relays_for_tenant(&mut *conn, pubkey).await? {
-                if !relay.is_purged() {
-                    purge_relay_in_tx(conn, &relay, now).await?;
-                    purged.push(relay.id);
-                }
-            }
-            Ok(purged)
+            forgive_and_purge_in_tx(conn, pubkey, now).await
         })
         .await?;
 
@@ -140,6 +131,45 @@ pub async fn ban_tenant(core: &Core, pubkey: &str) -> Result<()> {
         core.bus.publish(Change::RelayChanged { relay_id });
     }
     Ok(())
+}
+
+/// Delete a tenant without banning them: forgive what they owe and purge their
+/// relays. They may sign in and create relays again, under the same subdomains.
+pub async fn delete_tenant(core: &Core, pubkey: &str) -> Result<()> {
+    let now = core.clock.now();
+    let purged = core
+        .db
+        .with_tx(async |conn| {
+            tenants::lock_tenant(conn, pubkey).await?;
+            forgive_and_purge_in_tx(conn, pubkey, now).await
+        })
+        .await?;
+
+    for relay_id in purged {
+        core.bus.publish(Change::RelayChanged { relay_id });
+    }
+    Ok(())
+}
+
+/// Void a tenant's open invoices, forgive their unbilled charges and purge their
+/// relays, returning the relays purged. Purges stay unbilled, so their credit is
+/// still owed if the tenant returns.
+async fn forgive_and_purge_in_tx(
+    conn: &mut sqlx::PgConnection,
+    pubkey: &str,
+    now: i64,
+) -> Result<Vec<String>> {
+    activity::forgive_unbilled_activity_for_tenant(&mut *conn, pubkey, now).await?;
+    ledger::void_open_invoices_for_tenant(conn, pubkey, now).await?;
+
+    let mut purged = Vec::new();
+    for relay in relays::list_relays_for_tenant(&mut *conn, pubkey).await? {
+        if !relay.is_purged() {
+            purge_relay_in_tx(conn, &relay, now).await?;
+            purged.push(relay.id);
+        }
+    }
+    Ok(purged)
 }
 
 /// Lift a tenant's ban. Purged relays stay purged and forgiven charges forgiven.
@@ -338,7 +368,8 @@ pub async fn reactivate_relay(core: &Core, relay: &Relay) -> Result<()> {
     }
 }
 
-/// Purge a relay: delete its data and release its hosts for good. The row stays.
+/// Purge a relay: delete its data and release its hosts for good, leaving its
+/// subdomain free for another relay. The row stays.
 pub async fn purge_relay(core: &Core, relay: &Relay) -> Result<()> {
     if relay.is_purged() {
         return Err(Error::conflict(
@@ -354,6 +385,90 @@ pub async fn purge_relay(core: &Core, relay: &Relay) -> Result<()> {
 
     core.bus.publish(Change::RelayChanged {
         relay_id: relay.id.clone(),
+    });
+    Ok(())
+}
+
+/// Erase what a relay holds, keeping its settings: its events, media, rooms, roles,
+/// method grants, bans, claims, notifications and members. Its owner stays, as do
+/// the members and invites someone has paid for, and the relay republishes its
+/// member list.
+pub async fn erase_relay(core: &Core, relay: &Relay) -> Result<()> {
+    relay.require_unpurged()?;
+
+    let key = core.relay_key(relay)?;
+    let now = core.clock.now();
+    let (published, blobs) = core
+        .db
+        .with_tx(async |conn| {
+            // Joins bind paid invites under this lock.
+            relays::lock_relay(conn, &relay.id).await?;
+
+            for table in [
+                "event",
+                "room",
+                "role",
+                "method_grant",
+                "banned_pubkey",
+                "banned_event",
+                "notification",
+            ] {
+                sqlx::query(&format!("DELETE FROM {table} WHERE relay_id = $1"))
+                    .bind(&relay.id)
+                    .execute(&mut *conn)
+                    .await?;
+            }
+
+            let blobs: Vec<String> =
+                sqlx::query_scalar("DELETE FROM blob WHERE relay_id = $1 RETURNING sha256")
+                    .bind(&relay.id)
+                    .fetch_all(&mut *conn)
+                    .await?;
+
+            sqlx::query(
+                "DELETE FROM relay_member WHERE relay_id = $1 AND source <> 'owner'
+                 AND pubkey NOT IN (
+                   SELECT pubkey FROM membership
+                   WHERE relay_id = $1 AND pubkey IS NOT NULL AND status IN ('active', 'canceled')
+                 )",
+            )
+            .bind(&relay.id)
+            .execute(&mut *conn)
+            .await?;
+            sqlx::query("UPDATE relay_member SET roles = '{}' WHERE relay_id = $1")
+                .bind(&relay.id)
+                .execute(&mut *conn)
+                .await?;
+
+            let paid_invites = "SELECT invite_code FROM membership
+                WHERE relay_id = $1 AND invite_code IS NOT NULL AND status IN ('active', 'canceled')";
+            sqlx::query(&format!(
+                "DELETE FROM claim_use WHERE relay_id = $1 AND claim_code NOT IN ({paid_invites})"
+            ))
+            .bind(&relay.id)
+            .execute(&mut *conn)
+            .await?;
+            sqlx::query(&format!(
+                "DELETE FROM claim WHERE relay_id = $1 AND code NOT IN ({paid_invites})"
+            ))
+            .bind(&relay.id)
+            .execute(&mut *conn)
+            .await?;
+
+            let published = management::rebuild_derived(conn, &key, &relay.id, now).await?;
+            Ok::<_, Error>((published, blobs))
+        })
+        .await?;
+
+    for sha256 in blobs {
+        core.blobs
+            .delete(&media::blob_key(&relay.id, &sha256))
+            .await?;
+    }
+
+    core.bus.publish(Change::AccessChanged {
+        relay_id: relay.id.clone(),
+        published,
     });
     Ok(())
 }

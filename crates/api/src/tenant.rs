@@ -347,7 +347,7 @@ pub async fn reactivate_relay(
     ok(())
 }
 
-/// Delete a relay's data for good. The row stays as a record.
+/// Delete a relay's data for good, freeing its subdomain. The row stays as a record.
 pub async fn purge_relay(
     State(core): State<Core>,
     Authed(actor): Authed,
@@ -356,6 +356,18 @@ pub async fn purge_relay(
     let relay = relays::require_relay(core.db.pool(), &id).await?;
     actor.require_pubkey_or_admin(&relay.tenant_pubkey)?;
     hosting::purge_relay(&core, &relay).await?;
+    ok(())
+}
+
+/// Erase a relay's events, media, rooms and access lists, keeping its settings.
+pub async fn erase_relay(
+    State(core): State<Core>,
+    Authed(actor): Authed,
+    Path(id): Path<String>,
+) -> ApiResult {
+    let relay = relays::require_relay(core.db.pool(), &id).await?;
+    actor.require_pubkey_or_admin(&relay.tenant_pubkey)?;
+    hosting::erase_relay(&core, &relay).await?;
     ok(())
 }
 

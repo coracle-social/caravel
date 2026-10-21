@@ -12,7 +12,7 @@ use anyhow::Result;
 use caravel_core::billing::ledger::InvoiceMethod;
 use caravel_core::plans::{PLAN_BASIC, PLAN_GROWTH};
 use caravel_core::relays::RelayStatus;
-use caravel_core::testing;
+use caravel_core::{hosting, testing};
 use common::*;
 
 #[tokio::test]
@@ -212,6 +212,37 @@ async fn a_deactivated_relay_is_credited_and_stops_renewing() -> Result<()> {
         ]
     );
 
+    Ok(())
+}
+
+// Deleting a tenant settles their billing as a ban does, but doesn't keep them out.
+#[tokio::test]
+async fn a_deleted_tenant_is_forgiven_and_may_come_back() -> Result<()> {
+    let core = core().await;
+
+    travel(&core, day(2026, 1, 7));
+    let tenant = create_tenant(&core).await?;
+    let relay = create_relay(&core, &tenant, PLAN_GROWTH).await?;
+    reconcile(&core, &tenant).await?;
+    assert_eq!(invoice_amounts(&core, &tenant).await?, vec![2500]);
+
+    travel(&core, day(2026, 1, 22));
+    hosting::delete_tenant(&core, &tenant).await?;
+    assert!(get_relay(&core, &relay.id).await?.is_purged());
+    assert_eq!(get_tenant(&core, &tenant).await?.banned_at, None);
+    assert!(
+        invoices(&core, &tenant)
+            .await?
+            .iter()
+            .all(|invoice| invoice.voided_at.is_some())
+    );
+
+    // The purge's credit for the unused 16/31 waits on the ledger, as after a
+    // ban: 2500 * 16/31 = 1290.32.
+    reconcile(&core, &tenant).await?;
+    assert_eq!(outstanding(&core, &tenant).await?, -1290);
+
+    create_relay(&core, &tenant, "free").await?;
     Ok(())
 }
 

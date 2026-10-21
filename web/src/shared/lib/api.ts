@@ -89,9 +89,9 @@ export type RelayProfile = {
   description: string
 }
 
-// A purged relay keeps the status it had, so purging shows only in purged_at.
-export function relayStatus(relay: Pick<Relay, "status" | "purged_at">): RelayStatus | "purged" {
-  if (relay.purged_at != null) return "purged"
+// A deleted relay keeps the status it had, so deleting shows only in purged_at.
+export function relayStatus(relay: Pick<Relay, "status" | "purged_at">): RelayStatus | "deleted" {
+  if (relay.purged_at != null) return "deleted"
   return relay.status
 }
 
@@ -491,7 +491,7 @@ export function reactivateRelay(id: string) {
   return callApi<void>("POST", `/relays/${id}/reactivate`)
 }
 
-// Ban a tenant, purging their relays and voiding their open invoices.
+// Ban a tenant, deleting their relays and voiding their open invoices.
 export function banTenant(pubkey: string) {
   return callApi<Tenant>("POST", `/tenants/${pubkey}/ban`)
 }
@@ -500,9 +500,19 @@ export function unbanTenant(pubkey: string) {
   return callApi<Tenant>("POST", `/tenants/${pubkey}/unban`)
 }
 
-// Purge a relay for good: its data is erased soon after.
+// Delete a tenant's relays and void their open invoices, without banning them.
+export function deleteTenant(pubkey: string) {
+  return callApi<Tenant>("POST", `/tenants/${pubkey}/delete`)
+}
+
+// Delete a relay for good, freeing its subdomain: its data is erased soon after.
 export function purgeRelay(id: string) {
   return callApi<void>("POST", `/relays/${id}/purge`)
+}
+
+// Erase a relay's events, media, rooms and access lists, keeping its settings.
+export function eraseRelay(id: string) {
+  return callApi<void>("POST", `/relays/${id}/erase`)
 }
 
 export function createBillingPortalSession(pubkey: string, returnUrl?: string) {

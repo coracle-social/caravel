@@ -45,6 +45,18 @@ pub async fn unban_tenant(
     ))
 }
 
+/// Delete a tenant without banning them: forgive what they owe, purge their relays.
+pub async fn delete_tenant(
+    State(core): State<Core>,
+    _: Admin,
+    Path(pubkey): Path<String>,
+) -> ApiResult {
+    hosting::delete_tenant(&core, &pubkey).await?;
+    ok(TenantView::from(
+        tenants::require_tenant(core.db.pool(), &pubkey).await?,
+    ))
+}
+
 /// End every session a pubkey holds.
 pub async fn revoke_sessions(
     State(core): State<Core>,

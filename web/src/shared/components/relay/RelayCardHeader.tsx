@@ -30,6 +30,7 @@ type RelayCardHeaderProps = {
   onRequestReactivate?: () => void
   onRequestManageCustomDomain?: () => void
   onRequestTransferData?: () => void
+  onRequestErase?: () => void
   onRequestPurge?: () => void
 }
 
@@ -41,7 +42,8 @@ export default function RelayCardHeader(props: RelayCardHeaderProps) {
   const showMenu = () =>
     r().purged_at == null &&
     (props.editHref || props.onRequestDeactivate || props.onRequestReactivate ||
-      props.onRequestManageCustomDomain || props.onRequestTransferData || props.onRequestPurge)
+      props.onRequestManageCustomDomain || props.onRequestTransferData || props.onRequestErase ||
+      props.onRequestPurge)
 
   return (
     <div class="flex items-start justify-between gap-4">
@@ -135,6 +137,18 @@ export default function RelayCardHeader(props: RelayCardHeaderProps) {
                   {props.busy ? "Reactivating..." : "Reactivate"}
                 </ActionsMenuItem>
               </Show>
+              <Show when={props.onRequestErase}>
+                <ActionsMenuItem
+                  tone="danger"
+                  disabled={props.busy}
+                  onClick={() => {
+                    close()
+                    props.onRequestErase?.()
+                  }}
+                >
+                  {props.busy ? "Erasing..." : "Erase relay"}
+                </ActionsMenuItem>
+              </Show>
               <Show when={props.onRequestPurge}>
                 <ActionsMenuItem
                   tone="danger"
@@ -144,7 +158,7 @@ export default function RelayCardHeader(props: RelayCardHeaderProps) {
                     props.onRequestPurge?.()
                   }}
                 >
-                  {props.busy ? "Purging..." : "Purge relay"}
+                  {props.busy ? "Deleting..." : "Delete relay"}
                 </ActionsMenuItem>
               </Show>
             </>

@@ -13,10 +13,10 @@ export default function AdminRelayDetail() {
   const params = useParams()
   const relayId = () => params.id ?? ""
   const [relay, actions] = useRelay(relayId)
-  const [members] = useRelayMembers(relayId)
+  const [members, { refetch: refetchMembers }] = useRelayMembers(relayId)
   const loading = useMinLoading(() => relay.loading && !relay())
   const [activity] = useRelayActivity(relayId)
-  const { busy, deactivate, reactivate, purge, toggle } = useRelayActions(relayId, relay, actions)
+  const { busy, deactivate, reactivate, erase, purge, toggle } = useRelayActions(relayId, relay, actions)
 
   return (
     <PageContainer>
@@ -33,6 +33,10 @@ export default function AdminRelayDetail() {
               busy={busy()}
               onDeactivate={deactivate}
               onReactivate={reactivate}
+              onErase={async () => {
+                await erase()
+                void refetchMembers()
+              }}
               onPurge={purge}
               onToggle={toggle}
               enforcePlanLimits={false}

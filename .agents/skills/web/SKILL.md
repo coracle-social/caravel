@@ -17,7 +17,7 @@ description: Architecture and conventions for Caravel's web apps in web/ — thr
 
 The build lands in `web/dist`, which the `caravel` binary embeds. The server picks an app by host and path (the `architecture` skill describes host dispatch) and writes its runtime configuration into the page as JSON: the API's url, the relay domains, the platform's name and logo, Flotilla's url, and for the portal, the relay it is served for. `shared/lib/config.ts` reads it, falling back to the build's `VITE_*` variables under `vite dev`, where no server writes the page. Nothing is configured at build time, so one build runs anywhere.
 
-The two dashboards are separate apps, so a link from one to the other loads the page rather than routing within the app. `AppLink` makes that choice for any link that may cross between them. Under `vite dev`, a middleware in `vite.config.ts` picks the app per path the way the server does, and the portal runs under `/portal` with `?relay=<id>` standing in for its relay.
+The two dashboards are separate apps, so a link from one to the other loads the page rather than routing within the app. `AppLink` makes that choice for any link that may cross between them, marking a link into the other app external, since the router otherwise takes over every same-origin link and finds no route for it. Under `vite dev`, a middleware in `vite.config.ts` picks the app per path the way the server does, and the portal runs under `/portal` with `?relay=<id>` standing in for its relay.
 
 ## The stack
 

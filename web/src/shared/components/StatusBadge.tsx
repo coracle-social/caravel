@@ -11,7 +11,7 @@ const STATUS_STYLES: Record<string, string> = {
   inactive: GRAY,
   verified: GREEN,
   delinquent: RED,
-  purged: RED,
+  deleted: RED,
   banned: "bg-gray-800 text-gray-100 border-gray-800",
   canceled: YELLOW,
   draft: "bg-blue-50 text-blue-700 border-blue-200",

@@ -12,24 +12,38 @@ import CopyNpub from "@/shared/components/CopyNpub"
 import StatusBadge from "@/shared/components/StatusBadge"
 import useMinLoading from "@/shared/lib/useMinLoading"
 import { profileName, useProfileMetadata } from "@/shared/lib/profiles"
-import { banTenant, getTenant, listTenantInvoices, listTenantRelays, tenantStatus, unbanTenant } from "@/shared/lib/api"
+import { banTenant, deleteTenant, getTenant, listTenantInvoices, listTenantRelays, tenantStatus, unbanTenant } from "@/shared/lib/api"
 import { formatDateTime, formatError } from "@/shared/lib/format"
 import { setToastMessage } from "@/shared/lib/state"
 import { shortenNpub } from "@/shared/lib/pubkey"
 
-type Action = "ban" | "unban"
+type Action = "delete" | "ban" | "unban"
 
 function confirmation(action: Action, label: string): Confirmation {
   switch (action) {
+    case "delete":
+      return {
+        title: "Delete tenant?",
+        description: `${label}'s relays will be deleted and their billing settled.`,
+        details: [
+          "All of the tenant's relays will be permanently deleted — data and config — and their subdomains freed.",
+          "Billing is canceled: open invoices are voided and outstanding charges forgiven.",
+          "The tenant is not banned, and can sign in and create relays again.",
+          "Deleted relays and forgiven invoices are not restored.",
+        ],
+        confirmLabel: "Yes, delete tenant",
+        busyLabel: "Deleting...",
+        tone: "danger",
+      }
     case "ban":
       return {
         title: "Ban tenant?",
         description: `${label} will be banned immediately.`,
         details: [
-          "All of the tenant's relays will be permanently purged — data and config deleted.",
+          "All of the tenant's relays will be permanently deleted — data and config.",
           "Billing is canceled: open invoices are voided and outstanding charges forgiven.",
           "The tenant can no longer create relays.",
-          "Lifting the ban later does not restore purged relays.",
+          "Lifting the ban later does not restore deleted relays.",
         ],
         confirmLabel: "Yes, ban tenant",
         busyLabel: "Banning...",
@@ -41,7 +55,7 @@ function confirmation(action: Action, label: string): Confirmation {
         description: `${label} will be able to use the service again.`,
         details: [
           "The tenant can create relays again, and billing resumes on new activity.",
-          "Purged relays and forgiven invoices are not restored.",
+          "Deleted relays and forgiven invoices are not restored.",
         ],
         confirmLabel: "Yes, unban tenant",
         busyLabel: "Unbanning...",
@@ -70,14 +84,17 @@ export default function AdminTenantDetail() {
 
     setBusy(true)
     try {
-      if (action === "ban") {
+      if (action === "delete") {
+        await deleteTenant(tenantId())
+        setToastMessage("Tenant deleted", "success")
+      } else if (action === "ban") {
         await banTenant(tenantId())
         setToastMessage("Tenant banned", "success")
       } else {
         await unbanTenant(tenantId())
         setToastMessage("Tenant unbanned", "success")
       }
-      // Banning purges the tenant's relays and voids its open invoices.
+      // Deleting and banning delete the tenant's relays and void its open invoices.
       await Promise.all([refetchTenant(), refetchRelays(), refetchInvoices()])
       setPendingAction(undefined)
     } catch (e) {
@@ -118,6 +135,15 @@ export default function AdminTenantDetail() {
                     </ActionsMenuItem>
                   }
                 >
+                  <ActionsMenuItem
+                    tone="danger"
+                    onClick={() => {
+                      close()
+                      setPendingAction("delete")
+                    }}
+                  >
+                    Delete tenant
+                  </ActionsMenuItem>
                   <ActionsMenuItem
                     tone="danger"
                     onClick={() => {

@@ -74,7 +74,9 @@ The platform can leave one message per pubkey on a relay. The relay sends it as 
 
 A relay's events export as JSONL, one event per line, streamed a page at a time. An import stores each validly signed line and reports the ones it refused by line number. It skips the events the source relay published about its own members, roles, media and rooms, then rebuilds each room the dump creates or changes by replaying that room's moderation events, joins and leaves, oldest first; a room the relay doesn't hold is created only by a create event in the dump, and a deletion is replayed only if nothing follows it. Importing the same dump twice changes nothing.
 
-A purged relay keeps its row, but a worker erases its events, access lists, rooms, notifications and media.
+A purged relay ("deleted" in the dashboards) keeps its row, but a worker erases its events, access lists, rooms, notifications and media, and its subdomain is free for a new relay at once.
+
+Erasing a relay clears what it holds while it keeps running on its settings: its events, media, rooms, roles, method grants, bans, claims, notifications and members all go, except its owner, the members whose membership is paid for, and the claims of paid invites nobody has used yet, since those were bought. The relay then signs its member list again.
 
 ## The event store
 

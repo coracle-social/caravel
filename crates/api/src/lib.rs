@@ -72,6 +72,7 @@ pub fn router(core: Core) -> Router {
         )
         .route("/tenants/{pubkey}/ban", post(admin::ban_tenant))
         .route("/tenants/{pubkey}/unban", post(admin::unban_tenant))
+        .route("/tenants/{pubkey}/delete", post(admin::delete_tenant))
         .route(
             "/relays",
             get(admin::list_relays).post(tenant::create_relay),
@@ -111,6 +112,7 @@ pub fn router(core: Core) -> Router {
         .route("/relays/{id}/deactivate", post(tenant::deactivate_relay))
         .route("/relays/{id}/reactivate", post(tenant::reactivate_relay))
         .route("/relays/{id}/purge", post(tenant::purge_relay))
+        .route("/relays/{id}/erase", post(tenant::erase_relay))
         .route("/relays/{id}/export", get(tenant::export_relay_data))
         .route("/relays/{id}/import", post(tenant::import_relay_data))
         .route("/invoices", get(admin::list_invoices))

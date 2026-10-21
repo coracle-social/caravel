@@ -50,8 +50,9 @@ export default function ConfirmDialog(props: {
     void props.onConfirm()
   }
 
+  // Solid compiles a prop of `a && b` to false, not undefined, when `a` is falsy.
   return (
-    <Modal open={props.confirmation !== undefined} onClose={handleClose}>
+    <Modal open={Boolean(props.confirmation)} onClose={handleClose}>
       <Show when={shown()}>
         {(s) => (
           <>

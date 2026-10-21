@@ -64,22 +64,36 @@ const FEATURE_TOGGLES: Toggle[] = [
   { flag: "livekit_enabled", label: "LiveKit support", planGated: true },
 ]
 
-type Action = "deactivate" | "reactivate" | "purge"
+type Action = "deactivate" | "reactivate" | "erase" | "purge"
 
 function confirmation(action: Action, label: string): Confirmation {
   switch (action) {
     case "purge":
       return {
-        title: "Purge relay?",
+        title: "Delete relay?",
         description: `${label} and all of its data will be permanently deleted.`,
         details: [
           "All events, uploads, members, and settings are deleted from the hosting backend.",
-          "The relay's subdomain and custom domain stop serving immediately.",
+          "The relay's subdomain and custom domain stop serving immediately, and the subdomain is free for a new relay.",
           "An active paid relay earns a prorated credit for the rest of the billing period.",
-          "This cannot be undone — a purged relay cannot be re-activated.",
+          "This cannot be undone — a deleted relay cannot be re-activated.",
         ],
-        confirmLabel: "Yes, purge relay",
-        busyLabel: "Purging...",
+        confirmLabel: "Yes, delete relay",
+        busyLabel: "Deleting...",
+        tone: "danger",
+      }
+    case "erase":
+      return {
+        title: "Erase relay?",
+        description: `Everything stored on ${label} will be permanently deleted, but its settings stay.`,
+        details: [
+          "All events, uploads, rooms, roles, bans and invite codes are deleted.",
+          "Members are removed, except the owner and members who have paid for membership. Paid invites nobody has used still work.",
+          "Settings, plan, domains and billing are unchanged, and the relay stays online.",
+          "This cannot be undone. Export the relay's data first to keep a copy.",
+        ],
+        confirmLabel: "Yes, erase relay",
+        busyLabel: "Erasing...",
         tone: "danger",
       }
     case "deactivate":
@@ -116,6 +130,7 @@ type RelayDetailCardProps = {
   busy?: boolean
   onDeactivate?: () => void | Promise<void>
   onReactivate?: () => void | Promise<void>
+  onErase?: () => void | Promise<void>
   onPurge?: () => void | Promise<void>
   onToggle?: (flag: RelayFlag) => void
   onUpdatePlan?: (planId: PlanId) => Promise<void>
@@ -169,6 +184,8 @@ export default function RelayDetailCard(props: RelayDetailCardProps) {
       await props.onDeactivate?.()
     } else if (action === "reactivate") {
       await props.onReactivate?.()
+    } else if (action === "erase") {
+      await props.onErase?.()
     } else {
       await props.onPurge?.()
     }
@@ -208,6 +225,7 @@ export default function RelayDetailCard(props: RelayDetailCardProps) {
         onRequestReactivate={props.onReactivate ? () => setPendingAction("reactivate") : undefined}
         onRequestManageCustomDomain={() => setCustomDomainModalOpen(true)}
         onRequestTransferData={() => setDataTransferModalOpen(true)}
+        onRequestErase={props.onErase ? () => setPendingAction("erase") : undefined}
         onRequestPurge={props.onPurge ? () => setPendingAction("purge") : undefined}
       />
 

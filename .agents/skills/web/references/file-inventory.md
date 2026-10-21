@@ -20,7 +20,7 @@ Each app has an HTML entry at the root of `web/` and a matching directory under 
 ## `admin/` — the admin dashboard
 
 - `App.tsx` — the route table (below).
-- `pages/`: `AdminTenantList`, `AdminTenantDetail` (with banning), `AdminRelayList`, `AdminRelayDetail`, `AdminInvoiceList`, `AdminInvoiceDetail`, `AdminModeration`.
+- `pages/`: `AdminTenantList`, `AdminTenantDetail` (with deleting and banning), `AdminRelayList`, `AdminRelayDetail`, `AdminInvoiceList`, `AdminInvoiceDetail`, `AdminModeration`.
   - `AdminModeration` accumulates pages of the cross-relay feed of events and uploads in its own signals so "load more" can append, and filters what has loaded. It reads a time window whose start is fixed when the range is picked, pages back inside it by `seen_at` (when the relay received an item), and drops responses for a window it has left.
 - `components/`: `AdminInvoiceListItem`, `InvoiceDetailCard`, `ModerationListItem`, `NoteContent`.
   - `NoteContent` is the only place the dashboards show text strangers wrote. It builds the page from `@welshman/content`'s parsed segments, never from HTML, links only `http` and `https`, shows custom emoji as their shortcode, and truncates long notes.
@@ -40,7 +40,7 @@ Each app has an HTML entry at the root of `web/` and a matching directory under 
 - `components/`:
   - frame: `Layout` (the frame and the `requireTenant` and `requireAdmin` gates), `AppShell` (the signed-in navigation, with relay search), `AppLink` (a link that loads the page when it crosses between the dashboards, and `isAdminPath`).
   - kit: `PageContainer`, `ResourceState`, `LoadingState`, `Modal`, `ModalHeader`, `ConfirmDialog`, `SegmentedTabs`, `StatusBadge`, `Avatar`, `Field`, `ToggleField`, `ToggleButton`, `SearchInput`, `Toast`, `BackLink`, `ActionsMenu`, `CopyNpub`, and small icons.
-  - relays: `RelayForm`, `RelayListItem`, `RelayDetailCard` (a relay's settings as switch lists, its custom domain, members, member payments and plan, and the confirmations for deactivating, reactivating and purging), `ActivityFeed`, `PricingTable`, and in `relay/`: `RelayCardHeader`, `PlanGatedToggle`, `CustomDomainModal`, `DataTransferModal` (exporting and importing events as JSONL), `MemberPayments` (the member price, the portal link and who is paying), `MemberPriceModal`.
+  - relays: `RelayForm`, `RelayListItem`, `RelayDetailCard` (a relay's settings as switch lists, its custom domain, members, member payments and plan, and the confirmations for deactivating, reactivating, erasing and deleting, which the API calls purging), `ActivityFeed`, `PricingTable`, and in `relay/`: `RelayCardHeader`, `PlanGatedToggle`, `CustomDomainModal`, `DataTransferModal` (exporting and importing events as JSONL), `MemberPayments` (the member price, the portal link and who is paying), `MemberPriceModal`.
   - billing: `BillingPrompts` (the banner and its dialogs, and the `?invoice=` link), `PromptBanner`, `PostPaidPrompts`, `PaymentDialog` (paying an invoice by Lightning or Stripe Checkout), `PaymentSetup`, `PaymentSetupCard`, `PaymentSetupNWC` and their shared `PaymentSetupShell`, and in `payment/` and `account/`: `LightningPayBody`, `InvoiceItemsList`, `InvoiceListItem`, `PaymentMethodRow`.
   - `login/`: `LoginTabsScreen`, `LoginSignerScreen`, `LoginKeyScreen`, `QrScannerOverlay`.
 - `lib/`:

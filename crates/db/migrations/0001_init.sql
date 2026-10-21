@@ -47,9 +47,11 @@ CREATE TABLE relay (
   purged_at BIGINT,
   erased_at BIGINT,
   created_at BIGINT NOT NULL,
-  CONSTRAINT relay_subdomain_key UNIQUE (subdomain),
   CONSTRAINT relay_pubkey_key UNIQUE (pubkey)
 );
+
+-- Keeps two live relays from claiming one subdomain; a purged relay's is free again.
+CREATE UNIQUE INDEX relay_subdomain_key ON relay (subdomain) WHERE purged_at IS NULL;
 
 -- A tenant's relays, newest first, for its dashboard and for billing.
 CREATE INDEX relay_tenant_created_idx ON relay (tenant_pubkey, created_at);

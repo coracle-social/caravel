@@ -32,4 +32,4 @@ A page that lets a tenant pick a paid plan holds a post-paid flow and renders `P
 
 ## The optimistic write
 
-`useRelayActions` gives a relay's page its actions. A setting toggle or plan change updates the page's copy of the relay first, writes, and refetches; on failure it restores the copy and toasts the error. A free plan also turns off media storage and calls. Deactivating, reactivating and purging run one at a time, refetch, and toast a failure; purging also toasts its success.
+`useRelayActions` gives a relay's page its actions. A setting toggle or plan change updates the page's copy of the relay first, writes, and refetches; on failure it restores the copy and toasts the error. A free plan also turns off media storage and calls. Deactivating, reactivating, erasing and deleting (purging) run one at a time, refetch, and toast a failure; erasing and deleting also toast their success, and a page refetches its members after an erase.

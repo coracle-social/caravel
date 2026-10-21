@@ -1,5 +1,5 @@
-//! A relay's data through the API: exporting and importing its events, and the
-//! admins' moderation feed and blob review.
+//! A relay's data through the API: exporting, importing and erasing its events,
+//! deleting its tenant, and the admins' moderation feed and blob review.
 
 mod common;
 
@@ -9,6 +9,7 @@ use caravel_core::media;
 use caravel_core::testing::{create_relay, sign_event};
 use caravel_core::{events, hosting};
 use common::*;
+use coracle_lib::filters::Filter;
 use coracle_lib::keys::SecretKey;
 
 #[tokio::test]
@@ -91,6 +92,65 @@ async fn a_purged_relay_has_nothing_to_export() {
         .await;
     assert_eq!(response.status, StatusCode::BAD_REQUEST);
     assert_eq!(response.body["code"], "relay-is-purged");
+}
+
+#[tokio::test]
+async fn an_owner_or_an_admin_erases_a_relay() {
+    let api = TestApi::new().await;
+    let (relay, owner) = create_relay(&api.core).await;
+    let (_, stranger) = create_relay(&api.core).await;
+    let path = format!("/relays/{}/erase", relay.id);
+
+    let note = sign_event(&owner, 1, "erased", &[], api.core.clock.now());
+    let now = api.core.clock.now();
+    api.core
+        .db
+        .with_tx(async |conn| events::save_event(conn, &relay.id, &note, now).await)
+        .await
+        .unwrap();
+
+    let stranger = api.bearer(&stranger).await;
+    let refused = api.request("POST", &path, Some(&stranger), None).await;
+    assert_eq!(refused.status, StatusCode::FORBIDDEN);
+
+    for bearer in [api.bearer(&owner).await, api.bearer(&api.admin).await] {
+        let erased = api.request("POST", &path, Some(&bearer), None).await;
+        assert_eq!(erased.status, StatusCode::OK);
+    }
+    let filter = Filter {
+        kinds: Some([1].into()),
+        ..Filter::new()
+    };
+    assert!(
+        events::query_events(api.core.db.pool(), &relay.id, &filter, 10, now)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn an_admin_deletes_a_tenant_without_banning_them() {
+    let api = TestApi::new().await;
+    let (relay, owner) = create_relay(&api.core).await;
+    let admin = api.bearer(&api.admin).await;
+    let pubkey = owner.public_key().to_hex();
+
+    let deleted = api
+        .request(
+            "POST",
+            &format!("/tenants/{pubkey}/delete"),
+            Some(&admin),
+            None,
+        )
+        .await;
+    assert_eq!(deleted.status, StatusCode::OK);
+    assert_eq!(deleted.body["data"]["banned_at"], serde_json::Value::Null);
+
+    let relay = caravel_core::relays::require_relay(api.core.db.pool(), &relay.id)
+        .await
+        .unwrap();
+    assert!(relay.is_purged());
 }
 
 #[tokio::test]

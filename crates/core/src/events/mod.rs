@@ -30,6 +30,17 @@ pub struct EventHead {
     pub tag_values: Vec<String>,
 }
 
+/// Events that share everything a relay's rules read about an event: its kind, its
+/// author, and the first values of its `d` and `h` tags, which name its room.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EventGroup {
+    pub kind: u16,
+    pub pubkey: [u8; 32],
+    pub d: Option<String>,
+    pub h: Option<String>,
+    pub count: i64,
+}
+
 /// An event as stored, with its tags as the JSON it was signed with.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StoredEvent {
@@ -88,16 +99,16 @@ impl StoredEvent {
         }
     }
 
-    /// The event as NIP-01 JSON, with a zeroed signature if `strip_signature`.
+    /// The event as NIP-01 JSON, without its `sig` field if `strip_signature`.
     pub fn to_json(&self, strip_signature: bool) -> String {
         let sig = if strip_signature {
-            "0".repeat(128)
+            String::new()
         } else {
-            hex::encode(self.sig)
+            format!(r#","sig":"{}""#, hex::encode(self.sig))
         };
 
         format!(
-            r#"{{"id":"{}","pubkey":"{}","created_at":{},"kind":{},"tags":{},"content":{},"sig":"{}"}}"#,
+            r#"{{"id":"{}","pubkey":"{}","created_at":{},"kind":{},"tags":{},"content":{}{}}}"#,
             self.head.id_hex(),
             self.head.pubkey_hex(),
             self.head.created_at,
@@ -371,6 +382,61 @@ pub async fn query_event_heads(
     Ok(Some(rows.iter().filter_map(event_head).collect()))
 }
 
+/// A relay's unexpired events matching any of `filters`, each counted once, in
+/// groups that share what the rules read, so a caller can count only those a
+/// reader may see. A filter's limit bounds what is sent, not what is counted.
+pub async fn count_event_groups(
+    db: impl PgExecutor<'_>,
+    relay_id: &str,
+    filters: &[Filter],
+    now: i64,
+) -> Result<Vec<EventGroup>> {
+    let filters: Vec<&Filter> = filters
+        .iter()
+        .filter(|filter| !filter.matches_nothing())
+        .collect();
+    if filters.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let first_value = |name: char| {
+        format!(
+            "(SELECT substr(value, 3) FROM unnest(tag_values) WITH ORDINALITY AS tag(value, position)
+              WHERE value LIKE '{name}:%' ORDER BY position LIMIT 1)"
+        )
+    };
+    let mut query = QueryBuilder::<Postgres>::new(format!(
+        "SELECT kind, pubkey, {} AS d_value, {} AS h_value, count(*) AS count FROM event",
+        first_value('d'),
+        first_value('h'),
+    ));
+    push_scope(&mut query, relay_id, now);
+    query.push(" AND (");
+    for (index, filter) in filters.iter().enumerate() {
+        if index > 0 {
+            query.push(" OR ");
+        }
+        query.push("(true");
+        push_conditions(&mut query, filter);
+        query.push(")");
+    }
+    query.push(") GROUP BY 1, 2, 3, 4");
+
+    let rows = query.build().fetch_all(db).await?;
+    Ok(rows
+        .iter()
+        .filter_map(|row| {
+            Some(EventGroup {
+                kind: u16::try_from(row.get::<i32, _>("kind")).ok()?,
+                pubkey: row.get::<Vec<u8>, _>("pubkey").try_into().ok()?,
+                d: row.get("d_value"),
+                h: row.get("h_value"),
+                count: row.get("count"),
+            })
+        })
+        .collect())
+}
+
 /// A page of a relay's events, newest first with ties broken by id, starting
 /// after the event at `created_at` with id `id`.
 pub async fn list_events_after(
@@ -468,17 +534,26 @@ pub async fn delete_expired_events(db: impl PgExecutor<'_>, now: i64, batch: i64
     Ok(result.rows_affected())
 }
 
-/// Constrain a query to one relay's unexpired events matching a filter. A tag
-/// constraint on a multi-letter name, or with no values, matches nothing, since
-/// only single-letter tags are indexed.
+/// Constrain a query to one relay's unexpired events matching a filter.
 fn push_filter(query: &mut QueryBuilder<'_, Postgres>, relay_id: &str, filter: &Filter, now: i64) {
+    push_scope(query, relay_id, now);
+    push_conditions(query, filter);
+}
+
+/// Constrain a query to one relay's unexpired events.
+fn push_scope(query: &mut QueryBuilder<'_, Postgres>, relay_id: &str, now: i64) {
     query
         .push(" WHERE relay_id = ")
         .push_bind(relay_id.to_string())
         .push(" AND (expires_at IS NULL OR expires_at > ")
         .push_bind(now)
         .push(")");
+}
 
+/// A filter's conditions, each led by ` AND`. A tag constraint on a multi-letter
+/// name, or with no values, matches nothing, since only single-letter tags are
+/// indexed.
+fn push_conditions(query: &mut QueryBuilder<'_, Postgres>, filter: &Filter) {
     if let Some(ids) = &filter.ids {
         let ids: Vec<Vec<u8>> = ids.iter().map(|id| id.as_bytes().to_vec()).collect();
         query.push(" AND id = ANY(").push_bind(ids).push(")");

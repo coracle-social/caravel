@@ -82,7 +82,8 @@ pub struct Relay {
     /// Anyone may join with a NIP-43 request, without an invite.
     #[serde(with = "flag")]
     pub policy_public_join: bool,
-    /// Events are served without signatures to readers who aren't members.
+    /// Events are served without their signatures to everyone but the relay's
+    /// owner and its own key.
     #[serde(with = "flag")]
     pub policy_strip_signatures: bool,
     #[serde(with = "flag")]

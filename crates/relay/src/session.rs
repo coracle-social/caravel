@@ -173,8 +173,9 @@ async fn dispatch(session: &Session, instance: &RelayInstance, text: &str) {
         } => instance.on_req(session, subscription_id, filters).await,
         ClientMessage::Close(subscription_id) => instance.on_close(session, &subscription_id),
         ClientMessage::Count {
-            subscription_id, ..
-        } => instance.on_count(session, subscription_id).await,
+            subscription_id,
+            filters,
+        } => instance.on_count(session, subscription_id, filters).await,
         ClientMessage::NegOpen {
             subscription_id,
             filter,

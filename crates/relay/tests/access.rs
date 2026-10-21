@@ -195,6 +195,88 @@ async fn management_calls_are_authorized_per_method() {
 }
 
 #[tokio::test]
+async fn membership_changes_reach_subscribers_as_the_relay_publishes_them() {
+    let server = Server::start().await;
+    let (relay, owner) = server.relay().await;
+    let relay = server
+        .update(&relay, json!({"policy_public_join": 1}))
+        .await;
+    let host = relay.canonical_host();
+    let mut reader = server.connect(&host).await;
+    reader.auth(&owner, server.now()).await;
+    reader
+        .req("access", json!({"kinds": [8000, 8001, 13534]}))
+        .await;
+    let member = SecretKey::generate().public_key().to_hex();
+
+    server
+        .manage(&host, &owner, "allowpubkey", json!([member]))
+        .await;
+    assert_eq!(
+        published_kinds(&mut reader, &relay.pubkey, 2).await,
+        [8000, 13534]
+    );
+    server
+        .manage(&host, &owner, "unallowpubkey", json!([member]))
+        .await;
+    assert_eq!(
+        published_kinds(&mut reader, &relay.pubkey, 2).await,
+        [8001, 13534]
+    );
+
+    // Joining a relay one already belongs to is accepted and publishes nothing.
+    let joiner = SecretKey::generate();
+    let mut client = server.connect(&host).await;
+    client.auth(&joiner, server.now()).await;
+    for _ in 0..2 {
+        let join = sign_event(&joiner, kinds::RELAY_JOIN, "", &[], server.now());
+        assert!(client.publish(&join).await.0);
+    }
+    assert_eq!(
+        published_kinds(&mut reader, &relay.pubkey, 2).await,
+        [8000, 13534]
+    );
+    assert!(reader.is_quiet().await);
+}
+
+/// The kinds of the next `count` events a subscriber receives, sorted, each of
+/// which `pubkey` must have signed.
+async fn published_kinds(client: &mut Client, pubkey: &str, count: usize) -> Vec<u64> {
+    let mut kinds = Vec::new();
+    for _ in 0..count {
+        let event = client.recv_skipping_auth().await.unwrap()[2].clone();
+        assert_eq!(event["pubkey"], pubkey);
+        kinds.push(event["kind"].as_u64().unwrap());
+    }
+    kinds.sort();
+    kinds
+}
+
+#[tokio::test]
+async fn a_relay_with_management_off_takes_no_calls() {
+    let server = Server::start().await;
+    let (relay, _) = server.relay().await;
+    server
+        .update(&relay, json!({"management_enabled": 0}))
+        .await;
+
+    let response = server
+        .http(
+            axum::http::Request::builder()
+                .method("POST")
+                .uri("/")
+                .header("host", relay.canonical_host())
+                .header("content-type", "application/nostr+json+rpc")
+                .body(axum::body::Body::from(
+                    json!({"method": "supportedmethods", "params": []}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(response.status, axum::http::StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
 async fn a_management_call_must_be_signed_over_its_body() {
     let server = Server::start().await;
     let (relay, owner) = server.relay().await;
@@ -210,14 +292,37 @@ async fn a_management_call_must_be_signed_over_its_body() {
         ],
         server.now(),
     );
-    let response = server
-        .manage_with(
-            &host,
-            &auth,
-            json!({"method": "listclaims", "params": []}).to_string(),
+    let body = json!({"method": "listclaims", "params": []}).to_string();
+    let response = server.manage_with(&host, &auth, body.clone()).await;
+    assert_eq!(response["error"], "authorization payload mismatch");
+
+    // Nor may it be signed for another relay, or not at all.
+    let payload = hex::encode(<sha2::Sha256 as sha2::Digest>::digest(body.as_bytes()));
+    let elsewhere = sign_event(
+        &owner,
+        kinds::HTTP_AUTH,
+        "",
+        &[&["u", "https://elsewhere.example/"], &["payload", &payload]],
+        server.now(),
+    );
+    let response = server.manage_with(&host, &elsewhere, body.clone()).await;
+    assert_eq!(response["error"], "authorization url mismatch");
+
+    let unsigned = server
+        .http(
+            axum::http::Request::builder()
+                .method("POST")
+                .uri("/")
+                .header("host", &host)
+                .header("content-type", "application/nostr+json+rpc")
+                .body(axum::body::Body::from(body))
+                .unwrap(),
         )
         .await;
-    assert_eq!(response["error"], "authorization payload mismatch");
+    assert_eq!(
+        unsigned.json()["error"],
+        "blocked: please authenticate in order to manage this relay"
+    );
 }
 
 #[tokio::test]

@@ -69,11 +69,11 @@ Every test in zooid's suite, and the caravel test that covers the same behavior 
 - `TestEventStore_ReplaceEvent` — `crates/core/tests/events.rs` a_replaceable_event_keeps_one_newest_version_per_slot
 - `TestEventStore_ReplaceEvent_Republish` — `crates/core/tests/events.rs` a_replaceable_event_keeps_one_newest_version_per_slot
 - `TestEventStore_ReplaceEvent_OlderEvent` — `crates/core/tests/events.rs` a_replaceable_event_keeps_one_newest_version_per_slot
-- `TestEventStore_CountEvents` — Obsolete: the relays answer COUNT with a refusal, as zooid did, so nothing counts.
+- `TestEventStore_CountEvents` — `crates/core/tests/events.rs` counts_group_matching_events_by_kind_author_and_room_tags; `crates/relay/tests/protocol.rs` a_count_is_admitted_and_filtered_like_a_subscription
 - `TestEventStore_Close` — Obsolete: there is no per-relay store to close.
 - `TestEventStore_GetOrCreateApplicationSpecificData` — Obsolete: relay state lives in tables, not app-data events.
 - `TestEventStore_QueryEvents_MaxLimitCapsFilterWithNoLimit` — `crates/core/tests/events.rs` limits_cap_results_and_ties_break_on_id
-- `TestEventStore_CountEvents_IgnoresFilterLimit` — Obsolete: nothing counts events.
+- `TestEventStore_CountEvents_IgnoresFilterLimit` — `crates/core/tests/events.rs` counts_group_matching_events_by_kind_author_and_room_tags
 - `TestEventStore_QueryEvents_SearchPhrase` — `crates/core/tests/events.rs` search_matches_words_in_sequence
 - `TestEventStore_SaveEvent_ConcurrentDuplicate` — `crates/core/tests/events.rs` a_saved_event_is_a_duplicate_the_second_time
 - `TestEventStore_QueryEvents_EmptyFilterFieldMatchesNothing` — `crates/core/tests/events.rs` an_absent_field_matches_everything_and_an_empty_one_nothing

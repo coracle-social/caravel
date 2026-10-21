@@ -109,19 +109,26 @@ impl RelayInstance {
     /// Reload the relay's state from its row, keeping its connections open.
     pub async fn reload(&self, relay: Relay) -> caravel_core::Result<()> {
         let _reloading = self.reloading.lock().await;
+        self.install(relay).await
+    }
+
+    /// Reload the relay's access lists and rooms after a change to them. The row is
+    /// read once the lock is held, so a settings reload in progress isn't undone.
+    pub async fn refresh(&self) {
+        let _reloading = self.reloading.lock().await;
+        if let Err(error) = self.install(self.state().relay.clone()).await {
+            tracing::error!(relay = %self.relay_id(), error = %error, "failed to refresh relay");
+        }
+    }
+
+    /// Build the relay's state from `relay` and serve it, with the reload lock held.
+    async fn install(&self, relay: Relay) -> caravel_core::Result<()> {
         let state = InstanceState::load(&self.core, relay).await?;
         *self
             .state
             .write()
             .unwrap_or_else(|error| error.into_inner()) = Arc::new(state);
         Ok(())
-    }
-
-    /// Reload the relay's access lists and rooms after a change to them.
-    pub async fn refresh(&self) {
-        if let Err(error) = self.reload(self.state().relay.clone()).await {
-            tracing::error!(relay = %self.relay_id(), error = %error, "failed to refresh relay");
-        }
     }
 
     /// Reload the relay after a change to its access lists or rooms made outside
@@ -493,11 +500,55 @@ impl RelayInstance {
         self.connections.unsubscribe(session, subscription_id);
     }
 
-    pub async fn on_count(&self, session: &Session, subscription_id: SubscriptionId) {
-        let refusal = Refusal::blocked("this relay does not count");
-        session
-            .send(refused_subscription(subscription_id, &refusal))
-            .await;
+    pub async fn on_count(
+        &self,
+        session: &Session,
+        subscription_id: SubscriptionId,
+        filters: Vec<Filter>,
+    ) {
+        match self.count(session, &filters).await {
+            Ok(count) => {
+                session
+                    .send(RelayMessage::Count {
+                        subscription_id,
+                        count,
+                    })
+                    .await;
+            }
+            Err(refusal) => {
+                self.offer_challenge(session, &refusal).await;
+                session
+                    .send(refused_subscription(subscription_id, &refusal))
+                    .await;
+            }
+        }
+    }
+
+    /// How many events the filters match that the connection may see: a count is
+    /// admitted and filtered by the rules a subscription is.
+    async fn count(&self, session: &Session, filters: &[Filter]) -> Result<u64, Refusal> {
+        let state = self.state();
+        let authed = self.connections.pubkeys(session);
+
+        relay_policy::admit_req(&state.snapshot, &authed)?;
+
+        let groups = events::count_event_groups(
+            self.core.db.pool(),
+            &state.relay.id,
+            filters,
+            self.core.clock.now(),
+        )
+        .await
+        .map_err(|error| {
+            tracing::warn!(relay = %state.relay.id, error = %error, "count failed");
+            Refusal::Error("the count could not be run")
+        })?;
+
+        Ok(relay_policy::count_visible(
+            &state.snapshot,
+            &authed,
+            &groups,
+        ))
     }
 
     pub async fn on_auth(&self, session: &Session, event: Event) {

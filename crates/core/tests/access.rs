@@ -234,6 +234,60 @@ async fn banning_an_event_deletes_it_until_it_is_allowed() -> Result<()> {
 }
 
 #[tokio::test]
+async fn members_are_listed_as_allowed_pubkeys() -> Result<()> {
+    let f = fixture().await;
+    let alice = pubkey();
+    f.call(Call::AllowPubkey(alice.clone())).await?;
+
+    let mut listed = f.call(Call::ListAllowedPubkeys).await?;
+    listed
+        .as_array_mut()
+        .unwrap()
+        .sort_by_key(|item| item["pubkey"].as_str().unwrap().to_string());
+    let mut expected = [f.owner.clone(), alice];
+    expected.sort();
+    assert_eq!(
+        listed,
+        json!(
+            expected
+                .iter()
+                .map(|pubkey| json!({"pubkey": pubkey, "reason": "relay member"}))
+                .collect::<Vec<_>>()
+        )
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_relays_name_description_and_icon_are_managed() -> Result<()> {
+    let f = fixture().await;
+    let mut changes = f.core.bus.subscribe();
+
+    assert_eq!(
+        f.call(Call::ChangeRelayName("Renamed".into())).await?,
+        json!(true)
+    );
+    f.call(Call::ChangeRelayDescription("About us".into()))
+        .await?;
+    f.call(Call::ChangeRelayIcon("https://example.com/icon.png".into()))
+        .await?;
+
+    let relay = caravel_core::relays::require_relay(f.core.db.pool(), &f.relay.id).await?;
+    assert_eq!(relay.info_name, "Renamed");
+    assert_eq!(relay.info_description, "About us");
+    assert_eq!(relay.info_icon, "https://example.com/icon.png");
+
+    // Each change asks the relay to reload, so its information document follows.
+    for _ in 0..3 {
+        assert!(matches!(
+            changes.try_recv(),
+            Ok(caravel_core::bus::Change::RelayChanged { relay_id }) if relay_id == f.relay.id
+        ));
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn roles_are_defined_published_and_assigned() -> Result<()> {
     let f = fixture().await;
     let role = Role {

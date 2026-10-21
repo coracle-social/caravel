@@ -19,7 +19,7 @@ Only active, unpurged relays are served. The registry loads them when the proces
 
 A connection is challenged the moment it opens (NIP-42), and may prove several pubkeys by answering once for each. An answer's relay tag must name the host the client connected to. Refusals carry NIP-01's machine-readable prefixes, and one that needs authentication re-sends the challenge with it.
 
-A subscription is registered before its stored events are read, so nothing published meanwhile is missed. Stored events come back newest first with ties broken by id, at most a thousand per filter, without duplicates across filters, and then `EOSE`. NIP-77 reconciliation runs over the same rules, on a snapshot of the events the connection may see, capped at twenty thousand. `COUNT` is refused.
+A subscription is registered before its stored events are read, so nothing published meanwhile is missed. Stored events come back newest first with ties broken by id, at most a thousand per filter, without duplicates across filters, and then `EOSE`. NIP-77 reconciliation runs over the same rules, on a snapshot of the events the connection may see, capped at twenty thousand. A NIP-45 `COUNT` is admitted like a subscription and counts, once each, the events any of its filters match that the connection may see, whatever their limits; the database counts them in groups sharing a kind, an author and the tags naming a room, which is all the read rule looks at, so the rule decides per group rather than per event.
 
 ## The rules
 
@@ -27,8 +27,8 @@ A subscription is registered before its stored events are read, so nothing publi
 
 - A write passes NIP-70's protected-event check, then refuses kinds the relay writes itself (its membership records) and Blossom authorizations and events dated more than five minutes ahead, then banned events and authors. A zap receipt or gift wrap addressed to someone with access needs no authentication. Otherwise the publisher must be authenticated as the author (or be publishing the relay's own events), and must have access unless the relay takes public writes.
 - A subscription needs authentication unless the relay allows anonymous reads. A private relay admits a connection if any of its pubkeys has access; a public one refuses a connection with a banned pubkey.
-- Which events a reader sees is one function, used for stored queries, live delivery and reconciliation alike. Invite codes, join and leave requests and Blossom authorizations are never served, and a push subscription goes back only to its author.
-- A relay that strips signatures serves events with a zeroed signature to everyone who doesn't manage it. The owner and the relay's own key manage it.
+- Which events a reader sees is one function, used for stored queries, live delivery, reconciliation and counts alike. Invite codes, join and leave requests and Blossom authorizations are never served, and a push subscription goes back only to its author.
+- A relay that strips signatures serves events without a `sig` field to everyone who doesn't manage it, as zooid did: Flotilla holds an unsigned event and asks its user whether to trust the relay, but drops one whose signature fails to verify. The owner and the relay's own key manage it.
 
 Live delivery re-checks whether each subscriber may still read the relay at all, so a reader banned or removed after subscribing stops receiving at once.
 
@@ -93,3 +93,7 @@ The design keeps the lessons of zooid, the Go relay engine on khatru that served
 - zooid accepted NIP-98 headers without a freshness window until an audit added one; caravel's API checks freshness on every signature it takes.
 - zooid pushed every matching event to every subscription, so anyone could subscribe to a members-only relay's events. Here a subscription receives only what its author may read, without signatures where the relay strips them.
 - zooid counted push failures per callback url rather than per subscription. Here each subscription keeps its own count.
+- zooid delivered live events signed on relays that strip signatures, and broadcast a duplicate again each time it was published. Here live delivery strips like stored reads, and only a write that stored the event fans it out.
+- zooid stored a deletion naming another author's event, then refused it and skipped the tags after that one. Here the deletion is accepted and applies to its author's events only.
+- zooid's write check had a refusal for room events on a relay with rooms off that could never run, so it stored them as plain events. Here they are refused.
+- zooid refused `COUNT`, since its read checks ran per event over query results and a database count couldn't apply them. Here a count applies the same rule, to groups of events it can't tell apart.

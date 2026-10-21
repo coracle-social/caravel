@@ -241,6 +241,12 @@ pub enum RelayMessage {
     },
     /// `["EOSE", <id>]` — stored events are exhausted; what follows is live.
     Eose(SubscriptionId),
+    /// `["COUNT", <id>, {"count": <count>}]` — how many events a count's
+    /// filters match (NIP-45).
+    Count {
+        subscription_id: SubscriptionId,
+        count: u64,
+    },
     /// `["CLOSED", <id>, <message>]` — the relay ended a subscription.
     Closed {
         subscription_id: SubscriptionId,
@@ -284,6 +290,7 @@ impl RelayMessage {
             RelayMessage::Event { .. } => "EVENT",
             RelayMessage::Ok { .. } => "OK",
             RelayMessage::Eose(..) => "EOSE",
+            RelayMessage::Count { .. } => "COUNT",
             RelayMessage::Closed { .. } => "CLOSED",
             RelayMessage::Notice(_) => "NOTICE",
             RelayMessage::Auth { .. } => "AUTH",
@@ -323,6 +330,16 @@ impl Serialize for RelayMessage {
                 let mut seq = serializer.serialize_seq(Some(2))?;
                 seq.serialize_element("EOSE")?;
                 seq.serialize_element(subscription_id)?;
+                seq.end()
+            }
+            RelayMessage::Count {
+                subscription_id,
+                count,
+            } => {
+                let mut seq = serializer.serialize_seq(Some(3))?;
+                seq.serialize_element("COUNT")?;
+                seq.serialize_element(subscription_id)?;
+                seq.serialize_element(&serde_json::json!({ "count": count }))?;
                 seq.end()
             }
             RelayMessage::Closed {
@@ -525,6 +542,19 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&message).unwrap(),
             r#"["EOSE","sub"]"#
+        );
+    }
+
+    #[test]
+    fn writes_a_count() {
+        let message = RelayMessage::Count {
+            subscription_id: SubscriptionId::new("c").unwrap(),
+            count: 42,
+        };
+
+        assert_eq!(
+            serde_json::to_string(&message).unwrap(),
+            r#"["COUNT","c",{"count":42}]"#
         );
     }
 

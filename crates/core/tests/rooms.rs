@@ -164,15 +164,17 @@ async fn only_moderators_change_a_room_and_nobody_writes_its_state_directly() ->
         .unwrap();
 
     let pinned = "a".repeat(64);
+    let address = format!("30023:{}:post", member.public_key().to_hex());
     f.publish(
         &f.owner,
         kinds::PUT_PINS,
-        &[&["h", "room"], &["e", &pinned]],
+        &[&["h", "room"], &["e", &pinned], &["a", &address]],
     )
     .await
     .unwrap();
     let pins = f.published(kinds::PINS, "room").await.unwrap();
     assert_eq!(values(&pins, "e"), [pinned]);
+    assert_eq!(values(&pins, "a"), [address]);
 
     assert_eq!(
         f.publish(&member, kinds::PUT_PINS, &[&["h", "room"]]).await,
@@ -189,6 +191,148 @@ async fn only_moderators_change_a_room_and_nobody_writes_its_state_directly() ->
             .await,
         Err(Refusal::invalid("group not found"))
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn editing_a_room_replaces_its_metadata() -> Result<()> {
+    let f = fixture().await;
+    f.publish(
+        &f.owner,
+        kinds::CREATE_GROUP,
+        &[&["h", "room"], &["name", "Room"], &["private"]],
+    )
+    .await
+    .unwrap();
+
+    let published = f
+        .publish(
+            &f.owner,
+            kinds::EDIT_METADATA,
+            &[
+                &["h", "room"],
+                &["name", "Renamed"],
+                &["about", "A room"],
+                &["closed"],
+            ],
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        published.iter().map(|event| event.kind).collect::<Vec<_>>(),
+        [39000, 39001]
+    );
+    let metadata = f.published(kinds::METADATA, "room").await.unwrap();
+    assert_eq!(metadata.tags.value("name"), Some("Renamed"));
+    assert_eq!(metadata.tags.value("about"), Some("A room"));
+    assert!(metadata.tags.has("closed"));
+    assert!(
+        !metadata.tags.has("private"),
+        "flags the edit leaves out are dropped"
+    );
+
+    let snapshot = f.snapshot().await;
+    let room = &snapshot.rooms["room"];
+    assert!(room.closed && !room.private);
+
+    assert_eq!(
+        f.publish(
+            &f.owner,
+            kinds::EDIT_METADATA,
+            &[&["h", "nowhere"], &["name", "x"]]
+        )
+        .await,
+        Err(Refusal::invalid("group not found"))
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn moderators_put_and_remove_members() -> Result<()> {
+    let f = fixture().await;
+    let (alice, bob) = (SecretKey::generate(), SecretKey::generate());
+    let (alice, bob) = (alice.public_key().to_hex(), bob.public_key().to_hex());
+    f.publish(&f.owner, kinds::CREATE_GROUP, &[&["h", "room"]])
+        .await
+        .unwrap();
+
+    let published = f
+        .publish(
+            &f.owner,
+            kinds::PUT_USER,
+            &[&["h", "room"], &["p", &alice], &["p", &bob]],
+        )
+        .await
+        .unwrap();
+    assert!(published.iter().any(|event| event.kind == kinds::MEMBERS));
+    let mut members = values(&f.published(kinds::MEMBERS, "room").await.unwrap(), "p");
+    members.sort();
+    let mut expected = vec![alice.clone(), bob.clone()];
+    expected.sort();
+    assert_eq!(members, expected);
+
+    let published = f
+        .publish(
+            &f.owner,
+            kinds::REMOVE_USER,
+            &[&["h", "room"], &["p", &bob]],
+        )
+        .await
+        .unwrap();
+    assert!(published.iter().any(|event| event.kind == kinds::MEMBERS));
+    assert_eq!(
+        values(&f.published(kinds::MEMBERS, "room").await.unwrap(), "p"),
+        std::slice::from_ref(&alice)
+    );
+    assert!(!f.snapshot().await.rooms["room"].members.contains(&bob));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_closed_room_admits_only_joins_with_its_invite() -> Result<()> {
+    let f = fixture().await;
+    let (alice, bob) = (SecretKey::generate(), SecretKey::generate());
+    f.publish(
+        &f.owner,
+        kinds::CREATE_GROUP,
+        &[&["h", "club"], &["closed"]],
+    )
+    .await
+    .unwrap();
+    f.publish(
+        &f.owner,
+        kinds::CREATE_INVITE,
+        &[&["h", "club"], &["code", "sesame"]],
+    )
+    .await
+    .unwrap();
+
+    // A request without the code is kept, but admits nobody.
+    for tags in [
+        &[&["h", "club"][..]][..],
+        &[&["h", "club"], &["code", "guess"]],
+    ] {
+        let published = f.publish(&alice, kinds::JOIN_REQUEST, tags).await.unwrap();
+        assert!(published.is_empty());
+    }
+    assert_eq!(
+        f.publish(&alice, 9, &[&["h", "club"]]).await,
+        Err(Refusal::restricted("you are not a member of that group"))
+    );
+
+    // The code admits everyone who has it.
+    for joiner in [&alice, &bob] {
+        let published = f
+            .publish(
+                joiner,
+                kinds::JOIN_REQUEST,
+                &[&["h", "club"], &["code", "sesame"]],
+            )
+            .await
+            .unwrap();
+        assert_eq!(published[0].kind, kinds::PUT_USER);
+        assert!(f.publish(joiner, 9, &[&["h", "club"]]).await.is_ok());
+    }
     Ok(())
 }
 
@@ -385,6 +529,10 @@ async fn deleting_a_room_removes_it_and_everything_in_it() -> Result<()> {
     let message = sign_event(&f.owner, 9, "bye", &[&["h", "room"]], f.now());
     f.store(&message).await;
 
+    f.publish(&f.owner, kinds::JOIN_REQUEST, &[&["h", "room"]])
+        .await
+        .unwrap();
+
     f.publish(&f.owner, kinds::DELETE_GROUP, &[&["h", "room"]])
         .await
         .unwrap();
@@ -392,7 +540,28 @@ async fn deleting_a_room_removes_it_and_everything_in_it() -> Result<()> {
     assert!(f.snapshot().await.rooms.is_empty());
     assert!(f.published(kinds::PINS, "room").await.is_none());
     assert!(f.published(kinds::METADATA, "room").await.is_none());
+    assert!(f.published(kinds::MEMBERS, "room").await.is_none());
     assert!(!f.exists(&message).await);
+
+    // Only the deletion is left, and the room can be created again from nothing.
+    let left = events::query_events(
+        f.core.db.pool(),
+        &f.relay.id,
+        &Filter::new().add_tag(coracle_lib::filters::TagMatch::Any, "h", "room"),
+        10,
+        f.now(),
+    )
+    .await?;
+    assert_eq!(
+        left.iter()
+            .map(|stored| stored.head.kind)
+            .collect::<Vec<_>>(),
+        [kinds::DELETE_GROUP]
+    );
+    f.publish(&f.owner, kinds::CREATE_GROUP, &[&["h", "room"]])
+        .await
+        .unwrap();
+    assert!(f.snapshot().await.rooms["room"].members.is_empty());
     Ok(())
 }
 

@@ -43,12 +43,52 @@ async fn the_information_document_describes_the_relay() {
     assert_eq!(document["self"], relay.pubkey);
     assert_eq!(document["limitation"]["auth_required"], true);
     assert_eq!(document["limitation"]["created_at_upper_limit"], 300);
-    assert!(
-        document["supported_nips"]
-            .as_array()
-            .unwrap()
-            .contains(&json!(42))
-    );
+    assert_eq!(document["limitation"]["restricted_writes"], true);
+    let nips = document["supported_nips"].as_array().unwrap().clone();
+    for nip in [
+        json!(1),
+        json!(29),
+        json!(42),
+        json!(43),
+        json!(45),
+        json!(77),
+        json!(86),
+        json!("9a"),
+    ] {
+        assert!(nips.contains(&nip), "{nip} missing from {nips:?}");
+    }
+
+    // The document follows the relay's policy and the features it has on.
+    let relay = server
+        .update(
+            &relay,
+            json!({
+                "policy_public_read": 1,
+                "policy_anonymous_read": 1,
+                "policy_public_write": 1,
+                "groups_enabled": 0,
+                "management_enabled": 0,
+                "push_enabled": 0,
+            }),
+        )
+        .await;
+    let document = server
+        .http(
+            Request::builder()
+                .uri("/")
+                .header("Host", relay.canonical_host())
+                .header("Accept", "application/nostr+json")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .json();
+    assert_eq!(document["limitation"]["auth_required"], false);
+    assert_eq!(document["limitation"]["restricted_writes"], false);
+    let nips = document["supported_nips"].as_array().unwrap();
+    for nip in [json!(29), json!(86), json!("9a")] {
+        assert!(!nips.contains(&nip), "{nip} still in {nips:?}");
+    }
 }
 
 #[tokio::test]
@@ -108,10 +148,19 @@ async fn strangers_may_neither_read_nor_write_a_private_relay() {
     let stranger = SecretKey::generate();
     let mut client = server.connect(&relay.canonical_host()).await;
 
+    // A write that needs authentication offers the challenge again first.
     let event = sign_event(&stranger, 1, "hi", &[], server.now());
-    let (accepted, message) = client.publish(&event).await;
-    assert!(!accepted);
-    assert!(message.starts_with("auth-required:"), "{message}");
+    client.send(json!(["EVENT", event])).await;
+    assert_eq!(
+        client.recv().await.unwrap(),
+        json!(["AUTH", client.challenge])
+    );
+    let ok = client.recv().await.unwrap();
+    assert_eq!(ok[2], false);
+    assert!(
+        ok[3].as_str().unwrap().starts_with("auth-required:"),
+        "{ok}"
+    );
 
     client.auth(&stranger, server.now()).await;
     let (accepted, message) = client.publish(&event).await;
@@ -187,10 +236,19 @@ async fn a_public_relay_strips_signatures_for_everyone_but_its_managers() {
     let mut stranger = server.connect(&host).await;
     stranger.auth(&SecretKey::generate(), server.now()).await;
     let (stored, _) = stranger.req("sub", json!({"kinds": [1]})).await;
-    assert_eq!(stored[0]["sig"], "0".repeat(128));
+    assert!(stored[0].get("sig").is_none(), "{}", stored[0]);
+    assert_eq!(stored[0]["id"], event.id.to_hex());
 
     let (stored, _) = writer.req("sub", json!({"kinds": [1]})).await;
     assert_eq!(stored[0]["sig"], hex::encode(event.sig));
+
+    // Live delivery strips them the same way.
+    let later = sign_event(&owner, 1, "later", &[], server.now());
+    assert!(writer.publish(&later).await.0);
+    let live = stranger.recv_skipping_auth().await.unwrap();
+    assert_eq!(live[0], "EVENT");
+    assert_eq!(live[2]["id"], later.id.to_hex());
+    assert!(live[2].get("sig").is_none(), "{live}");
 }
 
 #[tokio::test]
@@ -211,6 +269,12 @@ async fn an_anonymous_relay_serves_readers_who_never_authenticate() {
     let (stored, eose) = anonymous.req("sub", json!({"kinds": [1]})).await;
     assert_eq!(eose[0], "EOSE");
     assert_eq!(stored.len(), 1);
+
+    let later = sign_event(&owner, 1, "and later", &[], server.now());
+    assert!(writer.publish(&later).await.0);
+    let delivered = anonymous.recv().await.unwrap();
+    assert_eq!(delivered[1], "sub");
+    assert_eq!(delivered[2]["id"], later.id.to_hex());
 }
 
 #[tokio::test]
@@ -268,6 +332,233 @@ async fn negentropy_reconciles_a_client_against_what_it_may_read() {
     assert!(!full.is_empty());
     client.send(json!(["NEG-CLOSE", "sync"])).await;
     assert!(client.is_quiet().await);
+
+    // Reconciling needs authentication like reading does.
+    let mut anonymous = server.connect(&relay.canonical_host()).await;
+    anonymous
+        .send(json!(["NEG-OPEN", "sync", {"kinds": [1]}, initiate(&local).to_hex()]))
+        .await;
+    assert_eq!(
+        anonymous.recv().await.unwrap(),
+        json!(["AUTH", anonymous.challenge])
+    );
+    let refused = anonymous.recv().await.unwrap();
+    assert_eq!(refused[0], "NEG-ERR");
+    assert_eq!(refused[1], "sync");
+    assert!(
+        refused[2].as_str().unwrap().starts_with("auth-required:"),
+        "{refused}"
+    );
+}
+
+#[tokio::test]
+async fn a_closed_subscription_hears_nothing_more() {
+    let server = Server::start().await;
+    let (relay, owner) = server.relay().await;
+    let host = relay.canonical_host();
+    let mut reader = server.connect(&host).await;
+    reader.auth(&owner, server.now()).await;
+    reader.req("live", json!({"kinds": [1]})).await;
+
+    reader.send(json!(["CLOSE", "live"])).await;
+    // A round trip after the CLOSE means the relay has acted on it.
+    reader.req("other", json!({"kinds": [7]})).await;
+
+    let mut writer = server.connect(&host).await;
+    writer.auth(&owner, server.now()).await;
+    let event = sign_event(&owner, 1, "unheard", &[], server.now());
+    assert!(writer.publish(&event).await.0);
+    assert!(reader.is_quiet().await);
+}
+
+#[tokio::test]
+async fn events_with_a_bad_id_or_signature_are_refused() {
+    let server = Server::start().await;
+    let (relay, owner) = server.relay().await;
+    let mut client = server.connect(&relay.canonical_host()).await;
+    client.auth(&owner, server.now()).await;
+    let event = sign_event(&owner, 1, "genuine", &[], server.now());
+
+    let mut tampered = serde_json::to_value(&event).unwrap();
+    tampered["content"] = json!("tampered");
+    let mut unsigned = serde_json::to_value(&event).unwrap();
+    unsigned["sig"] = json!("0".repeat(128));
+    for forged in [tampered, unsigned] {
+        client.send(json!(["EVENT", forged])).await;
+        let ok = client.recv().await.unwrap();
+        assert_eq!(ok[1], event.id.to_hex());
+        assert_eq!(ok[2], false);
+        assert!(ok[3].as_str().unwrap().starts_with("invalid:"), "{ok}");
+    }
+
+    let (stored, _) = client.req("sub", json!({"kinds": [1]})).await;
+    assert!(stored.is_empty());
+}
+
+#[tokio::test]
+async fn a_count_is_admitted_and_filtered_like_a_subscription() {
+    let server = Server::start().await;
+    let (relay, owner) = server.relay().await;
+    let host = relay.canonical_host();
+    let (insider, outsider) = (SecretKey::generate(), SecretKey::generate());
+    for member in [&insider, &outsider] {
+        caravel_core::hosting::add_member(&server.core, &relay, &member.public_key().to_hex())
+            .await
+            .unwrap();
+    }
+    server.relays.reload(&relay.id).await.unwrap();
+
+    let mut admin = server.connect(&host).await;
+    admin.auth(&owner, server.now()).await;
+    let create = sign_event(
+        &owner,
+        9007,
+        "",
+        &[&["h", "secret"], &["private"]],
+        server.now(),
+    );
+    assert!(admin.publish(&create).await.0);
+    for i in 0..3 {
+        let note = sign_event(&owner, 1, &i.to_string(), &[], server.now());
+        assert!(admin.publish(&note).await.0);
+    }
+    let mut inside = server.connect(&host).await;
+    inside.auth(&insider, server.now()).await;
+    let join = sign_event(&insider, 9021, "", &[&["h", "secret"]], server.now());
+    assert!(inside.publish(&join).await.0);
+    for i in 0..2 {
+        let post = sign_event(
+            &insider,
+            9,
+            &i.to_string(),
+            &[&["h", "secret"]],
+            server.now(),
+        );
+        assert!(inside.publish(&post).await.0);
+    }
+
+    // A private room's posts count only for its members.
+    let filter = json!({"kinds": [1, 9]});
+    assert_eq!(
+        count(&mut inside, vec![filter.clone()]).await,
+        json!(["COUNT", "c", {"count": 5}])
+    );
+    let mut outside = server.connect(&host).await;
+    outside.auth(&outsider, server.now()).await;
+    assert_eq!(
+        count(&mut outside, vec![filter.clone()]).await,
+        json!(["COUNT", "c", {"count": 3}])
+    );
+
+    // Filters are a union, each event counted once, and a limit doesn't cap a count.
+    let union = vec![
+        json!({"kinds": [1]}),
+        json!({"authors": [owner.public_key().to_hex()], "kinds": [1], "limit": 1}),
+    ];
+    assert_eq!(
+        count(&mut inside, union).await,
+        json!(["COUNT", "c", {"count": 3}])
+    );
+
+    // A reader who may not subscribe may not count either.
+    let mut stranger = server.connect(&host).await;
+    stranger.auth(&SecretKey::generate(), server.now()).await;
+    assert_eq!(
+        count(&mut stranger, vec![filter.clone()]).await,
+        json!([
+            "CLOSED",
+            "c",
+            "restricted: you are not a member of this relay"
+        ])
+    );
+    let mut anonymous = server.connect(&host).await;
+    anonymous.send(json!(["COUNT", "c", filter])).await;
+    assert_eq!(
+        anonymous.recv().await.unwrap(),
+        json!(["AUTH", anonymous.challenge])
+    );
+    let refused = anonymous.recv().await.unwrap();
+    assert_eq!(refused[0], "CLOSED");
+    assert!(
+        refused[2].as_str().unwrap().starts_with("auth-required:"),
+        "{refused}"
+    );
+}
+
+/// Ask for a count, returning the relay's answer.
+async fn count(client: &mut Client, filters: Vec<Value>) -> Value {
+    let mut message = vec![json!("COUNT"), json!("c")];
+    message.extend(filters);
+    client.send(Value::Array(message)).await;
+    client.recv_skipping_auth().await.unwrap()
+}
+
+#[tokio::test]
+async fn a_limit_of_zero_serves_nothing_stored_but_listens() {
+    let server = Server::start().await;
+    let (relay, owner) = server.relay().await;
+    let host = relay.canonical_host();
+    let mut reader = server.connect(&host).await;
+    reader.auth(&owner, server.now()).await;
+    let old = sign_event(&owner, 1, "old", &[], server.now());
+    assert!(reader.publish(&old).await.0);
+
+    let (stored, eose) = reader.req("live", json!({"kinds": [1], "limit": 0})).await;
+    assert!(stored.is_empty());
+    assert_eq!(eose[0], "EOSE");
+
+    let mut writer = server.connect(&host).await;
+    writer.auth(&owner, server.now()).await;
+    let new = sign_event(&owner, 1, "new", &[], server.now());
+    assert!(writer.publish(&new).await.0);
+    assert_eq!(reader.recv().await.unwrap()[2]["id"], new.id.to_hex());
+}
+
+#[tokio::test]
+async fn several_filters_are_answered_together_without_duplicates() {
+    let server = Server::start().await;
+    let (relay, owner) = server.relay().await;
+    let mut client = server.connect(&relay.canonical_host()).await;
+    client.auth(&owner, server.now()).await;
+    let note = sign_event(&owner, 1, "note", &[&["t", "x"]], server.now() - 1);
+    let reaction = sign_event(&owner, 7, "+", &[], server.now());
+    assert!(client.publish(&note).await.0);
+    assert!(client.publish(&reaction).await.0);
+
+    client
+        .send(json!(["REQ", "sub", {"kinds": [1]}, {"#t": ["x"]}, {"kinds": [7]}]))
+        .await;
+    let mut served = Vec::new();
+    loop {
+        let message = client.recv().await.unwrap();
+        if message[0] == "EOSE" {
+            break;
+        }
+        served.push(message[2]["id"].as_str().unwrap().to_string());
+    }
+    served.sort();
+    let mut expected = vec![note.id.to_hex(), reaction.id.to_hex()];
+    expected.sort();
+    assert_eq!(served, expected);
+}
+
+#[tokio::test]
+async fn ephemeral_events_are_delivered_but_not_stored() {
+    let server = Server::start().await;
+    let (relay, owner) = server.relay().await;
+    let host = relay.canonical_host();
+    let mut reader = server.connect(&host).await;
+    reader.auth(&owner, server.now()).await;
+    reader.req("live", json!({"kinds": [20001]})).await;
+
+    let mut writer = server.connect(&host).await;
+    writer.auth(&owner, server.now()).await;
+    let event = sign_event(&owner, 20001, "now or never", &[], server.now());
+    assert!(writer.publish(&event).await.0);
+    assert_eq!(reader.recv().await.unwrap()[2]["id"], event.id.to_hex());
+
+    let (stored, _) = writer.req("stored", json!({"kinds": [20001]})).await;
+    assert!(stored.is_empty());
 }
 
 #[tokio::test]

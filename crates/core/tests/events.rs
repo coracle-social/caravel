@@ -4,7 +4,7 @@
 use std::collections::BTreeSet;
 
 use anyhow::Result;
-use caravel_core::events::{self, Saved, StoredEvent, kinds};
+use caravel_core::events::{self, EventGroup, Saved, StoredEvent, kinds};
 use caravel_core::testing::{self, create_relay, sign_event};
 use caravel_core::{Core, Error};
 use coracle_lib::events::Event;
@@ -117,8 +117,16 @@ async fn relays_never_see_each_others_events() -> Result<()> {
     );
     assert!(ids(&core, &second.id, Filter::new()).await?.is_empty());
 
-    // The same event is stored independently on another relay.
+    // The same event is stored independently on another relay, and deleting it
+    // from one leaves the other's copy.
     assert_eq!(save(&core, &second.id, &event).await?, Saved::New);
+    let deletion = sign_event(&author, 5, "", &[&["e", &event.id.to_hex()]], NOW);
+    save(&core, &first.id, &deletion).await?;
+    assert!(ids(&core, &first.id, kinds(&[1])).await?.is_empty());
+    assert_eq!(
+        ids(&core, &second.id, kinds(&[1])).await?,
+        vec![event.id.to_bytes()]
+    );
     Ok(())
 }
 
@@ -513,6 +521,64 @@ async fn expired_events_are_hidden_then_swept() -> Result<()> {
 }
 
 #[tokio::test]
+async fn counts_group_matching_events_by_kind_author_and_room_tags() -> Result<()> {
+    let core = core().await;
+    let (relay, _) = create_relay(&core).await;
+    let (other, _) = create_relay(&core).await;
+    let (alice, bob) = (SecretKey::generate(), SecretKey::generate());
+    let expiry = (NOW + 60).to_string();
+
+    let in_room = sign_event(&alice, 1, "a", &[&["h", "room"], &["h", "second"]], NOW - 3);
+    let also_in_room = sign_event(&alice, 1, "b", &[&["h", "room"]], NOW - 2);
+    let plain = sign_event(&alice, 1, "c", &[], NOW - 1);
+    let addressed = sign_event(&bob, 7, "+", &[&["d", "x"], &["h", "room"]], NOW);
+    let expiring = sign_event(&bob, 1, "gone", &[&["expiration", &expiry]], NOW);
+    for event in [&in_room, &also_in_room, &plain, &addressed, &expiring] {
+        save(&core, &relay.id, event).await?;
+    }
+    save(&core, &other.id, &plain).await?;
+
+    let count = async |filters: &[Filter]| {
+        let mut groups =
+            events::count_event_groups(core.db.pool(), &relay.id, filters, NOW + 60).await?;
+        groups.sort_by_key(|group| (group.kind, group.h.clone()));
+        Ok::<_, anyhow::Error>(groups)
+    };
+    let group = |author: &SecretKey, kind, d: Option<&str>, h: Option<&str>, count| EventGroup {
+        kind,
+        pubkey: author.public_key().as_bytes(),
+        d: d.map(str::to_string),
+        h: h.map(str::to_string),
+        count,
+    };
+
+    // Filters are a union, so an event two of them match is counted once, and a
+    // limit bounds a subscription, not a count. Expired events aren't counted.
+    let both = [
+        kinds(&[1]).add_limit(1),
+        Filter::new().add_author(alice.public_key()),
+    ];
+    assert_eq!(
+        count(&both).await?,
+        [
+            group(&alice, 1, None, None, 1),
+            group(&alice, 1, None, Some("room"), 2),
+        ]
+    );
+    assert_eq!(
+        count(&[kinds(&[7])]).await?,
+        [group(&bob, 7, Some("x"), Some("room"), 1)]
+    );
+
+    let nothing = Filter {
+        ids: Some(BTreeSet::new()),
+        ..Filter::new()
+    };
+    assert!(count(&[nothing]).await?.is_empty());
+    Ok(())
+}
+
+#[tokio::test]
 async fn events_with_a_nul_character_are_not_storable() {
     let author = SecretKey::generate();
     assert!(!events::is_storable(&sign_event(
@@ -533,15 +599,19 @@ async fn events_with_a_nul_character_are_not_storable() {
 }
 
 #[tokio::test]
-async fn a_stripped_event_reads_back_with_a_zero_signature() -> Result<()> {
+async fn a_stripped_event_reads_back_without_a_signature() -> Result<()> {
     let core = core().await;
     let (relay, _) = create_relay(&core).await;
     let event = sign_event(&SecretKey::generate(), 1, "signed", &[], NOW);
     save(&core, &relay.id, &event).await?;
 
     let stored = &query(&core, &relay.id, Filter::new()).await?[0];
-    let parsed: serde_json::Value = serde_json::from_str(&stored.to_json(true))?;
-    assert_eq!(parsed["sig"], "0".repeat(128));
+    let stripped: serde_json::Value = serde_json::from_str(&stored.to_json(true))?;
+    let mut signed: serde_json::Value = serde_json::from_str(&stored.to_json(false))?;
+    assert!(stripped.get("sig").is_none(), "{stripped}");
+    assert_eq!(signed["sig"], hex::encode(event.sig));
+    signed.as_object_mut().unwrap().remove("sig");
+    assert_eq!(stripped, signed);
     Ok(())
 }
 

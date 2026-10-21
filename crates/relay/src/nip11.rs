@@ -11,7 +11,7 @@ use crate::instance::InstanceState;
 use crate::session::Transport;
 
 /// The NIPs every relay supports.
-const SUPPORTED_NIPS: [u16; 10] = [1, 9, 11, 40, 42, 43, 50, 62, 70, 77];
+const SUPPORTED_NIPS: [u16; 11] = [1, 9, 11, 40, 42, 43, 45, 50, 62, 70, 77];
 
 /// What a relay supports: every relay's NIPs, and those of the features it has on.
 /// Names that aren't numbers are given as strings.

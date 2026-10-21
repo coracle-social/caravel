@@ -11,8 +11,8 @@ use sqlx::PgExecutor;
 
 use crate::access::{self, INVITE_METHODS, MANAGED_METHODS};
 use crate::error::Result;
-use crate::events::EventHead;
 use crate::events::kinds;
+use crate::events::{EventGroup, EventHead};
 use crate::relays::{self, Relay};
 use crate::rooms::{self, ADMIN_ROLE};
 
@@ -258,6 +258,18 @@ impl<'a> EventFacts<'a> {
             room: head
                 .tag(rooms::room_tag(head.kind))
                 .filter(|room| !room.is_empty()),
+        }
+    }
+
+    pub fn of_group(group: &'a EventGroup, pubkey: &'a str) -> Self {
+        let room = match rooms::room_tag(group.kind) {
+            "d" => group.d.as_deref(),
+            _ => group.h.as_deref(),
+        };
+        Self {
+            kind: group.kind,
+            pubkey,
+            room: room.filter(|room| !room.is_empty()),
         }
     }
 }
@@ -621,6 +633,19 @@ pub fn can_any_receive(snapshot: &RelaySnapshot, authed: &[String], event: Event
     authed
         .iter()
         .any(|reader| can_receive(snapshot, Some(reader), event))
+}
+
+/// How many of the counted events any of a connection's identities may see (NIP-45),
+/// by the rule that decides what a subscription is sent.
+pub fn count_visible(snapshot: &RelaySnapshot, authed: &[String], groups: &[EventGroup]) -> u64 {
+    groups
+        .iter()
+        .filter(|group| {
+            let author = hex::encode(group.pubkey);
+            can_any_receive(snapshot, authed, EventFacts::of_group(group, &author))
+        })
+        .map(|group| group.count.unsigned_abs())
+        .sum()
 }
 
 /// Whether a live event goes to a reader subscribed as `authed`: one banned or

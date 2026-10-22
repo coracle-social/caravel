@@ -1,11 +1,10 @@
-import { Show, createSignal, createEffect, onCleanup } from "solid-js"
-import { useNavigate, type RouteSectionProps } from "@solidjs/router"
+import { Show, createSignal, onCleanup } from "solid-js"
 import { ExtensionAccount, NostrConnectAccount, PasswordAccount, PrivateKeyAccount } from "applesauce-accounts/accounts"
 import { PasswordSigner } from "applesauce-signers"
 import QrScanner from "qr-scanner"
 import QRCode from "qrcode"
 import { PLATFORM_NAME } from "@/shared/lib/config"
-import { accountManager, ensureSessionTenant, identity } from "@/shared/lib/state"
+import { accountManager, ensureSessionTenant } from "@/shared/lib/state"
 import { copyToClipboard } from "@/shared/lib/clipboard"
 import { formatError } from "@/shared/lib/format"
 import { decideKeyLogin, normalizeBunkerUrl, validateBunkerUri, type Tab } from "@/shared/lib/loginInput"
@@ -31,10 +30,9 @@ async function loadNostrConnectSigner() {
   return import("applesauce-signers").then((m) => m.NostrConnectSigner)
 }
 
-type LoginPageProps = LoginProps & Partial<RouteSectionProps<unknown>>
-
-export default function Login(props: LoginPageProps = {}) {
-  const navigate = useNavigate()
+// Signing in, as a dialog on the tenant dashboard's home page or as the admin
+// dashboard's whole page.
+export default function Login(props: LoginProps = {}) {
   const [tab, setTab] = createSignal<Tab>(window.nostr ? "nip07" : "nip46")
   const [rawLoading, setRawLoading] = createSignal(false)
   const loading = useMinLoading(() => rawLoading())
@@ -187,12 +185,6 @@ export default function Login(props: LoginPageProps = {}) {
   function copyUri() {
     void copyToClipboard(nostrConnectUri(), { successMessage: "Link copied" })
   }
-
-  createEffect(() => {
-    if (!props.inModal && identity()) {
-      navigate("/relays")
-    }
-  })
 
   onCleanup(() => {
     abortController?.abort()

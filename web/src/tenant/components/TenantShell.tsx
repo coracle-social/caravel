@@ -1,6 +1,5 @@
-import { useLocation } from "@solidjs/router"
-import AppLink from "@/shared/components/AppLink"
-import { createMemo, createSignal, For, Show } from "solid-js"
+import { A, useLocation } from "@solidjs/router"
+import { createMemo, createSignal, For, Show, type JSX } from "solid-js"
 import { account } from "@/shared/lib/account"
 import { canonicalHost, relayName, type Relay } from "@/shared/lib/api"
 import { PLATFORM_LOGO, PLATFORM_NAME } from "@/shared/lib/config"
@@ -28,21 +27,14 @@ function RelayIcon() {
   return <img src={serverIcon} alt="" aria-hidden="true" class="h-5 w-5" />
 }
 
-function AdminIcon() {
-  return (
-    <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-    </svg>
-  )
-}
-
-export default function AppShell(props: { children?: any }) {
+// The tenant dashboard's frame once signed in: a dark sidebar with their relays and
+// account, a bar along the bottom on phones, and the billing banner.
+export default function TenantShell(props: { children: JSX.Element }) {
   const location = useLocation()
   const metadata = useProfileMetadata(() => account()?.pubkey)
   const [tenantRelays] = useTenantRelays()
   const [searchOpen, setSearchOpen] = createSignal(false)
   const [searchQuery, setSearchQuery] = createSignal("")
-  const [adminOpen, setAdminOpen] = createSignal(false)
 
   const displayName = createMemo(() => profileName(metadata()))
   const username = createMemo(() => {
@@ -58,12 +50,6 @@ export default function AppShell(props: { children?: any }) {
   })
 
   const myResources = [{ href: "/relays", label: "My Relays" }]
-  const adminResources = [
-    { href: "/admin/tenants", label: "Tenants" },
-    { href: "/admin/relays", label: "Relays" },
-    { href: "/admin/invoices", label: "Invoices" },
-    { href: "/admin/moderation", label: "Moderation" },
-  ]
 
   const navItemClass = (href: string) => {
     const active = location.pathname === href || location.pathname.startsWith(`${href}/`)
@@ -72,46 +58,32 @@ export default function AppShell(props: { children?: any }) {
       : "block rounded-lg px-3 py-2 text-sm text-white/80 hover:bg-white/10 hover:text-white"
   }
 
-  const mobileNavItemClass = (href: string) => {
-    const active = location.pathname === href || location.pathname.startsWith(`${href}/`)
-    return active
-      ? "block rounded-lg bg-gray-100 px-3 py-3 text-sm font-medium text-gray-900"
-      : "block rounded-lg px-3 py-3 text-sm text-gray-700 hover:bg-gray-100"
-  }
-
   const openSearchModal = () => setSearchOpen(true)
   const closeSearchModal = () => {
     setSearchOpen(false)
     setSearchQuery("")
   }
-  const openAdminModal = () => setAdminOpen(true)
-  const closeAdminModal = () => setAdminOpen(false)
 
   return (
     <div class="min-h-screen bg-gray-50">
       <aside class="hidden md:flex fixed inset-y-0 left-0 w-[260px] bg-slate-900 text-white flex-col z-10">
-        <AppLink href="/" class="flex items-center gap-3 border-b border-white/15 px-7 py-5 text-lg font-bold text-white hover:bg-white/10">
+        <A href="/" class="flex items-center gap-3 border-b border-white/15 px-7 py-5 text-lg font-bold text-white hover:bg-white/10">
           <img src={PLATFORM_LOGO} alt={PLATFORM_NAME} class="h-7 w-7 rounded" />
           <span class="truncate">{PLATFORM_NAME}</span>
-        </AppLink>
+        </A>
         <div class="flex-1 px-4 py-6">
           <h2 class="px-3 text-xs font-semibold uppercase tracking-wider text-white/60">Resources</h2>
           <ul class="mt-2 space-y-1">
-            <For each={myResources}>{(item) => <li><AppLink href={item.href} class={navItemClass(item.href)}>{item.label}</AppLink></li>}</For>
+            <For each={myResources}>{(item) => <li><A href={item.href} class={navItemClass(item.href)}>{item.label}</A></li>}</For>
+            <Show when={identity()?.is_admin}>
+              {/* The admin dashboard is another app, so the router mustn't take this link. */}
+              <li><a href="/admin" rel="external" class={navItemClass("/admin")}>Administration</a></li>
+            </Show>
           </ul>
-
-          <Show when={identity()?.is_admin}>
-            <div class="mt-8">
-              <h2 class="px-3 text-xs font-semibold uppercase tracking-wider text-white/60">Administration</h2>
-              <ul class="mt-2 space-y-1">
-                <For each={adminResources}>{(item) => <li><AppLink href={item.href} class={navItemClass(item.href)}>{item.label}</AppLink></li>}</For>
-              </ul>
-            </div>
-          </Show>
         </div>
 
         <div class="border-t border-white/15 p-4">
-          <AppLink href="/account" class="flex items-center gap-3 rounded-lg p-2 hover:bg-white/10">
+          <A href="/account" class="flex items-center gap-3 rounded-lg p-2 hover:bg-white/10">
             <Avatar profile={metadata()} pubkey={account()?.pubkey ?? "?"} alt="Profile" class="h-10 w-10" fallbackClass="bg-white/15 text-sm font-medium text-white" />
             <div class="min-w-0">
               <Show
@@ -122,7 +94,7 @@ export default function AppShell(props: { children?: any }) {
               </Show>
               <p class="truncate text-xs text-white/60">{nip05()}</p>
             </div>
-          </AppLink>
+          </A>
         </div>
       </aside>
 
@@ -135,7 +107,6 @@ export default function AppShell(props: { children?: any }) {
         class="fixed inset-x-0 bottom-0 z-20 border-t border-gray-200 bg-white md:hidden"
         onClick={() => {
           if (searchOpen()) closeSearchModal()
-          if (adminOpen()) closeAdminModal()
         }}
       >
         <div class="flex h-16 items-center justify-between px-6">
@@ -151,26 +122,13 @@ export default function AppShell(props: { children?: any }) {
             >
               <SearchIcon />
             </button>
-            <AppLink href="/relays" aria-label="Relays" class="rounded-lg p-2 text-gray-700 hover:bg-gray-100">
+            <A href="/relays" aria-label="Relays" class="rounded-lg p-2 text-gray-700 hover:bg-gray-100">
               <RelayIcon />
-            </AppLink>
-            <Show when={identity()?.is_admin}>
-              <button
-                type="button"
-                aria-label="Administration"
-                class="rounded-lg p-2 text-gray-700 hover:bg-gray-100"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  openAdminModal()
-                }}
-              >
-                <AdminIcon />
-              </button>
-            </Show>
+            </A>
           </div>
-          <AppLink href="/account" aria-label="Account settings" class="rounded-full">
+          <A href="/account" aria-label="Account settings" class="rounded-full">
             <Avatar profile={metadata()} pubkey={account()?.pubkey ?? "?"} alt="Profile" class="h-9 w-9" fallbackClass="bg-gray-200 text-gray-600 text-sm font-medium" />
-          </AppLink>
+          </A>
         </div>
       </nav>
 
@@ -215,14 +173,14 @@ export default function AppShell(props: { children?: any }) {
                 <For each={searchedRelays()}>
                   {(relay) => (
                     <li>
-                      <AppLink
+                      <A
                         href={`/relays/${relay.id}`}
                         class="block rounded-lg border border-gray-200 bg-white p-3"
                         onClick={closeSearchModal}
                       >
                         <p class="text-sm font-medium text-gray-900">{relayName(relay)}</p>
                         <p class="text-xs text-gray-500">{canonicalHost(relay)}</p>
-                      </AppLink>
+                      </A>
                     </li>
                   )}
                 </For>
@@ -232,34 +190,6 @@ export default function AppShell(props: { children?: any }) {
         </div>
       </Modal>
 
-      <Modal
-        open={adminOpen()}
-        onClose={closeAdminModal}
-        wrapperClass="fixed inset-x-0 top-0 bottom-16 z-30 flex items-end bg-black/40 p-0 md:hidden"
-        panelClass="w-full overflow-hidden rounded-t-2xl bg-white"
-      >
-        <div class="flex items-center justify-between border-b border-gray-200 p-4">
-          <h2 class="text-xs font-semibold uppercase tracking-wider text-gray-500">Administration</h2>
-          <button
-            type="button"
-            class="rounded-lg px-3 py-2 text-sm text-gray-600 hover:bg-gray-100"
-            onClick={closeAdminModal}
-          >
-            Close
-          </button>
-        </div>
-        <ul class="space-y-1 p-4">
-          <For each={adminResources}>
-            {(item) => (
-              <li>
-                <AppLink href={item.href} class={mobileNavItemClass(item.href)} onClick={closeAdminModal}>
-                  {item.label}
-                </AppLink>
-              </li>
-            )}
-          </For>
-        </ul>
-      </Modal>
     </div>
   )
 }

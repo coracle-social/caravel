@@ -17,7 +17,7 @@ description: Architecture and conventions for Caravel's web apps in web/ — thr
 
 The build lands in `web/dist`, which the `caravel` binary embeds. The server picks an app by host and path (the `architecture` skill describes host dispatch) and writes its runtime configuration into the page as JSON: the API's url, the relay domains, the platform's name and logo, Flotilla's url, and for the portal, the relay it is served for. `shared/lib/config.ts` reads it, falling back to the build's `VITE_*` variables under `vite dev`, where no server writes the page. Nothing is configured at build time, so one build runs anywhere.
 
-The two dashboards are separate apps, so a link from one to the other loads the page rather than routing within the app. `AppLink` makes that choice for any link that may cross between them, marking a link into the other app external, since the router otherwise takes over every same-origin link and finds no route for it. Under `vite dev`, a middleware in `vite.config.ts` picks the app per path the way the server does, and the portal runs under `/portal` with `?relay=<id>` standing in for its relay.
+The two dashboards are separate apps that look and navigate separately: the tenant dashboard frames its signed-in pages in a dark sidebar with the billing banner, and the admin dashboard in a dark bar across the top marked Admin. Their only link is the tenant sidebar's Administration item, shown to admins, which is marked `rel="external"` because each app's router takes over every same-origin link and has no route for the other's paths. Under `vite dev`, a middleware in `vite.config.ts` picks the app per path the way the server does, and the portal runs under `/portal` with `?relay=<id>` standing in for its relay.
 
 ## The stack
 
@@ -68,7 +68,7 @@ After a tenant picks a paid plan, whether creating a relay or upgrading one, `Po
 
 ## Routing and auth gating
 
-Each dashboard declares its routes in its `App.tsx` under one router whose root is `Layout`. Protected pages are wrapped with `requireTenant` or `requireAdmin`, which wait for the identity resource and send everyone else home. `Layout` frames the signed-in pages in `AppShell`. The gates only decide what renders; the API authorizes every request. Login is a component, shown as a modal from the home page, not a route. The portal's routes sit at the root of its relay's host.
+Each dashboard declares its routes in its `App.tsx` under one router whose root is its own `Layout`. The tenant dashboard wraps its protected pages with `requireTenant`, which waits for the identity resource and sends everyone else home; the admin dashboard's `Layout` gates every page itself, showing the login when signed out and a notice to a signed-in account that isn't an admin. The gates only decide what renders; the API authorizes every request. Login is a component, shown as a dialog from the tenant dashboard's home page and as the admin dashboard's whole page, never a route. The portal's routes sit at the root of its relay's host.
 
 ## Styling and the component kit
 

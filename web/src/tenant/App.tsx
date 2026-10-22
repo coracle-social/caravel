@@ -1,5 +1,5 @@
 import { Router, Route } from "@solidjs/router"
-import Layout, { requireTenant } from "@/shared/components/Layout"
+import Layout, { requireTenant } from "@/tenant/components/Layout"
 import RelayEdit from "@/shared/views/RelayEdit"
 import Home from "@/tenant/pages/Home"
 import RelayList from "@/tenant/pages/relays/RelayList"

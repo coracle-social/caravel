@@ -1,9 +1,15 @@
 import { createEffect, createSignal, onCleanup, type JSX } from "solid-js"
 import menuDotsIcon from "@/shared/assets/menu-dots-2.svg"
 
-// A dots button opening a menu of ActionsMenuItems, which closes on a click
-// outside, Escape, or the `close` its children are given.
-export default function ActionsMenu(props: { children: (close: () => void) => JSX.Element }) {
+// A dots button, or `trigger` with its `triggerClass`, opening a menu of
+// ActionsMenuItems, which closes on a click outside, Escape, or the `close` its
+// children are given.
+export default function ActionsMenu(props: {
+  children: (close: () => void) => JSX.Element
+  trigger?: JSX.Element
+  triggerClass?: string
+  label?: string
+}) {
   const [open, setOpen] = createSignal(false)
 
   let containerRef: HTMLDivElement | undefined
@@ -37,11 +43,12 @@ export default function ActionsMenu(props: { children: (close: () => void) => JS
     <div class="relative shrink-0" ref={containerRef}>
       <button
         type="button"
-        class="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-gray-200 hover:bg-gray-50"
-        aria-label="Open actions"
+        class={props.triggerClass ?? "inline-flex h-9 w-9 items-center justify-center rounded-lg border border-gray-200 hover:bg-gray-50"}
+        aria-label={props.label ?? "Open actions"}
+        aria-expanded={open()}
         onClick={() => setOpen((isOpen) => !isOpen)}
       >
-        <img src={menuDotsIcon} alt="" class="h-5 w-5" />
+        {props.trigger ?? <img src={menuDotsIcon} alt="" class="h-5 w-5" />}
       </button>
 
       <div

@@ -11,7 +11,7 @@ use caravel_core::crypto::is_hex64;
 use caravel_core::hosting::{self, RelaySettings};
 use caravel_core::relays::{self, activity};
 use caravel_core::tenants::{self, Tenant};
-use caravel_core::{Core, Error, access, memberships, payouts, transfer};
+use caravel_core::{Core, Error, memberships, payouts, transfer};
 use serde::{Deserialize, Serialize};
 
 use crate::ReturnTo;
@@ -210,21 +210,6 @@ pub async fn update_relay(
     let relay = relays::require_relay(core.db.pool(), &id).await?;
     actor.require_pubkey_or_admin(&relay.tenant_pubkey)?;
     ok(hosting::update_relay(&core, relay, settings).await?)
-}
-
-pub async fn list_relay_members(
-    State(core): State<Core>,
-    Authed(actor): Authed,
-    Path(id): Path<String>,
-) -> ApiResult {
-    let relay = relays::require_relay(core.db.pool(), &id).await?;
-    actor.require_pubkey_or_admin(&relay.tenant_pubkey)?;
-    let members: Vec<String> = access::list_members(core.db.pool(), &relay.id)
-        .await?
-        .into_iter()
-        .map(|member| member.pubkey)
-        .collect();
-    ok(serde_json::json!({ "members": members }))
 }
 
 /// The relay's paid memberships, newest first.

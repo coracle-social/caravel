@@ -13,7 +13,7 @@ export const useRelayActivity = (relayId: () => string) => createResource(relayI
   return result.activity
 })
 
-// A relay's member pubkeys, or none when they can't be read.
+// A relay's members, or none when they can't be read.
 export const useRelayMembers = (relayId: () => string) => createResource(relayId, async (id) => {
   if (!id) return []
 

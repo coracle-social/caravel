@@ -330,6 +330,7 @@ CREATE TABLE room_member (
   room_id TEXT NOT NULL,
   pubkey TEXT NOT NULL,
   roles TEXT[] NOT NULL DEFAULT '{}',
+  permissions INTEGER[] NOT NULL DEFAULT '{}',
   created_at BIGINT NOT NULL,
   PRIMARY KEY (relay_id, room_id, pubkey),
   FOREIGN KEY (relay_id, room_id) REFERENCES room (relay_id, id) ON DELETE CASCADE

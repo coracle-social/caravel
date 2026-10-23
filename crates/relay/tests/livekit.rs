@@ -53,8 +53,8 @@ async fn start() -> (Server, Arc<Mutex<Vec<String>>>, String) {
     (Server::start_with(core).await, participants, url)
 }
 
-/// A relay with calls, and rooms: "call" with calls, "restricted" with calls for
-/// its members, and "quiet" without.
+/// A relay with calls, and rooms: "call" with calls, "restricted" and "private" with
+/// calls for their members, and "quiet" without.
 async fn call_relay(server: &Server) -> (Relay, SecretKey) {
     let (relay, owner) = server.relay().await;
     let relay = server
@@ -66,6 +66,7 @@ async fn call_relay(server: &Server) -> (Relay, SecretKey) {
     for tags in [
         vec![vec!["h", "call"], vec!["livekit"]],
         vec![vec!["h", "restricted"], vec!["livekit"], vec!["restricted"]],
+        vec![vec!["h", "private"], vec!["livekit"], vec!["private"]],
         vec![vec!["h", "quiet"]],
     ] {
         let tags: Vec<&[&str]> = tags.iter().map(Vec::as_slice).collect();
@@ -175,6 +176,7 @@ async fn tokens_are_refused_to_those_who_may_not_join() {
         (Some(owner.clone()), "nowhere", StatusCode::NOT_FOUND),
         (Some(owner.clone()), "quiet", StatusCode::FORBIDDEN),
         (Some(member.clone()), "restricted", StatusCode::FORBIDDEN),
+        (Some(member.clone()), "private", StatusCode::FORBIDDEN),
         (Some(member.clone()), "call", StatusCode::OK),
         (Some(owner.clone()), "restricted", StatusCode::OK),
     ];

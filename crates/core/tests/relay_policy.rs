@@ -274,8 +274,8 @@ fn pubkey_of_nobody() -> String {
     SecretKey::generate().public_key().to_hex()
 }
 
-/// A snapshot holding an open, a private and a hidden room, each with `member`
-/// in it, and a closed one `member` was invited to with a code.
+/// A snapshot holding an open, a private, a hidden and a restricted room, each with
+/// `member` in it, and a closed one `member` was invited to with a code.
 fn rooms_fixture(f: &Fixture) -> RelaySnapshot {
     let member = hex(&f.member);
     let room = |hidden, private, closed| RoomSnapshot {
@@ -303,6 +303,13 @@ fn rooms_fixture(f: &Fixture) -> RelaySnapshot {
     snapshot
         .rooms
         .insert("closed".into(), room(false, false, true));
+    snapshot.rooms.insert(
+        "restricted".into(),
+        RoomSnapshot {
+            restricted: true,
+            ..room(false, false, false)
+        },
+    );
     snapshot
 }
 
@@ -408,7 +415,7 @@ fn a_count_includes_only_what_the_reader_may_see() {
 }
 
 #[test]
-fn a_closed_room_takes_posts_only_from_its_members() {
+fn a_restricted_room_takes_posts_only_from_its_members() {
     let f = fixture();
     let snapshot = rooms_fixture(&f);
     let outsider = SecretKey::generate();
@@ -416,12 +423,19 @@ fn a_closed_room_takes_posts_only_from_its_members() {
         check_room_write(&snapshot, &sign_event(author, kind, "", tags, NOW))
     };
 
-    assert_eq!(post(&f.member, 9, &[&["h", "closed"]]), Ok(()));
-    assert_eq!(post(&f.owner, 9, &[&["h", "closed"]]), Ok(()));
+    assert_eq!(post(&f.member, 9, &[&["h", "restricted"]]), Ok(()));
+    assert_eq!(post(&f.owner, 9, &[&["h", "restricted"]]), Ok(()));
     assert_eq!(
-        post(&outsider, 9, &[&["h", "closed"]]),
+        post(&outsider, 9, &[&["h", "restricted"]]),
         Err(Refusal::restricted("you are not a member of that group"))
     );
+    assert_eq!(
+        post(&outsider, room_kinds::JOIN_REQUEST, &[&["h", "restricted"]]),
+        Ok(())
+    );
+
+    // A closed room turns away joins without an invite, not posts.
+    assert_eq!(post(&outsider, 9, &[&["h", "closed"]]), Ok(()));
 
     // Anyone may ask to join; the invite decides whether they get in.
     assert_eq!(

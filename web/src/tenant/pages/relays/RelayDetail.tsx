@@ -1,21 +1,21 @@
 import { useParams } from "@solidjs/router"
 import { Show } from "solid-js"
 import ActivityFeed from "@/shared/components/ActivityFeed"
-import BackLink from "@/shared/components/BackLink"
 import PageContainer from "@/shared/components/PageContainer"
 import PostPaidPrompts, { usePostPaidFlow } from "@/shared/components/PostPaidPrompts"
 import RelayDetailCard from "@/shared/components/RelayDetailCard"
 import ResourceState from "@/shared/components/ResourceState"
 import type { PlanId } from "@/shared/lib/api"
 import { FREE } from "@/shared/lib/plans"
-import { useRelay, useRelayActivity, useRelayMembers } from "@/shared/lib/relays"
+import { useRelayActivity, useRelayMembers } from "@/shared/lib/relays"
 import useMinLoading from "@/shared/lib/useMinLoading"
 import useRelayActions from "@/shared/lib/useRelayActions"
+import { useFramedRelay } from "@/tenant/components/RelayFrame"
 
 export default function RelayDetail() {
   const params = useParams()
   const relayId = () => params.id ?? ""
-  const [relay, actions] = useRelay(relayId)
+  const [relay, actions] = useFramedRelay()
   const [members, { refetch: refetchMembers }] = useRelayMembers(relayId)
   const loading = useMinLoading(() => relay.loading && !relay())
   const [activity] = useRelayActivity(relayId)
@@ -29,7 +29,6 @@ export default function RelayDetail() {
 
   return (
     <PageContainer>
-      <BackLink label="Back" />
       <ResourceState loading={loading()} error={relay.error} loadingText="Loading relay..." errorText="Failed to load relay." class="mb-4" />
       <Show when={!loading() && relay()}>
         {(r) => (

@@ -3,7 +3,7 @@
 # ---------- Build the web apps ----------
 # Built once with no configuration: the server writes each page's configuration
 # into it when serving, so one image runs anywhere.
-FROM node:24-slim AS web-build
+FROM node:26-slim AS web-build
 
 WORKDIR /app/web
 

@@ -4,7 +4,7 @@
 //! tombstones that refuse what they removed.
 
 use coracle_lib::addresses::get_identifier;
-use coracle_lib::events::Event;
+use coracle_lib::events::{Event, EventId};
 use coracle_lib::expiration::get_expiration;
 use coracle_lib::filters::Filter;
 use coracle_lib::kinds::{is_addressable, is_replaceable};
@@ -13,7 +13,7 @@ use sqlx::{PgConnection, PgExecutor, Postgres, QueryBuilder, Row};
 
 use crate::Core;
 use crate::crypto::RelayKey;
-use crate::error::Result;
+use crate::error::{Error, Result};
 
 pub mod kinds;
 
@@ -328,6 +328,34 @@ pub async fn apply_vanish(
     .await?;
 
     Ok(result.rows_affected())
+}
+
+/// A page of a relay's events for the dashboards, newest first: those of `kinds`
+/// and with `ids` where either is given, created at or before `until`.
+pub async fn page_events(
+    db: impl PgExecutor<'_>,
+    relay_id: &str,
+    kinds: &[u16],
+    ids: &[String],
+    until: Option<i64>,
+    limit: usize,
+    now: i64,
+) -> Result<Vec<StoredEvent>> {
+    let mut filter = Filter::new();
+    if !kinds.is_empty() {
+        filter.kinds = Some(kinds.iter().copied().collect());
+    }
+    if !ids.is_empty() {
+        filter.ids = Some(
+            ids.iter()
+                .map(|id| EventId::from_hex(id))
+                .collect::<std::result::Result<_, _>>()
+                .map_err(|_| Error::invalid("invalid-ids", "ids must be hex event ids"))?,
+        );
+    }
+    filter.until = until;
+    filter.limit = Some(limit);
+    query_events(db, relay_id, &filter, limit, now).await
 }
 
 /// A relay's unexpired events matching a filter, newest first with ties broken by

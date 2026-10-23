@@ -20,19 +20,20 @@ export default function Layout(props: { children?: JSX.Element }) {
   )
 }
 
-// A page shown only to a signed-in tenant, sending everyone else to the home page.
-export function requireTenant(Page: Component): Component {
-  return () => {
-    const navigate = useNavigate()
+// Its children, shown only to a signed-in tenant, sending everyone else to the home page.
+export function TenantGate(props: { children: JSX.Element }) {
+  const navigate = useNavigate()
 
-    createEffect(() => {
-      if (!identity.loading && !identity()) navigate("/", { replace: true })
-    })
+  createEffect(() => {
+    if (!identity.loading && !identity()) navigate("/", { replace: true })
+  })
 
-    return (
-      <Show when={!identity.loading && identity()}>
-        <Page />
-      </Show>
-    )
-  }
+  return <Show when={!identity.loading && identity()}>{props.children}</Show>
 }
+
+// A page shown only to a signed-in tenant.
+export const requireTenant = (Page: Component): Component => () => (
+  <TenantGate>
+    <Page />
+  </TenantGate>
+)

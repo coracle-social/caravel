@@ -295,7 +295,7 @@ async fn a_closed_room_admits_only_joins_with_its_invite() -> Result<()> {
     f.publish(
         &f.owner,
         kinds::CREATE_GROUP,
-        &[&["h", "club"], &["closed"]],
+        &[&["h", "club"], &["closed"], &["restricted"]],
     )
     .await
     .unwrap();
@@ -337,10 +337,12 @@ async fn a_closed_room_admits_only_joins_with_its_invite() -> Result<()> {
 }
 
 #[tokio::test]
-async fn a_relay_method_holder_may_not_moderate_rooms_but_a_room_admin_may() -> Result<()> {
+async fn a_room_is_moderated_by_the_kinds_its_members_are_permitted() -> Result<()> {
     let f = fixture().await;
     let holder = SecretKey::generate();
-    let admin = SecretKey::generate();
+    let titled = SecretKey::generate();
+    let moderator = SecretKey::generate();
+    let moderator_hex = moderator.public_key().to_hex();
     management::call(
         &f.core,
         &f.relay,
@@ -355,41 +357,146 @@ async fn a_relay_method_holder_may_not_moderate_rooms_but_a_room_admin_may() -> 
         kinds::PUT_USER,
         &[
             &["h", "room"],
-            &["p", &admin.public_key().to_hex(), "admin"],
+            &["p", &titled.public_key().to_hex(), "admin"],
         ],
     )
     .await
     .unwrap();
+    f.publish(
+        &f.owner,
+        kinds::ASSIGN_PERMISSION,
+        &[&["h", "room"], &["p", &moderator_hex, "9005", "9011"]],
+    )
+    .await
+    .unwrap();
 
+    // Neither a relay method nor a role grants anything in a room.
     let target = "b".repeat(64);
-    assert!(
-        f.publish(
-            &holder,
-            kinds::DELETE_EVENT,
-            &[&["h", "room"], &["e", &target]]
-        )
-        .await
-        .is_err()
+    let delete = [&["h", "room"][..], &["e", &target][..]];
+    let refused = Err(Refusal::restricted(
+        "you are not authorized to manage groups",
+    ));
+    assert_eq!(
+        f.publish(&holder, kinds::DELETE_EVENT, &delete)
+            .await
+            .map(drop),
+        refused
+    );
+    assert_eq!(
+        f.publish(&titled, kinds::DELETE_EVENT, &delete)
+            .await
+            .map(drop),
+        refused
     );
     assert!(
+        f.publish(&moderator, kinds::DELETE_EVENT, &delete)
+            .await
+            .is_ok()
+    );
+    assert_eq!(
         f.publish(
-            &admin,
-            kinds::DELETE_EVENT,
-            &[&["h", "room"], &["e", &target]]
+            &moderator,
+            kinds::REMOVE_USER,
+            &[&["h", "room"], &["p", &titled.public_key().to_hex()]]
         )
         .await
-        .is_ok()
+        .map(drop),
+        refused
     );
 
-    let admins = f.published(kinds::ADMINS, "room").await.unwrap();
-    let admin_tag: Vec<String> = admins
+    // A moderator may pass on only the kinds they hold.
+    let titled_hex = titled.public_key().to_hex();
+    assert_eq!(
+        f.publish(
+            &moderator,
+            kinds::ASSIGN_PERMISSION,
+            &[&["h", "room"], &["p", &titled_hex, "9008"]]
+        )
+        .await
+        .map(drop),
+        Err(Refusal::restricted(
+            "you may only grant permissions you hold"
+        ))
+    );
+    assert_eq!(
+        f.publish(
+            &f.owner,
+            kinds::ASSIGN_PERMISSION,
+            &[&["h", "room"], &["p", &titled_hex, "1"]]
+        )
+        .await
+        .map(drop),
+        Err(Refusal::invalid("permissions are group management kinds"))
+    );
+    f.publish(
+        &moderator,
+        kinds::ASSIGN_PERMISSION,
+        &[&["h", "room"], &["p", &titled_hex, "9005"]],
+    )
+    .await
+    .unwrap();
+
+    // The admin list names each admin's kinds, and the member list their roles,
+    // in the order they joined, which here is the same second.
+    let mut admins: Vec<Vec<String>> = f
+        .published(kinds::ADMINS, "room")
+        .await
+        .unwrap()
         .tags
         .find_all("p")
-        .find(|tag| tag.value() == admin.public_key().to_hex())
+        .map(|tag| tag.as_slice().to_vec())
+        .collect();
+    admins[1..].sort();
+    let owner_hex = f.owner.public_key().to_hex();
+    let mut owner_tag = vec!["p".to_string(), owner_hex];
+    owner_tag.extend(rooms::MODERATION_KINDS.map(|kind| kind.to_string()));
+    let mut expected = vec![
+        vec!["p".to_string(), titled_hex.clone(), "9005".into()],
+        vec![
+            "p".to_string(),
+            moderator_hex.clone(),
+            "9005".into(),
+            "9011".into(),
+        ],
+    ];
+    expected.sort();
+    expected.insert(0, owner_tag);
+    assert_eq!(admins, expected);
+    let mut members: Vec<Vec<String>> = f
+        .published(kinds::MEMBERS, "room")
+        .await
         .unwrap()
-        .as_slice()
-        .to_vec();
-    assert_eq!(admin_tag[2], "admin");
+        .tags
+        .find_all("p")
+        .map(|tag| tag.as_slice().to_vec())
+        .collect();
+    members.sort();
+    let mut expected = vec![
+        vec!["p".to_string(), titled_hex.clone(), "admin".into()],
+        vec!["p".to_string(), moderator_hex.clone()],
+    ];
+    expected.sort();
+    assert_eq!(members, expected);
+
+    // Revoking a kind takes it back, and leaves the member in the room.
+    f.publish(
+        &f.owner,
+        kinds::UNASSIGN_PERMISSION,
+        &[&["h", "room"], &["p", &moderator_hex, "9005"]],
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        f.publish(&moderator, kinds::DELETE_EVENT, &delete)
+            .await
+            .map(drop),
+        refused
+    );
+    assert!(
+        f.snapshot().await.rooms["room"]
+            .members
+            .contains(&moderator_hex)
+    );
     Ok(())
 }
 
@@ -628,6 +735,16 @@ async fn rebuilding_the_published_state_reproduces_it() -> Result<()> {
         &f.owner,
         kinds::PUT_USER,
         &[&["h", "room"], &["p", &bob.public_key().to_hex(), "admin"]],
+    )
+    .await
+    .unwrap();
+    f.publish(
+        &f.owner,
+        kinds::ASSIGN_PERMISSION,
+        &[
+            &["h", "room"],
+            &["p", &bob.public_key().to_hex(), "9001", "9005"],
+        ],
     )
     .await
     .unwrap();

@@ -1,5 +1,6 @@
-//! Managing a relay's access and rooms together: carrying out NIP-86 calls, and
-//! rewriting every event the relay publishes about its own state.
+//! Managing a relay's access and rooms together: carrying out NIP-86 calls and
+//! room moderation, and rewriting every event the relay publishes about its own
+//! state.
 
 use coracle_lib::events::Event;
 use serde_json::{Value, json};
@@ -10,8 +11,9 @@ use crate::access::{self, MANAGED_METHODS, Role};
 use crate::bus::Change;
 use crate::crypto::{RelayKey, is_hex64};
 use crate::error::{Error, Result};
+use crate::relay_policy;
 use crate::relays::{self, Relay};
-use crate::rooms;
+use crate::{events, rooms};
 
 /// A NIP-86 call, decoded from its method and params.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -241,6 +243,46 @@ pub async fn call(core: &Core, relay: &Relay, call: Call) -> Result<Outcome> {
     }
 }
 
+/// Publish a NIP-29 moderation event as the relay itself, for whoever manages it
+/// from the dashboards, and apply it to its room. The relay may publish any
+/// moderation kind, so only the room rules on what the event says can refuse it.
+pub async fn moderate_room(
+    core: &Core,
+    relay: &Relay,
+    kind: u16,
+    tags: Vec<Vec<String>>,
+) -> Result<()> {
+    relay.require_unpurged()?;
+    if !rooms::is_moderation_kind(kind) {
+        return Err(Error::invalid(
+            "invalid-kind",
+            format!("{kind} is not a group management kind"),
+        ));
+    }
+
+    let key = core.relay_key(relay)?;
+    let now = core.clock.now();
+    let event = key.sign(kind, tags, "", now);
+    let snapshot = relay_policy::load_snapshot(core.db.pool(), relay).await?;
+    relay_policy::check_room_write(&snapshot, &event)
+        .map_err(|refusal| Error::invalid("refused", refusal.message()))?;
+
+    let mut published = core
+        .db
+        .with_tx(async |conn| {
+            events::save_event(&mut *conn, &relay.id, &event, now).await?;
+            rooms::apply_event(conn, &key, &relay.id, &event, now).await
+        })
+        .await?;
+    published.insert(0, event);
+
+    core.bus.publish(Change::AccessChanged {
+        relay_id: relay.id.clone(),
+        published,
+    });
+    Ok(())
+}
+
 /// Change what the relay says about itself, which reloads it from its row.
 async fn change_info(
     core: &Core,
@@ -269,25 +311,11 @@ async fn write(
 
     match call {
         Call::BanPubkey(pubkey, reason) => {
-            let mut published = access::ban_pubkey(
-                &mut *conn,
-                key,
-                relay_id,
-                tenant_pubkey,
-                pubkey,
-                reason,
-                now,
-            )
-            .await?;
-            published.extend(publish_room_admins(conn, key, relay_id, now).await?);
-            Ok(published)
+            access::ban_pubkey(conn, key, relay_id, tenant_pubkey, pubkey, reason, now).await
         }
         Call::AllowPubkey(pubkey) => access::allow_pubkey(conn, key, relay_id, pubkey, now).await,
         Call::UnallowPubkey(pubkey) => {
-            let mut published =
-                access::remove(&mut *conn, key, relay_id, tenant_pubkey, pubkey, now).await?;
-            published.extend(publish_room_admins(conn, key, relay_id, now).await?);
-            Ok(published)
+            access::remove(conn, key, relay_id, tenant_pubkey, pubkey, now).await
         }
         Call::BanEvent(id, reason) => {
             access::ban_event(conn, relay_id, id, reason, now).await?;
@@ -303,47 +331,15 @@ async fn write(
             access::unassign_role(conn, key, relay_id, pubkey, role_id, now).await
         }
         Call::AssignMethod(pubkey, method) => {
-            let mut published = access::grant_method(
-                &mut *conn,
-                key,
-                relay_id,
-                tenant_pubkey,
-                pubkey,
-                method,
-                now,
-            )
-            .await?;
-            published.extend(publish_room_admins(conn, key, relay_id, now).await?);
-            Ok(published)
+            access::grant_method(conn, key, relay_id, tenant_pubkey, pubkey, method, now).await
         }
         Call::UnassignMethod(pubkey, method) => {
-            access::revoke_method(
-                &mut *conn,
-                relay_id,
-                tenant_pubkey,
-                &relay.pubkey,
-                pubkey,
-                method,
-            )
-            .await?;
-            publish_room_admins(conn, key, relay_id, now).await
+            access::revoke_method(conn, relay_id, tenant_pubkey, &relay.pubkey, pubkey, method)
+                .await?;
+            Ok(Vec::new())
         }
         _ => unreachable!("{call:?} doesn't write in a transaction"),
     }
-}
-
-/// Rewrite every room's admin list, since the relay's admins administer them all.
-async fn publish_room_admins(
-    conn: &mut PgConnection,
-    key: &RelayKey,
-    relay_id: &str,
-    now: i64,
-) -> Result<Vec<Event>> {
-    let mut published = Vec::new();
-    for room in rooms::list_rooms(&mut *conn, relay_id).await? {
-        published.push(rooms::publish_admins(&mut *conn, key, relay_id, &room.id, now).await?);
-    }
-    Ok(published)
 }
 
 /// Rewrite every event the relay publishes about its own state from the tables

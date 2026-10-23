@@ -4,6 +4,7 @@
 
 mod admin;
 mod auth;
+mod management;
 mod member;
 mod public;
 mod response;
@@ -81,7 +82,14 @@ pub fn router(core: Core) -> Router {
             "/relays/{id}",
             get(tenant::get_relay).put(tenant::update_relay),
         )
-        .route("/relays/{id}/members", get(tenant::list_relay_members))
+        .route("/relays/{id}/members", get(management::list_members))
+        .route("/relays/{id}/management", post(management::call_method))
+        .route("/relays/{id}/rooms", get(management::list_rooms))
+        .route(
+            "/relays/{id}/rooms/moderate",
+            post(management::moderate_room),
+        )
+        .route("/relays/{id}/events", get(management::list_events))
         .route(
             "/relays/{id}/members/{pubkey}",
             put(tenant::add_relay_member).delete(tenant::remove_relay_member),

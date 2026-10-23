@@ -239,6 +239,56 @@ export type NostrEvent = {
   sig: string
 }
 
+// How a member got into a relay.
+export type MemberSource = "owner" | "manual" | "claim" | "public_join" | "payment" | "migrated"
+
+// A relay member (NIP-43), with the ids of the roles they hold.
+export type RelayMember = {
+  pubkey: string
+  source: MemberSource
+  roles: string[]
+  created_at: number
+}
+
+// A role a relay gives some of its members (NIP-43 kind 33534).
+export type RelayRole = {
+  id: string
+  label: string
+  description: string
+  hue: number
+  position: number
+}
+
+export type RelayMembers = {
+  members: RelayMember[]
+  roles: RelayRole[]
+}
+
+export type BannedPubkey = { pubkey: string; reason: string }
+export type BannedEvent = { id: string; reason: string }
+
+// Who may call which of a relay's NIP-86 methods.
+export type MethodAssignee = { pubkey: string; methods: string[] }
+
+// A member of a room (NIP-29): roles are labels, and permissions the moderation kinds they may publish.
+export type RoomMember = {
+  room_id: string
+  pubkey: string
+  roles: string[]
+  permissions: number[]
+  created_at: number
+}
+
+// A room on a relay: its metadata tags, pinned events, members and invite codes.
+export type Room = {
+  id: string
+  tags: string[][]
+  pins: string[][]
+  created_at: number
+  members: RoomMember[]
+  invites: string[]
+}
+
 export type Upload = {
   sha256: string
   url: string
@@ -447,7 +497,31 @@ export function openPayoutDashboard(pubkey: string) {
 }
 
 export function listRelayMembers(id: string) {
-  return callApi<{ members: string[] }>("GET", `/relays/${id}/members`)
+  return callApi<RelayMembers>("GET", `/relays/${id}/members`)
+}
+
+// Call one of the relay's NIP-86 methods, as its owner may call any of them.
+export function callRelayMethod<T = true>(id: string, method: string, params: unknown[] = []) {
+  return callApi<T>("POST", `/relays/${id}/management`, { method, params })
+}
+
+export function listRelayRooms(id: string) {
+  return callApi<Room[]>("GET", `/relays/${id}/rooms`)
+}
+
+// Publish a NIP-29 moderation event about one of the relay's rooms, which the relay signs.
+export function moderateRoom(id: string, kind: number, tags: string[][]) {
+  return callApi<void>("POST", `/relays/${id}/rooms/moderate`, { kind, tags })
+}
+
+// A page of the relay's events, newest first, of some kinds or ids; `until` pages back.
+export function listRelayEvents(id: string, params: { kinds?: number[]; ids?: string[]; until?: number; limit?: number } = {}) {
+  const query = new URLSearchParams()
+  if (params.kinds?.length) query.set("kinds", params.kinds.join(","))
+  if (params.ids?.length) query.set("ids", params.ids.join(","))
+  if (params.until !== undefined) query.set("until", String(params.until))
+  if (params.limit !== undefined) query.set("limit", String(params.limit))
+  return callApi<NostrEvent[]>("GET", `/relays/${id}/events?${query}`)
 }
 
 export function listRelayActivity(id: string) {

@@ -3,8 +3,6 @@
 //! the transaction that stores it, and the relay-signed events describing the room
 //! are rewritten from those tables.
 
-use std::collections::BTreeSet;
-
 use coracle_lib::events::Event;
 use serde::{Deserialize, Serialize};
 use sqlx::types::Json;
@@ -23,6 +21,8 @@ pub mod kinds {
     pub const DELETE_GROUP: u16 = 9008;
     pub const CREATE_INVITE: u16 = 9009;
     pub const PUT_PINS: u16 = 9010;
+    pub const ASSIGN_PERMISSION: u16 = 9011;
+    pub const UNASSIGN_PERMISSION: u16 = 9012;
     pub const JOIN_REQUEST: u16 = 9021;
     pub const LEAVE_REQUEST: u16 = 9022;
     pub const METADATA: u16 = 39000;
@@ -33,16 +33,14 @@ pub mod kinds {
     pub const PINS: u16 = 39005;
 }
 
-/// The role that lets a room member moderate the room.
-pub const ADMIN_ROLE: &str = "admin";
-
 /// Kinds the relay publishes about a room, addressed by its `d` tag.
 pub fn is_metadata_kind(kind: u16) -> bool {
     (kinds::METADATA..=kinds::PINS).contains(&kind)
 }
 
-/// Kinds that change a room, which only its moderators may publish.
-const MODERATION_KINDS: [u16; 8] = [
+/// Kinds that change a room, each of which only the relay's managers and the room
+/// members permitted that kind may publish.
+pub const MODERATION_KINDS: [u16; 10] = [
     kinds::PUT_USER,
     kinds::REMOVE_USER,
     kinds::EDIT_METADATA,
@@ -51,10 +49,26 @@ const MODERATION_KINDS: [u16; 8] = [
     kinds::DELETE_GROUP,
     kinds::CREATE_INVITE,
     kinds::PUT_PINS,
+    kinds::ASSIGN_PERMISSION,
+    kinds::UNASSIGN_PERMISSION,
 ];
 
 pub fn is_moderation_kind(kind: u16) -> bool {
     MODERATION_KINDS.contains(&kind)
+}
+
+/// The kinds a permission tag (`["p", <pubkey>, <kind>...]`) grants or revokes, or
+/// `None` if one isn't a moderation kind.
+pub fn permission_kinds(tag: &[String]) -> Option<Vec<u16>> {
+    tag.get(2..)
+        .unwrap_or_default()
+        .iter()
+        .map(|kind| {
+            kind.parse::<u16>()
+                .ok()
+                .filter(|kind| is_moderation_kind(*kind))
+        })
+        .collect()
 }
 
 /// Whether an event belongs to the room machinery: it is about a room, changes
@@ -105,7 +119,10 @@ impl Room {
 pub struct RoomMember {
     pub room_id: String,
     pub pubkey: String,
+    /// Labels the room's moderators give the member, which grant nothing.
     pub roles: Vec<String>,
+    /// The moderation kinds the member may publish in the room.
+    pub permissions: Vec<i32>,
     pub created_at: i64,
 }
 
@@ -121,7 +138,7 @@ pub async fn list_rooms(db: impl PgExecutor<'_>, relay_id: &str) -> Result<Vec<R
 /// Every member of every room on a relay.
 pub async fn list_room_members(db: impl PgExecutor<'_>, relay_id: &str) -> Result<Vec<RoomMember>> {
     Ok(sqlx::query_as::<_, RoomMember>(
-        "SELECT room_id, pubkey, roles, created_at FROM room_member
+        "SELECT room_id, pubkey, roles, permissions, created_at FROM room_member
          WHERE relay_id = $1 ORDER BY room_id, created_at, pubkey",
     )
     .bind(relay_id)
@@ -196,6 +213,53 @@ pub async fn apply_event(
                 .await?;
             }
             publish_membership(conn, key, relay_id, room_id, now).await
+        }
+        kinds::ASSIGN_PERMISSION => {
+            // Someone granted a permission becomes a member, to see what they moderate.
+            for grant in event.tags.find_all("p") {
+                let permissions = permission_kinds(grant.as_slice())
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(i32::from)
+                    .collect::<Vec<_>>();
+                sqlx::query(
+                    "INSERT INTO room_member (relay_id, room_id, pubkey, permissions, created_at)
+                     VALUES ($1, $2, $3, ARRAY(SELECT DISTINCT unnest($4::int[]) ORDER BY 1), $5)
+                     ON CONFLICT (relay_id, room_id, pubkey) DO UPDATE SET permissions =
+                       ARRAY(SELECT DISTINCT unnest(room_member.permissions || $4::int[]) ORDER BY 1)",
+                )
+                .bind(relay_id)
+                .bind(room_id)
+                .bind(grant.value())
+                .bind(permissions)
+                .bind(now)
+                .execute(&mut *conn)
+                .await?;
+            }
+            publish_membership(conn, key, relay_id, room_id, now).await
+        }
+        kinds::UNASSIGN_PERMISSION => {
+            for grant in event.tags.find_all("p") {
+                let permissions = permission_kinds(grant.as_slice())
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(i32::from)
+                    .collect::<Vec<_>>();
+                sqlx::query(
+                    "UPDATE room_member SET permissions =
+                       ARRAY(SELECT unnest(permissions) EXCEPT SELECT unnest($4::int[]) ORDER BY 1)
+                     WHERE relay_id = $1 AND room_id = $2 AND pubkey = $3",
+                )
+                .bind(relay_id)
+                .bind(room_id)
+                .bind(grant.value())
+                .bind(permissions)
+                .execute(&mut *conn)
+                .await?;
+            }
+            Ok(vec![
+                publish_admins(conn, key, relay_id, room_id, now).await?,
+            ])
         }
         kinds::REMOVE_USER => {
             let pubkeys: Vec<String> = event.tags.values("p").map(str::to_string).collect();
@@ -420,9 +484,9 @@ pub async fn publish_metadata(
     events::publish(conn, key, relay_id, kinds::METADATA, tags, now).await
 }
 
-/// Rewrite a room's admin list (kind 39001): the relay's owner and the pubkeys
-/// granted management methods, listed as admins of every room, then the room's own
-/// admins with their roles.
+/// Rewrite a room's admin list (kind 39001), naming the moderation kinds each admin
+/// may publish: the relay's owner, who may publish all of them in every room, then
+/// the room's members permitted any.
 pub async fn publish_admins(
     conn: &mut PgConnection,
     key: &RelayKey,
@@ -430,43 +494,43 @@ pub async fn publish_admins(
     room_id: &str,
     now: i64,
 ) -> Result<Event> {
-    let relay_admins: Vec<String> = sqlx::query_scalar::<_, String>(
-        "SELECT tenant_pubkey FROM relay WHERE id = $1
-         UNION ALL (SELECT DISTINCT pubkey FROM method_grant WHERE relay_id = $1 ORDER BY pubkey)",
-    )
-    .bind(relay_id)
-    .fetch_all(&mut *conn)
-    .await?;
+    let owner: String = sqlx::query_scalar("SELECT tenant_pubkey FROM relay WHERE id = $1")
+        .bind(relay_id)
+        .fetch_one(&mut *conn)
+        .await?;
 
-    let room_admins = sqlx::query_as::<_, (String, Vec<String>)>(
-        "SELECT pubkey, roles FROM room_member
-         WHERE relay_id = $1 AND room_id = $2 AND $3 = ANY(roles) ORDER BY created_at, pubkey",
+    let room_admins = sqlx::query_as::<_, (String, Vec<i32>)>(
+        "SELECT pubkey, permissions FROM room_member
+         WHERE relay_id = $1 AND room_id = $2 AND cardinality(permissions) > 0 AND pubkey <> $3
+         ORDER BY created_at, pubkey",
     )
     .bind(relay_id)
     .bind(room_id)
-    .bind(ADMIN_ROLE)
+    .bind(&owner)
     .fetch_all(&mut *conn)
     .await?;
 
-    let mut seen = BTreeSet::new();
+    let admin = |pubkey: String, kinds: Vec<String>| {
+        let mut tag = vec!["p".to_string(), pubkey];
+        tag.extend(kinds);
+        tag
+    };
     let mut tags = vec![tag(&["-"]), tag(&["d", room_id])];
-    for pubkey in relay_admins {
-        if seen.insert(pubkey.clone()) {
-            tags.push(vec!["p".to_string(), pubkey]);
-        }
-    }
-    for (pubkey, roles) in room_admins {
-        if seen.insert(pubkey.clone()) {
-            let mut admin = vec!["p".to_string(), pubkey];
-            admin.extend(roles);
-            tags.push(admin);
-        }
+    tags.push(admin(
+        owner,
+        MODERATION_KINDS.iter().map(u16::to_string).collect(),
+    ));
+    for (pubkey, permissions) in room_admins {
+        tags.push(admin(
+            pubkey,
+            permissions.iter().map(i32::to_string).collect(),
+        ));
     }
 
     events::publish(conn, key, relay_id, kinds::ADMINS, tags, now).await
 }
 
-/// Rewrite a room's member list (kind 39002).
+/// Rewrite a room's member list (kind 39002), with each member's roles.
 pub async fn publish_members(
     conn: &mut PgConnection,
     key: &RelayKey,
@@ -474,8 +538,8 @@ pub async fn publish_members(
     room_id: &str,
     now: i64,
 ) -> Result<Event> {
-    let pubkeys = sqlx::query_scalar::<_, String>(
-        "SELECT pubkey FROM room_member WHERE relay_id = $1 AND room_id = $2 ORDER BY created_at, pubkey",
+    let members = sqlx::query_as::<_, (String, Vec<String>)>(
+        "SELECT pubkey, roles FROM room_member WHERE relay_id = $1 AND room_id = $2 ORDER BY created_at, pubkey",
     )
     .bind(relay_id)
     .bind(room_id)
@@ -483,11 +547,11 @@ pub async fn publish_members(
     .await?;
 
     let mut tags = vec![tag(&["-"]), tag(&["d", room_id])];
-    tags.extend(
-        pubkeys
-            .into_iter()
-            .map(|pubkey| vec!["p".to_string(), pubkey]),
-    );
+    tags.extend(members.into_iter().map(|(pubkey, roles)| {
+        let mut member = vec!["p".to_string(), pubkey];
+        member.extend(roles);
+        member
+    }));
 
     events::publish(conn, key, relay_id, kinds::MEMBERS, tags, now).await
 }

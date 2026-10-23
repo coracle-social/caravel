@@ -5,22 +5,9 @@ import { canonicalHost, fetchModerationBlob, relayName, type ModerationItem, typ
 import Avatar from "@/shared/components/Avatar"
 import CopyNpub from "@/shared/components/CopyNpub"
 import { profileName } from "@/shared/lib/profiles"
-import NoteContent from "@/admin/components/NoteContent"
+import NoteContent from "@/shared/components/NoteContent"
 import { formatBytes, formatTimeAgo } from "@/shared/lib/format"
-
-// Names for the kinds these relays carry; any other shows its number.
-const KIND_LABELS: Record<number, string> = {
-  0: "Profile",
-  1: "Note",
-  7: "Reaction",
-  9: "Chat message",
-  11: "Thread",
-  20: "Picture",
-  1063: "File",
-  1111: "Comment",
-  9802: "Highlight",
-  30023: "Article",
-}
+import { kindLabel } from "@/shared/lib/kinds"
 
 function FileIcon() {
   return (
@@ -102,7 +89,7 @@ export default function ModerationListItem(props: ModerationListItemProps) {
   const label = () =>
     props.item.type === "upload"
       ? "Upload"
-      : (KIND_LABELS[props.item.data.kind] ?? `Kind ${props.item.data.kind}`)
+      : kindLabel(props.item.data.kind)
 
   return (
     <li class="rounded-lg border border-gray-200 bg-white p-4">

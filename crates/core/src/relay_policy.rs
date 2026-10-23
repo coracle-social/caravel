@@ -14,7 +14,7 @@ use crate::error::Result;
 use crate::events::kinds;
 use crate::events::{EventGroup, EventHead};
 use crate::relays::{self, Relay};
-use crate::rooms::{self, ADMIN_ROLE};
+use crate::rooms;
 
 /// How far ahead of the relay's clock an event may be dated.
 pub const CREATED_AT_UPPER_LIMIT: i64 = 300;
@@ -52,17 +52,17 @@ pub struct RelaySnapshot {
 pub struct RoomSnapshot {
     /// Only its members and the relay's managers know it exists.
     pub hidden: bool,
-    /// Only its members and the relay's managers may read it.
+    /// Only its members and the relay's managers may read it or listen to its calls.
     pub private: bool,
-    /// Only its members and the relay's managers may post, and joining needs an invite.
+    /// Join requests without one of its invite codes are ignored.
     pub closed: bool,
     /// The room has calls.
     pub livekit: bool,
-    /// Only its members and the relay's managers may join its calls.
+    /// Only its members and the relay's managers may post to it or speak in its calls.
     pub restricted: bool,
     pub members: HashSet<String>,
-    /// Members holding the room's admin role, who may moderate it.
-    pub admins: HashSet<String>,
+    /// The moderation kinds members may publish in the room.
+    pub permissions: HashMap<String, BTreeSet<u16>>,
     pub invites: HashSet<String>,
 }
 
@@ -227,14 +227,17 @@ impl RelaySnapshot {
         }
     }
 
-    /// Whether a pubkey may moderate a room: the relay's managers, and the room's
-    /// own admins.
-    pub fn can_moderate_room(&self, pubkey: &str, room_id: &str) -> bool {
-        self.can_manage(pubkey)
-            || self
-                .rooms
-                .get(room_id)
-                .is_some_and(|room| room.admins.contains(pubkey))
+    /// Whether a pubkey may publish a moderation `kind` in a room: the relay's
+    /// managers may publish any, and the room's members those they're permitted.
+    pub fn can_moderate_room(&self, pubkey: &str, room_id: &str, kind: u16) -> bool {
+        self.can_manage(pubkey) || self.room_permits(pubkey, room_id, kind)
+    }
+
+    fn room_permits(&self, pubkey: &str, room_id: &str, kind: u16) -> bool {
+        self.rooms
+            .get(room_id)
+            .and_then(|room| room.permissions.get(pubkey))
+            .is_some_and(|permissions| permissions.contains(&kind))
     }
 
     pub fn has_room_access(&self, room: &RoomSnapshot, pubkey: &str) -> bool {
@@ -312,9 +315,12 @@ pub async fn load_snapshot(db: impl PgExecutor<'_> + Copy, relay: &Relay) -> Res
     }
     for member in rooms::list_room_members(db, &relay.id).await? {
         if let Some(room) = snapshot.rooms.get_mut(&member.room_id) {
-            if member.roles.iter().any(|role| role == ADMIN_ROLE) {
-                room.admins.insert(member.pubkey.clone());
-            }
+            let permissions = member
+                .permissions
+                .iter()
+                .filter_map(|kind| u16::try_from(*kind).ok());
+            room.permissions
+                .insert(member.pubkey.clone(), permissions.collect());
             room.members.insert(member.pubkey);
         }
     }
@@ -486,10 +492,33 @@ pub fn check_room_write(snapshot: &RelaySnapshot, event: &Event) -> Result<(), R
         return Err(Refusal::invalid("group not found"));
     }
 
-    if rooms::is_moderation_kind(event.kind) && !snapshot.can_moderate_room(&author, room_id) {
+    if rooms::is_moderation_kind(event.kind)
+        && !snapshot.can_moderate_room(&author, room_id, event.kind)
+    {
         return Err(Refusal::restricted(
             "you are not authorized to manage groups",
         ));
+    }
+
+    if matches!(
+        event.kind,
+        rooms::kinds::ASSIGN_PERMISSION | rooms::kinds::UNASSIGN_PERMISSION
+    ) {
+        for grant in event.tags.find_all("p") {
+            let Some(kinds) = rooms::permission_kinds(grant.as_slice()) else {
+                return Err(Refusal::invalid("permissions are group management kinds"));
+            };
+            // Nobody hands out a power they don't hold.
+            if !snapshot.can_manage(&author)
+                && !kinds
+                    .iter()
+                    .all(|kind| snapshot.room_permits(&author, room_id, *kind))
+            {
+                return Err(Refusal::restricted(
+                    "you may only grant permissions you hold",
+                ));
+            }
+        }
     }
 
     let Some(room) = room else {
@@ -513,7 +542,7 @@ pub fn check_room_write(snapshot: &RelaySnapshot, event: &Event) -> Result<(), R
             Err(Refusal::Unchanged("not currently a member".to_string()))
         }
         rooms::kinds::JOIN_REQUEST | rooms::kinds::LEAVE_REQUEST => Ok(()),
-        _ if room.closed && !has_access => {
+        _ if room.restricted && !has_access => {
             Err(Refusal::restricted("you are not a member of that group"))
         }
         _ => Ok(()),
@@ -670,7 +699,7 @@ pub enum CallRefusal {
 }
 
 /// Whether a pubkey may join a room's call: a member of the relay, in a room with
-/// calls, and in the room itself if it restricts them.
+/// calls, and in the room itself if it is private or restricted.
 pub fn admit_call(
     snapshot: &RelaySnapshot,
     pubkey: &str,
@@ -683,7 +712,7 @@ pub fn admit_call(
     if !room.livekit {
         return Err(CallRefusal::NoCalls);
     }
-    if room.restricted && !snapshot.has_room_access(room, pubkey) {
+    if (room.private || room.restricted) && !snapshot.has_room_access(room, pubkey) {
         return Err(CallRefusal::NotRoomMember);
     }
     Ok(())

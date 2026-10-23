@@ -14,16 +14,16 @@ Each app has an HTML entry at the root of `web/` and a matching directory under 
 ## `tenant/` — the tenant dashboard
 
 - `App.tsx` — the route table (below).
-- `pages/`: `Home` (the landing page, which also creates a first relay and signs in), `Account` (billing, payment methods, payouts and payment history), and `relays/` (`RelayList`, `RelayNew`, `RelayDetail`).
-- `components/`: `Layout` (the frame, and the `requireTenant` gate), `TenantShell` (the signed-in navigation: the sidebar, with a link to the admin dashboard for admins, the phone's bottom bar with relay search, and the billing banner), and `PayoutsSection` (the tenant's Stripe Connect payout account: its status, and links to onboarding or Stripe's payouts dashboard).
+- `pages/`: `Home` (the landing page, which also creates a first relay and signs in), `Account` (billing, payment methods, payouts and payment history), and `relays/`: `RelayList`, `RelayNew`, and the pages inside a relay's frame: `RelayDetail` (its overview and settings), `RelayMembers` (NIP-43 members and their roles, the roles, invite codes, and staff holding NIP-86 methods), `RelayRooms` and `RelayRoom` (NIP-29 rooms, and one room's members, roles, permissions and invite codes), `RelayReports` (NIP-56 reports, with dismissing, deleting what was reported and banning its author), `RelayContent` (everything the relay holds, newest first) and `RelayBans` (banned users and events).
+- `components/`: `Layout` (the frame, the `TenantGate` and the `requireTenant` that wraps a page in it), `RelayFrame` (a relay's tabs, and the relay its pages share through `useFramedRelay`), `TenantShell` (the signed-in navigation: the sidebar, with a link to the admin dashboard for admins, the phone's bottom bar with relay search, and the billing banner), `PayoutsSection` (the tenant's Stripe Connect payout account: its status, and links to onboarding or Stripe's payouts dashboard), and in `relay/` the parts of a relay's pages: `Section`, `PubkeyLabel`, `PubkeyDialog` (asking for an npub or hex pubkey), `RoleChip`, `MemberList`, `RoleList`, `InviteCodes`, `StaffList`, `RoomDialog` and `FeedFooter`.
+- `lib/`: `rooms` (the NIP-29 kinds the dashboard publishes, the permissions and flags it offers, and reading a room's tags), `changes` (`makeChange`, which toasts how a change went), `usePagedEvents` (a relay's events a page at a time).
 
 ## `admin/` — the admin dashboard
 
 - `App.tsx` — the route table (below).
 - `pages/`: `AdminTenantList`, `AdminTenantDetail` (with deleting and banning), `AdminRelayList`, `AdminRelayDetail`, `AdminInvoiceList`, `AdminInvoiceDetail`, `AdminModeration`.
   - `AdminModeration` accumulates pages of the cross-relay feed of events and uploads in its own signals so "load more" can append, and filters what has loaded. It reads a time window whose start is fixed when the range is picked, pages back inside it by `seen_at` (when the relay received an item), and drops responses for a window it has left.
-- `components/`: `Layout` (the frame, gating every page to admins with its own login), `AdminShell` (the top bar with the sections, and the signed-in admin's menu for signing out), `AdminInvoiceListItem`, `InvoiceDetailCard`, `ModerationListItem`, `NoteContent`.
-  - `NoteContent` is the only place the dashboards show text strangers wrote. It builds the page from `@welshman/content`'s parsed segments, never from HTML, links only `http` and `https`, shows custom emoji as their shortcode, and truncates long notes.
+- `components/`: `Layout` (the frame, gating every page to admins with its own login), `AdminShell` (the top bar with the sections, and the signed-in admin's menu for signing out), `AdminInvoiceListItem`, `InvoiceDetailCard`, `ModerationListItem`.
   - `ModerationListItem` previews an upload by fetching its bytes through the API, since relays serve blobs only to their members, and fetches only what scrolls into view.
 
 ## `portal/` — the member portal
@@ -38,13 +38,14 @@ Each app has an HTML entry at the root of `web/` and a matching directory under 
 - `index.css` — the dashboards' Tailwind v4 configuration and the brand color remap.
 - `views/`: `Login` (the dashboards' login, a dialog or a whole page), `RelayEdit` (editing a relay, under the tenant's or the admin's relay pages).
 - `components/`:
-  - kit: `PageContainer`, `ResourceState`, `LoadingState`, `Modal`, `ModalHeader`, `ConfirmDialog`, `SegmentedTabs`, `StatusBadge`, `Avatar`, `Field`, `ToggleField`, `ToggleButton`, `SearchInput`, `Toast`, `BackLink`, `ActionsMenu`, `CopyNpub`, and small icons.
+  - kit: `PageContainer`, `ResourceState`, `LoadingState`, `Modal`, `ModalHeader`, `ConfirmDialog`, `SegmentedTabs`, `StatusBadge`, `Avatar`, `Field`, `ToggleField`, `ToggleButton`, `SearchInput`, `Toast`, `BackLink`, `ActionsMenu` (dots, or a button of its own), `CopyNpub`, and small icons.
+  - `NoteContent` is the only way the dashboards show text strangers wrote. It builds the page from `@welshman/content`'s parsed segments, never from HTML, links only `http` and `https`, shows custom emoji as their shortcode, and truncates long notes.
   - relays: `RelayForm`, `RelayListItem`, `RelayDetailCard` (a relay's settings as switch lists, its custom domain, members, member payments and plan, and the confirmations for deactivating, reactivating, erasing and deleting, which the API calls purging), `ActivityFeed`, `PricingTable`, and in `relay/`: `RelayCardHeader`, `PlanGatedToggle`, `CustomDomainModal`, `DataTransferModal` (exporting and importing events as JSONL), `MemberPayments` (the member price, the portal link and who is paying), `MemberPriceModal`.
   - billing: `BillingPrompts` (the banner and its dialogs, and the `?invoice=` link), `PromptBanner`, `PostPaidPrompts`, `PaymentDialog` (paying an invoice by Lightning or Stripe Checkout), `PaymentSetup`, `PaymentSetupCard`, `PaymentSetupNWC` and their shared `PaymentSetupShell`, and in `payment/` and `account/`: `LightningPayBody`, `InvoiceItemsList`, `InvoiceListItem`, `PaymentMethodRow`.
   - `login/`: `LoginTabsScreen`, `LoginSignerScreen`, `LoginKeyScreen`, `QrScannerOverlay`.
 - `lib/`:
   - core: `config`, `http`, `api`, `account`, `state`.
-  - concepts: `profiles` (profiles and their names), `relays` (relay resources and creating a relay), `billing` (prompts and status), `paymentMethod`, `plans` (plan ids and labels), `pubkey`, `format`, `resource` (`loaded`).
+  - concepts: `profiles` (profiles and their names), `relays` (relay resources and creating a relay), `billing` (prompts and status), `paymentMethod`, `plans` (plan ids and labels), `pubkey`, `kinds` (event kinds' names), `format`, `resource` (`loaded`).
   - hooks: `useRelayActions`, `useRedirect`, `useNwcSetup`, `useCustomDomain`, `useInvoicePdf`, `useMinLoading`.
   - helpers: `loginInput`, `subdomain`, `slugify`, `search`, `clipboard`.
 
@@ -53,7 +54,8 @@ Each app has an HTML entry at the root of `web/` and a matching directory under 
 The tenant dashboard (`tenant/App.tsx`):
 
 - `/` → `Home`, ungated.
-- `/relays`, `/relays/new`, `/relays/:id`, `/relays/:id/edit`, `/account` → gated by `requireTenant`.
+- `/relays`, `/relays/new`, `/relays/:id/edit`, `/account` → gated by `requireTenant`.
+- `/relays/:id` → `RelayFrame`, gated by `TenantGate`, around `/` (`RelayDetail`), `/members`, `/rooms`, `/rooms/:room`, `/reports`, `/content` and `/bans`.
 
 The admin dashboard (`admin/App.tsx`):
 

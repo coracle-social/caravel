@@ -27,7 +27,7 @@ The two dashboards are separate apps that look and navigate separately: the tena
 
 ## Where things live
 
-Each app directory holds its `index.tsx` entry, its `App.tsx` route table, its `pages/`, and `components/` for UI only it uses. Shared UI lives in `shared/components`, with feature folders for login, payment, the account page and relays; page-level components both dashboards route to (login, editing a relay) live in `shared/views`. Non-UI code lives in `shared/lib`, one module per concept:
+Each app directory holds its `index.tsx` entry, its `App.tsx` route table, its `pages/`, `components/` for UI only it uses, and `lib/` for non-UI code only it uses. Shared UI lives in `shared/components`, with feature folders for login, payment, the account page and relays; page-level components both dashboards route to (login, editing a relay) live in `shared/views`. Non-UI code lives in `shared/lib`, one module per concept:
 
 - **`config.ts`** — the runtime configuration.
 - **`http.ts`** — the API transport every app uses: the error type, sending a request, unwrapping the response envelope, and buying a session token with one NIP-98 signature.
@@ -55,6 +55,10 @@ Where a new thing goes: a route page goes in its app's `pages/`; UI one app uses
 Every request goes through `http.ts`, which throws the API's own error message with its status when a request fails, so callers can check for a status such as 401 or 404. The dashboards' client in `api.ts` adds the signed-in account's session token, signing in once when it has none and again once if the server rejects it; the portal adds its member's token. Both build urls by appending the path to the API's url, so an API served under a path on the platform host works. [references/data-and-state-lifecycle.md](references/data-and-state-lifecycle.md) has the session mechanics.
 
 Pages read through resources, with the id as the resource's source so it refetches when the id changes, and render them with `ResourceState`, `useMinLoading` and `Show`. A resource throws when read after it failed, so code that only wants a value reads it through `loaded`. Writes to a relay go through `useRelayActions`: it updates the page's copy first, writes, refetches, and on failure restores the copy and reports in the toast. A redirect to a page the API names, such as Stripe Checkout or the billing portal, goes through `useRedirect`, which tracks the redirect in flight and its error.
+
+## Managing a relay
+
+A tenant manages a relay in its frame's tabs, all through the API with the dashboard's session rather than by speaking to the relay itself: NIP-86 methods through the management route, whatever they change; rooms through NIP-29 moderation events the relay signs on the tenant's behalf, which the API checks with the same room rules as a client's; and reports and content by paging through the relay's events. In NIP-29, a room member's roles are labels, and permissions, the moderation kinds they may publish, are granted and revoked separately.
 
 ## Global state and lazy tenant provisioning
 

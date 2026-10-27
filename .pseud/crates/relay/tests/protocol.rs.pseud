@@ -1,9 +1,9 @@
-% source=crates/relay/tests/protocol.rs lang=rust lines=845 sha=88e520e2a3d1
+% source=crates/relay/tests/protocol.rs lang=rust lines=879 sha=6abcf0bb0398
 
 module caravel_relay::tests::protocol
   -- The relays over a real socket, each by its own host: NIP-01, NIP-42, live delivery, the walls.
 
-  tests                                                                 @23-845
+  tests                                                                 @23-879
     test the_information_document_describes_the_relay                   @24-96
       -- NIP-11 open to any origin: owner, self, auth and restricted writes, 300s ahead
       lists NIPs 1, 29, 42, 43, 45, 77, 86 and 9a; public policy clears both flags
@@ -53,11 +53,13 @@ module caravel_relay::tests::protocol
     test a_custom_domain_stays_with_the_relay_that_verified_it          @697-743
       -- two relays claim one domain; verifying the second returns false and it resolves to the first
       the second keeps its pending claim through other changes; a third's claim is domain-exists
-    test renaming_a_relay_withdraws_its_custom_domains_verification     @746-769
+    test an_old_domain_keeps_redirecting_when_another_relay_names_it    @748-777
+      -- a replaced verified domain still redirects to its relay after another relay names it
+    test renaming_a_relay_withdraws_its_custom_domains_verification     @780-803
       -- a new subdomain leaves the domain unverified and unserved, and the new host served
-    test shutting_down_closes_every_connection_as_going_away            @772-780
+    test shutting_down_closes_every_connection_as_going_away            @806-814
       -- cancelling the shutdown token closes an open socket with 1001
-    test a_request_to_vanish_must_name_a_host_the_relay_answers_on      @783-812
+    test a_request_to_vanish_must_name_a_host_the_relay_answers_on      @817-846
       -- an unverified custom domain "names another relay"; the canonical host with :443 is accepted
-    test a_browser_may_preflight_any_relay_endpoint                     @815-845
+    test a_browser_may_preflight_any_relay_endpoint                     @849-879
       -- OPTIONS /upload allows any origin, PUT, and the authorization and x-sha-256 headers

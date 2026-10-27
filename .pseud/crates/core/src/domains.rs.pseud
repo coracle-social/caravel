@@ -1,4 +1,4 @@
-% source=crates/core/src/domains.rs lang=rust lines=98 sha=13440ab167ca
+% source=crates/core/src/domains.rs lang=rust lines=104 sha=e5df052b3946
 
 module caravel_core::domains  !net !db !time
   -- Custom domains: verifying over DNS that each points at its relay before it answers there.
@@ -12,9 +12,9 @@ module caravel_core::domains  !net !db !time
   pub async fn reverify_custom_domains(core) fails  !net !db !time      @46-63
     -- Withdraw verification from each verified domain that no longer points there.
     -- A failed lookup keeps the domain verified.
-  fn set_verified(core, relay_id, custom_domain, verified) -> bool  !db  @65-98
+  fn set_verified(core, relay_id, custom_domain, verified) -> bool  !db  @65-104
     -- Record a verification result, if custom_domain is still the relay's; returns whether it did.
     in one transaction: set_custom_domain_verified, a no-op if the domain moved on or is taken
-      if it became verified, drop any redirect from that host
-    publish RelayChanged only if something changed
+      if it became verified, take_host_redirect from whichever relay that host redirected to
+    publish RelayChanged only if something changed, for this relay and the one that lost a redirect
     a failure is logged, not returned, and the next run tries again

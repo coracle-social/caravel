@@ -198,13 +198,30 @@ pub async fn add_host_redirect(
     Ok(())
 }
 
-/// Stop redirecting the hosts a relay now answers on itself.
-pub async fn remove_host_redirects(db: impl PgExecutor<'_>, hosts: &[String]) -> Result<()> {
-    sqlx::query("DELETE FROM host_redirect WHERE host = ANY($1)")
+/// Stop redirecting to a relay the hosts it now answers on itself. Another
+/// relay's redirects stay, since naming a domain doesn't prove holding it.
+pub async fn remove_host_redirects(
+    db: impl PgExecutor<'_>,
+    relay_id: &str,
+    hosts: &[String],
+) -> Result<()> {
+    sqlx::query("DELETE FROM host_redirect WHERE relay_id = $1 AND host = ANY($2)")
+        .bind(relay_id)
         .bind(hosts)
         .execute(db)
         .await?;
     Ok(())
+}
+
+/// Stop redirecting `host`, for a relay that has verified it as its own domain,
+/// returning the relay it redirected to.
+pub async fn take_host_redirect(db: impl PgExecutor<'_>, host: &str) -> Result<Option<String>> {
+    Ok(
+        sqlx::query_scalar("DELETE FROM host_redirect WHERE host = $1 RETURNING relay_id")
+            .bind(host)
+            .fetch_optional(db)
+            .await?,
+    )
 }
 
 /// Record that a purged relay's data was erased.

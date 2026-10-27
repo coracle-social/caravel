@@ -742,6 +742,40 @@ async fn a_custom_domain_stays_with_the_relay_that_verified_it() {
     ));
 }
 
+// Naming a domain proves nothing, so another relay that names it can't take the
+// redirect a relay keeps from its old domain.
+#[tokio::test]
+async fn an_old_domain_keeps_redirecting_when_another_relay_names_it() {
+    let server = Server::start().await;
+    let old = "old.example.com";
+    let pool = server.core.db.pool();
+    let (first, _) = server.relay().await;
+    let (second, _) = server.relay().await;
+
+    let first = server.update(&first, json!({"custom_domain": old})).await;
+    assert!(
+        caravel_core::commands::relays::set_custom_domain_verified(pool, &first.id, old, true)
+            .await
+            .unwrap()
+    );
+    let first = caravel_core::queries::relays::require_relay(pool, &first.id)
+        .await
+        .unwrap();
+    let first = server
+        .update(&first, json!({"custom_domain": "new.example.com"}))
+        .await;
+    assert_eq!(first.redirect_from, [old]);
+
+    server.update(&second, json!({"custom_domain": old})).await;
+    let first = caravel_core::queries::relays::require_relay(pool, &first.id)
+        .await
+        .unwrap();
+    assert_eq!(first.redirect_from, [old]);
+    server.relays.reload(&first.id).await.unwrap();
+    let route = server.relays.resolve(old).expect("old domain not served");
+    assert_eq!(route.instance.relay_id(), first.id);
+}
+
 #[tokio::test]
 async fn renaming_a_relay_withdraws_its_custom_domains_verification() {
     let server = Server::start().await;

@@ -1,9 +1,9 @@
-% source=crates/relay/tests/blossom.rs lang=rust lines=410 sha=7f222bcdb262
+% source=crates/relay/tests/blossom.rs lang=rust lines=450 sha=8fcaea2f9e81
 
 module caravel_relay::tests::blossom
   -- Media over Blossom, ported from zooid: who may upload, list, fetch, delete; how blobs serve.
 
-  tests  !panic                                                         @19-410
+  tests  !panic                                                         @19-450
     fn sha256(bytes) -> str  -- hex digest                              @19-21
     fn blossom_auth(server, signer, verb, hashes) -> str                @24-38
       -- A kind 24242 authorization header for verb over hashes, expiring in a minute.
@@ -23,14 +23,16 @@ module caravel_relay::tests::blossom
       -- missing, non-base64 and empty-object authorizations are 401, and the blob stays
     test an_authorization_must_be_for_the_verb_and_unexpired            @190-243
       -- a delete authorization or an expired one is 401 for upload; one for another hash is 403
-    test a_blob_stays_until_its_last_uploader_deletes_it                @246-299
+    test an_authorization_naming_servers_is_good_only_on_them           @248-283
+      -- an upload naming another server is 401 "for another server"; naming this relay's host, 200
+    test a_blob_stays_until_its_last_uploader_deletes_it                @286-339
       -- a member who never uploaded it gets 404 deleting; after the owner deletes it still serves
       after the second uploader deletes, it is 404
-    test a_member_lists_an_uploaders_blobs  -- /list/<pubkey> returns the upload  @302-318
-    test a_relay_may_keep_its_media_to_members                          @321-345
+    test a_member_lists_an_uploaders_blobs  -- /list/<pubkey> returns the upload  @342-358
+    test a_relay_may_keep_its_media_to_members                          @361-385
       -- with blossom_authenticated_read, a bare download is 401 and a member's get authorization 200
-    test a_relay_without_media_has_no_media_server  -- upload is 404    @348-354
-    test an_upload_is_checked_before_it_is_sent                         @357-377
+    test a_relay_without_media_has_no_media_server  -- upload is 404    @388-394
+    test an_upload_is_checked_before_it_is_sent                         @397-417
       -- HEAD /upload with x-content-length: 1 KiB is 200, 11 MiB is 413
-    test a_member_mirrors_a_file_from_another_server                    @380-410
+    test a_member_mirrors_a_file_from_another_server                    @420-450
       -- PUT /mirror fetches from a local server, keeps its content type, and then serves the bytes

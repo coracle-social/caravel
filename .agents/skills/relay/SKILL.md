@@ -11,7 +11,7 @@ The test inventory in [references/zooid-tests.md](references/zooid-tests.md) map
 
 ## Hosts and reloads
 
-A request reaches a relay by its host. The app looks up every host but the API's and the dashboards', which no relay may take, in the relay registry: each live relay answers on its canonical host (`<subdomain>.<domain>`), on its verified custom domain, and on the hosts that redirect to it. A page requested on any host but the relay's primary one redirects there, while the protocol itself is served on all of them, since websocket clients don't follow redirects. A host no relay claims gets nothing but the health check and on-demand TLS's ask. Any origin may call a relay's HTTP endpoints and read the `X-Reason` media refusals carry.
+A request reaches a relay by its host. The app looks up every host but the API's and the dashboards', which no relay may take, in the relay registry: each live relay answers on its canonical host (`<subdomain>.<domain>`), on its verified custom domain, and on the hosts that redirect to it: the custom domains it replaced, until another relay verifies one. A page requested on any host but the relay's primary one redirects there, while the protocol itself is served on all of them, since websocket clients don't follow redirects. A host no relay claims gets nothing but the health check and on-demand TLS's ask. Any origin may call a relay's HTTP endpoints and read the `X-Reason` media refusals carry.
 
 Only active, unpurged relays are served. The registry loads them when the process starts, and reloads one whenever the core publishes that it changed. A reload builds the relay's new state and swaps it in, so open connections survive a settings change. A relay that stops being served closes its connections. Nothing between a request's host and its relay's rules reads the database.
 
@@ -54,7 +54,7 @@ The relay signs events describing its own state with its own key: its member lis
 
 ## Media
 
-A relay with media on runs a Blossom server on its own hosts (BUD-01, 02, 04, 06 and 11). Members upload, mirror, list and delete with a kind 24242 authorization naming the verb, an expiration, and the hashes it covers; anyone downloads, unless the relay keeps its media to members, in which case a download needs a member's authorization too. A blob is at most 10 MiB.
+A relay with media on runs a Blossom server on its own hosts (BUD-01, 02, 04, 06 and 11). Members upload, mirror, list and delete with a kind 24242 authorization naming the verb, an expiration, and the hashes it covers, and, if it names servers, one of this relay's hosts; anyone downloads, unless the relay keeps its media to members, in which case a download needs a member's authorization too. A blob is at most 10 MiB.
 
 A blob is stored once per relay however many members upload it, and each uploader owns it until they delete it; the last owner's deletion removes its bytes. An upload and a deletion of the same blob take turns on a lock in the process, so an upload racing the last owner's deletion keeps its bytes. The bytes live in the platform's blob store under `<relay id>/<sha256>`, in a directory or an S3 bucket. Storage is billed by the blobs a relay holds, each counted once.
 

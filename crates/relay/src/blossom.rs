@@ -129,7 +129,8 @@ fn require_media(route: &Route) -> Result<(), Refused> {
 }
 
 /// Check an authorization for `verb`, returning its signer's pubkey and the
-/// hashes it covers. Only the relay's members may authorize anything.
+/// hashes it covers. One naming servers must name one of this relay's hosts
+/// (BUD-11), and only the relay's members may authorize anything.
 fn authorize(
     route: &Route,
     headers: &HeaderMap,
@@ -159,6 +160,18 @@ fn authorize(
         return Err(unauthorized(&format!(
             "the authorization is not for {verb}"
         )));
+    }
+    let servers: Vec<&str> = event.tags.values("server").collect();
+    if !servers.is_empty()
+        && !route
+            .instance
+            .state()
+            .relay
+            .hosts()
+            .iter()
+            .any(|host| servers.contains(&host.as_str()))
+    {
+        return Err(unauthorized("the authorization is for another server"));
     }
 
     let pubkey = event.pubkey.to_hex();

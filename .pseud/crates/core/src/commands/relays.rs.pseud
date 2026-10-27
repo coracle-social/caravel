@@ -1,4 +1,4 @@
-% source=crates/core/src/commands/relays.rs lang=rust lines=362 sha=c1d9c4fe9da1
+% source=crates/core/src/commands/relays.rs lang=rust lines=379 sha=c329a0f1f048
 
 module caravel_core::commands::relays  !db !rand
   -- Writing relays: their rows, the hosts that redirect to them, and erasing what they hold.
@@ -19,19 +19,21 @@ module caravel_core::commands::relays  !db !rand
     -- Returns whether it wrote; it never verifies a domain another live relay has verified.
   pub async fn add_host_redirect(host, relay_id, now) fails  !db        @183-199
     -- Make host redirect to the relay, taking it from whichever relay it redirected to.
-  pub async fn remove_host_redirects(hosts: [str]) fails  !db           @202-208
-    -- Stop redirecting hosts a relay now answers on itself.
-  pub async fn set_relay_erased_at(id, now) fails  !db                  @211-218
-  pub async fn purge_relay_in_tx(conn, relay: Relay, now) fails  !db !rand  @222-237
+  pub async fn remove_host_redirects(relay_id, hosts: [str]) fails  !db  @201-214
+    -- Stop redirecting to the relay the hosts it now answers on itself; other relays' redirects stay.
+  pub async fn take_host_redirect(host) -> relay_id? fails  !db         @216-225
+    -- Stop redirecting host, returning the relay it redirected to, once another verifies it.
+  pub async fn set_relay_erased_at(id, now) fails  !db                  @228-235
+  pub async fn purge_relay_in_tx(conn, relay: Relay, now) fails  !db !rand  @239-254
     -- Set purged_at and record a PurgeRelay activity with the status it was purged from.
     -- billing credits the purge only if that status was active
-  fn map_relay_write_error(error: Error) -> Error  !-db  -- inspects a returned sqlx error only  @240-255
+  fn map_relay_write_error(error: Error) -> Error  !-db  -- inspects a returned sqlx error only  @257-272
     -- A unique violation of relay_subdomain_key becomes invalid "subdomain-exists"; else passes.
-  pub async fn rebuild_derived(conn, key, relay_id, now) -> [Event] fails  !db  @260-287
+  pub async fn rebuild_derived(conn, key, relay_id, now) -> [Event] fails  !db  @277-304
     -- Republish everything the relay says about its state, from the tables that hold it.
     publish_member_list, then publish_role for each role
     for each room: publish_metadata, publish_admins, publish_members and publish_pins
-  pub async fn erase_relay_data(conn, relay_id) -> [sha256] fails  !db  @293-339
+  pub async fn erase_relay_data(conn, relay_id) -> [sha256] fails  !db  @310-356
     -- Erase what a relay holds but keep its settings, returning the blobs whose bytes should go.
     delete its events, rooms, roles, method grants, bans and notifications
       rooms take their members and invites with them
@@ -39,6 +41,6 @@ module caravel_core::commands::relays  !db !rand
     clear every remaining member's roles
     delete its claims, but those of active or canceled invite memberships
     delete its blobs, owners cascading, returning their hashes
-  pub async fn erase_purged_relay_data(conn, relay_id) fails  !db       @343-362
+  pub async fn erase_purged_relay_data(conn, relay_id) fails  !db       @360-379
     -- Delete everything a purged relay held; billing's records, memberships and calls stay.
     -- events, rooms, members, roles, bans, claims, blobs, notifications, redirects

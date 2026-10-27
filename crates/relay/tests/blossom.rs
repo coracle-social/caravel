@@ -242,6 +242,46 @@ async fn an_authorization_must_be_for_the_verb_and_unexpired() {
     assert_eq!(uncovered.status, StatusCode::FORBIDDEN);
 }
 
+// BUD-11: a token naming servers is good only on those, so one made for another
+// relay here can't be replayed on this one.
+#[tokio::test]
+async fn an_authorization_naming_servers_is_good_only_on_them() {
+    let server = Server::start().await;
+    let (relay, owner) = media_relay(&server).await;
+    let bytes = b"scoped";
+    let hash = sha256(bytes);
+    let expiration = (server.now() + 60).to_string();
+    let put = |named: &str| {
+        let auth = testing::authorization(&sign_event(
+            &owner,
+            kinds::BLOSSOM_AUTH,
+            "upload",
+            &[
+                &["t", "upload"],
+                &["expiration", &expiration],
+                &["x", &hash],
+                &["server", named],
+            ],
+            server.now(),
+        ));
+        Request::put("/upload")
+            .header("host", relay.canonical_host())
+            .header("authorization", auth)
+            .body(Body::from(bytes.to_vec()))
+            .unwrap()
+    };
+
+    let elsewhere = server.http(put("other.relay.test")).await;
+    assert_eq!(elsewhere.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        elsewhere.header("x-reason"),
+        Some("the authorization is for another server")
+    );
+
+    let here = server.http(put(&relay.canonical_host())).await;
+    assert_eq!(here.status, StatusCode::OK);
+}
+
 #[tokio::test]
 async fn a_blob_stays_until_its_last_uploader_deletes_it() {
     let server = Server::start().await;

@@ -62,9 +62,11 @@ pub async fn reverify_custom_domains(core: &Core) -> Result<()> {
     Ok(())
 }
 
-/// Record a verification result, returning whether it changed the relay.
+/// Record a verification result, returning whether it changed the relay. A
+/// verified domain stops redirecting to whichever relay held it before, and both
+/// relays reload.
 async fn set_verified(core: &Core, relay_id: &str, custom_domain: &str, verified: bool) -> bool {
-    let result: Result<bool> = core
+    let result: Result<(bool, Option<String>)> = core
         .db
         .with_tx(async |conn| {
             let changed = commands::relays::set_custom_domain_verified(
@@ -74,22 +76,26 @@ async fn set_verified(core: &Core, relay_id: &str, custom_domain: &str, verified
                 verified,
             )
             .await?;
-            if changed && verified {
-                commands::relays::remove_host_redirects(&mut *conn, &[custom_domain.to_string()])
-                    .await?;
-            }
-            Ok(changed)
+            let previous = if changed && verified {
+                commands::relays::take_host_redirect(&mut *conn, custom_domain).await?
+            } else {
+                None
+            };
+            Ok((changed, previous))
         })
         .await;
 
     match result {
-        Ok(true) => {
-            core.bus.publish(Change::RelayChanged {
-                relay_id: relay_id.to_string(),
-            });
+        Ok((true, previous)) => {
+            let previous = previous.filter(|previous| previous != relay_id);
+            for relay_id in std::iter::once(relay_id).chain(previous.as_deref()) {
+                core.bus.publish(Change::RelayChanged {
+                    relay_id: relay_id.to_string(),
+                });
+            }
             true
         }
-        Ok(false) => false,
+        Ok((false, _)) => false,
         Err(error) => {
             tracing::error!(relay = relay_id, error = %error, "failed to record custom domain verification");
             false

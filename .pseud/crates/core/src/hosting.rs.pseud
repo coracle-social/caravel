@@ -1,4 +1,4 @@
-% source=crates/core/src/hosting.rs lang=rust lines=433 sha=a3ddae15024c
+% source=crates/core/src/hosting.rs lang=rust lines=433 sha=c1e973358715
 
 module caravel_core::hosting  !net !db !fs !time !rand
   -- Hosting: what tenants and admins do to tenants and relays; callers authorize first.
@@ -43,7 +43,7 @@ module caravel_core::hosting  !net !db !fs !time !rand
     in one transaction
       update the row; the SQL withdraws verification if custom domain, domain or subdomain changed
       a replaced verified custom domain redirects to this relay from now on
-      drop redirects from the relay's own canonical host and custom domain
+      drop the relay's own redirects from its canonical host and custom domain
       record UpdateRelay with the new plan and the caller's copy of the status
     publish RelayChanged, then return the relay as re-read
   pub async fn deactivate_relay(core, relay) fails  !db !time !rand     @281-289

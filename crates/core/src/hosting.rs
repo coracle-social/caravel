@@ -258,7 +258,7 @@ pub async fn update_relay(core: &Core, relay: Relay, settings: RelaySettings) ->
             if let Some(host) = &replaced_domain {
                 commands::relays::add_host_redirect(&mut *conn, host, &relay.id, now).await?;
             }
-            commands::relays::remove_host_redirects(&mut *conn, &own_hosts).await?;
+            commands::relays::remove_host_redirects(&mut *conn, &relay.id, &own_hosts).await?;
             commands::activity::insert_relay_activity(
                 conn,
                 ActivityType::UpdateRelay,

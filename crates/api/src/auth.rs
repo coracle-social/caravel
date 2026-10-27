@@ -6,12 +6,11 @@ use axum::http::HeaderMap;
 use axum::http::header::AUTHORIZATION;
 use axum::http::request::Parts;
 use caravel_core::models::auth::Actor;
-use caravel_core::{Core, Error, domain, sessions};
+use caravel_core::{Core, Error, sessions};
 
 use crate::response::ApiError;
 
-/// The actor behind a session's bearer token, or behind a NIP-98 header signed for
-/// the API's base url, which clients from before sessions send on every request.
+/// The actor behind a session's bearer token.
 pub struct Authed(pub Actor);
 
 /// Proof that the request is from an admin of the platform.
@@ -21,18 +20,13 @@ impl FromRequestParts<Core> for Authed {
     type Rejection = ApiError;
 
     async fn from_request_parts(parts: &mut Parts, core: &Core) -> Result<Self, Self::Rejection> {
-        let header = authorization(&parts.headers)?;
-        let now = core.clock.now();
-
-        let pubkey = match header.strip_prefix("Bearer ") {
-            Some(token) => {
-                sessions::find(core, token.trim())
-                    .await?
-                    .ok_or_else(|| Error::Unauthorized("session is invalid or expired".into()))?
-                    .pubkey
-            }
-            None => domain::auth::verify_base_url_auth(header, &core.config.api_url, now)?,
-        };
+        let token = authorization(&parts.headers)?
+            .strip_prefix("Bearer ")
+            .ok_or_else(|| Error::Unauthorized("authorization must be a bearer token".into()))?;
+        let pubkey = sessions::find(core, token.trim())
+            .await?
+            .ok_or_else(|| Error::Unauthorized("session is invalid or expired".into()))?
+            .pubkey;
 
         Ok(Self(Actor::new(&core.config, &pubkey)))
     }

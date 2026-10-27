@@ -54,7 +54,7 @@ After a write commits, the subsystem that made it publishes a change on an in-pr
 
 ## Authentication and authorization
 
-The API's own routes authenticate with session tokens. A client signs one NIP-98 request for exactly `POST /session` and gets back an opaque bearer token, good for thirty days, which it sends from then on. Only a hash of the token is stored, so sessions can be ended individually or all at once for a pubkey. Clients from before sessions may instead send a NIP-98 header signed for the API's base url, which is accepted for fifteen minutes after signing.
+The API's own routes authenticate with session tokens. A client signs one NIP-98 request for exactly `POST /session` and gets back an opaque bearer token, good for thirty days, which it sends from then on. Only a hash of the token is stored, so sessions can be ended individually or all at once for a pubkey.
 
 An authenticated request runs as an actor: a pubkey, and whether it is an admin. Authorization is load-then-authorize: a handler loads the tenant, relay or invoice the request names, then asks the actor whether it may act as that resource's tenant. An extractor gates the admin-only routes. A test calls every route without credentials, and admin routes as a tenant, to make sure none is left open.
 

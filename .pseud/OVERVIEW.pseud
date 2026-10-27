@@ -36,9 +36,9 @@ module overview
   ~ memberships: `open_checkout` -> Stripe Connect checkout -> `reconcile_checkout` -> `activate`
     admits the member; `sweep` renews or lapses subscriptions and settles stale checkouts
   ~ sessions: one NIP-98 `POST /session` buys a 30-day bearer token (`sessions::start`),
-    stored only as a hash; `Authed` accepts it, or a NIP-98 header for the API base url
-  ~ media: Blossom `upload` stores bytes, then `media` records the blob per uploader;
-    `delete` removes a pubkey's claim and the bytes once the last owner is gone
+    stored only as a hash; `Authed` accepts only it
+  ~ media: Blossom `upload` -> `media::keep_upload` stores the bytes and records the blob per
+    uploader; `delete` removes a pubkey's claim and the bytes once the last owner is gone
   ~ calls: `livekit::token` admits room members by `admit_call`; `livekit::webhook` meters time
 
   -- Shared state

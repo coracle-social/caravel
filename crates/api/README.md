@@ -14,8 +14,6 @@ A client signs in once and then sends a bearer token:
 - Every other authenticated route takes `Authorization: Bearer <token>`.
 - `DELETE /session` ends the session whose token it is sent with.
 
-For clients that predate sessions, an authenticated route also accepts a NIP-98 header whose `u` tag is the API's base url, with no `method` check, for fifteen minutes after it was signed.
-
 Admins are the pubkeys in `ADMIN_PUBKEYS`. Unless marked otherwise, a route that names a tenant, relay or invoice may be called by that tenant or by an admin.
 
 ## Routes

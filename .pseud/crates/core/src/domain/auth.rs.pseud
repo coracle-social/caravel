@@ -1,29 +1,23 @@
-% source=crates/core/src/domain/auth.rs lang=rust lines=118 sha=a6954f59508d
+% source=crates/core/src/domain/auth.rs lang=rust lines=97 sha=64ab4ac8a527
 
 module caravel_core::domain::auth
   -- NIP-98: who signed an Authorization header, checked against what it was made for.
 
   const MAX_SKEW = 60  -- seconds a strict signature's created_at may be from now  @12-13
-  const BASE_URL_AUTH_MAX_AGE = 15 minutes  -- for a reused base-url header; clients re-sign each 10  @15-17
 
-  pub fn verify_request_auth(header, url, method, now) -> pubkey fails  @19-42
+  pub fn verify_request_auth(header, url, method, now) -> pubkey fails  @15-38
     -- The signer of a header made for exactly this request.
     fail Unauthorized unless the u tag is url, ignoring trailing slashes
     fail unless the method tag is method, case-insensitively
     fail "stale" if created_at is more than MAX_SKEW from now, either way
-  pub fn verify_base_url_auth(header, base_url, now) -> pubkey fails    @44-59
-    -- The signer of a header for the API's base url, which pre-session clients reuse for every call.
-    fail Unauthorized unless the u tag is base_url, ignoring trailing slashes
-    fail "stale" if dated over MAX_SKEW ahead or signed more than BASE_URL_AUTH_MAX_AGE ago
-    no method or payload is checked, so one header authorizes any call for 15 minutes
-  pub fn verify_payload_auth(header, host, body: bytes, now) -> pubkey fails  @61-81
+  pub fn verify_payload_auth(header, host, body: bytes, now) -> pubkey fails  @40-60
     -- The signer of a header for a request to a relay on host with this body.
     fail Unauthorized unless the u tag's url_host is host; its path and the method are not checked
     fail unless the payload tag is the body's sha256
     fail "stale" if created_at is more than MAX_SKEW from now, either way
-  pub fn decode_authorization(header) -> Event fails                    @83-102
+  pub fn decode_authorization(header) -> Event fails                    @62-81
     -- The verified event in `Authorization: Nostr <base64>`, standard or url-safe base64.
     fail Unauthorized without the Nostr scheme, on bad base64 or JSON, or a bad id or signature
-  fn decode_http_auth(header) -> Event fails  -- decode_authorization, which must be kind HTTP_AUTH  @104-110
-  fn same_url(signed, expected) -> bool  -- equal once trailing slashes are trimmed  @112-114
-  fn unauthorized(reason) -> Error                                      @116-118
+  fn decode_http_auth(header) -> Event fails  -- decode_authorization, which must be kind HTTP_AUTH  @83-89
+  fn same_url(signed, expected) -> bool  -- equal once trailing slashes are trimmed  @91-93
+  fn unauthorized(reason) -> Error                                      @95-97

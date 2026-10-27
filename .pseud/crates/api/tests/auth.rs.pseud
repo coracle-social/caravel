@@ -1,9 +1,9 @@
-% source=crates/api/tests/auth.rs lang=rust lines=319 sha=fe6c47d81227
+% source=crates/api/tests/auth.rs lang=rust lines=307 sha=dcbfe94d32cd
 
 module caravel_api::tests::auth
-  -- How the API authenticates: NIP-98-bought sessions, base-url signatures, which routes need them.
+  -- How the API authenticates: sessions a NIP-98 signature buys, and which routes need one.
 
-  tests                                                                 @12-319
+  tests                                                                 @12-307
     test a_signature_buys_a_session_until_it_is_deleted                 @13-28
       -- the bearer reads /identity as a non-admin until DELETE /session, then 401
     test a_session_signature_must_be_for_this_request_and_fresh         @31-51
@@ -12,15 +12,15 @@ module caravel_api::tests::auth
       -- good one second before thirty days, 401 at exactly thirty days
     test an_admin_can_revoke_every_session_a_pubkey_holds               @79-104
       -- the user gets 403 on DELETE /sessions/{pubkey}; the admin revokes both of its sessions
-    test a_base_url_signature_works_for_fifteen_minutes                 @107-135
-      -- accepted 14 minutes old, 401 at 16 minutes, and 401 for another host's url
-    test every_route_has_an_auth_class                                  @140-267
+    test a_signature_is_no_substitute_for_a_session                     @107-123
+      -- a fresh NIP-98 header for the base url or for the route itself is 401 "must be a bearer token"
+    test every_route_has_an_auth_class                                  @128-255
       -- Every served route is in a class; public ones answer bare, the rest need credentials.
       every method and route the router serves matches a class entry, and every entry a route
       plans are 200 without credentials; domain check, offer, invites, invite reconcile are 404
       every tenant, relay, member, invoice and session route is 401 without credentials
       every admin route is 401 without credentials and 403 for a tenant's bearer
-    async fn served_routes(api) -> [(method, route)]                    @271-292
+    async fn served_routes(api) -> [(method, route)]                    @259-280
       -- Each caravel_api::routes path's methods, but HEAD, from the Allow header of a 405 to PROBE.
-    fn is_request_for(route, path) -> bool  -- same segments, ignoring the query; `{}` matches any  @295-303
-    test banning_a_tenant_nobody_is_not_found                           @306-319
+    fn is_request_for(route, path) -> bool  -- same segments, ignoring the query; `{}` matches any  @283-291
+    test banning_a_tenant_nobody_is_not_found                           @294-307

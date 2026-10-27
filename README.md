@@ -22,7 +22,7 @@ The binary reads these from the environment, or from a `.env` file in its workin
 | Variable | Description |
 | --- | --- |
 | `PORT` | The port everything is served on, `2892` by default |
-| `API_URL` | The API's public base url, which NIP-98 signatures are checked against. On its own host, the API is served at the root, as Flotilla needs; sharing `PLATFORM_URL`'s host, it needs a path such as `/api` |
+| `API_URL` | The API's public base url, which the NIP-98 signature that starts a session is checked against. On its own host, the API is served at the root, as Flotilla needs; sharing `PLATFORM_URL`'s host, it needs a path such as `/api` |
 | `PLATFORM_URL` | The dashboards' public url. Without it, no dashboard is served |
 | `PLATFORM_NAME`, `PLATFORM_LOGO` | The name and logo the web apps show, `Caravel` and `/caravel.png` by default |
 | `ADMIN_PUBKEYS` | Comma-separated hex pubkeys of the platform's admins |

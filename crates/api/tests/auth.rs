@@ -1,5 +1,5 @@
-//! How the API authenticates: sessions bought with one NIP-98 signature, the
-//! reusable base-url signatures older clients send, and which routes need either.
+//! How the API authenticates: sessions bought with one NIP-98 signature, and which
+//! routes need one.
 
 mod common;
 
@@ -104,34 +104,22 @@ async fn an_admin_can_revoke_every_session_a_pubkey_holds() {
 }
 
 #[tokio::test]
-async fn a_base_url_signature_works_for_fifteen_minutes() {
+async fn a_signature_is_no_substitute_for_a_session() {
     let api = TestApi::new().await;
     let user = SecretKey::generate();
     let now = api.core.clock.now();
 
-    let fresh = testing::http_auth(&user, API_URL, "GET", now - 14 * 60);
-    assert_eq!(
-        api.request("GET", "/identity", Some(&fresh), None)
-            .await
-            .status,
-        StatusCode::OK
-    );
-
-    let stale = testing::http_auth(&user, API_URL, "GET", now - 16 * 60);
-    assert_eq!(
-        api.request("GET", "/identity", Some(&stale), None)
-            .await
-            .status,
-        StatusCode::UNAUTHORIZED
-    );
-
-    let elsewhere = testing::http_auth(&user, "http://elsewhere.test", "GET", now);
-    assert_eq!(
-        api.request("GET", "/identity", Some(&elsewhere), None)
-            .await
-            .status,
-        StatusCode::UNAUTHORIZED
-    );
+    for auth in [
+        testing::http_auth(&user, API_URL, "GET", now),
+        testing::http_auth(&user, &format!("{API_URL}/identity"), "GET", now),
+    ] {
+        let response = api.request("GET", "/identity", Some(&auth), None).await;
+        assert_eq!(response.status, StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            response.body["error"],
+            "authorization must be a bearer token"
+        );
+    }
 }
 
 /// Every route the router serves is in a class: the public ones answer without

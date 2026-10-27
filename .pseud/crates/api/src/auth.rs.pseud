@@ -1,20 +1,20 @@
-% source=crates/api/src/auth.rs lang=rust lines=56 sha=f809dc6e01bb
+% source=crates/api/src/auth.rs lang=rust lines=50 sha=dbe108beed6a
 
 module caravel_api::auth  !db !time
   -- Extractors that authenticate a request: a handler taking one requires it; without one, public.
 
-  pub data Authed(Actor)  -- the actor behind a session token, or a legacy NIP-98 header  @15
-  pub data Admin  -- proof that the request is from a platform admin    @18
+  pub data Authed(Actor)  -- the actor behind a session's bearer token  @14
+  pub data Admin  -- proof that the request is from a platform admin    @17
 
-  impl FromRequestParts for Authed  !db !time                           @20-39
-    async fn from_request_parts(parts, core) -> Authed fails ApiError  !db !time  @23-38
+  impl FromRequestParts for Authed  !db !time                           @19-33
+    async fn from_request_parts(parts, core) -> Authed fails ApiError  !db !time  @22-32
       -- Resolve the Authorization header to an actor, admin when ADMIN_PUBKEYS lists it.
       fail Unauthorized without an Authorization header
-      "Bearer <token>" -> sessions::find the trimmed token, Unauthorized if none is live
-      anything else -> a NIP-98 header signed for the API's base url, checked at now
-  impl FromRequestParts for Admin  !db !time                            @41-49
-    async fn from_request_parts(parts, core) -> Admin fails ApiError  !db !time  @44-48
+      Unauthorized "authorization must be a bearer token" unless it is "Bearer <token>"
+      sessions::find the trimmed token, Unauthorized if none is live
+  impl FromRequestParts for Admin  !db !time                            @35-43
+    async fn from_request_parts(parts, core) -> Admin fails ApiError  !db !time  @38-42
       -- Authed, then Forbidden unless the actor is an admin.
 
-  pub fn authorization(headers) -> str fails ApiError                   @51-56
+  pub fn authorization(headers) -> str fails ApiError                   @45-50
     -- The Authorization header as text; Unauthorized when it is missing or not text.

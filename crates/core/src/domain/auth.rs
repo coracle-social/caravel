@@ -12,10 +12,6 @@ use crate::models::kinds;
 /// How far a strict NIP-98 signature's `created_at` may be from now.
 const MAX_SKEW: i64 = 60;
 
-/// How old a reused NIP-98 header signed for the API's base url may be. Clients
-/// re-sign every ten minutes.
-const BASE_URL_AUTH_MAX_AGE: i64 = 15 * 60;
-
 /// The signer of a NIP-98 `Authorization` header made for exactly this request:
 /// its `u` tag is `url`, its `method` tag is `method`, and it was signed within a
 /// minute of `now`.
@@ -35,23 +31,6 @@ pub fn verify_request_auth(header: &str, url: &str, method: &str, now: i64) -> R
     }
 
     if (event.created_at - now).abs() > MAX_SKEW {
-        return Err(unauthorized("authorization is stale"));
-    }
-
-    Ok(event.pubkey.to_hex())
-}
-
-/// The signer of a NIP-98 header made for the API's base url rather than for one
-/// request, which clients that predate sessions reuse for every call. It is good
-/// for fifteen minutes from signing.
-pub fn verify_base_url_auth(header: &str, base_url: &str, now: i64) -> Result<String> {
-    let event = decode_http_auth(header)?;
-
-    if !same_url(event.tags.value("u").unwrap_or_default(), base_url) {
-        return Err(unauthorized("authorization host mismatch"));
-    }
-
-    if event.created_at > now + MAX_SKEW || now - event.created_at > BASE_URL_AUTH_MAX_AGE {
         return Err(unauthorized("authorization is stale"));
     }
 

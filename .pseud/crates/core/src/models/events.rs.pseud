@@ -1,4 +1,4 @@
-% source=crates/core/src/models/events.rs lang=rust lines=134 sha=046c4ca7385c
+% source=crates/core/src/models/events.rs lang=rust lines=139 sha=169d0473117b
 
 module caravel_core::models::events
   -- The event store's shapes: every relay's events in one table, deletions kept as tombstones.
@@ -23,9 +23,10 @@ module caravel_core::models::events
     ~ from_event, id_hex, pubkey_hex                                    @68-84
     pub fn tag(self, name) -> str?  -- the first value of a single-letter tag  @86-92
 
-  impl StoredEvent                                                      @95-124
+  impl StoredEvent                                                      @95-128
     pub fn from_event(event) -> StoredEvent  !-panic  -- tags always serialize  @96-103
     pub fn to_json(self, strip_signature: bool) -> str  !-panic         @105-123
       -- NIP-01 JSON built by hand from the stored tags JSON, without sig when stripping.
+    pub fn to_event(self) -> Event fails  -- the event, parsed back from its to_json  @125-128
 
-  fn tag_values(event) -> [str]  -- name:value for tags with a value and a one-character name  @126-134
+  fn tag_values(event) -> [str]  -- name:value for tags with a value and a one-character name  @131-139

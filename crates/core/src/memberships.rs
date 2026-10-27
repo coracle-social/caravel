@@ -4,7 +4,7 @@
 //! as a claim for whoever joins with it; lapsing removes a member who got in by
 //! paying, and tells them why. A sweep keeps every membership in step with Stripe.
 
-use caravel_adapters::stripe::{MembershipCheckoutParams, Subscription};
+use caravel_adapters::stripe::{MembershipCheckoutParams, Standing, Subscription};
 
 use crate::Core;
 use crate::bus::Change;
@@ -275,7 +275,7 @@ pub async fn activate(
     let now = core.clock.now();
     let Some(period_end) = subscription
         .current_period_end
-        .filter(|end| subscription.in_good_standing && *end > now)
+        .filter(|end| subscription.standing == Standing::Good && *end > now)
     else {
         return Ok(false);
     };
@@ -541,8 +541,8 @@ async fn renew_or_lapse(core: &Core, membership: &Membership) -> Result<()> {
 
     let subscription = core.stripe.get_subscription(subscription_id).await?;
     let renewed = subscription.current_period_end.filter(|end| *end > now);
-    if let Some(period_end) =
-        renewed.filter(|_| subscription.in_good_standing && subscription.latest_invoice_paid)
+    if let Some(period_end) = renewed
+        .filter(|_| subscription.standing == Standing::Good && subscription.latest_invoice_paid)
     {
         let status = status_of(&subscription);
         return commands::memberships::set_status(
@@ -555,7 +555,7 @@ async fn renew_or_lapse(core: &Core, membership: &Membership) -> Result<()> {
     }
 
     // Not cycled yet, drafting the renewal's invoice, or retrying a failed payment.
-    let collecting = (subscription.in_good_standing || subscription.past_due)
+    let collecting = subscription.standing != Standing::Stopped
         && (renewed.is_some() || !subscription.cancel_at_period_end);
     let in_grace = membership
         .current_period_end

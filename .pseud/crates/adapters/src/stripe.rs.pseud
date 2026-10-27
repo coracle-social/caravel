@@ -1,4 +1,4 @@
-% source=crates/adapters/src/stripe.rs lang=rust lines=592 sha=bb5e01724347
+% source=crates/adapters/src/stripe.rs lang=rust lines=603 sha=314524aa1235
 
 module caravel_adapters::stripe  !panic !net !time
   -- The subset of the Stripe REST API caravel uses, returning plain values.
@@ -9,7 +9,7 @@ module caravel_adapters::stripe  !panic !net !time
   const TIMEOUT = 30s  -- so a hung request can't stall billing         @18
   pub data Stripe { http, secret_key, api }                             @20-25
 
-  impl Stripe  !panic !net !time                                        @27-480
+  impl Stripe  !panic !net !time                                        @27-483
     pub fn new(secret_key) -> Stripe  !panic !time  -- against STRIPE_API  @28-30
     pub fn with_api(secret_key, api) -> Stripe  !panic !time  -- against api, such as a test fake  @33-42
     ~ get, post, delete: requests to api + path, through authed         @46-56
@@ -53,43 +53,46 @@ module caravel_adapters::stripe  !panic !net !time
       -- complete when status is "complete" and payment is "paid" or "no_payment_required".
     pub async fn list_open_checkout_sessions(self, customer_id) -> [str] fails  !net  @392-408
       -- Ids of the customer's open sessions, first 100 only.
-    pub async fn get_subscription(self, subscription_id) -> Subscription fails  !net  @412-425
+    pub async fn get_subscription(self, subscription_id) -> Subscription fails  !net  @412-428
       -- Expanding latest_invoice: the first item's current_period_end, cancel_at_period_end, the
-      -- status as in_good_standing (active, trialing) or past_due, and whether that invoice is paid.
-    pub async fn list_live_subscriptions(self, customer_id) -> [str] fails  !net  @428-441
+      -- status as a Standing, and whether that invoice is paid.
+    pub async fn list_live_subscriptions(self, customer_id) -> [str] fails  !net  @431-444
       -- Ids of the customer's first 100 subscriptions, minus incomplete_expired ones.
-    pub async fn cancel_subscription_at_period_end(self, subscription_id) fails  @444-450
-    pub async fn cancel_subscription(self, subscription_id) fails  -- DELETE: ends it now  @453-458
-    pub async fn create_billing_portal_session(self, customer_id, return_url: str?) -> str fails  !net  @464-479
+    pub async fn cancel_subscription_at_period_end(self, subscription_id) fails  @447-453
+    pub async fn cancel_subscription(self, subscription_id) fails  -- DELETE: ends it now  @456-461
+    pub async fn create_billing_portal_session(self, customer_id, return_url: str?) -> str fails  !net  @467-482
       -- A billing portal url where the customer manages saved cards.
 
-  pub data MembershipCheckoutParams                                     @483-497
+  pub data MembershipCheckoutParams                                     @486-500
     customer_id, destination_account_id, relay_id, membership_id, product_name: str
     amount: i64  -- cents
     interval: str  -- month or year
     application_fee_percent: f64
     billing_cycle_anchor: i64?
     success_url, cancel_url: str
-  pub enum Charge  -- how an off-session charge ended, when Stripe's answer settles it  @500-505
+  pub enum Charge  -- how an off-session charge ended, when Stripe's answer settles it  @503-508
     Succeeded(payment_intent_id)
     Refused(reason)  -- nothing was charged
-  pub data CheckoutSession { id: str, url: str, expires_at: i64 }  -- an invoice's session  @508-512
-  pub data MembershipCheckout                                           @514-520
+  pub data CheckoutSession { id: str, url: str, expires_at: i64 }  -- an invoice's session  @511-515
+  pub data MembershipCheckout                                           @517-523
     complete: bool  -- completed and paid for
     customer_id, subscription_id, membership_id: str?
-  pub data Subscription                                                 @522-533
+  pub data Subscription                                                 @525-532
     current_period_end: i64?
     cancel_at_period_end: bool
-    in_good_standing: bool  -- active or trialing; Stripe moves the period on before collecting
-    past_due: bool  -- a payment failed and Stripe is retrying it
+    standing: Standing
     latest_invoice_paid: bool  -- a renewal's invoice is a draft for an hour, then open until paid
-  fn field(body, key, what) -> str fails  -- a string field, else "missing {what}"  @536-541
-  interface StripeRequest                                               @543-546
-    fn send_ok(self) -> Response fails                                  @544
-    fn send_json(self) -> Value fails                                   @545
-  impl StripeRequest for RequestBuilder  !net                           @548-556
-    async fn send_ok(self) -> Response fails  !net  -- send, then error_for_status  @549-551
-    async fn send_json(self) -> Value fails  -- send_ok, then parse the JSON body  @553-555
-  async fn error_for_status(resp) -> Response fails                     @559-592
+  pub enum Standing  -- a running period may still be unpaid            @534-544
+    Good  -- active or trialing
+    PastDue  -- a payment failed and Stripe is retrying it
+    Stopped  -- any other status, such as unpaid or canceled: Stripe has stopped collecting
+  fn field(body, key, what) -> str fails  -- a string field, else "missing {what}"  @547-552
+  interface StripeRequest                                               @554-557
+    fn send_ok(self) -> Response fails                                  @555
+    fn send_json(self) -> Value fails                                   @556
+  impl StripeRequest for RequestBuilder  !net                           @559-567
+    async fn send_ok(self) -> Response fails  !net  -- send, then error_for_status  @560-562
+    async fn send_json(self) -> Value fails  -- send_ok, then parse the JSON body  @564-566
+  async fn error_for_status(resp) -> Response fails                     @570-603
     -- A 4xx or 5xx as an error naming the url, status and Stripe's message, type or code, and param.
     -- Falls back to the raw body, or "<empty response body>".

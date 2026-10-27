@@ -15,7 +15,7 @@ use crate::error::{Error, Result};
 use crate::models::events::{Saved, StoredEvent};
 use crate::models::relays::Relay;
 use crate::models::rooms;
-use crate::models::transfer::{ImportProblem, ImportResult, Line};
+use crate::models::transfer::{HistoryEntry, ImportProblem, ImportResult, Line};
 use crate::{commands, domain, queries};
 
 /// The longest line an import takes.
@@ -72,8 +72,7 @@ where
     E: std::fmt::Display,
 {
     let mut result = ImportResult::default();
-    // Each room's history as (created_at, kind, id), read back from the store to replay.
-    let mut rooms_touched: BTreeMap<String, Vec<(i64, u16, [u8; 32])>> = BTreeMap::new();
+    let mut rooms_touched: BTreeMap<String, Vec<HistoryEntry>> = BTreeMap::new();
     let mut batch: Vec<(usize, Event)> = Vec::new();
     let mut buffer: Vec<u8> = Vec::new();
     let mut line = 0;
@@ -128,7 +127,11 @@ where
                                 rooms::kinds::JOIN_REQUEST | rooms::kinds::LEAVE_REQUEST
                             )
                         {
-                            history.push((event.created_at, event.kind, event.id.to_bytes()));
+                            history.push(HistoryEntry {
+                                created_at: event.created_at,
+                                kind: event.kind,
+                                id: event.id.to_bytes(),
+                            });
                         }
                     }
                     batch.push((line, event));
@@ -213,7 +216,7 @@ async fn store_batch(
 async fn rebuild_rooms(
     core: &Core,
     relay: &Relay,
-    rooms_touched: BTreeMap<String, Vec<(i64, u16, [u8; 32])>>,
+    rooms_touched: BTreeMap<String, Vec<HistoryEntry>>,
 ) -> Result<ImportResult> {
     let mut result = ImportResult::default();
     if rooms_touched.is_empty() {
@@ -231,7 +234,7 @@ async fn rebuild_rooms(
     for (room_id, mut history) in rooms_touched {
         let created = history
             .iter()
-            .any(|(_, kind, _)| *kind == rooms::kinds::CREATE_GROUP);
+            .any(|entry| entry.kind == rooms::kinds::CREATE_GROUP);
         if !known.contains(&room_id) && !created {
             result.note(ImportProblem {
                 line: None,
@@ -246,14 +249,14 @@ async fn rebuild_rooms(
             continue;
         }
 
-        history.sort_by_key(|(created_at, _, _)| *created_at);
+        history.sort_by_key(|entry| entry.created_at);
         let last = history.pop();
-        history.retain(|(_, kind, _)| *kind != rooms::kinds::DELETE_GROUP);
+        history.retain(|entry| entry.kind != rooms::kinds::DELETE_GROUP);
         history.extend(last);
         core.db
             .with_tx(async |conn| {
                 for page in history.chunks(IMPORT_BATCH) {
-                    let ids: Vec<[u8; 32]> = page.iter().map(|(_, _, id)| *id).collect();
+                    let ids: Vec<[u8; 32]> = page.iter().map(|entry| entry.id).collect();
                     let mut stored: BTreeMap<[u8; 32], StoredEvent> =
                         queries::events::get_events(&mut *conn, &relay.id, &ids)
                             .await?
@@ -265,8 +268,7 @@ async fn rebuild_rooms(
                         let Some(stored) = stored.remove(id) else {
                             continue;
                         };
-                        let event: Event = serde_json::from_str(&stored.to_json(false))
-                            .map_err(anyhow::Error::from)?;
+                        let event = stored.to_event().map_err(anyhow::Error::from)?;
                         commands::rooms::apply_event(&mut *conn, &key, &relay.id, &event, now)
                             .await?;
                     }

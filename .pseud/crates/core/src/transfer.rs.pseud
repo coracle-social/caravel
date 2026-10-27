@@ -1,4 +1,4 @@
-% source=crates/core/src/transfer.rs lang=rust lines=293 sha=b6930c993b58
+% source=crates/core/src/transfer.rs lang=rust lines=295 sha=0cb1dfba5333
 
 module caravel_core::transfer  !db !time
   -- Moving a relay's events in and out as JSONL, one event per line.
@@ -10,7 +10,7 @@ module caravel_core::transfer  !db !time
   pub fn export_events(pool, relay_id) -> stream Bytes fails  !db       @32-63
     -- Every stored event as JSONL, a page of EXPORT_PAGE at a time on a (created_at, id) cursor.
     -- Stops at an empty page or one shorter than EXPORT_PAGE.
-  pub async fn import_events(core, relay, body: stream Bytes) -> ImportResult fails  !db !time  @69-159
+  pub async fn import_events(core, relay, body: stream Bytes) -> ImportResult fails  !db !time  @69-162
     -- Store a JSONL dump as it arrives, reporting bad lines, then rebuild the rooms it touched.
     append each chunk to a buffer; a broken upload fails invalid "unreadable-body"
       at the end, a last line without a newline still counts
@@ -19,15 +19,15 @@ module caravel_core::transfer  !db !time
       blank -> nothing; invalid -> counted and reported; source relay state -> counted as skipped
       a room event, on a relay with groups_enabled
         one that names no room fails its line
-        note the room; keep the created_at, kind and id of its moderation events, joins and leaves
+        note the room; keep a HistoryEntry of its moderation events, joins and leaves
       queue the event, storing the queue every IMPORT_BATCH events
     an unfinished line past MAX_LINE_BYTES is reported once and its bytes discarded
     store what is left, then rebuild_rooms
-  fn store_batch(core, relay, batch: [(line, Event)]) -> ImportResult fails  !db !time  @162-206
+  fn store_batch(core, relay, batch: [(line, Event)]) -> ImportResult fails  !db !time  @165-209
     -- Save a batch in one transaction, then count each line's outcome.
     save each storable event; one holding a NUL is not saved and fails its line
     New or Duplicate counts as imported; Deleted fails, refused by a stored deletion
-  fn rebuild_rooms(core, relay, rooms_touched: Map<room_id, [(at, kind, id)]>) -> ImportResult fails  !db !time  @213-293
+  fn rebuild_rooms(core, relay, rooms_touched: Map<room_id, [HistoryEntry]>) -> ImportResult fails  !db !time  @216-295
     -- Replay each touched room's history as stored, then rewrite the relay's published state.
     read the rooms the relay already holds
     for each touched room

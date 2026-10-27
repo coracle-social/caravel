@@ -15,6 +15,8 @@ const REPORT = 1984
 
 const tagValue = (event: NostrEvent, name: string, index = 1) => event.tags.find(tag => tag[0] === name)?.[index]
 
+const tagValues = (event: NostrEvent, name: string) => event.tags.filter(tag => tag[0] === name).map(tag => tag[1])
+
 // What a report says is wrong: the type its first tag gives, or else nothing.
 const reportReason = (report: NostrEvent) => tagValue(report, "e", 2) || tagValue(report, "p", 2) || ""
 
@@ -24,7 +26,7 @@ export default function RelayReports() {
   const feed = usePagedEvents(() => params.id!, { kinds: [REPORT] }, 20)
 
   // The reported events the relay still holds, fetched for each page of reports in batches of 100, the most a page returns.
-  const targetIds = createMemo(() => uniq(feed.events().flatMap(report => report.tags.filter(tag => tag[0] === "e").map(tag => tag[1]))))
+  const targetIds = createMemo(() => uniq(feed.events().flatMap(report => tagValues(report, "e"))))
   const [targets] = createResource(
     () => (targetIds().length ? targetIds() : undefined),
     async (ids) => (await Promise.all(chunk(100, ids).map(batch => listRelayEvents(params.id!, { ids: batch, limit: 100 })))).flat(),
@@ -38,7 +40,7 @@ export default function RelayReports() {
 
   // Delete the reported event, and dismiss every shown report of it.
   async function deleteTarget(report: NostrEvent, id: string) {
-    const reports = feed.events().filter(event => event.tags.some(tag => tag[0] === "e" && tag[1] === id))
+    const reports = feed.events().filter(event => tagValues(event, "e").includes(id))
     await makeChange(async () => {
       await callRelayMethod(params.id!, "banevent", [id, reportReason(report)])
       await Promise.all(reports.map(dismiss))
@@ -47,7 +49,7 @@ export default function RelayReports() {
 
   // Ban the reported user, which deletes the reports they made, and dismiss every shown report of them.
   async function banAuthor(report: NostrEvent, pubkey: string) {
-    const reports = feed.events().filter(event => event.pubkey !== pubkey && (event === report || event.tags.some(tag => tag[0] === "p" && tag[1] === pubkey)))
+    const reports = feed.events().filter(event => event.pubkey !== pubkey && (event === report || tagValues(event, "p").includes(pubkey)))
     const banned = await makeChange(async () => {
       await callRelayMethod(params.id!, "banpubkey", [pubkey, reportReason(report)])
       await Promise.all(reports.map(dismiss))

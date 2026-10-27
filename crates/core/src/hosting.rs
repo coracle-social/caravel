@@ -306,8 +306,7 @@ pub async fn purge_relay(core: &Core, relay: &Relay) -> Result<()> {
     core.db
         .with_tx(async |conn| {
             // Judged on the locked row, so a stale copy can't credit an active relay twice.
-            queries::relays::lock_relay(conn, &relay.id).await?;
-            let relay = queries::relays::require_relay(&mut *conn, &relay.id).await?;
+            let relay = queries::relays::lock_relay(conn, &relay.id).await?;
             if relay.is_purged() {
                 return Err(Error::conflict(
                     "relay-is-purged",
@@ -379,8 +378,7 @@ async fn change_relay_status(
     let now = core.clock.now();
     core.db
         .with_tx(async |conn| {
-            queries::relays::lock_relay(conn, &relay.id).await?;
-            let relay = queries::relays::require_relay(&mut *conn, &relay.id).await?;
+            let relay = queries::relays::lock_relay(conn, &relay.id).await?;
             relay.require_unpurged()?;
             match (relay.status, status) {
                 (RelayStatus::Delinquent, _) => Err(Error::conflict(

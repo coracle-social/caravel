@@ -1,5 +1,5 @@
 //! Moving a relay's events in and out as JSONL, one event per line: what an import
-//! reports, and what one line of a dump holds.
+//! reports, what one line of a dump holds, and what it keeps of a room's history.
 
 use coracle_lib::events::Event;
 use serde::{Deserialize, Serialize};
@@ -16,6 +16,15 @@ pub struct ImportProblem {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub event_id: Option<String>,
     pub message: String,
+}
+
+/// An event of a room's history an import stored, kept small until the room is
+/// rebuilt from it: enough to order it, find its kind, and read it back by id.
+#[derive(Clone, Copy, Debug)]
+pub struct HistoryEntry {
+    pub created_at: i64,
+    pub kind: u16,
+    pub id: [u8; 32],
 }
 
 /// What an import did. An event the relay already held counts as imported, so

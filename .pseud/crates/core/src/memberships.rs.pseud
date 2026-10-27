@@ -1,4 +1,4 @@
-% source=crates/core/src/memberships.rs lang=rust lines=589 sha=239a0ef5dc3c
+% source=crates/core/src/memberships.rs lang=rust lines=589 sha=051d74151759
 
 module caravel_core::memberships  !net !db !time !rand
   -- Paid memberships of relays through Stripe Connect, each driving the relay's access list.
@@ -89,7 +89,7 @@ module caravel_core::memberships  !net !db !time !rand
     read the subscription with its latest invoice  !net
     its period moved on, in good standing, latest invoice paid -> store that end and its status
     still collecting, until RENEWAL_GRACE past the stored period end -> leave it for the next sweep
-      collecting: active or past due, and either moved on or not set to cancel
+      collecting: not Stopped, and either moved on or not set to cancel
       covers not cycled yet, the renewal invoice's draft hour, and Stripe's retries
     if Stripe still lists it as live, cancel it now, so nothing charges a membership moving on  !net
     if the customer has another live subscription and activate takes it, it carries on  !net

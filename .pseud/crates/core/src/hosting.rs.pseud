@@ -1,4 +1,4 @@
-% source=crates/core/src/hosting.rs lang=rust lines=435 sha=ee0cbb3dcba3
+% source=crates/core/src/hosting.rs lang=rust lines=433 sha=a3ddae15024c
 
 module caravel_core::hosting  !net !db !fs !time !rand
   -- Hosting: what tenants and admins do to tenants and relays; callers authorize first.
@@ -52,13 +52,13 @@ module caravel_core::hosting  !net !db !fs !time !rand
   pub async fn reactivate_relay(core, relay) fails  !db !time !rand     @292-300
     -- Resume an Inactive relay, recording ActivateRelay, which billing charges for the period's rest.
     -- change_relay_status to Active.
-  pub async fn purge_relay(core, relay) fails  !db !time !rand          @304-326
+  pub async fn purge_relay(core, relay) fails  !db !time !rand          @304-325
     -- Purge a relay for good, freeing its subdomain; the row stays.
-    in one transaction, under the relay's row lock, re-reading it
+    in one transaction, on the relay as lock_relay reads it
       fail conflict "relay-is-purged" if the locked row is purged
       set purged_at and record PurgeRelay with the locked row's status
     publish RelayChanged
-  pub async fn erase_relay(core, relay) fails  !net !db !fs !time       @332-368
+  pub async fn erase_relay(core, relay) fails  !net !db !fs !time       @331-367
     -- Erase what a relay holds but its settings, owner, and paid-for members and invites.
     fail if the relay is purged
     in one transaction, under the relay's row lock that joins bind paid invites under
@@ -67,13 +67,13 @@ module caravel_core::hosting  !net !db !fs !time !rand
     after the commit, publish AccessChanged with what was republished
     then delete each dropped blob's bytes; a failure is logged and left for a purge  !net !fs
       under its blob lock, and only if no upload has stored the blob again since  !db
-  fn change_relay_status(core, relay, status, activity_type) fails  !db !time !rand  @373-416
+  fn change_relay_status(core, relay, status, activity_type) fails  !db !time !rand  @372-414
     -- Move a relay between Active and Inactive, judged on its locked row so it records once.
-    in one transaction, under the relay's row lock, re-reading it
+    in one transaction, on the relay as lock_relay reads it
       fail if the locked row is purged
       fail conflict if it is Delinquent, or already at status
       record_status_change on the locked row
     publish RelayChanged
-  pub async fn erase_purged_relays(core) fails  !net !db !fs !time      @420-435
+  pub async fn erase_purged_relays(core) fails  !net !db !fs !time      @418-433
     -- For each purged relay not yet erased: delete its blobs by prefix, then its data, marking it.
     -- Blobs go first, so a failure leaves the relay for the next run, and ends this one.

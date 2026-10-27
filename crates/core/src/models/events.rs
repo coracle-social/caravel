@@ -121,6 +121,11 @@ impl StoredEvent {
             sig,
         )
     }
+
+    /// The event, read back from its JSON.
+    pub fn to_event(&self) -> serde_json::Result<Event> {
+        serde_json::from_str(&self.to_json(false))
+    }
 }
 
 /// An event's single-letter tags as `name:value`, the form tag filters match.

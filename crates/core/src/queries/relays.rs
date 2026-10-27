@@ -45,13 +45,14 @@ pub async fn require_relay(db: impl PgExecutor<'_>, id: &str) -> Result<Relay> {
         .ok_or(Error::NotFound("relay not found"))
 }
 
-/// Lock a relay's row until the transaction ends, which serializes its joins.
-pub async fn lock_relay(conn: &mut PgConnection, id: &str) -> Result<()> {
-    sqlx::query("SELECT 1 FROM relay WHERE id = $1 FOR UPDATE")
+/// Read a relay and lock its row until the transaction ends, which serializes its
+/// joins and status changes.
+pub async fn lock_relay(conn: &mut PgConnection, id: &str) -> Result<Relay> {
+    sqlx::query_as::<_, Relay>(&format!("{SELECT_RELAY} WHERE id = $1 FOR UPDATE"))
         .bind(id)
-        .execute(conn)
-        .await?;
-    Ok(())
+        .fetch_optional(conn)
+        .await?
+        .ok_or(Error::NotFound("relay not found"))
 }
 
 /// The live relay a host belongs to: as its canonical host, its verified custom

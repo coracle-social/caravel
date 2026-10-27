@@ -1,4 +1,4 @@
-% source=crates/relay/src/push.rs lang=rust lines=279 sha=e707618c455f
+% source=crates/relay/src/push.rs lang=rust lines=279 sha=123f23ae4a2d
 
 module caravel_relay::push  !net !db !lock !spawn !time
   -- NIP-9a push: stored kind 30390 subscriptions, and a bounded pool POSTing new event ids to them.

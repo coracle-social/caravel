@@ -418,8 +418,11 @@ impl Stripe {
         Ok(Subscription {
             current_period_end: body["items"]["data"][0]["current_period_end"].as_i64(),
             cancel_at_period_end: body["cancel_at_period_end"].as_bool().unwrap_or(false),
-            in_good_standing: matches!(body["status"].as_str(), Some("active" | "trialing")),
-            past_due: body["status"].as_str() == Some("past_due"),
+            standing: match body["status"].as_str() {
+                Some("active" | "trialing") => Standing::Good,
+                Some("past_due") => Standing::PastDue,
+                _ => Standing::Stopped,
+            },
             latest_invoice_paid: body["latest_invoice"]["status"].as_str() == Some("paid"),
         })
     }
@@ -522,14 +525,22 @@ pub struct MembershipCheckout {
 pub struct Subscription {
     pub current_period_end: Option<i64>,
     pub cancel_at_period_end: bool,
-    /// Active or trialing. Stripe moves a subscription to its next period before
-    /// collecting for it, so a period running doesn't mean it was paid for.
-    pub in_good_standing: bool,
-    /// A payment failed and Stripe is retrying it.
-    pub past_due: bool,
+    pub standing: Standing,
     /// A renewal's invoice stays a draft for about an hour, then is open until
     /// Stripe collects it.
     pub latest_invoice_paid: bool,
+}
+
+/// Where a subscription stands with Stripe. Stripe moves a subscription to its next
+/// period before collecting for it, so a period running doesn't mean it was paid for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Standing {
+    /// Active or trialing.
+    Good,
+    /// A payment failed and Stripe is retrying it.
+    PastDue,
+    /// Any other status, such as unpaid or canceled: Stripe has stopped collecting.
+    Stopped,
 }
 
 /// A string field of a response, which Stripe always sends.

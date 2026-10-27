@@ -11,6 +11,9 @@ use crate::models::events::{EventGroup, EventHead, EventPage, StoredEvent};
 use crate::models::relays::Relay;
 use crate::models::rooms;
 
+const SELECT_EVENT: &str =
+    "SELECT id, pubkey, created_at, kind, tag_values, content, tags, sig FROM event";
+
 /// Whether the author deleted this event, or the version of its slot it is, or
 /// asked the relay to forget them since it was written, or a moderator of its room
 /// deleted it there.
@@ -82,9 +85,7 @@ pub async fn page_events(
         .transpose()
         .map_err(|_| Error::invalid("invalid-after", "after must be a hex event id"))?;
 
-    let mut query = QueryBuilder::<Postgres>::new(
-        "SELECT id, pubkey, created_at, kind, tag_values, content, tags, sig FROM event",
-    );
+    let mut query = QueryBuilder::<Postgres>::new(SELECT_EVENT);
     push_filter(&mut query, &relay.id, &filter, now);
     if let (Some(until), Some(after)) = (page.until, after) {
         query
@@ -119,9 +120,7 @@ pub async fn query_events(
         return Ok(Vec::new());
     }
 
-    let mut query = QueryBuilder::<Postgres>::new(
-        "SELECT id, pubkey, created_at, kind, tag_values, content, tags, sig FROM event",
-    );
+    let mut query = QueryBuilder::<Postgres>::new(SELECT_EVENT);
     push_filter(&mut query, relay_id, filter, now);
     query
         .push(" ORDER BY created_at DESC, id LIMIT ")
@@ -222,11 +221,10 @@ pub async fn list_events_after(
     id: &[u8],
     limit: i64,
 ) -> Result<Vec<StoredEvent>> {
-    let rows = sqlx::query(
-        "SELECT id, pubkey, created_at, kind, tag_values, content, tags, sig FROM event
-         WHERE relay_id = $1 AND (created_at < $2 OR (created_at = $2 AND id > $3))
+    let rows = sqlx::query(&format!(
+        "{SELECT_EVENT} WHERE relay_id = $1 AND (created_at < $2 OR (created_at = $2 AND id > $3))
          ORDER BY created_at DESC, id LIMIT $4",
-    )
+    ))
     .bind(relay_id)
     .bind(created_at)
     .bind(id)
@@ -243,10 +241,9 @@ pub async fn get_events(
     relay_id: &str,
     ids: &[[u8; 32]],
 ) -> Result<Vec<StoredEvent>> {
-    let rows = sqlx::query(
-        "SELECT id, pubkey, created_at, kind, tag_values, content, tags, sig FROM event
-         WHERE relay_id = $1 AND id = ANY($2)",
-    )
+    let rows = sqlx::query(&format!(
+        "{SELECT_EVENT} WHERE relay_id = $1 AND id = ANY($2)",
+    ))
     .bind(relay_id)
     .bind(ids.iter().map(|id| id.to_vec()).collect::<Vec<_>>())
     .fetch_all(db)

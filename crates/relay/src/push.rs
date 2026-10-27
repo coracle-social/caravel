@@ -42,7 +42,7 @@ pub struct Subscription {
 
 impl Subscription {
     fn parse(stored: &StoredEvent) -> Option<Self> {
-        let event: Event = serde_json::from_str(&stored.to_json(false)).ok()?;
+        let event = stored.to_event().ok()?;
         let parse_filters = |name: &str| -> Vec<Filter> {
             event
                 .tags

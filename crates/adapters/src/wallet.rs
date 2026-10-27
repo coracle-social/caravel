@@ -217,4 +217,21 @@ mod tests {
         );
         assert!(Wallet::from_url("https://example.com").is_err());
     }
+
+    #[tokio::test]
+    async fn a_wallet_relay_on_a_local_address_is_never_dialed() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let relay = format!("ws://{}", listener.local_addr().unwrap());
+        let url = format!(
+            "nostr+walletconnect://{}?relay={relay}&secret={}",
+            SecretKey::generate().public_key().to_hex(),
+            SecretKey::generate().to_hex()
+        );
+        let error = Wallet::from_url(&url)
+            .unwrap()
+            .pay_invoice("lnbc1", 0)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("no public address"), "{error}");
+    }
 }

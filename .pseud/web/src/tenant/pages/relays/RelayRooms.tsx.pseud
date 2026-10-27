@@ -1,0 +1,12 @@
+% source=web/src/tenant/pages/relays/RelayRooms.tsx lang=typescript lines=128 sha=79933a318f94
+
+module @/tenant/pages/relays/RelayRooms  !net !db !time
+  -- A relay's rooms tab: its NIP-29 rooms, to create, edit, delete and open.
+
+  pub fn RelayRooms()  !net !db !time !-panic  -- routed only inside RelayFrame  @16-128
+    -- Each room's name, Voice and flag badges, about and member count, linking to the room.
+    read listRelayRooms for the route's relay
+    New room and the list need groups_enabled; until the relay loads the list shows anyway  @52-59
+    RoomDialog offers voice rooms only when livekit_enabled; saving refetches  @105-111
+    fn remove()  !net !db !time                                         @28-43
+      -- After a confirmation: moderateRoom DELETE_GROUP with the room's h tag, then refetch.

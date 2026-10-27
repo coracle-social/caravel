@@ -11,10 +11,10 @@ use axum::http::{Request, StatusCode};
 use axum::routing::post;
 use axum::{Json, Router};
 use caravel_adapters::livekit::Livekit;
-use caravel_core::calls;
-use caravel_core::events::kinds;
-use caravel_core::relays::Relay;
-use caravel_core::testing::{self, sign_event};
+use caravel_core::models::kinds;
+use caravel_core::models::relays::Relay;
+use caravel_core::testing::sign_event;
+use caravel_core::{domain, queries, testing};
 use common::*;
 use coracle_lib::keys::SecretKey;
 use serde_json::{Value, json};
@@ -145,7 +145,7 @@ async fn a_member_gets_a_token_for_a_rooms_call() {
     assert_eq!(claims["iss"], "test-key");
     assert_eq!(
         claims["video"]["room"],
-        calls::livekit_room(&relay.id, "call")
+        domain::calls::livekit_room(&relay.id, "call")
     );
     assert_eq!(claims["video"]["roomJoin"], true);
     assert!(
@@ -212,7 +212,7 @@ async fn a_departure_is_metered_once_and_the_call_published() {
         .unwrap()
         .push(format!("{staying}:nonce"));
 
-    let room = calls::livekit_room(&relay.id, "call");
+    let room = domain::calls::livekit_room(&relay.id, "call");
     let left = json!({
         "event": "participant_left",
         "room": {"name": room},
@@ -228,7 +228,7 @@ async fn a_departure_is_metered_once_and_the_call_published() {
         );
     }
     assert_eq!(
-        calls::participant_seconds(server.core.db.pool(), &relay.id)
+        queries::calls::participant_seconds(server.core.db.pool(), &relay.id)
             .await
             .unwrap(),
         60
@@ -267,7 +267,7 @@ async fn a_webhook_must_be_signed_and_name_a_known_call() {
     let forger = Livekit::new(&url, "test-key", "wrong-secret").unwrap();
 
     let joined = |room: String| json!({"event": "participant_joined", "room": {"name": room}});
-    let room = calls::livekit_room(&relay.id, "call");
+    let room = domain::calls::livekit_room(&relay.id, "call");
 
     assert_eq!(
         webhook(&server, &relay, &forger, joined(room.clone()))
@@ -291,7 +291,7 @@ async fn a_webhook_must_be_signed_and_name_a_known_call() {
             &server,
             &relay,
             &livekit,
-            joined(calls::livekit_room(&relay.id, "quiet"))
+            joined(domain::calls::livekit_room(&relay.id, "quiet"))
         )
         .await
         .status,
@@ -313,7 +313,7 @@ async fn a_departure_is_metered_even_from_a_room_without_calls() {
 
     let left = json!({
         "event": "participant_left",
-        "room": {"name": calls::livekit_room(&relay.id, "quiet")},
+        "room": {"name": domain::calls::livekit_room(&relay.id, "quiet")},
         "participant": {"sid": "PA_quiet", "identity": format!("{}:n", owner.public_key().to_hex()), "joinedAt": "1000"},
         "createdAt": "1030",
     });
@@ -322,7 +322,7 @@ async fn a_departure_is_metered_even_from_a_room_without_calls() {
         StatusCode::FORBIDDEN
     );
     assert_eq!(
-        calls::participant_seconds(server.core.db.pool(), &relay.id)
+        queries::calls::participant_seconds(server.core.db.pool(), &relay.id)
             .await
             .unwrap(),
         30

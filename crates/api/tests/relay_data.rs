@@ -3,14 +3,19 @@
 
 mod common;
 
+use std::convert::Infallible;
+use std::pin::Pin;
+use std::task::{Context, Poll};
+
+use axum::body::Body;
 use axum::http::StatusCode;
 use bytes::Bytes;
-use caravel_core::media;
 use caravel_core::testing::{create_relay, sign_event};
-use caravel_core::{events, hosting};
+use caravel_core::{commands, domain, hosting, queries};
 use common::*;
 use coracle_lib::filters::Filter;
 use coracle_lib::keys::SecretKey;
+use http_body::{Frame, SizeHint};
 
 #[tokio::test]
 async fn an_owner_exports_one_relay_and_imports_into_another() {
@@ -30,7 +35,7 @@ async fn an_owner_exports_one_relay_and_imports_into_another() {
     let now = api.core.clock.now();
     api.core
         .db
-        .with_tx(async |conn| events::save_event(conn, &source.id, &note, now).await)
+        .with_tx(async |conn| commands::events::save_event(conn, &source.id, &note, now).await)
         .await
         .unwrap();
 
@@ -75,6 +80,45 @@ async fn an_owner_exports_one_relay_and_imports_into_another() {
     assert_eq!(imported["data"]["invalid"], 0);
 }
 
+/// A body claiming a length it doesn't hold, as a client's Content-Length can.
+struct Claimed(u64);
+
+impl http_body::Body for Claimed {
+    type Data = Bytes;
+    type Error = Infallible;
+
+    fn poll_frame(
+        self: Pin<&mut Self>,
+        _: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Bytes>, Infallible>>> {
+        Poll::Ready(None)
+    }
+
+    fn size_hint(&self) -> SizeHint {
+        SizeHint::with_exact(self.0)
+    }
+}
+
+#[tokio::test]
+async fn an_import_over_a_gib_is_refused_before_it_is_read() {
+    let api = TestApi::new().await;
+    let (relay, owner) = create_relay(&api.core).await;
+    let bearer = api.bearer(&owner).await;
+    let path = format!("/relays/{}/import", relay.id);
+
+    let (status, _, body) = api
+        .raw("POST", &path, &bearer, Body::new(Claimed((1 << 30) + 1)))
+        .await;
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+    let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(body["code"], "import-too-large");
+
+    let (status, _, _) = api
+        .raw("POST", &path, &bearer, Body::new(Claimed(1 << 30)))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+}
+
 #[tokio::test]
 async fn a_purged_relay_has_nothing_to_export() {
     let api = TestApi::new().await;
@@ -105,7 +149,7 @@ async fn an_owner_or_an_admin_erases_a_relay() {
     let now = api.core.clock.now();
     api.core
         .db
-        .with_tx(async |conn| events::save_event(conn, &relay.id, &note, now).await)
+        .with_tx(async |conn| commands::events::save_event(conn, &relay.id, &note, now).await)
         .await
         .unwrap();
 
@@ -122,7 +166,7 @@ async fn an_owner_or_an_admin_erases_a_relay() {
         ..Filter::new()
     };
     assert!(
-        events::query_events(api.core.db.pool(), &relay.id, &filter, 10, now)
+        queries::events::query_events(api.core.db.pool(), &relay.id, &filter, 10, now)
             .await
             .unwrap()
             .is_empty()
@@ -147,7 +191,7 @@ async fn an_admin_deletes_a_tenant_without_banning_them() {
     assert_eq!(deleted.status, StatusCode::OK);
     assert_eq!(deleted.body["data"]["banned_at"], serde_json::Value::Null);
 
-    let relay = caravel_core::relays::require_relay(api.core.db.pool(), &relay.id)
+    let relay = caravel_core::queries::relays::require_relay(api.core.db.pool(), &relay.id)
         .await
         .unwrap();
     assert!(relay.is_purged());
@@ -165,7 +209,7 @@ async fn admins_review_the_feed_and_its_blobs() {
         .core
         .db
         .with_tx(async |conn| {
-            media::record_upload(
+            commands::media::record_upload(
                 conn,
                 &relay.id,
                 &"a".repeat(64),
@@ -181,7 +225,7 @@ async fn admins_review_the_feed_and_its_blobs() {
     api.core
         .blobs
         .put(
-            &media::blob_key(&relay.id, &blob.sha256),
+            &domain::media::blob_key(&relay.id, &blob.sha256),
             Bytes::from_static(b"bytes"),
         )
         .await

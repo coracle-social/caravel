@@ -7,7 +7,7 @@ import { PLATFORM_NAME } from "@/shared/lib/config"
 import { accountManager, ensureSessionTenant } from "@/shared/lib/state"
 import { copyToClipboard } from "@/shared/lib/clipboard"
 import { formatError } from "@/shared/lib/format"
-import { decideKeyLogin, normalizeBunkerUrl, validateBunkerUri, type Tab } from "@/shared/lib/loginInput"
+import { decideKeyLogin, validateBunkerUri, type Tab } from "@/shared/lib/loginInput"
 import useMinLoading from "@/shared/lib/useMinLoading"
 import LoginTabsScreen from "@/shared/components/login/LoginTabsScreen"
 import LoginSignerScreen from "@/shared/components/login/LoginSignerScreen"
@@ -51,7 +51,9 @@ export default function Login(props: LoginProps = {}) {
 
   let scannerVideo: HTMLVideoElement | undefined
   let scanner: QrScanner | undefined
-  let abortController: AbortController | undefined
+  // Bumped to stop offering nostrconnect codes; `waiting` aborts the wait on the one shown, closing its signer.
+  let attempt = 0
+  let waiting: AbortController | undefined
 
   async function completeLogin(account: ExtensionAccount | NostrConnectAccount | PrivateKeyAccount | PasswordAccount) {
     accountManager.addAccount(account)
@@ -65,14 +67,16 @@ export default function Login(props: LoginProps = {}) {
     await props.onAuthenticated?.()
   }
 
-  // Run one way of logging in, showing it as loading and reporting its failure.
+  // Run one way of logging in, showing it as loading and reporting its failure, and say whether it logged in.
   async function runLogin(fn: () => Promise<void>, fallbackMessage: string) {
     setError("")
     setRawLoading(true)
     try {
       await fn()
+      return true
     } catch (e) {
       setError(formatError(e, fallbackMessage))
+      return false
     } finally {
       setRawLoading(false)
     }
@@ -84,29 +88,47 @@ export default function Login(props: LoginProps = {}) {
     }, "Failed to login with extension")
   }
 
-  function startNostrConnect() {
-    return runLogin(async () => {
-      const NostrConnectSigner = await loadNostrConnectSigner()
+  function stopNostrConnect() {
+    attempt++
+    waiting?.abort()
+    waiting = undefined
+    setNostrConnectUri("")
+    setQrDataUrl("")
+  }
+
+  // Offer nostrconnect codes until a signer scans one and logs in, each for a minute, with a new one after a failed login.
+  async function startNostrConnect() {
+    stopNostrConnect()
+    const current = attempt
+    const NostrConnectSigner = await loadNostrConnectSigner()
+
+    while (current === attempt) {
       const signer = new NostrConnectSigner({ relays: NIP46_RELAYS })
       const uri = signer.getNostrConnectURI({
         name: PLATFORM_NAME,
         url: window.location.origin,
       })
+      const qrDataUrl = await QRCode.toDataURL(uri, { width: 256, margin: 2 })
+      if (current !== attempt) return
       setNostrConnectUri(uri)
-      setQrDataUrl(await QRCode.toDataURL(uri, { width: 256, margin: 2 }))
+      setQrDataUrl(qrDataUrl)
 
-      abortController = new AbortController()
-      const timeout = window.setTimeout(() => abortController?.abort(), 60_000)
+      const wait = (waiting = new AbortController())
+      const timeout = window.setTimeout(() => wait.abort(), 60_000)
+      const scanned = await signer.waitForSigner(wait.signal).then(() => true, () => false)
+      window.clearTimeout(timeout)
+      if (current !== attempt) return
 
-      try {
-        await signer.waitForSigner(abortController.signal)
+      // The abort would close the signer the new account keeps, so it's let go once scanned.
+      waiting = undefined
+      if (!scanned) continue
+      const loggedIn = await runLogin(async () => {
         const pubkey = await signer.getPublicKey()
-        const account = new NostrConnectAccount(pubkey, signer)
-        await completeLogin(account)
-      } finally {
-        window.clearTimeout(timeout)
-      }
-    }, "Failed to connect signer")
+        await completeLogin(new NostrConnectAccount(pubkey, signer))
+      }, "Failed to connect signer")
+      if (loggedIn) return
+      void signer.close()
+    }
   }
 
   function loginWithBunker() {
@@ -117,9 +139,8 @@ export default function Login(props: LoginProps = {}) {
       return
     }
     return runLogin(async () => {
-      const uri = normalizeBunkerUrl(bunkerUrl())
       const NostrConnectSigner = await loadNostrConnectSigner()
-      const signer = await NostrConnectSigner.fromBunkerURI(uri)
+      const signer = await NostrConnectSigner.fromBunkerURI(bunkerUrl().trim())
       const pubkey = await signer.getPublicKey()
       const account = new NostrConnectAccount(pubkey, signer)
       await completeLogin(account)
@@ -179,7 +200,7 @@ export default function Login(props: LoginProps = {}) {
     setError("")
     setScreen("nip46")
     setSignerTab("qr")
-    if (!nostrConnectUri()) void startNostrConnect()
+    void startNostrConnect().catch(e => setError(formatError(e, "Failed to connect signer")))
   }
 
   function copyUri() {
@@ -187,7 +208,7 @@ export default function Login(props: LoginProps = {}) {
   }
 
   onCleanup(() => {
-    abortController?.abort()
+    stopNostrConnect()
     scanner?.destroy()
   })
 
@@ -255,7 +276,7 @@ export default function Login(props: LoginProps = {}) {
                   bunkerUrl={bunkerUrl}
                   setBunkerUrl={setBunkerUrl}
                   loading={loading}
-                  onBack={() => { setError(""); setScreen("tabs") }}
+                  onBack={() => { stopNostrConnect(); setError(""); setScreen("tabs") }}
                   onCopyUri={copyUri}
                   onScan={openScanner}
                   onConnectBunker={loginWithBunker}

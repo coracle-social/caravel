@@ -4,9 +4,10 @@
 use std::collections::BTreeSet;
 
 use anyhow::Result;
-use caravel_core::events::{self, EventGroup, Saved, StoredEvent, kinds};
-use caravel_core::testing::{self, create_relay, sign_event};
-use caravel_core::{Core, Error};
+use caravel_core::models::events::{EventGroup, Saved, StoredEvent};
+use caravel_core::models::kinds;
+use caravel_core::testing::{create_relay, sign_event};
+use caravel_core::{Core, Error, commands, domain, queries, testing};
 use coracle_lib::events::Event;
 use coracle_lib::filters::{Filter, TagMatch};
 use coracle_lib::keys::SecretKey;
@@ -24,14 +25,14 @@ async fn save(core: &Core, relay_id: &str, event: &Event) -> Result<Saved> {
     let saved = core
         .db
         .with_tx(async |conn| {
-            let saved = events::save_event(&mut *conn, relay_id, event, NOW).await?;
+            let saved = commands::events::save_event(&mut *conn, relay_id, event, NOW).await?;
             if saved == Saved::New {
                 match event.kind {
                     kinds::DELETION => {
-                        events::apply_deletion(conn, relay_id, event).await?;
+                        commands::events::apply_deletion(conn, relay_id, event).await?;
                     }
                     kinds::VANISH => {
-                        events::apply_vanish(
+                        commands::events::apply_vanish(
                             conn,
                             relay_id,
                             &event.pubkey.as_bytes(),
@@ -51,11 +52,11 @@ async fn save(core: &Core, relay_id: &str, event: &Event) -> Result<Saved> {
 /// A relay's events matching a filter, leaving out the ones the relay signed about
 /// its own members.
 async fn query(core: &Core, relay_id: &str, filter: Filter) -> Result<Vec<StoredEvent>> {
-    let relay = caravel_core::relays::get_relay(core.db.pool(), relay_id)
+    let relay = caravel_core::queries::relays::get_relay(core.db.pool(), relay_id)
         .await?
         .expect("no relay");
     Ok(
-        events::query_events(core.db.pool(), relay_id, &filter, 1000, NOW)
+        queries::events::query_events(core.db.pool(), relay_id, &filter, 1000, NOW)
             .await?
             .into_iter()
             .filter(|event| event.head.pubkey_hex() != relay.pubkey)
@@ -253,9 +254,10 @@ async fn limits_cap_results_and_ties_break_on_id() -> Result<()> {
     );
 
     // The relay's cap applies whether or not the filter names a limit.
-    let capped = events::query_events(core.db.pool(), &relay.id, &Filter::new(), 3, NOW).await?;
+    let capped =
+        queries::events::query_events(core.db.pool(), &relay.id, &Filter::new(), 3, NOW).await?;
     assert_eq!(capped.len(), 3);
-    let capped = events::query_events(
+    let capped = queries::events::query_events(
         core.db.pool(),
         &relay.id,
         &Filter::new().add_limit(100),
@@ -495,6 +497,28 @@ async fn vanishing_removes_an_author_and_their_gift_wraps() -> Result<()> {
     Ok(())
 }
 
+// NIP-62: a deletion naming a request to vanish has no effect.
+#[tokio::test]
+async fn a_deletion_cannot_lift_a_request_to_vanish() -> Result<()> {
+    let core = core().await;
+    let (relay, _) = create_relay(&core).await;
+    let author = SecretKey::generate();
+
+    let note = sign_event(&author, 1, "gone", &[], NOW - 10);
+    save(&core, &relay.id, &note).await?;
+    let vanish = sign_event(&author, 62, "", &[&["relay", "ALL_RELAYS"]], NOW - 5);
+    save(&core, &relay.id, &vanish).await?;
+
+    let undo = sign_event(&author, 5, "", &[&["e", &vanish.id.to_hex()]], NOW);
+    assert_eq!(save(&core, &relay.id, &undo).await?, Saved::New);
+    assert_eq!(
+        ids(&core, &relay.id, kinds(&[62])).await?,
+        vec![vanish.id.to_bytes()]
+    );
+    assert_eq!(save(&core, &relay.id, &note).await?, Saved::Deleted);
+    Ok(())
+}
+
 #[tokio::test]
 async fn expired_events_are_hidden_then_swept() -> Result<()> {
     let core = core().await;
@@ -512,10 +536,11 @@ async fn expired_events_are_hidden_then_swept() -> Result<()> {
     assert_eq!(ids(&core, &relay.id, Filter::new()).await?.len(), 1);
 
     let later =
-        events::query_events(core.db.pool(), &relay.id, &kinds(&[1]), 1000, NOW + 60).await?;
+        queries::events::query_events(core.db.pool(), &relay.id, &kinds(&[1]), 1000, NOW + 60)
+            .await?;
     assert!(later.is_empty());
 
-    events::delete_expired_events(core.db.pool(), NOW + 60, 1000).await?;
+    commands::events::delete_expired_events(core.db.pool(), NOW + 60, 1000).await?;
     assert!(ids(&core, &relay.id, Filter::new()).await?.is_empty());
     Ok(())
 }
@@ -540,7 +565,8 @@ async fn counts_group_matching_events_by_kind_author_and_room_tags() -> Result<(
 
     let count = async |filters: &[Filter]| {
         let mut groups =
-            events::count_event_groups(core.db.pool(), &relay.id, filters, NOW + 60).await?;
+            queries::events::count_event_groups(core.db.pool(), &relay.id, filters, NOW + 60)
+                .await?;
         groups.sort_by_key(|group| (group.kind, group.h.clone()));
         Ok::<_, anyhow::Error>(groups)
     };
@@ -581,21 +607,27 @@ async fn counts_group_matching_events_by_kind_author_and_room_tags() -> Result<(
 #[tokio::test]
 async fn events_with_a_nul_character_are_not_storable() {
     let author = SecretKey::generate();
-    assert!(!events::is_storable(&sign_event(
+    assert!(!domain::events::is_storable(&sign_event(
         &author,
         1,
         "a\0b",
         &[],
         NOW
     )));
-    assert!(!events::is_storable(&sign_event(
+    assert!(!domain::events::is_storable(&sign_event(
         &author,
         1,
         "ok",
         &[&["t", "a\0"]],
         NOW
     )));
-    assert!(events::is_storable(&sign_event(&author, 1, "ok", &[], NOW)));
+    assert!(domain::events::is_storable(&sign_event(
+        &author,
+        1,
+        "ok",
+        &[],
+        NOW
+    )));
 }
 
 #[tokio::test]
@@ -629,9 +661,11 @@ async fn negentropy_heads_refuse_sets_over_the_cap() -> Result<()> {
         .await?;
     }
 
-    let heads = events::query_event_heads(core.db.pool(), &relay.id, &kinds(&[1]), 3, NOW).await?;
+    let heads =
+        queries::events::query_event_heads(core.db.pool(), &relay.id, &kinds(&[1]), 3, NOW).await?;
     assert_eq!(heads.map(|heads| heads.len()), Some(3));
-    let over = events::query_event_heads(core.db.pool(), &relay.id, &kinds(&[1]), 2, NOW).await?;
+    let over =
+        queries::events::query_event_heads(core.db.pool(), &relay.id, &kinds(&[1]), 2, NOW).await?;
     assert!(over.is_none());
     Ok(())
 }

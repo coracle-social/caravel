@@ -1,0 +1,23 @@
+% source=crates/api/tests/relay_data.rs lang=rust lines=271 sha=8aabd81a2916
+
+module caravel_api::tests::relay_data
+  -- A relay's data through the API: export, import, erase, tenant deletion, the moderation feed.
+
+  tests                                                                 @20-271
+    test an_owner_exports_one_relay_and_imports_into_another            @21-81
+      -- export is NDJSON named <subdomain>.jsonl; importing it is 403 for another relay's owner
+      the target's owner imports it: 1 imported, 0 invalid
+    data Claimed(u64)  -- a body claiming a length it doesn't hold, as a Content-Length can  @84
+    impl http_body::Body for Claimed  -- no frames, with an exact size hint of its claim  @86-100
+    test an_import_over_a_gib_is_refused_before_it_is_read              @103-120
+      -- a body claiming 1 GiB and a byte is 413 import-too-large; one claiming 1 GiB is 200
+    test a_purged_relay_has_nothing_to_export                           @123-139
+      -- 400 with code relay-is-purged
+    test an_owner_or_an_admin_erases_a_relay                            @142-174
+      -- a stranger gets 403; the owner and then an admin both get 200, and no notes remain
+    test an_admin_deletes_a_tenant_without_banning_them                 @177-198
+      -- banned_at stays null and the tenant's relay is purged
+    test admins_review_the_feed_and_its_blobs                           @201-271
+      -- the feed lists the upload; a tenant gets 403
+      the blob comes back with its uploaded content type and nosniff
+      an unknown hash is 404 and a malformed one 422

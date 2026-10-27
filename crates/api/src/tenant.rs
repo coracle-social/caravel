@@ -2,21 +2,23 @@
 //! may call each of them on any tenant's behalf.
 
 use axum::Json;
-use axum::body::Body;
+use axum::body::{Body, HttpBody};
 use axum::extract::{Path, Query, State};
-use axum::http::header;
+use axum::http::{StatusCode, header};
 use axum::response::IntoResponse;
-use caravel_core::billing::{self, ledger};
 use caravel_core::crypto::is_hex64;
-use caravel_core::hosting::{self, RelaySettings};
-use caravel_core::relays::{self, activity};
-use caravel_core::tenants::{self, Tenant};
-use caravel_core::{Core, Error, memberships, payouts, transfer};
+use caravel_core::models::relays::RelaySettings;
+use caravel_core::models::tenants::Tenant;
+use caravel_core::{Core, Error, billing, hosting, management, payouts, queries, transfer};
+use http_body_util::Limited;
 use serde::{Deserialize, Serialize};
 
 use crate::ReturnTo;
 use crate::auth::Authed;
-use crate::response::{ApiResult, created, ok};
+use crate::response::{ApiResult, created, error, ok};
+
+/// The largest import body taken, 1 GiB.
+const MAX_IMPORT_SIZE: usize = 1 << 30;
 
 /// A tenant as the API shows it, which reveals whether an NWC url is set but not
 /// the url.
@@ -79,7 +81,7 @@ pub async fn get_tenant(
 ) -> ApiResult {
     actor.require_pubkey_or_admin(&pubkey)?;
     ok(TenantView::from(
-        tenants::require_tenant(core.db.pool(), &pubkey).await?,
+        queries::tenants::require_tenant(core.db.pool(), &pubkey).await?,
     ))
 }
 
@@ -95,14 +97,14 @@ pub async fn update_tenant(
     Json(body): Json<UpdateTenant>,
 ) -> ApiResult {
     actor.require_pubkey_or_admin(&pubkey)?;
-    tenants::require_tenant(core.db.pool(), &pubkey).await?;
+    queries::tenants::require_tenant(core.db.pool(), &pubkey).await?;
 
     if let Some(nwc_url) = body.nwc_url {
         hosting::set_tenant_nwc_url(&core, &pubkey, &nwc_url).await?;
     }
 
     ok(TenantView::from(
-        tenants::require_tenant(core.db.pool(), &pubkey).await?,
+        queries::tenants::require_tenant(core.db.pool(), &pubkey).await?,
     ))
 }
 
@@ -112,7 +114,7 @@ pub async fn list_tenant_relays(
     Path(pubkey): Path<String>,
 ) -> ApiResult {
     actor.require_pubkey_or_admin(&pubkey)?;
-    ok(relays::list_relays_for_tenant(core.db.pool(), &pubkey).await?)
+    ok(queries::relays::list_relays_for_tenant(core.db.pool(), &pubkey).await?)
 }
 
 pub async fn list_tenant_invoices(
@@ -121,7 +123,7 @@ pub async fn list_tenant_invoices(
     Path(pubkey): Path<String>,
 ) -> ApiResult {
     actor.require_pubkey_or_admin(&pubkey)?;
-    ok(ledger::list_invoices_for_tenant(core.db.pool(), &pubkey).await?)
+    ok(queries::ledger::list_invoices_for_tenant(core.db.pool(), &pubkey).await?)
 }
 
 /// Bring the tenant's billing up to date without charging them, settling anything
@@ -132,10 +134,10 @@ pub async fn reconcile_tenant(
     Path(pubkey): Path<String>,
 ) -> ApiResult {
     actor.require_pubkey_or_admin(&pubkey)?;
-    let tenant = tenants::require_tenant(core.db.pool(), &pubkey).await?;
+    let tenant = queries::tenants::require_tenant(core.db.pool(), &pubkey).await?;
     billing::reconcile_tenant(&core, &tenant).await?;
     ok(TenantView::from(
-        tenants::require_tenant(core.db.pool(), &pubkey).await?,
+        queries::tenants::require_tenant(core.db.pool(), &pubkey).await?,
     ))
 }
 
@@ -146,7 +148,7 @@ pub async fn get_draft_invoice(
     Path(pubkey): Path<String>,
 ) -> ApiResult {
     actor.require_pubkey_or_admin(&pubkey)?;
-    let tenant = tenants::require_tenant(core.db.pool(), &pubkey).await?;
+    let tenant = queries::tenants::require_tenant(core.db.pool(), &pubkey).await?;
     ok(billing::get_draft_invoice(&core, &tenant).await?)
 }
 
@@ -157,7 +159,7 @@ pub async fn list_draft_invoice_items(
     Path(pubkey): Path<String>,
 ) -> ApiResult {
     actor.require_pubkey_or_admin(&pubkey)?;
-    ok(ledger::list_outstanding_invoice_items_for_tenant(core.db.pool(), &pubkey).await?)
+    ok(queries::ledger::list_outstanding_invoice_items_for_tenant(core.db.pool(), &pubkey).await?)
 }
 
 /// A Stripe billing portal for the tenant to manage their saved cards.
@@ -168,7 +170,7 @@ pub async fn create_stripe_session(
     Query(params): Query<ReturnTo>,
 ) -> ApiResult {
     actor.require_pubkey(&pubkey)?;
-    let tenant = tenants::require_tenant(core.db.pool(), &pubkey).await?;
+    let tenant = queries::tenants::require_tenant(core.db.pool(), &pubkey).await?;
     let url = billing::open_billing_portal(&core, &tenant, params.return_url.as_deref()).await?;
     ok(serde_json::json!({ "url": url }))
 }
@@ -196,7 +198,7 @@ pub async fn get_relay(
     Authed(actor): Authed,
     Path(id): Path<String>,
 ) -> ApiResult {
-    let relay = relays::require_relay(core.db.pool(), &id).await?;
+    let relay = queries::relays::require_relay(core.db.pool(), &id).await?;
     actor.require_pubkey_or_admin(&relay.tenant_pubkey)?;
     ok(relay)
 }
@@ -207,7 +209,7 @@ pub async fn update_relay(
     Path(id): Path<String>,
     Json(settings): Json<RelaySettings>,
 ) -> ApiResult {
-    let relay = relays::require_relay(core.db.pool(), &id).await?;
+    let relay = queries::relays::require_relay(core.db.pool(), &id).await?;
     actor.require_pubkey_or_admin(&relay.tenant_pubkey)?;
     ok(hosting::update_relay(&core, relay, settings).await?)
 }
@@ -218,9 +220,9 @@ pub async fn list_relay_memberships(
     Authed(actor): Authed,
     Path(id): Path<String>,
 ) -> ApiResult {
-    let relay = relays::require_relay(core.db.pool(), &id).await?;
+    let relay = queries::relays::require_relay(core.db.pool(), &id).await?;
     actor.require_pubkey_or_admin(&relay.tenant_pubkey)?;
-    ok(memberships::list_memberships_for_relay(core.db.pool(), &relay.id).await?)
+    ok(queries::memberships::list_memberships_for_relay(core.db.pool(), &relay.id).await?)
 }
 
 // --- Payouts ---
@@ -232,7 +234,7 @@ pub async fn get_payouts(
     Path(pubkey): Path<String>,
 ) -> ApiResult {
     actor.require_pubkey_or_admin(&pubkey)?;
-    let tenant = tenants::require_tenant(core.db.pool(), &pubkey).await?;
+    let tenant = queries::tenants::require_tenant(core.db.pool(), &pubkey).await?;
     ok(payouts::refresh_status(&core, &tenant).await?)
 }
 
@@ -245,7 +247,7 @@ pub async fn onboard_payouts(
     Json(request): Json<ReturnTo>,
 ) -> ApiResult {
     actor.require_pubkey(&pubkey)?;
-    let tenant = tenants::require_tenant(core.db.pool(), &pubkey).await?;
+    let tenant = queries::tenants::require_tenant(core.db.pool(), &pubkey).await?;
     let return_url = request
         .return_url
         .unwrap_or_else(|| tenant.return_url.clone());
@@ -259,7 +261,7 @@ pub async fn open_payouts_dashboard(
     Path(pubkey): Path<String>,
 ) -> ApiResult {
     actor.require_pubkey(&pubkey)?;
-    let tenant = tenants::require_tenant(core.db.pool(), &pubkey).await?;
+    let tenant = queries::tenants::require_tenant(core.db.pool(), &pubkey).await?;
     ok(serde_json::json!({ "url": payouts::dashboard(&core, &tenant).await? }))
 }
 
@@ -269,10 +271,10 @@ pub async fn add_relay_member(
     Authed(actor): Authed,
     Path((id, pubkey)): Path<(String, String)>,
 ) -> ApiResult {
-    let relay = relays::require_relay(core.db.pool(), &id).await?;
+    let relay = queries::relays::require_relay(core.db.pool(), &id).await?;
     actor.require_pubkey_or_admin(&relay.tenant_pubkey)?;
     validate_pubkey(&pubkey)?;
-    hosting::add_member(&core, &relay, &pubkey).await?;
+    management::add_member(&core, &relay, &pubkey).await?;
     ok(())
 }
 
@@ -282,9 +284,9 @@ pub async fn remove_relay_member(
     Authed(actor): Authed,
     Path((id, pubkey)): Path<(String, String)>,
 ) -> ApiResult {
-    let relay = relays::require_relay(core.db.pool(), &id).await?;
+    let relay = queries::relays::require_relay(core.db.pool(), &id).await?;
     actor.require_pubkey_or_admin(&relay.tenant_pubkey)?;
-    hosting::remove_member(&core, &relay, &pubkey).await?;
+    management::remove_member(&core, &relay, &pubkey).await?;
     ok(())
 }
 
@@ -304,9 +306,9 @@ pub async fn list_relay_activity(
     Authed(actor): Authed,
     Path(id): Path<String>,
 ) -> ApiResult {
-    let relay = relays::require_relay(core.db.pool(), &id).await?;
+    let relay = queries::relays::require_relay(core.db.pool(), &id).await?;
     actor.require_pubkey_or_admin(&relay.tenant_pubkey)?;
-    let activity = activity::list_activity_for_relay(core.db.pool(), &id).await?;
+    let activity = queries::activity::list_activity_for_relay(core.db.pool(), &id).await?;
     ok(serde_json::json!({ "activity": activity }))
 }
 
@@ -315,7 +317,7 @@ pub async fn deactivate_relay(
     Authed(actor): Authed,
     Path(id): Path<String>,
 ) -> ApiResult {
-    let relay = relays::require_relay(core.db.pool(), &id).await?;
+    let relay = queries::relays::require_relay(core.db.pool(), &id).await?;
     actor.require_pubkey_or_admin(&relay.tenant_pubkey)?;
     hosting::deactivate_relay(&core, &relay).await?;
     ok(())
@@ -326,7 +328,7 @@ pub async fn reactivate_relay(
     Authed(actor): Authed,
     Path(id): Path<String>,
 ) -> ApiResult {
-    let relay = relays::require_relay(core.db.pool(), &id).await?;
+    let relay = queries::relays::require_relay(core.db.pool(), &id).await?;
     actor.require_pubkey_or_admin(&relay.tenant_pubkey)?;
     hosting::reactivate_relay(&core, &relay).await?;
     ok(())
@@ -338,7 +340,7 @@ pub async fn purge_relay(
     Authed(actor): Authed,
     Path(id): Path<String>,
 ) -> ApiResult {
-    let relay = relays::require_relay(core.db.pool(), &id).await?;
+    let relay = queries::relays::require_relay(core.db.pool(), &id).await?;
     actor.require_pubkey_or_admin(&relay.tenant_pubkey)?;
     hosting::purge_relay(&core, &relay).await?;
     ok(())
@@ -350,7 +352,7 @@ pub async fn erase_relay(
     Authed(actor): Authed,
     Path(id): Path<String>,
 ) -> ApiResult {
-    let relay = relays::require_relay(core.db.pool(), &id).await?;
+    let relay = queries::relays::require_relay(core.db.pool(), &id).await?;
     actor.require_pubkey_or_admin(&relay.tenant_pubkey)?;
     hosting::erase_relay(&core, &relay).await?;
     ok(())
@@ -362,7 +364,7 @@ pub async fn export_relay_data(
     Authed(actor): Authed,
     Path(id): Path<String>,
 ) -> ApiResult {
-    let relay = relays::require_relay(core.db.pool(), &id).await?;
+    let relay = queries::relays::require_relay(core.db.pool(), &id).await?;
     actor.require_pubkey_or_admin(&relay.tenant_pubkey)?;
     relay.require_unpurged()?;
 
@@ -381,17 +383,26 @@ pub async fn export_relay_data(
         .into_response())
 }
 
-/// Store a JSONL dump of events in the relay, reporting the lines it refused.
+/// Store a JSONL dump of events in the relay, reporting the lines it refused. A
+/// body over MAX_IMPORT_SIZE is refused, or broken off where it passes it.
 pub async fn import_relay_data(
     State(core): State<Core>,
     Authed(actor): Authed,
     Path(id): Path<String>,
     body: Body,
 ) -> ApiResult {
-    let relay = relays::require_relay(core.db.pool(), &id).await?;
+    let relay = queries::relays::require_relay(core.db.pool(), &id).await?;
     actor.require_pubkey_or_admin(&relay.tenant_pubkey)?;
     relay.require_unpurged()?;
 
+    if body.size_hint().lower() > MAX_IMPORT_SIZE as u64 {
+        return Ok(error(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "import-too-large",
+            "an import may be at most 1 GiB",
+        ));
+    }
+    let body = Body::new(Limited::new(body, MAX_IMPORT_SIZE));
     ok(transfer::import_events(&core, &relay, body.into_data_stream()).await?)
 }
 
@@ -402,7 +413,7 @@ pub async fn get_invoice(
     Authed(actor): Authed,
     Path(id): Path<String>,
 ) -> ApiResult {
-    let invoice = ledger::require_invoice(core.db.pool(), &id).await?;
+    let invoice = queries::ledger::require_invoice(core.db.pool(), &id).await?;
     actor.require_pubkey_or_admin(&invoice.tenant_pubkey)?;
     ok(invoice)
 }
@@ -412,9 +423,9 @@ pub async fn list_invoice_items(
     Authed(actor): Authed,
     Path(id): Path<String>,
 ) -> ApiResult {
-    let invoice = ledger::require_invoice(core.db.pool(), &id).await?;
+    let invoice = queries::ledger::require_invoice(core.db.pool(), &id).await?;
     actor.require_pubkey_or_admin(&invoice.tenant_pubkey)?;
-    ok(ledger::list_invoice_items_for_invoice(core.db.pool(), &id).await?)
+    ok(queries::ledger::list_invoice_items_for_invoice(core.db.pool(), &id).await?)
 }
 
 /// Collect an open invoice now, without the reminder DM a failure would send.
@@ -423,17 +434,17 @@ pub async fn reconcile_invoice(
     Authed(actor): Authed,
     Path(id): Path<String>,
 ) -> ApiResult {
-    let invoice = ledger::require_invoice(core.db.pool(), &id).await?;
+    let invoice = queries::ledger::require_invoice(core.db.pool(), &id).await?;
     actor.require_pubkey_or_admin(&invoice.tenant_pubkey)?;
 
     if !invoice.is_open() {
         return ok(invoice);
     }
 
-    let tenant = tenants::require_tenant(core.db.pool(), &invoice.tenant_pubkey).await?;
+    let tenant = queries::tenants::require_tenant(core.db.pool(), &invoice.tenant_pubkey).await?;
     billing::collect_invoice(&core, &tenant, &invoice).await?;
 
-    ok(ledger::require_invoice(core.db.pool(), &id).await?)
+    ok(queries::ledger::require_invoice(core.db.pool(), &id).await?)
 }
 
 /// A payable Lightning invoice for an invoice.
@@ -442,7 +453,7 @@ pub async fn ensure_invoice_bolt11(
     Authed(actor): Authed,
     Path(id): Path<String>,
 ) -> ApiResult {
-    let invoice = ledger::require_invoice(core.db.pool(), &id).await?;
+    let invoice = queries::ledger::require_invoice(core.db.pool(), &id).await?;
     actor.require_pubkey_or_admin(&invoice.tenant_pubkey)?;
     ok(billing::ensure_bolt11_for_invoice(&core, &invoice).await?)
 }
@@ -461,9 +472,9 @@ pub async fn ensure_invoice_checkout(
     Path(id): Path<String>,
     Query(params): Query<CheckoutParams>,
 ) -> ApiResult {
-    let invoice = ledger::require_invoice(core.db.pool(), &id).await?;
+    let invoice = queries::ledger::require_invoice(core.db.pool(), &id).await?;
     actor.require_pubkey_or_admin(&invoice.tenant_pubkey)?;
-    let tenant = tenants::require_tenant(core.db.pool(), &invoice.tenant_pubkey).await?;
+    let tenant = queries::tenants::require_tenant(core.db.pool(), &invoice.tenant_pubkey).await?;
     let checkout =
         billing::ensure_checkout_for_invoice(&core, &tenant, &invoice, &params.return_url).await?;
     ok(serde_json::json!({ "url": checkout.url }))

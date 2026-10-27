@@ -1,0 +1,18 @@
+% source=crates/core/src/config.rs lang=rust lines=35 sha=a9733c823c0b
+
+module caravel_core::config
+  -- The platform's configuration, as the app reads it from the environment.
+
+  pub data Config                                                       @5-21
+    api_url: str  -- the API's public base url, which NIP-98 u tags are checked against
+    platform_url: str?  -- the dashboards' public url; without one, no dashboard is served
+    admin_pubkeys: [str]
+    relay_domains: [str]
+      -- domains relay subdomains live under; a relay's canonical host is <subdomain>.<domain>
+    platform_key: PlatformKey
+    member_fee_percent: f64  -- the platform's cut of each membership payment, at most two decimals
+    flotilla_url: str  -- the Flotilla instance invites are accepted in
+
+  impl Config                                                           @23-35
+    pub fn is_admin(self, pubkey) -> bool  -- pubkey is in admin_pubkeys  @24-27
+    pub fn is_relay_domain(self, host) -> bool  -- host is a relay domain or a subdomain of one  @29-34

@@ -1,0 +1,54 @@
+% source=crates/core/tests/billing.rs lang=rust lines=742 sha=ea55ec745c5d
+
+module caravel_core::tests::billing
+  -- Billing replayed over several periods by pinning the clock; expected amounts are spelled out.
+
+  tests                                                                 @20-742
+    test a_mid_period_relay_pays_its_slice_then_renews_in_full          @21-72
+      -- A relay added with 16 of 31 days left pays 258; both renew at the turn, once however
+      -- often billing runs; nothing is due mid-period; invoices carry their period starts.
+    test proration_rounds_to_the_nearest_whole_day                      @75-98
+      -- 30 days 13 hours left bills all 31 days; 15 days 11 hours bills 15.
+    test an_upgrade_bills_the_difference_and_renews_at_the_new_price    @101-130
+      -- Basic to Growth with 16/31 left bills 1290 - 258 = 1032 as one item; renews at 2500.
+    test a_downgrade_credit_carries_forward_until_it_is_spent           @133-176
+      -- A -1032 credit cuts no invoice while renewals draw it down; the renewal that exceeds it
+      -- invoices 468, claiming the credit and all three renewals.
+    test a_deactivated_relay_is_credited_and_stops_renewing             @179-218
+      -- Credited 1290 for the unused days, not renewed while inactive; reactivation bills
+      -- 28/31 (2258) less the credit.
+    test a_stale_relay_is_paused_and_purged_with_one_credit             @223-256
+      -- A second pause and a purge on a stale Active copy are refused or credit nothing more: one
+      -- 1290 credit.
+    test a_paused_relays_plan_change_is_priced_when_it_comes_back       @259-290
+      -- An upgrade while paused bills nothing; reactivating bills Growth for 11/31 (887) less the
+      -- pause's 258 credit.
+    test a_deleted_tenant_is_forgiven_and_may_come_back                 @294-321
+      -- Deletion purges relays and voids invoices without banning; the purge's credit waits on
+      -- the ledger and the tenant may create a relay again.
+    test overage_is_billed_in_arrears_at_the_tier_the_period_closed_on  @324-414
+      -- Nothing is metered mid-period; storage bills its peak (rounded up) and call hours the
+      -- climb since the last reading before the period, both on the next renewal's invoice and
+      -- at the rates of the plan the period closed on (Growth after a mid-period upgrade).
+    test an_unpaid_invoice_churns_at_the_end_of_grace_and_a_return_forgives_it  @417-484
+      -- An open invoice churns the tenant exactly 7 days later: relays go Delinquent and the
+      -- invoice is voided; delinquent relays don't renew; a new relay restores the paused one,
+      -- each prorated, while the old invoice stays void and unpaid.
+    test a_churned_tenant_who_connects_a_wallet_is_back                 @489-519
+      -- Saving an NWC url clears churn and restores the relay; the next reconcile bills 18/31 (290).
+    test a_churned_tenant_who_saves_a_card_is_back                      @524-558
+      -- A card saved on the fake Stripe brings the tenant back whether their own reconcile or the
+      -- hourly pass syncs it first; each then bills 290.
+    test a_pass_holding_a_churned_tenant_leaves_their_comeback_alone    @563-594
+      -- A pass holding the tenant from before their comeback doesn't void the comeback's invoice.
+    test a_31st_anchor_renews_once_a_month_through_short_months         @597-640
+      -- Periods clamp to month ends (Feb 28, Mar 31, Apr 30), each starting where the last ended;
+      -- running the day before a turn renews nothing.
+    test operators_are_invoiced_but_never_collected_or_churned          @643-671
+      -- An admin's invoices are paid as Comp, and they never churn past grace.
+    test a_lightning_invoice_that_may_have_been_paid_isnt_replaced      @676-707
+      -- An expired one isn't replaced while the wallet can't be asked; a caller holding the
+      -- invoice open after it was paid gets the settled one back.
+    test a_declined_card_is_charged_afresh_on_the_next_pass             @712-742
+      -- With a card saved on a fake Stripe replaying each key's first answer, a decline sets
+      -- stripe_error and the next pass's new attempt pays the invoice and clears it.

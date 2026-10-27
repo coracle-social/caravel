@@ -4,8 +4,8 @@
 mod common;
 
 use axum::http::StatusCode;
-use caravel_core::events;
 use caravel_core::testing::{create_relay, sign_event};
+use caravel_core::{commands, hosting};
 use common::*;
 use coracle_lib::keys::SecretKey;
 use serde_json::{Value, json};
@@ -115,6 +115,25 @@ async fn an_owner_calls_the_relays_methods_and_a_stranger_may_not() {
 }
 
 #[tokio::test]
+async fn a_purged_relays_members_are_out_of_reach() {
+    let api = TestApi::new().await;
+    let (relay, owner) = create_relay(&api.core).await;
+    let owner = api.bearer(&owner).await;
+    hosting::purge_relay(&api.core, &relay).await.unwrap();
+
+    let member = format!("/relays/{}/members/{}", relay.id, pubkey());
+    for (method, path) in [
+        ("GET", format!("/relays/{}/members", relay.id)),
+        ("PUT", member.clone()),
+        ("DELETE", member),
+    ] {
+        let response = api.request(method, &path, Some(&owner), None).await;
+        assert_eq!(response.status, StatusCode::BAD_REQUEST, "{method} {path}");
+        assert_eq!(response.body["code"], "relay-is-purged", "{method} {path}");
+    }
+}
+
+#[tokio::test]
 async fn rooms_are_moderated_through_the_relays_key() {
     let api = TestApi::new().await;
     let (relay, owner) = create_relay(&api.core).await;
@@ -202,7 +221,7 @@ async fn a_relays_events_are_paged_by_kind_and_id() {
     for event in [&note, &report] {
         api.core
             .db
-            .with_tx(async |conn| events::save_event(conn, &relay.id, event, now).await)
+            .with_tx(async |conn| commands::events::save_event(conn, &relay.id, event, now).await)
             .await
             .unwrap();
     }
@@ -226,5 +245,63 @@ async fn a_relays_events_are_paged_by_kind_and_id() {
     assert_eq!(older.body["data"][0]["id"], note.id.to_hex());
 
     let bad = events("kinds=notes".into()).await;
+    assert_eq!(bad.status, StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[tokio::test]
+async fn a_relays_events_page_past_a_shared_second_and_leave_out_its_own() {
+    let api = TestApi::new().await;
+    let (relay, owner) = create_relay(&api.core).await;
+    let bearer = api.bearer(&owner).await;
+    let now = api.core.clock.now();
+
+    let mut notes: Vec<_> = (0..5)
+        .map(|n| sign_event(&SecretKey::generate(), 1, &n.to_string(), &[], now - 10))
+        .collect();
+    let own = api.core.relay_key(&relay).unwrap().sign(
+        8000,
+        vec![vec!["p".to_string(), pubkey()]],
+        "",
+        now - 5,
+    );
+    for event in notes.iter().chain([&own]) {
+        api.core
+            .db
+            .with_tx(async |conn| commands::events::save_event(conn, &relay.id, event, now).await)
+            .await
+            .unwrap();
+    }
+    notes.sort_by_key(|note| note.id.to_hex());
+    let note_ids: Vec<String> = notes.iter().map(|note| note.id.to_hex()).collect();
+
+    let ids = |query: String| {
+        let api = &api;
+        let bearer = &bearer;
+        let path = format!("/relays/{}/events?{query}", relay.id);
+        async move {
+            let response = api.request("GET", &path, Some(bearer), None).await;
+            assert_eq!(response.status, StatusCode::OK, "{query}");
+            response.body["data"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|event| event["id"].as_str().unwrap().to_string())
+                .collect::<Vec<_>>()
+        }
+    };
+    let next = |after: &str| format!("kinds=1&limit=2&until={}&after={after}", now - 10);
+
+    assert_eq!(ids("kinds=1&limit=2".into()).await, note_ids[0..2]);
+    assert_eq!(ids(next(&note_ids[1])).await, note_ids[2..4]);
+    assert_eq!(ids(next(&note_ids[3])).await, note_ids[4..]);
+    assert!(ids(next(&note_ids[4])).await.is_empty());
+
+    assert!(ids(String::new()).await.contains(&own.id.to_hex()));
+    let others = ids("exclude_own=true".into()).await;
+    assert_eq!(others.len(), 5);
+    assert!(!others.contains(&own.id.to_hex()));
+
+    let path = format!("/relays/{}/events?until={now}&after=nope", relay.id);
+    let bad = api.request("GET", &path, Some(&bearer), None).await;
     assert_eq!(bad.status, StatusCode::UNPROCESSABLE_ENTITY);
 }

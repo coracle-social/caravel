@@ -5,8 +5,9 @@ mod common;
 
 use axum::body::Body;
 use axum::http::Request;
-use caravel_core::events::kinds;
-use caravel_core::management::{self, Call};
+use caravel_core::management;
+use caravel_core::models::kinds;
+use caravel_core::models::management::Call;
 use caravel_core::testing::sign_event;
 use common::*;
 use coracle_lib::keys::SecretKey;

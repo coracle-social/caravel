@@ -1,0 +1,6 @@
+% source=web/src/shared/components/ToggleButton.tsx lang=typescript lines=21 sha=9d5717b4b123
+
+module @/shared/components/ToggleButton
+  -- A settings switch.
+
+  pub fn ToggleButton(props: { enabled, onToggle? })  -- a switch labeled Enabled or Disabled  @1-21

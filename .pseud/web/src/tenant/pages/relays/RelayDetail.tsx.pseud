@@ -1,0 +1,13 @@
+% source=web/src/tenant/pages/relays/RelayDetail.tsx lang=typescript lines=62 sha=a83ed01524b1
+
+module @/tenant/pages/relays/RelayDetail  !net !db !time
+  -- A relay's overview tab.
+
+  pub fn RelayDetail()  !net !db !time !-panic  -- routed only inside RelayFrame  @17-62
+    -- RelayDetailCard over the framed relay, with its member count and activity feed.
+    useRelayActions over the frame's relay, so its optimistic toggles show on every tab
+    fn changePlan(planId)                                               @27-31
+      updatePlan, optimistic and rolled back on failure
+      a paid plan then starts the post-paid prompts without awaiting them, so the card
+        reports the plan change; a failure to start them toasts its own error  @30
+    erasing the relay refetches its member count                        @46-49

@@ -1,0 +1,16 @@
+% source=web/src/portal/pages/InvitePage.tsx lang=typescript lines=132 sha=03c3f676f02a
+
+module @/portal/pages/InvitePage
+  -- Where an invite's buyer lands after paying, and gets its link.
+
+  pub fn InvitePage()                                                   @14-132
+    -- The invite the :code param names under its relay's header, then by state: payment not
+    -- seen yet, the link to open or copy, accepted (manage it at /), or expired.
+    on mount, if Stripe came back with ?checkout, reconcile it          @28-42
+      once paid drop the param from the address; either way refetch the invite  @34-36
+      a failure shows "We couldn't confirm your payment"                @37-38
+    a 404 says the invite wasn't found; any other failure asks to try again  @58-62
+    while pending, Check again only refetches; the membership worker settles a paid checkout  @68-77
+    the link shows whenever the API sends invite_url, which it does once paid and unbound  @79
+    async fn copy(link)                                                 @44-51
+      -- Copy the link to the clipboard, or ask the buyer to copy it by hand.

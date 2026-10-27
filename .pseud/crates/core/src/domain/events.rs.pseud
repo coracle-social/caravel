@@ -1,0 +1,9 @@
+% source=crates/core/src/domain/events.rs lang=rust lines=36 sha=dfee4af5cd5f
+
+module caravel_core::domain::events
+  -- What the event store reads off an event before keeping it.
+
+  pub fn slot(event) -> str?  -- "" for replaceable kinds, the d tag for addressable, none otherwise  @7-17
+  pub fn is_storable(event) -> bool  -- no NUL in content or tags, which Postgres text refuses  @19-26
+  pub fn tag(values: [str]) -> [str]                                    @28-31
+  pub fn decode_id(hex) -> [u8; 32]?  -- a 32-byte id or pubkey from hex  @33-36

@@ -1,0 +1,20 @@
+% source=crates/core/src/models/management.rs lang=rust lines=54 sha=02e1c26f03c7
+
+module caravel_core::models::management
+  -- NIP-86 calls, decoded from their method and params, and what carrying one out did.
+
+  pub enum Call  -- one variant per MANAGED_METHODS entry, with its params  @9-35
+    ChangeRelayName(name), ChangeRelayDescription(description), ChangeRelayIcon(icon)
+    BanPubkey(pubkey, reason), UnbanPubkey(pubkey), AllowPubkey(pubkey), UnallowPubkey(pubkey)
+    ListBannedPubkeys, ListAllowedPubkeys
+    BanEvent(id, reason), AllowEvent(id), ListBannedEvents
+    CreateRole(Role), EditRole(Role), DeleteRole(role_id)
+    AssignRole(pubkey, role_id), UnassignRole(pubkey, role_id)
+    AssignMethod(pubkey, method), UnassignMethod(pubkey, method), ListMethodAssignees
+    ListClaims, CreateClaim(claim), DeleteClaim(claim)
+  pub enum Outcome  -- what a call did                                  @37-44
+    Answer(Value)  -- answered without touching access lists or rooms
+    AccessChanged([Event])  -- changed them, publishing these for the caller to reload and deliver
+
+  impl Outcome                                                          @46-54
+    pub fn result(self) -> Value  -- the answer, or true for AccessChanged  @47-53

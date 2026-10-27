@@ -3,13 +3,13 @@
 //! Subscriptions are stored as events and indexed with each relay's state;
 //! deliveries go through a bounded pool so a slow callback holds up nothing else.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
-use caravel_core::Core;
-use caravel_core::bus::Change;
-use caravel_core::events::{self, StoredEvent, kinds};
-use caravel_core::relay_policy::{self, EventFacts, RelaySnapshot};
+use caravel_core::models::events::StoredEvent;
+use caravel_core::models::kinds;
+use caravel_core::models::policy::{EventFacts, RelaySnapshot};
+use caravel_core::{Core, domain, events, queries};
 use coracle_lib::events::{Event, EventId};
 use coracle_lib::filters::{Filter, matches_any};
 use serde_json::{Value, json};
@@ -72,7 +72,7 @@ pub async fn load_subscriptions(
         kinds: Some([kinds::PUSH_SUBSCRIPTION].into()),
         ..Default::default()
     };
-    let stored = events::query_events(
+    let stored = queries::events::query_events(
         core.db.pool(),
         relay_id,
         &filter,
@@ -106,7 +106,8 @@ struct Delivery {
 #[derive(Clone)]
 pub struct Pusher {
     sender: mpsc::Sender<Delivery>,
-    failures: Arc<Mutex<HashMap<EventId, u32>>>,
+    /// By relay id and subscription.
+    failures: Arc<Mutex<HashMap<(String, EventId), u32>>>,
 }
 
 impl Pusher {
@@ -156,7 +157,7 @@ impl Pusher {
         for subscription in subscriptions {
             let reader = [subscription.pubkey.clone()];
             if subscription.pubkey == author
-                || !relay_policy::can_deliver(snapshot, &reader, facts)
+                || !domain::policy::can_deliver(snapshot, &reader, facts)
                 || !matches_any(&subscription.filters, event)
                 || matches_any(&subscription.ignore, event)
             {
@@ -168,7 +169,7 @@ impl Pusher {
                 "relay": format!("wss://{primary_host}/"),
             });
             if subscription.include_event {
-                let strip = relay_policy::strips_signature(snapshot, &reader);
+                let strip = domain::policy::strips_signature(snapshot, &reader);
                 payload["event"] = serde_json::from_str(&stored.to_json(strip)).unwrap_or_default();
             }
 
@@ -184,6 +185,14 @@ impl Pusher {
         }
     }
 
+    /// Forget the failures of a relay's subscriptions other than `held`, its
+    /// current ones, once the rest have been replaced, deleted or expired.
+    pub fn retain(&self, relay_id: &str, held: &[Subscription]) {
+        let held: HashSet<EventId> = held.iter().map(|subscription| subscription.id).collect();
+        self.failures()
+            .retain(|(relay, subscription), _| relay != relay_id || held.contains(subscription));
+    }
+
     /// Call one callback. A 404 drops the subscription at once; other failures
     /// drop it once they run to ten in a row.
     async fn deliver(&self, core: &Core, delivery: Delivery) {
@@ -193,22 +202,23 @@ impl Pusher {
             .await
             .ok();
 
+        let key = (delivery.relay_id.clone(), delivery.subscription);
         let drop = match status {
             Some(status) if (200..300).contains(&status) => {
-                self.failures().remove(&delivery.subscription);
+                self.failures().remove(&key);
                 false
             }
             Some(404) => {
-                self.failures().remove(&delivery.subscription);
+                self.failures().remove(&key);
                 true
             }
             _ => {
                 let mut failures = self.failures();
-                let count = failures.entry(delivery.subscription).or_default();
+                let count = failures.entry(key.clone()).or_default();
                 *count += 1;
                 let exhausted = *count >= MAX_FAILURES;
                 if exhausted {
-                    failures.remove(&delivery.subscription);
+                    failures.remove(&key);
                 }
                 exhausted
             }
@@ -217,20 +227,53 @@ impl Pusher {
         if drop {
             tracing::info!(relay = %delivery.relay_id, subscription = %delivery.subscription.to_hex(), "dropping a push subscription");
             let id = delivery.subscription.as_bytes();
-            if let Err(error) = events::delete_event(core.db.pool(), &delivery.relay_id, id).await {
+            if let Err(error) = events::drop_push_subscription(core, &delivery.relay_id, id).await {
                 tracing::warn!(relay = %delivery.relay_id, error = %error, "failed to drop a push subscription");
-                return;
             }
-            core.bus.publish(Change::AccessChanged {
-                relay_id: delivery.relay_id,
-                published: Vec::new(),
-            });
         }
     }
 
-    fn failures(&self) -> std::sync::MutexGuard<'_, HashMap<EventId, u32>> {
+    fn failures(&self) -> std::sync::MutexGuard<'_, HashMap<(String, EventId), u32>> {
         self.failures
             .lock()
             .unwrap_or_else(|error| error.into_inner())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn subscription(id: u8) -> Subscription {
+        Subscription {
+            id: EventId::new([id; 32]),
+            pubkey: String::new(),
+            d: id.to_string(),
+            filters: Vec::new(),
+            ignore: Vec::new(),
+            callback: String::new(),
+            include_event: false,
+        }
+    }
+
+    #[test]
+    fn failures_are_forgotten_once_their_subscription_is_gone() {
+        let pusher = Pusher {
+            sender: mpsc::channel(1).0,
+            failures: Arc::default(),
+        };
+        let (kept, replaced) = (subscription(1), subscription(2));
+        for (relay_id, id) in [("a", kept.id), ("a", replaced.id), ("b", replaced.id)] {
+            pusher.failures().insert((relay_id.to_string(), id), 3);
+        }
+
+        pusher.retain("a", std::slice::from_ref(&kept));
+        let mut left: Vec<_> = pusher.failures().keys().cloned().collect();
+        left.sort();
+        let expected = [("a".to_string(), kept.id), ("b".to_string(), replaced.id)];
+        assert_eq!(left, expected);
+
+        pusher.retain("b", &[]);
+        assert_eq!(pusher.failures().len(), 1);
     }
 }

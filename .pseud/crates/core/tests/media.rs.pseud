@@ -1,0 +1,32 @@
+% source=crates/core/tests/media.rs lang=rust lines=461 sha=88648c6ffd19
+
+module caravel_core::tests::media
+  -- Blobs owned by their uploaders and counted once per relay, the call clock, and relay erasure.
+
+  tests  !db !time                                                      @16-461
+    const NOW = 1_800_000_000                                           @16
+    async fn core() -> Core  -- a test core with a fresh admin, clock pinned at NOW  @18-22
+    fn blob(sha256, size) -> Blob  -- a png blob                        @24-31
+    async fn upload(core, relay_id, blob, pubkey) -> Blob fails  !db !time  -- record_upload now  @33-50
+    async fn delete(core, relay_id, sha256, pubkey) -> Deleted fails  !db  -- delete_upload  @52-57
+    test storage_counts_each_blob_once  -- per relay, however many own it (from zooid)  @61-80
+    test a_blob_goes_with_its_last_owner                                @83-110
+      -- A non-owner's delete is NotOwned, an owner's is Shared while another owns it, then Last.
+    test an_upload_racing_the_last_owners_deletion_keeps_its_bytes      @114-144
+      -- 20 rounds of keep_upload and the last owner's delete_upload joined on one blob: the
+      -- uploader always owns it and its bytes are stored.
+    test a_list_holds_one_uploaders_blobs_newest_first                  @147-164
+    test the_call_clock_sums_each_session_once  -- a redelivered session counts once, per relay  @169-188
+    test livekit_rooms_lead_with_their_relay  -- a room id with colons splits back intact  @191-197
+    test participants_are_named_once_by_pubkey  -- duplicates collapse, garbage identities drop  @200-211
+    test erasing_a_purged_relay_removes_what_it_held                    @214-274
+      -- Events, blob rows and stored bytes go, erased_at is stamped, another relay's stay; a
+      -- second erase pass succeeds.
+    test erasing_a_relay_keeps_only_its_settings_and_owner              @277-393
+      -- Events, members, rooms, roles, bans, claims and blobs go; only a re-signed member list
+      -- naming the tenant is left; the relay row is unchanged; another relay's blobs stay.
+    test erasing_a_relay_outlasts_bytes_that_wont_delete                @398-432
+      -- On a directory store where one blob's bytes can't be deleted, the erase still succeeds,
+      -- publishes AccessChanged and deletes the other blob's bytes.
+    test a_purged_relays_subdomain_can_be_taken_again                   @436-461
+      -- A live relay's subdomain is subdomain-exists; once purged, a new relay may take it.

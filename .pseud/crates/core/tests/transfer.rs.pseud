@@ -1,0 +1,39 @@
+% source=crates/core/tests/transfer.rs lang=rust lines=643 sha=92d31d136e10
+
+module caravel_core::tests::transfer
+  -- JSONL import and export (ported from zooid): round trips, re-imports, bad lines, room rebuilds.
+
+  tests  !panic !db                                                     @18-643
+    const NOW = 1_800_000_000                                           @18
+    async fn core() -> Core  -- a test core with a fresh admin, clock pinned at NOW  @20-24
+    fn line(event) -> str  !panic  -- the event as one JSON line        @26-28
+    async fn import(core, relay, dump) -> ImportResult fails            @31-38
+      -- transfer::import_events on the dump in 7-byte chunks, so lines straddle chunks.
+    async fn export(core, relay) -> str fails  !db  -- every exported page, concatenated  @40-48
+    async fn stored(core, relay, kind, room_id) -> [StoredEvent] fails  !db  @50-62
+      -- The relay's events of kind in a room, by d for room state kinds and h otherwise.
+    async fn is_room_member(core, relay, room_id, pubkey) -> bool fails  !db  @64-69
+    async fn room_name(core, relay, room_id) -> str? fails  !db         @71-83
+      -- The room's name tag ("" when unnamed), or None when the room doesn't exist.
+    test an_export_imports_into_another_relay                           @86-126
+      -- The source relay's own signed events come along but are skipped by the target.
+    test an_export_pages_through_every_event  -- all 2500, across pages and tied timestamps  @129-158
+    test importing_a_dump_twice_is_harmless  -- both runs report 1 imported, 0 invalid  @162-172
+    test an_import_skips_bad_lines_and_says_which                       @176-204
+      -- Non-JSON, forged ("invalid signature") and unsigned lines are reported by 1-based line;
+      -- a blank line is ignored and the good line lands.
+    test an_import_rebuilds_room_state                                  @209-268
+      -- Room history replays into state the relay signs itself; the source's signed state is skipped.
+    test an_import_admits_join_requests  -- as an arriving join would   @272-302
+    test an_import_replays_only_the_history_it_stored                   @306-342
+      -- A join request a stored deletion refuses is reported and admits nobody.
+    test an_import_adds_to_an_existing_room  -- the room isn't recreated or renamed  @347-386
+    test an_import_leaves_an_uncreated_room_alone                       @390-428
+      -- Its posts are stored, no room appears, and one problem mentions the room.
+    test an_import_ending_in_a_deletion_leaves_no_room  -- and none of its posts  @432-463
+    test an_import_keeps_a_room_created_again_after_its_deletion        @467-508
+    test a_relay_without_rooms_rebuilds_none  -- room events are stored as plain events  @512-534
+    test an_overlong_line_is_reported_and_skipped  -- a 5 MiB line; the next still lands  @538-556
+    test an_import_that_only_posts_in_a_room_rebuilds_nothing           @560-590
+    test an_import_refuses_group_events_naming_no_group                 @594-643
+      -- Room events with a missing or empty id are invalid; source state with an empty d is skipped.

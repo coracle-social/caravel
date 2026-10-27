@@ -16,14 +16,17 @@ function formatDate(ts: number) {
   })
 }
 
-export default function ActivityFeed(props: { activity: Activity[]; loading: boolean }) {
+export default function ActivityFeed(props: { activity: Activity[]; loading: boolean; error?: unknown }) {
   return (
     <section class="bg-white border border-gray-200 rounded-xl p-6">
       <h3 class="text-sm font-semibold uppercase tracking-wider mb-6">Activity</h3>
       <Show when={props.loading}>
         <p class="text-sm text-gray-400">Loading activity...</p>
       </Show>
-      <Show when={!props.loading && props.activity.length === 0}>
+      <Show when={!props.loading && props.error}>
+        <p class="text-sm text-red-600">Failed to load activity.</p>
+      </Show>
+      <Show when={!props.loading && !props.error && props.activity.length === 0}>
         <p class="text-sm text-gray-400">No activity yet.</p>
       </Show>
       <Show when={!props.loading && props.activity.length > 0}>

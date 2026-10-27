@@ -7,17 +7,16 @@
 pub mod stripe;
 
 use anyhow::{Result, anyhow};
-use caravel_core::billing::{
-    self, Collection,
-    ledger::{self, Invoice, InvoiceItem},
-};
+use caravel_core::billing::Collection;
 use caravel_core::crypto::generate_keypair;
-use caravel_core::hosting::{self, RelaySettings};
-use caravel_core::plans::{GB, SECONDS_PER_HOUR};
-use caravel_core::relays::{self, Relay};
-use caravel_core::tenants::{self, Tenant};
-use caravel_core::usage::{self, UsageSample};
-use caravel_core::{Core, flag::Flag, testing};
+use caravel_core::flag::Flag;
+use caravel_core::models::ledger;
+use caravel_core::models::ledger::{Invoice, InvoiceItem};
+use caravel_core::models::plans::{GB, SECONDS_PER_HOUR};
+use caravel_core::models::relays::{Relay, RelaySettings};
+use caravel_core::models::tenants::Tenant;
+use caravel_core::models::usage::UsageSample;
+use caravel_core::{Core, billing, commands, hosting, queries, testing};
 use chrono::{NaiveDate, TimeZone, Utc};
 
 /// A core whose admin is a fresh pubkey, with the clock released.
@@ -95,7 +94,7 @@ pub async fn record_usage(
     storage_gb: f64,
     participant_hours: f64,
 ) -> Result<()> {
-    usage::insert_usage_sample(
+    commands::usage::insert_usage_sample(
         core.db.pool(),
         &UsageSample {
             id: uuid::Uuid::new_v4().to_string(),
@@ -129,13 +128,21 @@ pub async fn reconcile_and_pay(core: &Core, tenant_pubkey: &str) -> Result<()> {
 /// does: a bolt11 on the invoice, settled out of band.
 pub async fn pay_invoices(core: &Core, tenant_pubkey: &str) -> Result<()> {
     let now = core.clock.now();
-    for invoice in ledger::list_open_invoices_for_tenant(core.db.pool(), tenant_pubkey).await? {
+    for invoice in
+        queries::ledger::list_open_invoices_for_tenant(core.db.pool(), tenant_pubkey).await?
+    {
         let lnbc = format!("lnbc-e2e-{}", invoice.id);
         let bolt11 =
-            ledger::insert_bolt11(core.db.pool(), &invoice.id, &lnbc, 0, now + 3600, now).await?;
-        ledger::mark_bolt11_settled(core.db.pool(), &bolt11.id, now).await?;
-        ledger::mark_invoice_paid(core.db.pool(), &invoice.id, ledger::InvoiceMethod::Oob, now)
-            .await?;
+            commands::ledger::insert_bolt11(core.db.pool(), &invoice.id, &lnbc, 0, now + 3600, now)
+                .await?;
+        commands::ledger::mark_bolt11_settled(core.db.pool(), &bolt11.id, now).await?;
+        commands::ledger::mark_invoice_paid(
+            core.db.pool(),
+            &invoice.id,
+            ledger::InvoiceMethod::Oob,
+            now,
+        )
+        .await?;
     }
     Ok(())
 }
@@ -143,20 +150,21 @@ pub async fn pay_invoices(core: &Core, tenant_pubkey: &str) -> Result<()> {
 // --- Reads ---
 
 pub async fn get_tenant(core: &Core, pubkey: &str) -> Result<Tenant> {
-    tenants::get_tenant(core.db.pool(), pubkey)
+    queries::tenants::get_tenant(core.db.pool(), pubkey)
         .await?
         .ok_or_else(|| anyhow!("no tenant {pubkey}"))
 }
 
 pub async fn get_relay(core: &Core, relay_id: &str) -> Result<Relay> {
-    relays::get_relay(core.db.pool(), relay_id)
+    queries::relays::get_relay(core.db.pool(), relay_id)
         .await?
         .ok_or_else(|| anyhow!("no relay {relay_id}"))
 }
 
 /// A tenant's invoices, oldest first.
 pub async fn invoices(core: &Core, tenant_pubkey: &str) -> Result<Vec<Invoice>> {
-    let mut invoices = ledger::list_invoices_for_tenant(core.db.pool(), tenant_pubkey).await?;
+    let mut invoices =
+        queries::ledger::list_invoices_for_tenant(core.db.pool(), tenant_pubkey).await?;
     invoices.reverse();
     Ok(invoices)
 }
@@ -174,7 +182,7 @@ pub async fn invoice_amounts(core: &Core, tenant_pubkey: &str) -> Result<Vec<i64
 /// the same second compare deterministically.
 pub async fn line_items(core: &Core, invoice: &Invoice) -> Result<Vec<(String, i64)>> {
     let mut items: Vec<(String, i64)> =
-        ledger::list_invoice_items_for_invoice(core.db.pool(), &invoice.id)
+        queries::ledger::list_invoice_items_for_invoice(core.db.pool(), &invoice.id)
             .await?
             .into_iter()
             .map(|item: InvoiceItem| (item.description, item.amount))
@@ -187,7 +195,7 @@ pub async fn line_items(core: &Core, invoice: &Invoice) -> Result<Vec<(String, i
 /// forward, or charges below the minimum an invoice is cut for.
 pub async fn outstanding(core: &Core, tenant_pubkey: &str) -> Result<i64> {
     Ok(
-        ledger::list_outstanding_invoice_items_for_tenant(core.db.pool(), tenant_pubkey)
+        queries::ledger::list_outstanding_invoice_items_for_tenant(core.db.pool(), tenant_pubkey)
             .await?
             .iter()
             .map(|item| item.amount)

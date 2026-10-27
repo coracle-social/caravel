@@ -1,0 +1,16 @@
+% source=crates/core/src/bus.rs lang=rust lines=48 sha=444740c9bdd5
+
+module caravel_core::bus
+  -- In-process hints of committed changes; subscribers re-read, and a lagging one re-reads all.
+
+  pub enum Change                                                       @8-24
+    RelayChanged { relay_id }  -- a relay's row, hosts or status changed
+    AccessChanged { relay_id, published: [Event] }
+      -- members, roles, grants, bans, rooms or push subscriptions changed; it published these
+    Notified { relay_id, pubkey, message }  -- a pubkey's notification on a relay was replaced
+  pub data Bus { sender: broadcast Sender<Change> }                     @26-29
+  impl Default for Bus  -- a broadcast channel holding 1024 changes     @31-37
+
+  impl Bus                                                              @39-48
+    pub fn publish(self, change)  -- send to subscribers, ignoring that nobody listens  @40-43
+    pub fn subscribe(self) -> Receiver<Change>                          @45-47

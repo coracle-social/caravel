@@ -1,0 +1,13 @@
+% source=crates/core/src/models/methods.rs lang=rust lines=31 sha=0df8c107776f
+
+module caravel_core::models::methods
+  -- The NIP-86 methods a relay's managers may grant to other pubkeys.
+
+  pub const MANAGED_METHODS: [str; 23]  -- every method a pubkey may be granted on a relay  @3-28
+    changerelayname, changerelaydescription, changerelayicon
+    banpubkey, unbanpubkey, allowpubkey, unallowpubkey, listbannedpubkeys, listallowedpubkeys
+    banevent, allowevent, listbannedevents
+    createrole, editrole, deleterole, assignrole, unassignrole
+    assignmethod, unassignmethod, listmethodassignees
+    listclaims, createclaim, deleteclaim
+  pub const INVITE_METHODS = [listclaims, createclaim]  -- every member's when members may invite  @30-31

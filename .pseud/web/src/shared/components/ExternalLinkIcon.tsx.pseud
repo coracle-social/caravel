@@ -1,0 +1,6 @@
+% source=web/src/shared/components/ExternalLinkIcon.tsx lang=typescript lines=9 sha=24df597c3e84
+
+module @/shared/components/ExternalLinkIcon
+  -- The external-link icon.
+
+  pub fn ExternalLinkIcon()  -- a box-and-arrow icon                    @1-9

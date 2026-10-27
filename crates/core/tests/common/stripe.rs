@@ -1,10 +1,11 @@
-//! A fake of the parts of Stripe's API that memberships and payouts use, holding
-//! its state in memory for tests to inspect and move along.
+//! A fake of the parts of Stripe's API that memberships, payouts and card charges
+//! use, holding its state in memory for tests to inspect and move along.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use axum::extract::{Form, Path, Query, State};
+use axum::http::{HeaderMap, StatusCode};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use caravel_adapters::stripe::Stripe;
@@ -27,6 +28,7 @@ pub struct Subscription {
     pub period_end: i64,
     pub cancel_at_period_end: bool,
     pub canceled: bool,
+    pub past_due: bool,
 }
 
 #[derive(Default)]
@@ -35,6 +37,14 @@ pub struct StripeState {
     pub sessions: Vec<CheckoutSession>,
     pub subscriptions: Vec<Subscription>,
     pub accounts: HashMap<String, bool>,
+    /// Decline every new card charge while set.
+    decline_charges: bool,
+    /// Each charge's answer by idempotency key, which Stripe replays.
+    charges: HashMap<String, (StatusCode, Value)>,
+    /// Each customer's saved card.
+    cards: HashMap<String, String>,
+    /// Subscriptions whose latest invoice hasn't been collected.
+    unpaid_invoices: HashSet<String>,
 }
 
 impl StripeState {
@@ -57,6 +67,8 @@ impl FakeStripe {
         let state: Shared = Arc::default();
         let router = Router::new()
             .route("/customers", post(create_customer))
+            .route("/payment_intents", post(create_payment_intent))
+            .route("/payment_methods", get(list_payment_methods))
             .route(
                 "/checkout/sessions",
                 post(create_session).get(list_sessions),
@@ -117,8 +129,20 @@ impl FakeStripe {
             period_end,
             cancel_at_period_end: false,
             canceled: false,
+            past_due: false,
         });
         subscription_id
+    }
+
+    /// Expire a checkout session, as Stripe does a day after opening it.
+    pub fn expire(&self, session_id: &str) {
+        let mut state = self.state();
+        let session = state
+            .sessions
+            .iter_mut()
+            .find(|session| session.id == session_id)
+            .expect("no such session");
+        session.status = "expired";
     }
 
     pub fn subscription(&self, id: &str) -> Subscription {
@@ -141,8 +165,52 @@ impl FakeStripe {
         subscription.period_end = period_end;
     }
 
+    /// Fail a subscription's renewal: Stripe still moves it to its next period.
+    pub fn set_past_due(&self, id: &str, period_end: i64) {
+        let mut state = self.state();
+        let subscription = state
+            .subscriptions
+            .iter_mut()
+            .find(|subscription| subscription.id == id)
+            .expect("no such subscription");
+        subscription.period_end = period_end;
+        subscription.past_due = true;
+        state.unpaid_invoices.insert(id.to_string());
+    }
+
+    /// Move a subscription to its next period with its invoice not yet collected,
+    /// as Stripe leaves a renewal for about an hour before charging it.
+    pub fn start_renewal(&self, id: &str, period_end: i64) {
+        self.set_period_end(id, period_end);
+        self.state().unpaid_invoices.insert(id.to_string());
+    }
+
+    /// Collect a subscription's latest invoice, putting it back in good standing.
+    pub fn pay_renewal(&self, id: &str) {
+        let mut state = self.state();
+        state.unpaid_invoices.remove(id);
+        let subscription = state
+            .subscriptions
+            .iter_mut()
+            .find(|subscription| subscription.id == id)
+            .expect("no such subscription");
+        subscription.past_due = false;
+    }
+
     pub fn set_account_ready(&self, account_id: &str, ready: bool) {
         self.state().accounts.insert(account_id.to_string(), ready);
+    }
+
+    /// Decline card charges from now on, or stop declining them.
+    pub fn set_decline_charges(&self, decline: bool) {
+        self.state().decline_charges = decline;
+    }
+
+    /// Save a card for a customer, as the billing portal would.
+    pub fn save_card(&self, customer_id: &str, payment_method_id: &str) {
+        self.state()
+            .cards
+            .insert(customer_id.to_string(), payment_method_id.to_string());
     }
 }
 
@@ -162,7 +230,11 @@ fn session_json(session: &CheckoutSession) -> Value {
 fn subscription_json(subscription: &Subscription) -> Value {
     json!({
         "id": subscription.id,
-        "status": if subscription.canceled { "canceled" } else { "active" },
+        "status": match (subscription.canceled, subscription.past_due) {
+            (true, _) => "canceled",
+            (false, true) => "past_due",
+            (false, false) => "active",
+        },
         "cancel_at_period_end": subscription.cancel_at_period_end,
         "items": { "data": [{ "current_period_end": subscription.period_end }] },
     })
@@ -170,6 +242,50 @@ fn subscription_json(subscription: &Subscription) -> Value {
 
 async fn create_customer(State(state): State<Shared>) -> Json<Value> {
     Json(json!({ "id": state.lock().unwrap().id("cus") }))
+}
+
+/// Charge a card, or decline it while `decline_charges` is set, replaying the first
+/// answer given for an idempotency key as Stripe does.
+async fn create_payment_intent(
+    State(state): State<Shared>,
+    headers: HeaderMap,
+) -> (StatusCode, Json<Value>) {
+    let key = headers
+        .get("Idempotency-Key")
+        .and_then(|key| key.to_str().ok())
+        .unwrap_or_default()
+        .to_string();
+    let mut state = state.lock().unwrap();
+    if let Some((status, body)) = state.charges.get(&key) {
+        return (*status, Json(body.clone()));
+    }
+
+    let answer = if state.decline_charges {
+        let error =
+            json!({ "error": { "type": "card_error", "message": "Your card was declined." } });
+        (StatusCode::PAYMENT_REQUIRED, error)
+    } else {
+        (
+            StatusCode::OK,
+            json!({ "id": state.id("pi"), "status": "succeeded" }),
+        )
+    };
+    state.charges.insert(key, answer.clone());
+    (answer.0, Json(answer.1))
+}
+
+async fn list_payment_methods(
+    State(state): State<Shared>,
+    Query(query): Query<HashMap<String, String>>,
+) -> Json<Value> {
+    let state = state.lock().unwrap();
+    let data: Vec<Value> = query
+        .get("customer")
+        .and_then(|customer| state.cards.get(customer))
+        .map(|id| json!({ "id": id }))
+        .into_iter()
+        .collect();
+    Json(json!({ "data": data }))
 }
 
 async fn create_session(
@@ -248,14 +364,33 @@ async fn list_subscriptions(
     Json(json!({ "data": data }))
 }
 
-async fn get_subscription(State(state): State<Shared>, Path(id): Path<String>) -> Json<Value> {
+async fn get_subscription(
+    State(state): State<Shared>,
+    Path(id): Path<String>,
+    Query(query): Query<HashMap<String, String>>,
+) -> Result<Json<Value>, StatusCode> {
     let state = state.lock().unwrap();
+    // The sweep also asks about other tests' memberships, which Stripe wouldn't know.
     let subscription = state
         .subscriptions
         .iter()
         .find(|subscription| subscription.id == id)
-        .expect("no such subscription");
-    Json(subscription_json(subscription))
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let mut body = subscription_json(subscription);
+    // The latest invoice is an id unless the request expands it.
+    let invoice_id = format!("in_{id}");
+    let expanded = query.get("expand[]").map(String::as_str) == Some("latest_invoice");
+    body["latest_invoice"] = if expanded {
+        let status = match (state.unpaid_invoices.contains(&id), subscription.past_due) {
+            (false, _) => "paid",
+            (true, true) => "open",
+            (true, false) => "draft",
+        };
+        json!({ "id": invoice_id, "status": status })
+    } else {
+        json!(invoice_id)
+    };
+    Ok(Json(body))
 }
 
 async fn update_subscription(

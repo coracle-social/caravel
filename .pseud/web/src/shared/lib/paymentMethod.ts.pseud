@@ -1,0 +1,12 @@
+% source=web/src/shared/lib/paymentMethod.ts lang=typescript lines=38 sha=0dccb24b93c6
+
+module @/shared/lib/paymentMethod
+  -- A tenant's payment methods: whether each is set up and working, and how invoices were paid.
+
+  pub type PaymentMethodState = not_set_up | ok | error(message)        @3-7
+  pub fn nwcState(t) -> PaymentMethodState  -- not_set_up without NWC, error with nwc_error's text  @9-13
+  pub fn cardState(t) -> PaymentMethodState                             @15-20
+    -- not_set_up without a Stripe method; on failure "Payment failed" (Stripe's text is for admins).
+  pub fn autopayConfigured(t) -> bool  -- an NWC wallet or a Stripe payment method is on file  @22-27
+  const METHOD_LABELS  -- nwc and oob "Lightning", stripe "Card", comp "Complimentary"  @29-34
+  pub fn methodLabel(m) -> str  -- how an invoice was paid, for display  @36-38

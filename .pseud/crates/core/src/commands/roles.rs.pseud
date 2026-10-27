@@ -1,0 +1,31 @@
+% source=crates/core/src/commands/roles.rs lang=rust lines=213 sha=a78990763ea6
+
+module caravel_core::commands::roles  !db
+  -- Defining a relay's roles and assigning them to members; each change publishes what it changed.
+
+  pub async fn create_role(conn, key, relay_id, role: Role, now) -> [Event] fails  !db  @17-49
+    -- Define a role, publishing it.
+    domain::roles::validate_role
+    insert it; fail conflict "role-exists" if the relay has one with that id
+    return publish_role
+  pub async fn edit_role(conn, key, relay_id, role: Role, now) -> [Event] fails  !db  @52-82
+    -- Redefine a role, publishing it.
+    domain::roles::validate_role
+    update label, description, hue and position; fail conflict "role-missing" if none matched
+    return publish_role
+  pub async fn delete_role(conn, key, relay_id, role_id, now) -> [Event] fails  !db  @86-133
+    -- Delete a role and take it from every member, publishing what changed.
+    if a role row was deleted
+      publish a DELETION of its RELAY_ROLE address (a and k tags) and apply_deletion it
+    remove role_id from every member holding it, even when no role row existed
+    if any member lost it, publish_member_list
+  pub async fn assign_role(conn, key, relay_id, pubkey, role_id, now) -> [Event] fails  !db  @136-166
+    -- Give a pubkey a role, making it a member first.
+    queries::roles::require_role
+    commands::members::admit as Manual
+    append the role unless the member holds it
+    if appended, replace admit's member list in the result with a fresh publish_member_list
+  pub async fn unassign_role(conn, key, relay_id, pubkey, role_id, now) -> [Event] fails  !db  @168-194
+    -- Take a role from a member; publish_member_list if they held it, else publish nothing.
+  pub async fn publish_role(conn, key, relay_id, role: Role, now) -> Event fails  !db  @197-213
+    -- Publish RELAY_ROLE (kind 33534) with domain::roles::role_tags.

@@ -1,0 +1,8 @@
+% source=web/src/shared/components/login/QrScannerOverlay.tsx lang=typescript lines=26 sha=9c0a76866b59
+
+module @/shared/components/login/QrScannerOverlay
+  -- The camera view for scanning a signer's QR code.
+
+  type QrScannerOverlayProps { open, onClose, videoRef }                @3-8
+  pub fn QrScannerOverlay(props)                                        @10-26
+    -- While open, a dialog closed by its button or the backdrop, holding the video Login scans.

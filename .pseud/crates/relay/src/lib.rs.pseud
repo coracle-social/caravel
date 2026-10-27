@@ -1,0 +1,102 @@
+% source=crates/relay/src/lib.rs lang=rust lines=451 sha=51616e1b4126
+
+module caravel_relay  !net !db !global !lock !spawn !time
+  -- Every live relay served from this process by host, loaded at start and reloaded on bus changes.
+
+  pub data RelayLimits                                                  @42-54
+    -- How much any one connection may ask of a relay.
+    max_subscriptions: usize = 300
+    max_identities: usize = 16  -- pubkeys proved on one connection
+    max_reconciliations: usize = 8
+    max_filters: usize = 200  -- filters one REQ or COUNT may hold, as strfry allows
+    max_limit: usize = 1000  -- stored events one filter returns
+    max_sync: usize = 20_000  -- events one reconciliation covers
+  impl Default for RelayLimits  -- the defaults above                   @56-67
+
+  pub data RelaysConfig                                                 @69-79
+    -- How the relays are served.
+    limits: RelayLimits
+    transport: Transport
+    forwarded_header: str?  -- a trusted proxy's client-address header; else the peer address
+    connections_per_minute: u32  -- new connections per address; zero is unlimited
+
+  pub data Route { instance: RelayInstance, host }                      @81-87
+    -- A request's host resolved to its relay; host is the one the request came in on.
+  impl Route                                                            @89-94
+    pub fn primary_host(self) -> str  -- the relay's host, where pages on other hosts redirect  @90-93
+
+  pub data Relays { inner: shared Inner }                               @96-100
+    -- Every relay this process serves, by id and by host; clones share one Inner.
+  data Inner                                                            @102-114
+    core: Core
+    config: RelaysConfig
+    connecting: Limiter  -- new connections per address
+    pusher: Pusher  -- the one push pool every instance shares
+    shutdown: CancellationToken  -- parent of every instance's closed token
+    instances: shared Map<relay_id, RelayInstance>  -- RwLock
+    hosts: shared Map<host, relay_id>  -- RwLock
+    router: OnceLock<Router>  -- built on the first request
+    changes: Mutex<broadcast::Receiver<Change>?>  -- subscribed before the first load, for watch
+
+  impl Relays  !db !lock !spawn !time                                   @116-357
+    pub async fn load(core, config, shutdown) -> Relays fails  !db !lock !spawn  @117-139
+      -- Start the push pool and serve every live relay; cancelling shutdown closes every connection.
+      subscribe to the bus before reading a relay, so a change committed meanwhile waits for watch
+    pub fn resolve(self, host) -> Route?  !lock                         @141-156
+      -- Look the host up in hosts, then its instance; never the database.
+    pub async fn serve(self, route, request) -> Response                @158-181
+      -- Route a protocol request on a relay's host, with the Route in the request's extensions.
+      build the router once, with CORS on every route
+        GET / -> root; POST / -> nip86::handle
+        PUT and HEAD /upload, PUT /mirror, GET /list/{pubkey}, GET and DELETE /{name} -> blossom
+        /.well-known/nip29/livekit, …/{room_id} and POST …/webhook -> livekit
+        anything else -> 404
+    pub async fn watch(self, shutdown)  !db !lock !time                 @183-232
+      -- Apply the core's changes one at a time until shutdown or the bus closes.
+      take the receiver load subscribed, or subscribe now when an earlier watch took it
+      loop until shutdown
+        match the next change
+          RelayChanged -> reload(relay_id)
+          AccessChanged -> the instance's apply_access_change(published), if it is served
+          Notified -> the instance's deliver_notification(pubkey, message), if it is served
+          Lagged -> reload_all
+            the missed changes' published events and notifications go undelivered
+          Closed -> stop
+        log a failed reload and carry on
+    pub async fn reload(self, relay_id) fails  !db !lock !time          @234-242
+      -- Read the relay's row: install it if is_served (active, unpurged), remove it otherwise.
+    pub fn instance(self, relay_id) -> RelayInstance?  !lock            @244-252
+      -- The instance served under an id.
+    async fn reload_all(self) fails  !db !lock !time                    @254-282
+      -- Bring the served set in line with every is_served relay.
+      list every relay and keep the served ones  !db
+      remove each instance whose relay is not among them
+      install each served relay, logging and skipping one that fails
+    async fn install(self, relay) fails  !db !lock !time                @284-325
+      -- Serve a relay, reloading its instance in place or building a new one.
+      if an instance exists, its reload(relay); its connections stay open
+      else load an InstanceState, then insert a RelayInstance closed by a child of shutdown
+        an instance inserted meanwhile is kept and the new one discarded
+      replace the relay's entries in hosts with relay.hosts(), taking any host another relay held
+      -- a failed load returns before hosts change, so the relay keeps its old state and hosts
+    fn remove(self, relay_id)  !lock                                    @327-344
+      -- Drop the instance and its hosts and its push failure counts, then close it, which ends
+      -- its connections.
+    fn client_ip(self, headers, addr) -> IpAddr                         @346-356
+      -- The last address in forwarded_header when one is configured and parses, else the peer's.
+
+  async fn root(relays, route, request) -> Response  !net !db !global !lock !spawn !time  @359-414
+    -- GET / on a relay's host: its NIP-11 document, a page, or a websocket.
+    if Accept asks for application/nostr+json, return nip11::document
+    if not a websocket upgrade
+      on a host other than the primary one, redirect permanently to the primary host's /
+      else 200 with a line saying this is a nostr relay
+    429 unless connecting.allow(client_ip)
+    upgrade with transport.max_message_size and session::run under the instance's closed token
+
+  fn cors() -> CorsLayer                                                @416-437
+    -- Any origin; GET, HEAD, POST, PUT, DELETE; NIP-98, Blossom and NIP-11 headers; exposes X-Reason.
+  fn is_upgrade(headers) -> bool                                        @439-444
+    -- Upgrade is websocket, in any case.
+  fn wants_relay_info(headers) -> bool                                  @446-451
+    -- Accept contains application/nostr+json.

@@ -56,14 +56,14 @@ Tenants:
 - `POST /relays/{id}/management` — `{method, params}`: any NIP-86 method the relay supports, which `supportedmethods` lists, called as the owner; returns the method's result
 - `GET /relays/{id}/rooms` — the relay's rooms (NIP-29), each `{id, tags, pins, created_at, members, invites}`, with members as `{pubkey, roles, permissions, created_at}`
 - `POST /relays/{id}/rooms/moderate` — `{kind, tags}`: a NIP-29 moderation event, with its room in an `h` tag, which the relay signs and applies
-- `GET /relays/{id}/events?kinds=&ids=&until=&limit=` — the relay's events, newest first, of comma-separated `kinds` or `ids`, at most a hundred at a time
+- `GET /relays/{id}/events?kinds=&ids=&until=&after=&exclude_own=&limit=` — the relay's events, newest first with ties broken by id, of comma-separated `kinds` or `ids`, at most a hundred at a time; the next page passes the last event's `created_at` as `until` and its id as `after`, and `exclude_own=true` leaves out the events the relay signed itself
 - `PUT /relays/{id}/members/{pubkey}`, `DELETE /relays/{id}/members/{pubkey}` — add or remove a member; the owner can't be removed
 - `GET /relays/{id}/memberships` — the relay's paid memberships, newest first
 - `GET /relays/{id}/activity` — `{activity}`, newest first, each `{id, tenant_pubkey, relay_id, activity_type, snapshot: {plan_id, status}, created_at, billed_at}`
 - `POST /relays/{id}/deactivate`, `/reactivate`, `/purge` — a purged relay's data is erased soon after, and its subdomain is free at once
 - `POST /relays/{id}/erase` — delete the relay's events, media, rooms and access lists, keeping its settings, its owner, and what members paid for
 - `GET /relays/{id}/export` — the relay's events as JSONL
-- `POST /relays/{id}/import` — a JSONL body of events, returning `{imported, invalid, skipped, rooms_rebuilt, problems}`
+- `POST /relays/{id}/import` — a JSONL body of events, returning `{imported, invalid, skipped, rooms_rebuilt, problems}`; a body over 1 GiB is 413 `import-too-large`
 - `GET /invoices/{id}`, `GET /invoices/{id}/items`
 - `POST /invoices/{id}/reconcile` — collect an open invoice now
 - `POST /invoices/{id}/bolt11` — a payable Lightning invoice
@@ -75,7 +75,7 @@ Admins:
 - `POST /tenants/{pubkey}/ban`, `POST /tenants/{pubkey}/unban`
 - `POST /tenants/{pubkey}/delete` — purge the tenant's relays and settle their billing, without banning them
 - `DELETE /sessions/{pubkey}` — end every session a pubkey holds
-- `GET /moderation?since=&until=` — `{items, truncated}`: up to a thousand events and uploads every relay not owned by an admin saw in an inclusive window of `seen_at`, newest first, each as `{type, relay_id, seen_at, data}`
+- `GET /moderation?since=&until=` — `{items, truncated}`: up to a thousand events and uploads every relay not owned by an admin saw in an inclusive window of `seen_at`, newest first, each as `{type, relay_id, seen_at, data}`; events that run a relay (what the relay signs, room moderation and join requests, and relay and room lists) are left out
 - `GET /moderation/blob/{relay_id}/{sha256}` — a blob's bytes
 
 Relay settings are `subdomain`, `zooid_domain`, `plan_id`, `info_name`, `info_icon`, `info_description`, `policy_public_read`, `policy_anonymous_read`, `policy_public_write`, `policy_public_join`, `policy_strip_signatures`, `groups_enabled`, `management_enabled`, `members_can_invite`, `blossom_enabled`, `blossom_authenticated_read`, `livekit_enabled`, `push_enabled`, `custom_domain`, `member_price` (cents, `0` or at least `50`) and `member_interval` (`month` or `year`). A relay with a member price can't take public joins.

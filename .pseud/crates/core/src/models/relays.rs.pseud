@@ -1,0 +1,51 @@
+% source=crates/core/src/models/relays.rs lang=rust lines=236 sha=74ee21eb650b
+
+module caravel_core::models::relays
+  -- Relays: the rows tenants create and the platform serves, their hosts, and their settings.
+
+  pub enum RelayStatus = Active | Inactive | Delinquent  -- stored lowercase, Active by default  @10-21
+    -- Active serves and bills; Inactive is paused by its tenant, unbilled; Delinquent is paused
+    -- because its tenant churned, until they pay or come back.
+  pub enum MemberInterval = Month | Year  -- how often a membership renews; Month by default  @23-31
+  impl MemberInterval                                                   @33-49
+    ~ as_str: "month" or "year", as Stripe names it; seconds: 30 or 365 days, as NIP-11 states  @34-48
+
+  pub data Relay  -- flags serialize as 0/1                             @51-123
+    id, tenant_pubkey, subdomain, plan_id, info_name, info_icon, info_description: str
+    domain: str  -- relay domain of its canonical host (zooid_domain); subdomains unique across all
+    status: RelayStatus
+    pubkey, secret: str  -- its own key, signing what it publishes; secret encrypted, unserialized
+    policy_public_read: bool  -- anyone may read without being a member
+    policy_anonymous_read: bool  -- anyone may read unauthenticated; public_read decides once authed
+    policy_public_write: bool  -- anyone may publish without being a member
+    policy_public_join: bool  -- anyone may join with a NIP-43 request, without an invite
+    policy_strip_signatures: bool  -- events go out unsigned to all but the owner and the relay key
+    groups_enabled, management_enabled, blossom_enabled, livekit_enabled, push_enabled: bool
+    members_can_invite: bool  -- members may list and create invite claims
+    blossom_authenticated_read: bool  -- only members may download its media
+    custom_domain: str?, custom_domain_verified: bool  -- serves once DNS sees it at canonical_host
+    member_price: i64, member_interval  -- cents per interval for a membership; 0 joins free
+    redirect_from: [str]  -- hosts redirecting here, kept when a verified custom domain is replaced
+    purged_at: i64?  -- data deleted and hosts released, row kept; purging an active one credits
+    erased_at: i64?  -- when a purged relay's events, access lists, rooms and media were erased
+    created_at: i64
+  pub data RelayProfile { relay_id, host, name, icon, description }  -- name falls back to host  @125-134
+
+  impl Relay                                                            @136-208
+    pub fn host(self) -> str  -- the verified custom domain, else the canonical host  @137-144
+    pub fn hosts(self) -> [str]  -- canonical, a verified custom domain, then redirect_from  @146-155
+    pub fn canonical_host(self) -> str  -- `<subdomain>.<domain>`, always answered on  @157-161
+    pub fn is_purged(self) -> bool                                      @163-165
+    pub fn require_unpurged(self) -> () fails  -- conflict "relay-is-purged" once purged  @167-173
+    pub fn is_served(self) -> bool  -- Active and not purged            @175-178
+    pub fn charges_members(self) -> bool  -- has a member_price and is served  @180-183
+    pub fn member_limit(self) -> i64?  -- the plan's limit; none for an unknown plan too  @185-188
+    pub fn display_name(self) -> str  -- info_name, or the host when it is empty  @190-197
+    pub fn profile(self) -> RelayProfile                                @199-207
+
+  pub data RelaySettings  -- a tenant's choices; create fills gaps with defaults, update keeps them  @210-236
+    subdomain, domain (zooid_domain), plan_id, info_name, info_icon, info_description: str?
+    policy_public_read, policy_anonymous_read, policy_public_write, policy_public_join: Flag?
+    policy_strip_signatures, groups_enabled, management_enabled, members_can_invite: Flag?
+    blossom_enabled, blossom_authenticated_read, livekit_enabled, push_enabled: Flag?
+    custom_domain: str?, member_price: i64?, member_interval: MemberInterval?

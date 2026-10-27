@@ -1,7 +1,8 @@
 //! One client connection, from the upgrade to the close. The read loop parses
 //! what arrives and hands it to the relay instance; a write task owns the socket
 //! and drains a queue, so anything holding a [`Session`] can push a message at
-//! the client without waiting on the socket.
+//! the client without waiting on the socket. A client that stops reading, which
+//! stalls a write or leaves a ping unanswered, is dropped.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -12,10 +13,10 @@ use axum::extract::ws::{CloseFrame, Message as WsMessage, WebSocket};
 use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::mpsc;
-use tokio::time::{Instant, interval_at};
+use tokio::time::{Instant, interval_at, timeout, timeout_at};
 use tokio_util::sync::CancellationToken;
 
-use caravel_core::relay_policy::Refusal;
+use caravel_core::models::policy::Refusal;
 
 use crate::instance::RelayInstance;
 use crate::message::{
@@ -37,6 +38,11 @@ pub struct Transport {
     pub send_buffer: usize,
     /// How often to ping a client, to notice one that went away silently.
     pub ping_interval: Duration,
+    /// How long a client may leave a ping unanswered, longer than `ping_interval`.
+    pub pong_wait: Duration,
+    /// How long one frame may take to reach the socket. A client that stops
+    /// reading fills the socket, and would otherwise hold its connection forever.
+    pub write_wait: Duration,
 }
 
 impl Default for Transport {
@@ -45,6 +51,8 @@ impl Default for Transport {
             max_message_size: 512 * 1024,
             send_buffer: 256,
             ping_interval: Duration::from_secs(30),
+            pong_wait: Duration::from_secs(60),
+            write_wait: Duration::from_secs(10),
         }
     }
 }
@@ -98,12 +106,21 @@ pub async fn run(
 
     tracing::debug!(session = id, %addr, relay = %instance.relay_id(), "connected");
 
-    let writer = tokio::spawn(write(sink, receiver, transport, shutdown.clone()));
+    // Cancelled when the writer stops, so the read side lets the socket go too.
+    let written = CancellationToken::new();
+    let writer = tokio::spawn(write(
+        sink,
+        receiver,
+        transport,
+        shutdown.clone(),
+        written.clone(),
+    ));
 
     instance.on_connect(&session).await;
     tokio::select! {
-        _ = read(&session, &instance, stream) => {}
+        _ = read(&session, &instance, stream, transport.pong_wait) => {}
         _ = shutdown.cancelled() => {}
+        _ = written.cancelled() => {}
     }
     instance.on_disconnect(&session);
 
@@ -114,15 +131,31 @@ pub async fn run(
     let _ = writer.await;
 }
 
-async fn read(session: &Session, instance: &RelayInstance, mut stream: SplitStream<WebSocket>) {
-    while let Some(frame) = stream.next().await {
+/// Hand each message the client sends to the instance, until it closes, the
+/// socket fails, or a ping goes unanswered for `pong_wait`.
+async fn read(
+    session: &Session,
+    instance: &RelayInstance,
+    mut stream: SplitStream<WebSocket>,
+    pong_wait: Duration,
+) {
+    let mut deadline = Instant::now() + pong_wait;
+    loop {
+        let Ok(next) = timeout_at(deadline, stream.next()).await else {
+            tracing::debug!(session = session.id(), "pings went unanswered");
+            break;
+        };
+        let Some(frame) = next else {
+            break;
+        };
         match frame {
             Ok(WsMessage::Text(text)) => dispatch(session, instance, text.as_str()).await,
             Ok(WsMessage::Binary(_)) => {
                 let refusal = Refusal::invalid("nostr messages are text, not binary");
                 session.send(RelayMessage::Notice(refusal.message())).await;
             }
-            Ok(WsMessage::Close(_) | WsMessage::Ping(_) | WsMessage::Pong(_)) => {}
+            Ok(WsMessage::Pong(_)) => deadline = Instant::now() + pong_wait,
+            Ok(WsMessage::Close(_) | WsMessage::Ping(_)) => {}
             Err(error) => {
                 tracing::debug!(session = session.id(), %error, "read failed");
                 break;
@@ -218,13 +251,17 @@ fn malformed(text: &str, error: &serde_json::Error) -> RelayMessage {
 }
 
 /// Serialize queued messages onto the socket, pinging the client between them,
-/// and say goodbye with 1001 when the server shuts down.
+/// and say goodbye with 1001 when the server shuts down. A frame the socket won't
+/// take within `write_wait` ends the connection, and `written` is cancelled once
+/// writing stops for any reason.
 async fn write(
     mut sink: SplitSink<WebSocket, WsMessage>,
     mut receiver: mpsc::Receiver<RelayMessage>,
     transport: Transport,
     shutdown: CancellationToken,
+    written: CancellationToken,
 ) {
+    let _written = written.drop_guard();
     let mut ping = interval_at(
         Instant::now() + transport.ping_interval,
         transport.ping_interval,
@@ -234,12 +271,11 @@ async fn write(
         let frame = tokio::select! {
             biased;
             _ = shutdown.cancelled() => {
-                let _ = sink
-                    .send(WsMessage::Close(Some(CloseFrame {
-                        code: GOING_AWAY,
-                        reason: "server shutting down".into(),
-                    })))
-                    .await;
+                let goodbye = WsMessage::Close(Some(CloseFrame {
+                    code: GOING_AWAY,
+                    reason: "server shutting down".into(),
+                }));
+                let _ = timeout(transport.write_wait, sink.send(goodbye)).await;
                 break;
             }
             message = receiver.recv() => match message {
@@ -255,10 +291,15 @@ async fn write(
             _ = ping.tick() => WsMessage::Ping(Vec::new().into()),
         };
 
-        if sink.send(frame).await.is_err() {
-            break;
+        match timeout(transport.write_wait, sink.send(frame)).await {
+            Ok(Ok(())) => {}
+            Ok(Err(_)) => break,
+            Err(_) => {
+                tracing::debug!("dropped a client that stopped reading");
+                return;
+            }
         }
     }
 
-    let _ = sink.close().await;
+    let _ = timeout(transport.write_wait, sink.close()).await;
 }

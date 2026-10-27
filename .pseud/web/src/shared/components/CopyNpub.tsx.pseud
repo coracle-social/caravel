@@ -1,0 +1,7 @@
+% source=web/src/shared/components/CopyNpub.tsx lang=typescript lines=30 sha=11f9147dca2f
+
+module @/shared/components/CopyNpub
+  -- A pubkey shown as a copyable npub.
+
+  pub fn CopyNpub(props: { pubkey, class? })                            @6-30
+    -- A shortened npub and a button copying the full one, which doesn't follow an enclosing link.

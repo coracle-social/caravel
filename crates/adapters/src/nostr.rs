@@ -17,21 +17,36 @@ use futures_util::future::{join_all, select_ok};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use tokio::net::TcpStream;
+use tokio::time::{Instant, timeout_at};
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{Connector, MaybeTlsStream, WebSocketStream};
+
+use crate::outbound;
 
 /// The kind a client answers a relay's challenge with.
 const CLIENT_AUTH: u16 = 22242;
 
-/// A key to talk to relays as.
+/// A key to talk to relays as, refusing relays on local or internal addresses.
 #[derive(Clone)]
 pub struct Client {
     secret: SecretKey,
+    allow_private: bool,
 }
 
 impl Client {
     pub fn new(secret: SecretKey) -> Self {
-        Self { secret }
+        Self {
+            secret,
+            allow_private: false,
+        }
+    }
+
+    /// A client that also reaches local addresses, for tests' relays on loopback.
+    pub fn allowing_private(secret: SecretKey) -> Self {
+        Self {
+            secret,
+            allow_private: true,
+        }
     }
 
     /// Publish an event to every relay, succeeding if any of them takes it.
@@ -71,7 +86,7 @@ impl Client {
         let results = join_all(
             relays
                 .iter()
-                .map(|relay| within(timeout, self.fetch_from(relay, filter, now))),
+                .map(|relay| self.fetch_from(relay, filter, now, timeout)),
         )
         .await;
 
@@ -111,7 +126,7 @@ impl Client {
     }
 
     async fn publish_to(&self, relay: &str, event: &Event, now: i64) -> Result<()> {
-        let mut connection = Connection::open(relay, &self.secret, now).await?;
+        let mut connection = Connection::open(relay, &self.secret, now, self.allow_private).await?;
         let publish = json!(["EVENT", event]);
         connection.send(&publish).await?;
 
@@ -142,21 +157,38 @@ impl Client {
         }
     }
 
-    async fn fetch_from(&self, relay: &str, filter: &Filter, now: i64) -> Result<Vec<Event>> {
-        let mut connection = Connection::open(relay, &self.secret, now).await?;
-        let subscribe = json!(["REQ", "fetch", filter]);
+    /// The events a relay sends until EOSE or the timeout, failing if it sent none
+    /// by the timeout.
+    async fn fetch_from(
+        &self,
+        relay: &str,
+        filter: &Filter,
+        now: i64,
+        timeout: Duration,
+    ) -> Result<Vec<Event>> {
+        let deadline = Instant::now() + timeout;
+        let open = Connection::open(relay, &self.secret, now, self.allow_private);
+        let mut connection = within(timeout, open).await?;
+        let id = hex::encode(rand::random::<[u8; 16]>());
+        let subscribe = json!(["REQ", id, filter]);
         connection.send(&subscribe).await?;
 
         let mut events = Vec::new();
         let mut retry = Retry::default();
         loop {
-            match connection.receive().await? {
+            let Ok(received) = timeout_at(deadline, connection.receive()).await else {
+                if events.is_empty() {
+                    bail!("the relay didn't answer in time");
+                }
+                break;
+            };
+            match received? {
                 Received::Authenticated => {
                     if retry.on_authenticated() {
                         connection.send(&subscribe).await?;
                     }
                 }
-                Received::Message(message) if message[1] != "fetch" => {}
+                Received::Message(message) if message[1] != id => {}
                 Received::Message(message) => match message[0].as_str() {
                     Some("EVENT") => {
                         if let Some(event) = verified(&message[2])
@@ -179,11 +211,13 @@ impl Client {
             }
         }
 
-        connection.send(&json!(["CLOSE", "fetch"])).await?;
+        connection.send(&json!(["CLOSE", id])).await?;
         connection.close().await;
         Ok(events)
     }
 
+    /// Publish `event` once a subscription to `reply` is open, since an answer
+    /// sent before then is missed, and wait for the first verified answer.
     async fn request_from(
         &self,
         relay: &str,
@@ -191,23 +225,31 @@ impl Client {
         reply: &Filter,
         now: i64,
     ) -> Result<Event> {
-        let mut connection = Connection::open(relay, &self.secret, now).await?;
-        let subscribe = json!(["REQ", "reply", reply]);
+        let mut connection = Connection::open(relay, &self.secret, now, self.allow_private).await?;
+        let id = hex::encode(rand::random::<[u8; 16]>());
+        let subscribe = json!(["REQ", id, reply]);
         let publish = json!(["EVENT", event]);
         connection.send(&subscribe).await?;
-        connection.send(&publish).await?;
 
-        let mut retry = Retry::default();
+        let mut published = false;
+        let mut subscribe_retry = Retry::default();
+        let mut publish_retry = Retry::default();
         loop {
             match connection.receive().await? {
                 Received::Authenticated => {
-                    if retry.on_authenticated() {
+                    if subscribe_retry.on_authenticated() {
                         connection.send(&subscribe).await?;
+                    }
+                    if publish_retry.on_authenticated() {
                         connection.send(&publish).await?;
                     }
                 }
                 Received::Message(message) => match message[0].as_str() {
-                    Some("EVENT") if message[1] == "reply" => {
+                    Some("EOSE") if message[1] == id && !published => {
+                        published = true;
+                        connection.send(&publish).await?;
+                    }
+                    Some("EVENT") if message[1] == id => {
                         if let Some(answer) = verified(&message[2])
                             && reply.matches(&answer)
                         {
@@ -217,16 +259,17 @@ impl Client {
                     }
                     Some("OK") if message[1] == event.id.to_hex() && message[2] != true => {
                         let reason = message[3].as_str().unwrap_or_default();
-                        if retry.on_refused(reason, connection.authenticated) {
-                            connection.send(&subscribe).await?;
+                        if publish_retry.on_refused(reason, connection.authenticated) {
                             connection.send(&publish).await?;
-                        } else if !retry.waiting {
+                        } else if !publish_retry.waiting {
                             bail!("{relay} refused the request: {reason}");
                         }
                     }
-                    Some("CLOSED") if message[1] == "reply" => {
+                    Some("CLOSED") if message[1] == id => {
                         let reason = message[2].as_str().unwrap_or_default();
-                        if !reason.starts_with("auth-required") {
+                        if subscribe_retry.on_refused(reason, connection.authenticated) {
+                            connection.send(&subscribe).await?;
+                        } else if !subscribe_retry.waiting {
                             bail!("{relay} closed the subscription: {reason}");
                         }
                     }
@@ -292,11 +335,22 @@ struct Connection<'a> {
 }
 
 impl<'a> Connection<'a> {
-    async fn open(relay: &str, secret: &'a SecretKey, now: i64) -> Result<Self> {
-        let (socket, _) =
-            tokio_tungstenite::connect_async_tls_with_config(relay, None, false, Some(tls()))
-                .await
-                .map_err(|error| anyhow!("couldn't connect to {relay}: {error}"))?;
+    /// A websocket to `relay`, refusing local and internal addresses unless
+    /// `allow_private`.
+    async fn open(
+        relay: &str,
+        secret: &'a SecretKey,
+        now: i64,
+        allow_private: bool,
+    ) -> Result<Self> {
+        let url: url::Url = relay.parse()?;
+        let (socket, _) = async {
+            let stream = outbound::connect(&url, allow_private).await?;
+            let tls = Some(tls());
+            Ok(tokio_tungstenite::client_async_tls_with_config(relay, stream, None, tls).await?)
+        }
+        .await
+        .map_err(|error: anyhow::Error| anyhow!("couldn't connect to {relay}: {error}"))?;
         Ok(Self {
             socket,
             relay: relay.to_string(),
@@ -373,4 +427,136 @@ fn tls() -> Connector {
     .with_root_certificates(roots)
     .with_no_client_auth();
     Connector::Rustls(Arc::new(config))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+
+    use super::*;
+    use tokio::net::TcpListener;
+
+    /// A relay that answers a REQ with `events` and never sends EOSE, and its url.
+    async fn stalling_relay(events: Vec<Event>) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("ws://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+            while let Some(Ok(Message::Text(text))) = socket.next().await {
+                let message: Value = serde_json::from_str(&text).unwrap();
+                if message[0] != "REQ" {
+                    continue;
+                }
+                for event in &events {
+                    let reply = json!(["EVENT", message[1], event]);
+                    let _ = socket.send(Message::Text(reply.to_string().into())).await;
+                }
+            }
+        });
+        url
+    }
+
+    /// A relay that takes events from anyone but opens subscriptions only once the
+    /// connection has authenticated, answering each event with `answer` on every
+    /// open subscription, as a relay forwards an ephemeral event; and its url.
+    async fn auth_to_read_relay(answer: Event) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("ws://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+            let text = |message: Value| Message::Text(message.to_string().into());
+            let _ = socket.send(text(json!(["AUTH", "challenge"]))).await;
+            let (mut authenticated, mut open) = (false, Vec::new());
+            while let Some(Ok(Message::Text(received))) = socket.next().await {
+                let message: Value = serde_json::from_str(&received).unwrap();
+                let mut replies = Vec::new();
+                match message[0].as_str() {
+                    Some("AUTH") => {
+                        authenticated = true;
+                        replies.push(json!(["OK", message[1]["id"], true, ""]));
+                    }
+                    Some("REQ") if !authenticated => {
+                        replies.push(json!(["CLOSED", message[1], "auth-required: sign in"]));
+                    }
+                    Some("REQ") => {
+                        open.push(message[1].clone());
+                        replies.push(json!(["EOSE", message[1]]));
+                    }
+                    Some("EVENT") => {
+                        replies.push(json!(["OK", message[1]["id"], true, ""]));
+                        replies.extend(open.iter().map(|id| json!(["EVENT", id, answer])));
+                    }
+                    _ => {}
+                }
+                for reply in replies {
+                    let _ = socket.send(text(reply)).await;
+                }
+            }
+        });
+        url
+    }
+
+    fn note(secret: &SecretKey) -> Event {
+        let hashed = EventContent::new()
+            .with_content("hello")
+            .with_kind(1)
+            .with_created_at(0)
+            .with_pubkey(secret.public_key())
+            .with_id();
+        let sig = secret.sign(&hashed.id.to_bytes());
+        hashed.with_sig(sig)
+    }
+
+    #[tokio::test]
+    async fn a_relay_without_eose_by_the_timeout_keeps_what_it_sent() {
+        let secret = SecretKey::generate();
+        let event = note(&secret);
+        let relays = [stalling_relay(vec![event.clone()]).await];
+        let fetched = Client::allowing_private(secret)
+            .fetch(&relays, &Filter::default(), 0, Duration::from_millis(200))
+            .await
+            .unwrap();
+        assert_eq!(fetched, [event]);
+    }
+
+    #[tokio::test]
+    async fn a_relay_that_sent_nothing_by_the_timeout_did_not_answer() {
+        let relays = [stalling_relay(Vec::new()).await];
+        let fetched = Client::allowing_private(SecretKey::generate())
+            .fetch(&relays, &Filter::default(), 0, Duration::from_millis(200))
+            .await;
+        assert!(fetched.is_err());
+    }
+
+    #[tokio::test]
+    async fn a_relay_on_a_local_address_is_never_dialed() {
+        let secret = SecretKey::generate();
+        for host in ["127.0.0.1", "localhost"] {
+            let url = stalling_relay(vec![note(&secret)]).await;
+            let relays = [url.replace("127.0.0.1", host)];
+            let error = Client::new(secret.clone())
+                .fetch(&relays, &Filter::default(), 0, Duration::from_secs(2))
+                .await
+                .unwrap_err();
+            assert!(error.to_string().contains("no public address"), "{error}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_request_subscribes_again_after_auth_before_it_publishes() {
+        let (asker, answerer) = (SecretKey::generate(), SecretKey::generate());
+        let answer = note(&answerer);
+        let relays = [auth_to_read_relay(answer.clone()).await];
+        let reply = Filter {
+            authors: Some(BTreeSet::from([answerer.public_key()])),
+            ..Default::default()
+        };
+        let answered = Client::allowing_private(asker.clone())
+            .request(&relays, &note(&asker), &reply, 0, Duration::from_secs(2))
+            .await
+            .unwrap();
+        assert_eq!(answered, answer);
+    }
 }

@@ -2,15 +2,16 @@
 //! method grants and claims, and the events the relay publishes about them.
 
 use anyhow::Result;
-use caravel_core::access::{self, MANAGED_METHODS, MemberSource, Role};
 use caravel_core::crypto::RelayKey;
-use caravel_core::events;
-use caravel_core::events::kinds;
-use caravel_core::management::{self, Call, Outcome};
-use caravel_core::relay_policy;
-use caravel_core::relays::Relay;
-use caravel_core::testing::{self, create_relay, sign_event};
-use caravel_core::{Core, Error};
+use caravel_core::models::events::Saved;
+use caravel_core::models::kinds;
+use caravel_core::models::management::{Call, Outcome};
+use caravel_core::models::members::MemberSource;
+use caravel_core::models::methods::MANAGED_METHODS;
+use caravel_core::models::relays::Relay;
+use caravel_core::models::roles::Role;
+use caravel_core::testing::{create_relay, sign_event};
+use caravel_core::{Core, Error, commands, management, queries, testing};
 use coracle_lib::events::Event;
 use coracle_lib::filters::Filter;
 use coracle_lib::keys::SecretKey;
@@ -47,11 +48,13 @@ impl Fixture {
     }
 
     async fn members(&self) -> Result<Vec<String>> {
-        Ok(access::list_members(self.core.db.pool(), &self.relay.id)
-            .await?
-            .into_iter()
-            .map(|member| member.pubkey)
-            .collect())
+        Ok(
+            queries::members::list_members(self.core.db.pool(), &self.relay.id)
+                .await?
+                .into_iter()
+                .map(|member| member.pubkey)
+                .collect(),
+        )
     }
 
     /// The latest event the relay published of a kind.
@@ -59,7 +62,7 @@ impl Fixture {
         let filter = Filter::new()
             .add_kind(kind)
             .add_author(self.key.pubkey().parse()?);
-        let found = events::query_events(
+        let found = queries::events::query_events(
             self.core.db.pool(),
             &self.relay.id,
             &filter,
@@ -95,7 +98,7 @@ async fn the_owner_is_a_member_from_the_start() -> Result<()> {
         vec![vec!["member".to_string(), f.owner.clone()]]
     );
 
-    let member = access::get_member(f.core.db.pool(), &f.relay.id, &f.owner)
+    let member = queries::members::get_member(f.core.db.pool(), &f.relay.id, &f.owner)
         .await?
         .unwrap();
     assert_eq!(member.source, MemberSource::Owner);
@@ -112,7 +115,8 @@ async fn membership_changes_are_idempotent_and_published() -> Result<()> {
         .core
         .db
         .with_tx(async |conn| {
-            access::admit(conn, &f.key, &f.relay.id, &alice, MemberSource::Manual, now).await
+            commands::members::admit(conn, &f.key, &f.relay.id, &alice, MemberSource::Manual, now)
+                .await
         })
         .await?;
     assert_eq!(
@@ -129,7 +133,8 @@ async fn membership_changes_are_idempotent_and_published() -> Result<()> {
         .core
         .db
         .with_tx(async |conn| {
-            access::admit(conn, &f.key, &f.relay.id, &alice, MemberSource::Claim, now).await
+            commands::members::admit(conn, &f.key, &f.relay.id, &alice, MemberSource::Claim, now)
+                .await
         })
         .await?;
     assert!(again.is_empty());
@@ -164,7 +169,7 @@ async fn banning_a_pubkey_removes_it_and_everything_it_wrote() -> Result<()> {
     let spam = sign_event(&spammer, 1, "spam", &[], now);
     f.core
         .db
-        .with_tx(async |conn| events::save_event(conn, &f.relay.id, &spam, now).await)
+        .with_tx(async |conn| commands::events::save_event(conn, &f.relay.id, &spam, now).await)
         .await?;
 
     f.call(Call::BanPubkey(spammer_hex.clone(), "spam".into()))
@@ -175,7 +180,7 @@ async fn banning_a_pubkey_removes_it_and_everything_it_wrote() -> Result<()> {
         f.call(Call::ListBannedPubkeys).await?,
         json!([{"pubkey": spammer_hex, "reason": "spam"}])
     );
-    let written = events::query_events(
+    let written = queries::events::query_events(
         f.core.db.pool(),
         &f.relay.id,
         &Filter::new().add_author(spammer.public_key()),
@@ -189,6 +194,49 @@ async fn banning_a_pubkey_removes_it_and_everything_it_wrote() -> Result<()> {
     f.call(Call::AllowPubkey(spammer_hex.clone())).await?;
     assert!(f.members().await?.contains(&spammer_hex));
     assert_eq!(f.call(Call::ListBannedPubkeys).await?, json!([]));
+    Ok(())
+}
+
+// A ban takes what a pubkey wrote, but not its tombstones, so what it deleted
+// stays deleted once the ban is lifted.
+#[tokio::test]
+async fn a_ban_keeps_the_pubkeys_deletions_and_requests_to_vanish() -> Result<()> {
+    let f = fixture().await;
+    let author = SecretKey::generate();
+    let author_hex = author.public_key().to_hex();
+    let now = f.core.clock.now();
+    let store = async |event: &Event| {
+        caravel_core::ingest::store(&f.core, &f.relay, &f.key, false, event)
+            .await
+            .map(|(saved, _)| saved)
+    };
+
+    let vanished = sign_event(&author, 1, "vanished", &[], now - 20);
+    let vanish = sign_event(&author, 62, "", &[&["relay", "ALL_RELAYS"]], now - 15);
+    let deleted = sign_event(&author, 1, "deleted", &[], now - 10);
+    let deletion = sign_event(&author, 5, "", &[&["e", &deleted.id.to_hex()]], now - 5);
+    for event in [&vanished, &vanish, &deleted, &deletion] {
+        store(event).await?;
+    }
+
+    f.call(Call::BanPubkey(author_hex.clone(), "spam".into()))
+        .await?;
+    f.call(Call::UnbanPubkey(author_hex)).await?;
+
+    let kept: Vec<[u8; 32]> = queries::events::query_events(
+        f.core.db.pool(),
+        &f.relay.id,
+        &Filter::new().add_author(author.public_key()),
+        10,
+        now,
+    )
+    .await?
+    .iter()
+    .map(|stored| stored.head.id)
+    .collect();
+    assert_eq!(kept, vec![deletion.id.to_bytes(), vanish.id.to_bytes()]);
+    assert_eq!(store(&deleted).await?, Saved::Deleted);
+    assert_eq!(store(&vanished).await?, Saved::Deleted);
     Ok(())
 }
 
@@ -213,7 +261,7 @@ async fn banning_an_event_deletes_it_until_it_is_allowed() -> Result<()> {
     let event = sign_event(&author, 1, "bad", &[], now);
     f.core
         .db
-        .with_tx(async |conn| events::save_event(conn, &f.relay.id, &event, now).await)
+        .with_tx(async |conn| commands::events::save_event(conn, &f.relay.id, &event, now).await)
         .await?;
 
     let id = event.id.to_hex();
@@ -223,7 +271,7 @@ async fn banning_an_event_deletes_it_until_it_is_allowed() -> Result<()> {
         json!([{"id": id, "reason": "bad"}])
     );
     assert!(
-        events::get_events(f.core.db.pool(), &f.relay.id, &[event.id.to_bytes()])
+        queries::events::get_events(f.core.db.pool(), &f.relay.id, &[event.id.to_bytes()])
             .await?
             .is_empty()
     );
@@ -272,7 +320,7 @@ async fn the_relays_name_description_and_icon_are_managed() -> Result<()> {
     f.call(Call::ChangeRelayIcon("https://example.com/icon.png".into()))
         .await?;
 
-    let relay = caravel_core::relays::require_relay(f.core.db.pool(), &f.relay.id).await?;
+    let relay = caravel_core::queries::relays::require_relay(f.core.db.pool(), &f.relay.id).await?;
     assert_eq!(relay.info_name, "Renamed");
     assert_eq!(relay.info_description, "About us");
     assert_eq!(relay.info_icon, "https://example.com/icon.png");
@@ -408,7 +456,7 @@ async fn methods_are_granted_individually_and_to_members_of_inviting_relays() ->
         "a method makes its holder a member"
     );
 
-    let snapshot = relay_policy::load_snapshot(f.core.db.pool(), &f.relay).await?;
+    let snapshot = queries::policy::load_snapshot(f.core.db.pool(), &f.relay).await?;
     let mut methods = snapshot.methods_for(&alice);
     methods.sort();
     // Members of a relay whose members may invite also hold the invite methods.
@@ -428,7 +476,7 @@ async fn methods_are_granted_individually_and_to_members_of_inviting_relays() ->
 
     f.call(Call::UnassignMethod(alice.clone(), "banpubkey".into()))
         .await?;
-    let snapshot = relay_policy::load_snapshot(f.core.db.pool(), &f.relay).await?;
+    let snapshot = queries::policy::load_snapshot(f.core.db.pool(), &f.relay).await?;
     assert!(
         !snapshot
             .methods_for(&alice)
@@ -467,7 +515,7 @@ async fn removing_a_member_takes_their_methods() -> Result<()> {
     f.call(Call::UnallowPubkey(alice.clone())).await?;
 
     assert!(
-        access::list_method_grants(f.core.db.pool(), &f.relay.id)
+        queries::methods::list_method_grants(f.core.db.pool(), &f.relay.id)
             .await?
             .is_empty()
     );
@@ -475,7 +523,7 @@ async fn removing_a_member_takes_their_methods() -> Result<()> {
 }
 
 #[tokio::test]
-async fn claims_are_created_listed_revoked_and_logged() -> Result<()> {
+async fn claims_are_created_listed_and_revoked() -> Result<()> {
     let f = fixture().await;
     let pool = f.core.db.pool();
 
@@ -484,29 +532,11 @@ async fn claims_are_created_listed_revoked_and_logged() -> Result<()> {
     f.call(Call::CreateClaim("alpha".into())).await?;
     f.call(Call::CreateClaim("beta".into())).await?;
     assert_eq!(f.call(Call::ListClaims).await?, json!(["alpha", "beta"]));
-    assert!(access::is_live_claim(pool, &f.relay.id, "alpha").await?);
-
-    let joiner = pubkey();
-    let now = f.core.clock.now();
-    access::record_claim_use(pool, &f.relay.id, "alpha", &joiner, now).await?;
-    access::record_claim_use(pool, &f.relay.id, "unknown", &joiner, now).await?;
+    assert!(queries::claims::is_live_claim(pool, &f.relay.id, "alpha").await?);
 
     f.call(Call::DeleteClaim("alpha".into())).await?;
     assert_eq!(f.call(Call::ListClaims).await?, json!(["beta"]));
-    assert!(!access::is_live_claim(pool, &f.relay.id, "alpha").await?);
-
-    // The log outlives the claim.
-    let log = access::get_claim_log(pool, &f.relay.id, "alpha")
-        .await?
-        .expect("no log");
-    assert!(log.revoked_at.is_some());
-    assert_eq!(log.uses.len(), 1);
-    assert_eq!(log.uses[0].pubkey, joiner);
-    assert!(
-        access::get_claim_log(pool, &f.relay.id, "unknown")
-            .await?
-            .is_none()
-    );
+    assert!(!queries::claims::is_live_claim(pool, &f.relay.id, "alpha").await?);
     Ok(())
 }
 

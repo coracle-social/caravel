@@ -1,0 +1,9 @@
+% source=crates/core/src/domain/roles.rs lang=rust lines=40 sha=43429d6035cd
+
+module caravel_core::domain::roles
+  -- Checking a role, and the event that defines it.
+
+  pub fn validate_role(role) -> () fails                                @7-18
+    -- Invalid "role-id-required" for an empty id, "invalid-hue" for a hue outside 0 to 360.
+  pub fn role_tags(role) -> [tag]                                       @20-40
+    -- "-" and d, then label, description, color (hue) and order (position), each only when set.

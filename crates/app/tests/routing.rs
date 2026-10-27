@@ -8,9 +8,8 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use caravel_app::dispatch::{self, Hosts};
 use caravel_app::web::{PageConfig, Web};
-use caravel_core::relays::{self, Relay};
-use caravel_core::testing;
-use caravel_core::{Core, hosting};
+use caravel_core::models::relays::Relay;
+use caravel_core::{Core, commands, hosting, queries, testing};
 use caravel_relay::{Relays, RelaysConfig};
 use coracle_lib::keys::SecretKey;
 use http_body_util::BodyExt;
@@ -71,13 +70,13 @@ async fn fixture(api_url: &str) -> Fixture {
     let (custom, old) = (format!("club-{tag}.example"), format!("old-{tag}.example"));
     let settings = serde_json::from_value(json!({"custom_domain": custom})).unwrap();
     let relay = hosting::update_relay(&core, relay, settings).await.unwrap();
-    relays::set_custom_domain_verified(core.db.pool(), &relay.id, &custom, true)
+    commands::relays::set_custom_domain_verified(core.db.pool(), &relay.id, &custom, true)
         .await
         .unwrap();
-    relays::add_host_redirect(core.db.pool(), &old, &relay.id, core.clock.now())
+    commands::relays::add_host_redirect(core.db.pool(), &old, &relay.id, core.clock.now())
         .await
         .unwrap();
-    let relay = relays::get_relay(core.db.pool(), &relay.id)
+    let relay = queries::relays::get_relay(core.db.pool(), &relay.id)
         .await
         .unwrap()
         .unwrap();
@@ -269,6 +268,48 @@ async fn the_api_can_share_the_platform_host_under_a_path() {
             Some(&format!("https://{PLATFORM}"))
         )
         .is_err()
+    );
+}
+
+#[tokio::test]
+async fn an_api_on_its_own_host_answers_with_and_without_its_path() {
+    let f = fixture(&format!("https://{API}/plan")).await;
+
+    for path in ["/plan/plans", "/plans"] {
+        let plans = get(&f.app, API, path, JSON).await;
+        assert_eq!(plans.status, StatusCode::OK, "{path}");
+        assert!(plans.body.contains(r#""code":"ok""#), "{path}");
+    }
+}
+
+#[tokio::test]
+async fn a_relay_cant_take_over_the_platforms_hosts() {
+    let core = testing::core(&SecretKey::generate().public_key().to_hex()).await;
+    let tag = &caravel_core::crypto::random_token()[..12];
+    let (api, platform) = (format!("api-{tag}.example"), format!("app-{tag}.example"));
+
+    // Hosts this core doesn't know as the platform's, verified as a relay's.
+    for host in [&api, &platform] {
+        let (relay, _) = testing::create_relay(&core).await;
+        let settings = serde_json::from_value(json!({"custom_domain": host})).unwrap();
+        let relay = hosting::update_relay(&core, relay, settings).await.unwrap();
+        commands::relays::set_custom_domain_verified(core.db.pool(), &relay.id, host, true)
+            .await
+            .unwrap();
+    }
+    let app = app(
+        &core,
+        &format!("https://{api}"),
+        Some(&format!("https://{platform}")),
+    )
+    .await;
+
+    let plans = get(&app, &api, "/plans", JSON).await;
+    assert_eq!(plans.status, StatusCode::OK);
+    assert!(plans.body.contains(r#""code":"ok""#));
+    assert_eq!(
+        get(&app, &platform, "/", PAGE).await.shell().as_deref(),
+        Some("tenant")
     );
 }
 

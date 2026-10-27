@@ -1,0 +1,39 @@
+% source=crates/api/src/management.rs lang=rust lines=187 sha=83615b80b45d
+
+module caravel_api::management  !db !time
+  -- Managing a relay from the dashboards, for its tenant or an admin: its NIP-86 methods, NIP-43
+  -- members, NIP-29 rooms, and the events it holds.
+
+  const MAX_EVENTS = 100  -- the most events one page holds             @21
+  async fn managed_relay(core, actor, id) -> Relay fails  !db           @24-29
+    -- The relay, once the caller is its tenant or an admin and it isn't purged.
+  pub data MethodCall { method, params: [Value] = [] }                  @32-36
+
+  pub async fn call_method(actor, id, call) -> Value fails  !db !time   @40-60
+    -- POST /relays/{id}/management: a NIP-86 method run as the relay's owner on a managed relay.
+    supportedmethods -> MANAGED_METHODS, without calling the core
+    otherwise decode the call and run it through management::call
+    if access changed, publish AccessChanged with what it signed; the core leaves that to callers
+    return the outcome's result
+  pub async fn list_members(actor, id) -> {members, roles} fails  !db   @64-74
+    -- GET /relays/{id}/members: its members with their roles and sources, and the roles it defines.
+
+  data RoomView { ..room: Room, members: [RoomMember], invites: [code] }  @78-83
+  pub async fn list_rooms(actor, id) -> [RoomView] fails  !db           @86-114
+    -- GET /relays/{id}/rooms: every room with its members and invite codes, matched up in memory.
+  pub data Moderation { kind: u16, tags }                               @117-120
+  pub async fn moderate_room(actor, id, moderation) fails  !db          @124-133
+    -- POST /relays/{id}/rooms/moderate: a NIP-29 moderation event the relay signs and applies.
+
+  pub data EventQuery                                                   @136-146
+    kinds, ids: str?  -- comma-separated
+    until: i64?
+    after: str?  -- a hex event id
+    exclude_own: bool = false
+    limit: usize?
+  pub async fn list_events(actor, id, query) -> [Event] fails  !db !time  @149-187
+    -- GET /relays/{id}/events: a page of stored events, as EventPage describes.
+    split kinds and ids on commas, dropping blanks; fail invalid-kinds unless every kind is a u16
+    limit defaults to MAX_EVENTS and is capped at it
+    page_events at now, which fails invalid-ids or invalid-after on an id that isn't hex
+    return each event as JSON, signature included

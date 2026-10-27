@@ -10,19 +10,21 @@ import Avatar from "@/shared/components/Avatar"
 import StatusBadge from "@/shared/components/StatusBadge"
 import CopyNpub from "@/shared/components/CopyNpub"
 import { shortenNpub } from "@/shared/lib/pubkey"
+import { loaded } from "@/shared/lib/resource"
 import { fuzzySearch } from "@/shared/lib/search"
 
 export default function AdminTenantList() {
   const [query, setQuery] = createSignal("")
   const [tenants] = createResource(listTenants)
-  const profiles = useProfileMetadataMap(() => (tenants() ?? []).map((t) => t.pubkey))
+  const profiles = useProfileMetadataMap(() => (loaded(tenants) ?? []).map((t) => t.pubkey))
   const loading = useMinLoading(() => tenants.loading)
 
   const filtered = createMemo(() => {
-    const list = (tenants() ?? []).map((tenant) => {
+    const list = (loaded(tenants) ?? []).map((tenant) => {
       const profile = profiles()[tenant.pubkey]
       return {
         ...tenant,
+        status: tenantStatus(tenant),
         profileName: profileName(profile),
         profileAbout: profile?.about,
         profileNip05: profile?.nip05,
@@ -38,7 +40,7 @@ export default function AdminTenantList() {
         <SearchInput value={query()} onInput={setQuery} placeholder="Search tenants..." />
       </div>
       <ResourceState loading={loading()} error={tenants.error} loadingText="Loading tenants..." errorText="Failed to load tenants." />
-      <Show when={!loading()}>
+      <Show when={!loading() && loaded(tenants)}>
         <Show when={filtered().length > 0} fallback={<p class="py-20 text-center text-gray-500">No tenants found.</p>}>
           <ul class="space-y-3">
             <For each={filtered()}>

@@ -1,0 +1,6 @@
+% source=web/src/shared/components/CheckIcon.tsx lang=typescript lines=7 sha=8f9b07116d9a
+
+module @/shared/components/CheckIcon
+  -- The check mark in plan feature lists.
+
+  pub fn CheckIcon()  -- a small brand-colored check mark               @1-7

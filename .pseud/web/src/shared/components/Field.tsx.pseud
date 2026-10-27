@@ -1,0 +1,6 @@
+% source=web/src/shared/components/Field.tsx lang=typescript lines=10 sha=3d6fd5f41c3c
+
+module @/shared/components/Field
+  -- A labeled value in a definition list.
+
+  pub fn Field(props: { label })  -- the label as a dt and the children as its dd  @3-10

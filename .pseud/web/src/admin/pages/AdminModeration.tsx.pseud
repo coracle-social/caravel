@@ -1,0 +1,33 @@
+% source=web/src/admin/pages/AdminModeration.tsx lang=typescript lines=206 sha=8f63b1f635e3
+
+module @/admin/pages/AdminModeration  !net !db !time
+  -- The admin moderation feed: recent events and uploads across moderated relays, paged back.
+
+  const TYPE_FILTERS = [all, event, upload]                             @12-16
+  const RANGES = [1d, 7d, 30d, all]  -- how far back the feed reaches; all is unbounded  @19-24
+  type TypeFilter = "all" | "event" | "upload"                          @26
+  type RangeValue = "1d" | "7d" | "30d" | "all"                         @27
+  fn startOfRange(range) -> unixSecs?  !time                            @30-33
+    -- Now minus the range, or none for all time; fixed when picked so paging can't move it.
+  fn itemKey(item) -> str                                               @36-37
+    -- The relay id with the upload's sha256 or the event's id, since relays share content.
+  pub fn AdminModeration()  !net !db !time                              @39-206
+    -- The feed loaded a page at a time, filtered by type and search, with a range picker and
+    -- Load more; each item names its relay from one listRelays fetch. The relay machinery is
+    -- left out by list_moderation.
+    fetch the loaded authors' profiles in one request                   @54
+    async fn loadMore()  !net !db !time                                 @56-84
+      return if a page is loading or the range is exhausted             @57
+      fetch from since up to the oldest loaded seen_at, inclusive       @65-67
+      drop the response if the range changed meanwhile                  @69
+      append only items not already loaded, by itemKey                  @71-75
+      exhausted when the page wasn't truncated or added nothing new     @77-78
+        so more than a page of items in one second ends the feed there, as its comment accepts
+      keep a failure as the error, and clear loading, for the current range only  @79-83
+    fn selectRange(value)  !net !db !time                               @86-99
+      -- For a new range: bump generation, recompute since, reset items and paging, loadMore.
+    load the first page on mount                                        @101
+    filter loaded items by type, then fuzzy-search pubkey, author, relay name and content  @104-120
+    the error and loading states show only until something has loaded   @160-168
+    once items exist, a failed page shows above Load more, which ends at the range's end  @184-203
+    reads the relays through loaded, so a failed listRelays names items by relay id  @53

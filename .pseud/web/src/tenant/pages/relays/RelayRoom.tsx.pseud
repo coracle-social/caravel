@@ -1,0 +1,27 @@
+% source=web/src/tenant/pages/relays/RelayRoom.tsx lang=typescript lines=298 sha=6bc5c4dd7986
+
+module @/tenant/pages/relays/RelayRoom  !net !db !time !rand
+  -- One NIP-29 room: its members, their roles and permissions, and its invite codes.
+
+  fn parseRoles(text) -> [str]  -- comma-separated labels, trimmed, empties dropped  @33
+  pub fn RelayRoom()  !net !db !time !rand                              @36-202
+    -- Members with roles, permission counts and actions; invite codes to copy; Add member, New code.
+    read every room with listRelayRooms and pick the route's; "This room doesn't exist." if absent
+    fn moderate(kind, tags)  !net !db !time  -- moderateRoom with the room's h tag first, signed by the relay  @49
+    fn remove()  !net !db !time                                         @51-62
+      -- After a confirmation: REMOVE_USER with the member's p tag, then refetch.
+    fn createInvite()  !net !db !time !rand                             @64-70
+      CREATE_INVITE with a code of 12 hex characters from 6 random bytes, not optimistic
+      on success refetch and copy the code
+    add -> PubkeyDialog with roles, then PUT_USER [p, pubkey, ...roles] and refetch  @152-162
+      PUT_USER replaces an existing member's roles                      @crates/core/src/commands/rooms.rs:53-67
+    roles -> RolesDialog, then PUT_USER with the member's new roles and refetch  @164-171
+    permissions -> PermissionsDialog, then refetch whether or not it succeeded  @173-186
+      ASSIGN_PERMISSION with the added kinds on the member's p tag, then UNASSIGN_PERMISSION
+  fn DialogFooter(props)  -- a dialog's error, Cancel and save buttons, disabled while saving  @205-221
+  fn useSave(onSave, onClose) -> { saving, error, setError, save }      @224-242
+    -- Run onSave, closing on success and keeping formatError's message on failure.
+  fn RolesDialog(props: { member?, onClose, onSave })                   @245-266
+    -- The member's room roles as comma-separated text, which grant nothing.
+  fn PermissionsDialog(props: { member?, onClose, onSave })             @269-298
+    -- A checkbox per PERMISSIONS kind, starting from the member's each time it opens.

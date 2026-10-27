@@ -6,8 +6,8 @@ use axum::extract::Extension;
 use axum::http::header::AUTHORIZATION;
 use axum::http::{HeaderMap, HeaderValue, header};
 use axum::response::{IntoResponse, Response};
-use caravel_core::auth;
-use caravel_core::management::{self, Call, Outcome};
+use caravel_core::models::management::{Call, Outcome};
+use caravel_core::{domain, management};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -86,5 +86,5 @@ fn authenticate(headers: &HeaderMap, body: &[u8], host: &str, now: i64) -> Resul
         .get(AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
         .ok_or("blocked: please authenticate in order to manage this relay")?;
-    auth::verify_payload_auth(header, host, body, now).map_err(|error| error.to_string())
+    domain::auth::verify_payload_auth(header, host, body, now).map_err(|error| error.to_string())
 }

@@ -1,0 +1,25 @@
+% source=web/src/portal/pages/RelayPage.tsx lang=typescript lines=256 sha=3aa25dd6ede1
+
+module @/portal/pages/RelayPage  !net !db !env !global
+  -- A relay's page on its own host, and its NIP-11 payments_url.
+
+  pub fn RelayPage()  !net !db !env !global                             @27-256
+    -- Where a selling relay's members sign in to join, renew or cancel, or get an invite
+    -- instead; a relay that sells nothing (offer 404) points to Flotilla.
+    fetch the offer; with a session, also the membership and identity   @31-36
+      both refetch when the session changes                             @33
+    sign out when the membership fetch is refused with 401              @55-57
+    on mount                                                            @59-82
+      adopt a ?token session from a notification's link, then drop it from the address  @61-65
+      then, with a session and Stripe's ?checkout, reconcile the checkout  @68-73
+        unpaid warns to refresh in a minute; paid drops the param; either way refetch  @74-76
+        a failure shows "We couldn't confirm your payment"              @77-78
+    async fn checkout()                                                 @84-94
+      -- Redirect to Stripe Checkout for this relay, passing return_url on; show any failure.
+    async fn cancel()                                                   @96-109
+      -- Stop renewal, close the confirmation and refetch; show any failure.
+    a membership fetch failing with anything but 401 shows "We couldn't load your membership"  @163-165
+    by membership status                                                @167-233
+      active -> renewal date, Cancel renewal behind a confirmation, and Back to an https return_url
+      canceled -> the access-until date, and Renew
+      otherwise, once loaded -> Join for the price, unless the relay isn't taking payments

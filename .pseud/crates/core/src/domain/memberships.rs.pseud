@@ -1,0 +1,12 @@
+% source=crates/core/src/domain/memberships.rs lang=rust lines=37 sha=14faf025522c
+
+module caravel_core::domain::memberships
+  -- The pages a membership is bought, renewed and accepted on.
+
+  pub fn portal_url(relay, path) -> str  -- https on the relay's host   @7-10
+  pub fn invite_url(config, relay, code) -> str fails                   @12-20
+    -- Flotilla's join page for the relay and code: <flotilla_url>/join?r=<host>&c=<code>.
+  pub fn with_return(page, return_url: str?) -> str fails               @22-30
+    -- page with a non-blank return_url as a query param; the portal only links it, so no allow-list.
+  pub fn checkout_success_url(page) -> str                              @32-37
+    -- page plus checkout={CHECKOUT_SESSION_ID} unencoded, for Stripe to fill in.

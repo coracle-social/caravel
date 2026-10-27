@@ -1,0 +1,8 @@
+% source=web/src/admin/components/InvoiceDetailCard.tsx lang=typescript lines=49 sha=f494559bff9f
+
+module @/admin/components/InvoiceDetailCard  !net
+  -- One invoice's details, for an admin.
+
+  pub fn InvoiceDetailCard(props: { invoice })  !net                    @11-49
+    -- Amount and status, then billing period, created date, payment method when set, and the
+    -- tenant linking to its admin page, named from its profile (read, not fetched) or by npub.

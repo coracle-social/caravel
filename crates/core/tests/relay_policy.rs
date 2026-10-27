@@ -1,13 +1,15 @@
 //! A relay's rules, ported from zooid's instance tests: who may write, who may
 //! subscribe, who may see which event, and who gets signatures.
 
-use caravel_core::events::{EventGroup, kinds};
-use caravel_core::relay_policy::{
-    self, CREATED_AT_UPPER_LIMIT, EventFacts, Refusal, RelaySnapshot, RoomSnapshot, admit_req,
-    admit_write, can_receive, check_room_write, strips_signature,
+use caravel_core::domain;
+use caravel_core::domain::policy::{
+    CREATED_AT_UPPER_LIMIT, admit_req, admit_write, can_receive, check_room_write, strips_signature,
 };
-use caravel_core::relays::url_host;
-use caravel_core::rooms::kinds as room_kinds;
+use caravel_core::domain::relays::url_host;
+use caravel_core::models::events::EventGroup;
+use caravel_core::models::kinds;
+use caravel_core::models::policy::{EventFacts, Refusal, RelaySnapshot, RoomSnapshot};
+use caravel_core::models::rooms::kinds as room_kinds;
 use caravel_core::testing::sign_event;
 use coracle_lib::keys::SecretKey;
 
@@ -405,7 +407,7 @@ fn a_count_includes_only_what_the_reader_may_see() {
         group(room_kinds::CREATE_INVITE, &f.owner, None, Some("open"), 5),
         group(kinds::PUSH_SUBSCRIPTION, &f.member, Some("phone"), None, 1),
     ];
-    let count = |authed: &[String]| relay_policy::count_visible(&snapshot, authed, &groups);
+    let count = |authed: &[String]| domain::policy::count_visible(&snapshot, authed, &groups);
 
     assert_eq!(count(std::slice::from_ref(&owner)), 17);
     assert_eq!(count(std::slice::from_ref(&member)), 18);
@@ -478,6 +480,32 @@ fn a_restricted_room_takes_posts_only_from_its_members() {
     );
 }
 
+// zooid let a zap or gift wrap for a member into any room it named.
+#[test]
+fn a_gift_wrap_or_zap_for_a_member_still_answers_to_its_room() {
+    let f = fixture();
+    let snapshot = rooms_fixture(&f);
+    let member = hex(&f.member);
+    let zap = |room: &str| {
+        let event = sign_event(
+            &f.stranger,
+            kinds::ZAP_RECEIPT,
+            "",
+            &[&["p", &member], &["h", room]],
+            NOW,
+        );
+        admit_write(&snapshot, &event, &[], NOW)
+    };
+
+    assert_eq!(zap("open"), Ok(()));
+    assert_eq!(
+        zap("restricted"),
+        Err(Refusal::restricted("you are not a member of that group"))
+    );
+    assert_eq!(zap("hidden"), Err(Refusal::invalid("group not found")));
+    assert_eq!(zap("nowhere"), Err(Refusal::invalid("group not found")));
+}
+
 // zooid created a room with an empty id from a 9007 like these, and signed its state.
 #[test]
 fn a_room_event_must_name_its_room() {
@@ -514,7 +542,7 @@ fn credentials_and_requests_are_never_served() {
 
     for kind in [
         kinds::RELAY_INVITE,
-        caravel_core::rooms::kinds::CREATE_INVITE,
+        caravel_core::models::rooms::kinds::CREATE_INVITE,
         kinds::RELAY_JOIN,
         kinds::RELAY_LEAVE,
         kinds::BLOSSOM_AUTH,
@@ -548,15 +576,38 @@ fn stripping_spares_whoever_manages_the_relay() {
 
 #[test]
 fn ephemeral_kinds_are_not_stored() {
-    assert!(!relay_policy::is_stored(20001));
-    assert!(relay_policy::is_stored(1));
-    assert!(relay_policy::is_stored(30023));
+    assert!(!domain::policy::is_stored(20001));
+    assert!(domain::policy::is_stored(1));
+    assert!(domain::policy::is_stored(30023));
 }
 
 #[test]
 fn relay_urls_name_their_host_without_scheme_port_or_path() {
     assert_eq!(url_host("ws://Relay.Example:8080/path"), "relay.example");
     assert_eq!(url_host("relay.example."), "relay.example");
+}
+
+// zooid stored a push subscription from anyone; one its author couldn't read
+// through would never be pushed anything.
+#[test]
+fn a_push_subscription_is_admitted_like_a_subscription() {
+    let f = fixture();
+    let subscribe = |snapshot: &RelaySnapshot, author: &SecretKey| {
+        let event = sign_event(author, kinds::PUSH_SUBSCRIPTION, "", &[], NOW);
+        admit_write(snapshot, &event, &[hex(author)], NOW)
+    };
+
+    assert_eq!(subscribe(&f.snapshot, &f.member), Ok(()));
+    assert_eq!(
+        subscribe(&f.snapshot, &f.stranger),
+        Err(Refusal::restricted("you are not a member of this relay"))
+    );
+
+    let readable = RelaySnapshot {
+        public_read: true,
+        ..f.snapshot.clone()
+    };
+    assert_eq!(subscribe(&readable, &f.stranger), Ok(()));
 }
 
 #[test]
@@ -584,13 +635,13 @@ fn a_push_subscription_may_name_any_of_the_relays_hosts() {
         "old.example",
     ] {
         assert_eq!(
-            relay_policy::check_push_subscription(&subscription(relay), &hosts, 0),
+            domain::policy::check_push_subscription(&subscription(relay), &hosts, 0),
             Ok(()),
             "{relay}"
         );
     }
     assert!(
-        relay_policy::check_push_subscription(&subscription("wss://other.example"), &hosts, 0)
+        domain::policy::check_push_subscription(&subscription("wss://other.example"), &hosts, 0)
             .is_err()
     );
 }
@@ -604,7 +655,7 @@ fn a_push_subscription_says_what_is_wrong_with_it() {
     let callback = ["callback", "https://push.example/"];
     let check = |tags: &[&[&str]]| {
         let event = sign_event(&author, kinds::PUSH_SUBSCRIPTION, "", tags, NOW);
-        relay_policy::check_push_subscription(&event, &hosts, 0)
+        domain::policy::check_push_subscription(&event, &hosts, 0)
             .map_err(|refusal| refusal.message())
     };
 

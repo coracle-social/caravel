@@ -7,6 +7,7 @@ import PageContainer from "@/shared/components/PageContainer"
 import ResourceState from "@/shared/components/ResourceState"
 import useMinLoading from "@/shared/lib/useMinLoading"
 import { getInvoice, listInvoiceItems } from "@/shared/lib/api"
+import { loaded } from "@/shared/lib/resource"
 
 export default function AdminInvoiceDetail() {
   const params = useParams()
@@ -27,7 +28,7 @@ export default function AdminInvoiceDetail() {
     <PageContainer>
       <BackLink label="Back" />
       <ResourceState loading={loading()} error={invoice.error} loadingText="Loading invoice..." errorText="Failed to load invoice." class="mb-4" />
-      <Show when={!loading() && invoice()}>
+      <Show when={!loading() && loaded(invoice)}>
         {(i) => (
           <div class="space-y-6 mb-6">
             <InvoiceDetailCard invoice={i()} />

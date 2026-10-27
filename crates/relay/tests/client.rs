@@ -8,7 +8,8 @@ use std::time::Duration;
 
 use caravel_adapters::nostr;
 use caravel_adapters::robot::{Robot, RobotProfile};
-use caravel_core::relays::{self, Relay};
+use caravel_core::commands;
+use caravel_core::models::relays::Relay;
 use caravel_core::testing::sign_event;
 use common::*;
 use coracle_kinds::gift_wrap::{GiftWrapReader, SealReader};
@@ -25,7 +26,7 @@ async fn relay_at(server: &Server, host: &str) -> (Relay, SecretKey, String) {
     let relay = server
         .update(&relay, json!({"policy_public_read": 1}))
         .await;
-    relays::add_host_redirect(server.core.db.pool(), host, &relay.id, server.now())
+    commands::relays::add_host_redirect(server.core.db.pool(), host, &relay.id, server.now())
         .await
         .unwrap();
     server.relays.reload(&relay.id).await.unwrap();
@@ -41,7 +42,7 @@ async fn the_robot_sends_a_dm_its_recipient_can_open() {
     let relays = [url.clone()];
 
     // The recipient lists this relay as their outbox and their inbox.
-    let member = nostr::Client::new(owner.clone());
+    let member = nostr::Client::allowing_private(owner.clone());
     for (kind, tag) in [(10002, "r"), (10050, "relay")] {
         let list = sign_event(&owner, kind, "", &[&[tag, &url]], now);
         member.publish(&relays, &list, now, TIMEOUT).await.unwrap();
@@ -52,7 +53,7 @@ async fn the_robot_sends_a_dm_its_recipient_can_open() {
         indexer_relays: relays.to_vec(),
         ..Default::default()
     };
-    let robot = Robot::new(&robot_secret.to_hex(), profile).unwrap();
+    let robot = Robot::allowing_private(&robot_secret.to_hex(), profile).unwrap();
     robot
         .send_dm(&owner.public_key().to_hex(), "your invoice is ready", now)
         .await
@@ -99,7 +100,7 @@ async fn a_request_waits_for_the_event_that_answers_it() {
         tags: BTreeMap::from([("#e".to_string(), BTreeSet::from([request.id.to_hex()]))]),
         ..Default::default()
     };
-    let requester = nostr::Client::new(owner.clone());
+    let requester = nostr::Client::allowing_private(owner.clone());
     let relays = [url];
     let asking = requester.request(&relays, &request, &reply, now, TIMEOUT);
     let answering = async {

@@ -4,7 +4,8 @@
 mod common;
 
 use axum::http::StatusCode;
-use caravel_core::testing::{self, API_URL};
+use caravel_core::testing;
+use caravel_core::testing::API_URL;
 use common::*;
 use coracle_lib::keys::SecretKey;
 
@@ -133,8 +134,8 @@ async fn a_base_url_signature_works_for_fifteen_minutes() {
     );
 }
 
-/// Every route but the public ones refuses a request without credentials, and the
-/// admin routes refuse a tenant.
+/// Every route the router serves is in a class: the public ones answer without
+/// credentials, the rest refuse a request without them, and admin routes refuse a tenant.
 #[tokio::test]
 async fn every_route_has_an_auth_class() {
     let api = TestApi::new().await;
@@ -150,12 +151,14 @@ async fn every_route_has_an_auth_class() {
     ];
     // Reached without credentials, and finding nothing.
     let public_missing = [
+        ("GET", "/domains/check?domain=missing.test".to_string()),
         ("GET", format!("/relays/{id}/offer")),
         ("POST", format!("/relays/{id}/invites")),
         ("GET", format!("/invites/{id}")),
         ("POST", format!("/invites/{id}/reconcile")),
     ];
     let authed = [
+        ("POST", "/session".to_string()),
         ("GET", "/identity".to_string()),
         ("POST", "/tenants".to_string()),
         ("GET", format!("/tenants/{tenant_pubkey}")),
@@ -217,6 +220,30 @@ async fn every_route_has_an_auth_class() {
         ("GET", format!("/moderation/blob/{id}/{sha}")),
     ];
 
+    let classified: Vec<&(&str, String)> = public
+        .iter()
+        .chain(&public_missing)
+        .chain(&authed)
+        .chain(&admin)
+        .collect();
+    let served = served_routes(&api).await;
+    for (method, route) in &served {
+        assert!(
+            classified
+                .iter()
+                .any(|(m, path)| m == method && is_request_for(route, path)),
+            "{method} {route} has no auth class"
+        );
+    }
+    for (method, path) in &classified {
+        assert!(
+            served
+                .iter()
+                .any(|(m, route)| m == method && is_request_for(route, path)),
+            "{method} {path} is not a route"
+        );
+    }
+
     for (method, path) in &public {
         let response = api.request(method, path, None, None).await;
         assert_eq!(response.status, StatusCode::OK, "{method} {path}");
@@ -237,6 +264,42 @@ async fn every_route_has_an_auth_class() {
         let response = api.request(method, path, Some(&bearer), None).await;
         assert_eq!(response.status, StatusCode::FORBIDDEN, "{method} {path}");
     }
+}
+
+/// Each method and route the router serves, read from the `Allow` header of a
+/// method no route takes.
+async fn served_routes(api: &TestApi) -> Vec<(String, &'static str)> {
+    let mut served = Vec::new();
+    for (route, _) in caravel_api::routes() {
+        let path: Vec<&str> = route
+            .split('/')
+            .map(|segment| {
+                if segment.starts_with('{') {
+                    "x"
+                } else {
+                    segment
+                }
+            })
+            .collect();
+        let (status, headers, _) = api.raw("PROBE", &path.join("/"), "", Vec::new()).await;
+        assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED, "{route}");
+        let allow = headers["allow"].to_str().unwrap();
+        for method in allow.split(',').filter(|method| *method != "HEAD") {
+            served.push((method.to_string(), route));
+        }
+    }
+    served
+}
+
+/// Whether `path`, ignoring its query, requests `route`, whose `{}` segments match any.
+fn is_request_for(route: &str, path: &str) -> bool {
+    let path: Vec<&str> = path.split('?').next().unwrap().split('/').collect();
+    let route: Vec<&str> = route.split('/').collect();
+    route.len() == path.len()
+        && route
+            .iter()
+            .zip(&path)
+            .all(|(route, path)| route.starts_with('{') || route == path)
 }
 
 #[tokio::test]

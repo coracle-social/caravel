@@ -1,0 +1,10 @@
+% source=crates/core/src/queries/media.rs lang=rust lines=49 sha=b8d7b8dde6af
+
+module caravel_core::queries::media  !db
+  -- Reading a relay's media.
+
+  pub async fn get_blob(relay_id, sha256) -> Blob? fails  !db           @8-20
+  pub async fn list_blobs_for_pubkey(relay_id, pubkey) -> [Blob] fails  !db  @24-39
+    -- The blobs the pubkey owns on the relay, newest first, dated by its own upload.
+  pub async fn storage_bytes(relay_id) -> i64 fails  !db                @42-49
+    -- The sum of the relay's blob sizes, each blob once however many members own it.

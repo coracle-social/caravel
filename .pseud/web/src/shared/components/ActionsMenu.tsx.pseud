@@ -1,0 +1,10 @@
+% source=web/src/shared/components/ActionsMenu.tsx lang=typescript lines=89 sha=c61077c40d42
+
+module @/shared/components/ActionsMenu
+  -- The dropdown menu of actions in relay headers.
+
+  pub fn ActionsMenu(props: { children(close), trigger?, triggerClass?, label? })  @7-65
+    -- A dots button, or `trigger`, toggling a menu of ActionsMenuItems.
+    -- The menu closes on a mousedown outside it, on Escape, or through the close its children get.
+  ~ item styles per tone: default, primary, danger                      @67-71
+  pub fn ActionsMenuItem(props: { tone?, disabled?, onClick })  -- a full-width menu button  @73-89

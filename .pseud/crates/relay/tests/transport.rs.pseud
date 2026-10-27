@@ -1,0 +1,12 @@
+% source=crates/relay/tests/transport.rs lang=rust lines=73 sha=0a32f62c06a0
+
+module caravel_relay::tests::transport
+  -- The clients the relay gives up on, so one that stops reading can't hold its connection forever.
+
+  tests                                                                 @15-73
+    async fn server(transport: Transport) -> Server                     @15-22
+      -- A server on a fresh test core whose relays use that transport.
+    test a_client_that_leaves_pings_unanswered_is_dropped               @24-43
+      -- 50ms pings, 300ms pong wait: a client that keeps reading stays, an idle one is dropped
+    test a_client_that_stops_reading_is_dropped                         @45-73
+      -- 300ms write wait: store 40 one-megabyte notes, REQ them all without reading, and get dropped

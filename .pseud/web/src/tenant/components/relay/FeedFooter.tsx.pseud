@@ -1,0 +1,8 @@
+% source=web/src/tenant/components/relay/FeedFooter.tsx lang=typescript lines=42 sha=c13a6162114b
+
+module @/tenant/components/relay/FeedFooter
+  -- The end of a paged list of a relay's events.
+
+  pub fn FeedFooter(props: { count, loading, error, exhausted, empty, onMore })  @5-42
+    -- Empty: loading, "Failed to load." or the empty text; else a failure note and Load more.
+    once exhausted, "That's everything." replaces the button

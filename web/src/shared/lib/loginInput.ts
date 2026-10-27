@@ -2,40 +2,19 @@
 
 export type Tab = "nip07" | "nip46" | "key"
 
-// What's wrong with a pasted signer link, if anything.
+// What's wrong with a pasted signer link, if anything. A nostrconnect:// link names a client, not a signer (NIP-46).
 export function validateBunkerUri(value: string): string | null {
   const trimmed = value.trim()
-  if (!trimmed) return "Enter a bunker or nostrconnect link"
+  if (!trimmed) return "Enter a bunker link"
+  if (trimmed.startsWith("nostrconnect://")) return "That link is for your signer app to open; paste the bunker:// link it gives you"
+  if (!trimmed.startsWith("bunker://")) return "Link must start with bunker://"
 
-  if (trimmed.startsWith("nostrconnect://") || trimmed.startsWith("bunker://")) {
-    try {
-      new URL(trimmed)
-    } catch {
-      return "That doesn't look like a valid link"
-    }
-    return null
+  try {
+    new URL(trimmed)
+  } catch {
+    return "That doesn't look like a valid link"
   }
-
-  return "Link must start with bunker:// or nostrconnect://"
-}
-
-// A pasted signer link as a bunker:// url, rewriting a nostrconnect:// one.
-export function normalizeBunkerUrl(value: string): string {
-  const trimmed = value.trim()
-  if (!trimmed) return ""
-
-  if (trimmed.startsWith("nostrconnect://")) {
-    const url = new URL(trimmed)
-    const remote = url.host || url.pathname.replace(/^\/+/, "")
-    const relays = url.searchParams.getAll("relay")
-    const secret = url.searchParams.get("secret")
-    const params = new URLSearchParams()
-    for (const relay of relays) params.append("relay", relay)
-    if (secret) params.set("secret", secret)
-    return `bunker://${remote}?${params.toString()}`
-  }
-
-  return trimmed
+  return null
 }
 
 // How to log in with the keys entered: an ncryptsec with its password, or else an nsec.

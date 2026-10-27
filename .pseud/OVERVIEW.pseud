@@ -1,0 +1,54 @@
+module overview
+  -- Caravel hosts virtual Nostr relays, sold to tenants on plans and billed monthly.
+  -- One binary serves every relay by host, the JSON API, and three embedded Solid apps.
+
+  -- Layers (each depends only on those below; crates/app/tests/layers.rs enforces it)
+  ~ db: the Postgres pool, migrations, and `with_tx`, which reruns a transaction Postgres aborts
+  ~ adapters: Stripe, Nostr relays, NWC wallets, the robot, DNS, blobs, LiveKit, outbound HTTP
+  ~ core: models, then pure domain rules, then queries that read and commands that write,
+    then the subsystems that run them against a `Core` (crates/core/tests/layers.rs)
+  ~ relay and api above the core read through queries and change state only through subsystems
+  ~ app: config from the environment, host dispatch, the embedded web apps, background workers
+
+  -- Entry points
+  ~ `main` reads config, connects a request pool and a background pool, builds the `Core`
+  ~ `serve` spawns the workers, loads every relay with `Relays::load`, then serves `router`
+  ~ `router` sends each request by host: a relay's hosts to `Relays::serve`, the API host to
+    the API `router`, the platform host to the dashboards; anything else gets health and TLS ask
+  ~ `workers::spawn` schedules billing, domain checks, the session, event and membership sweeps,
+    relay erasure, and publishing the robot's identity
+
+  -- Flows
+  ~ client event: `session::run` reads a socket -> `RelayInstance::on_event` -> `screen`
+    and `admit_write` against the snapshot -> `ingest::store` saves it with what it changes
+    -> `broadcast` of it and what the relay published: `fanout` to live subscribers and
+    `Pusher::push` to NIP-9a callbacks
+  ~ client REQ: `on_req` -> `admit_req` -> subscribe first, then stored events that pass
+    `can_any_receive` -> EOSE; later events reach it through `fanout` and `can_deliver`
+  ~ NIP-43 join or leave: `ingest::join` / `ingest::leave` -> member list republished by the relay
+  ~ NIP-86 call: `nip86::handle` checks a NIP-98 signature over the body -> `management::call`
+    -> `apply_access_change` on the instance
+  ~ dashboard change: API handler loads the resource, authorizes the actor, calls a subsystem
+    (`hosting`, `management`, `memberships`) -> commit -> `Bus::publish` -> `Relays::watch`
+    reloads the relay and delivers what it published
+  ~ billing: `reconcile_subscriptions` hourly prices activity per tenant, renews, bills overage,
+    cuts invoices, collects by NWC or card, reminds by DM, and churns tenants past grace
+  ~ memberships: `open_checkout` -> Stripe Connect checkout -> `reconcile_checkout` -> `activate`
+    admits the member; `sweep` renews or lapses subscriptions and settles stale checkouts
+  ~ sessions: one NIP-98 `POST /session` buys a 30-day bearer token (`sessions::start`),
+    stored only as a hash; `Authed` accepts it, or a NIP-98 header for the API base url
+  ~ media: Blossom `upload` stores bytes, then `media` records the blob per uploader;
+    `delete` removes a pubkey's claim and the bytes once the last owner is gone
+  ~ calls: `livekit::token` admits room members by `admit_call`; `livekit::webhook` meters time
+
+  -- Shared state
+  ~ `Relays` maps hosts to live `RelayInstance`s behind a lock, swapped on reload
+  ~ each instance holds a swappable snapshot of its access, rooms and settings, and its connections
+  ~ the `Bus` broadcasts hints after commits; a lagging subscriber reloads everything
+  ~ the `Clock` is the only source of time; tests pin it
+
+  -- Web apps (web/src)
+  ~ tenant dashboard: relays, plans, billing, and managing a relay over NIP-86, NIP-43 and NIP-29
+  ~ admin dashboard under /admin: tenants, relays, invoices, the moderation feed
+  ~ member portal on each relay's host: buying, inviting and renewing paid memberships
+  ~ `@/shared/lib/api` holds a function per API route; `@/shared/lib/state` the signed-in account

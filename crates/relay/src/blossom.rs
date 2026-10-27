@@ -9,10 +9,10 @@ use axum::body::{Body, Bytes};
 use axum::extract::{Extension, Path, Request};
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use caravel_core::auth;
 use caravel_core::crypto::{is_hex64, sha256_hex};
-use caravel_core::events::kinds::BLOSSOM_AUTH;
-use caravel_core::media::{self, Blob, Deleted, MAX_BLOB_SIZE};
+use caravel_core::models::kinds::BLOSSOM_AUTH;
+use caravel_core::models::media::{Blob, Deleted, MAX_BLOB_SIZE};
+use caravel_core::{domain, media, queries};
 use futures_util::StreamExt;
 use serde_json::{Value, json};
 
@@ -140,8 +140,8 @@ fn authorize(
         .get(header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
         .ok_or_else(|| unauthorized("an Authorization: Nostr header is required"))?;
-    let event =
-        auth::decode_authorization(header).map_err(|error| unauthorized(&error.to_string()))?;
+    let event = domain::auth::decode_authorization(header)
+        .map_err(|error| unauthorized(&error.to_string()))?;
     let now = route.instance.core().clock.now();
 
     if event.kind != BLOSSOM_AUTH {
@@ -187,7 +187,7 @@ pub async fn download(
     }
 
     let core = route.instance.core();
-    let blob = media::get_blob(core.db.pool(), &state.relay.id, &sha256)
+    let blob = queries::media::get_blob(core.db.pool(), &state.relay.id, &sha256)
         .await
         .map_err(|error| Refused::failed("the blob could not be read", error))?
         .ok_or_else(|| Refused::new(StatusCode::NOT_FOUND, "no such blob"))?;
@@ -199,7 +199,10 @@ pub async fn download(
         .and_then(|value| parse_range(value, blob.size as u64));
     let read = core
         .blobs
-        .get(&media::blob_key(&state.relay.id, &sha256), range.clone())
+        .get(
+            &domain::media::blob_key(&state.relay.id, &sha256),
+            range.clone(),
+        )
         .await
         .map_err(|error| Refused::failed("the blob could not be read", error))?
         .ok_or_else(|| Refused::new(StatusCode::NOT_FOUND, "no such blob"))?;
@@ -398,22 +401,17 @@ async fn keep(
         ));
     }
 
-    let core = route.instance.core();
     let relay_id = route.instance.relay_id();
-    let size = bytes.len() as i64;
-
-    core.blobs
-        .put(&media::blob_key(&relay_id, &sha256), bytes)
-        .await
-        .map_err(|error| Refused::failed("the file could not be kept", error))?;
-
-    let now = core.clock.now();
-    core.db
-        .with_tx(async |conn| {
-            media::record_upload(conn, &relay_id, &sha256, &content_type, size, pubkey, now).await
-        })
-        .await
-        .map_err(|error| Refused::failed("the file could not be recorded", error))
+    media::keep_upload(
+        route.instance.core(),
+        &relay_id,
+        &sha256,
+        &content_type,
+        pubkey,
+        bytes,
+    )
+    .await
+    .map_err(|error| Refused::failed("the file could not be kept", error))
 }
 
 /// BUD-02: the blobs a pubkey uploaded, for the relay's members.
@@ -429,7 +427,7 @@ pub async fn list(
         return Err(Refused::new(StatusCode::BAD_REQUEST, "not a hex pubkey"));
     }
 
-    let blobs = media::list_blobs_for_pubkey(
+    let blobs = queries::media::list_blobs_for_pubkey(
         route.instance.core().db.pool(),
         &route.instance.relay_id(),
         &pubkey,
@@ -457,27 +455,14 @@ pub async fn delete(
         ));
     }
 
-    let core = route.instance.core();
     let relay_id = route.instance.relay_id();
-    let deleted = core
-        .db
-        .with_tx(async |conn| media::delete_upload(conn, &relay_id, &sha256, &pubkey).await)
+    let deleted = media::delete_upload(route.instance.core(), &relay_id, &sha256, &pubkey)
         .await
         .map_err(|error| Refused::failed("the blob could not be deleted", error))?;
 
     match deleted {
         Deleted::NotOwned => Err(Refused::new(StatusCode::NOT_FOUND, "you have no such blob")),
-        Deleted::Shared => Ok(StatusCode::OK.into_response()),
-        Deleted::Last => {
-            if let Err(error) = core
-                .blobs
-                .delete(&media::blob_key(&relay_id, &sha256))
-                .await
-            {
-                tracing::warn!(relay = %relay_id, error = %error, "failed to delete a blob's bytes");
-            }
-            Ok(StatusCode::OK.into_response())
-        }
+        Deleted::Shared | Deleted::Last => Ok(StatusCode::OK.into_response()),
     }
 }
 

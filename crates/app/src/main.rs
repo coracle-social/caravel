@@ -93,7 +93,7 @@ async fn serve() -> Result<()> {
         .allow_origin(Any)
         .allow_methods(Any)
         .allow_headers(Any);
-    let hosts = Hosts::from_urls(&core.config.api_url, settings.web.platform_url.as_deref())?;
+    let hosts = Hosts::from_urls(&core.config.api_url, core.config.platform_url.as_deref())?;
     let web = Web::new(PageConfig::new(&core.config, &settings.web));
     let app = dispatch::router(caravel_api::router(core).layer(cors), relays, web, hosts);
 

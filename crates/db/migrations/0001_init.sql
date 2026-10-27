@@ -305,17 +305,6 @@ CREATE TABLE claim (
   PRIMARY KEY (relay_id, code)
 );
 
-CREATE TABLE claim_use (
-  relay_id TEXT NOT NULL,
-  claim_code TEXT NOT NULL,
-  pubkey TEXT NOT NULL,
-  created_at BIGINT NOT NULL,
-  FOREIGN KEY (relay_id, claim_code) REFERENCES claim (relay_id, code)
-);
-
--- A claim's log of joins, oldest first.
-CREATE INDEX claim_use_claim_idx ON claim_use (relay_id, claim_code, created_at);
-
 CREATE TABLE room (
   relay_id TEXT NOT NULL REFERENCES relay (id),
   id TEXT NOT NULL CHECK (id <> ''),

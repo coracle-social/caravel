@@ -1,0 +1,17 @@
+% source=crates/relay/src/auth.rs lang=rust lines=113 sha=b92c9af55924
+
+module caravel_relay::auth  !rand
+  -- NIP-42: issuing each connection's challenge and checking a client's answer.
+
+  const MAX_DRIFT = 600  -- seconds an answer's created_at may differ from now, either way  @7-8
+  pub fn challenge() -> str  !rand  -- 16 random bytes as hex, one per connection  @10-13
+  pub fn validate(event, challenge, host, now) -> pubkey fails str      @15-43
+    -- Check a signature-verified answer against this connection's challenge and host.
+    fail unless the kind is CLIENT_AUTH
+    fail if created_at is more than MAX_DRIFT from now
+    fail unless the challenge tag is this connection's challenge
+    fail unless the relay tag names the connected host; only the host is compared
+    return the author's pubkey
+
+  tests                                                                 @45-113
+    ~ a good answer names its signer; another challenge or relay, staleness or a wrong kind fail

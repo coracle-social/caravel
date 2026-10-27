@@ -3,9 +3,9 @@
 
 use anyhow::Result;
 use caravel_core::bus::Change;
-use caravel_core::notifications::{self, get_notification};
-use caravel_core::testing::{self, create_relay};
-use caravel_core::{Core, Error};
+use caravel_core::queries::notifications::get_notification;
+use caravel_core::testing::create_relay;
+use caravel_core::{Core, Error, commands, notifications, testing};
 use coracle_lib::keys::SecretKey;
 
 const NOW: i64 = 1_800_000_000;
@@ -122,7 +122,7 @@ async fn clearing_a_message_is_idempotent() -> Result<()> {
 
     notifications::notify(&core, &relay.id, &member, "hello", None).await?;
     for _ in 0..2 {
-        notifications::clear(core.db.pool(), &relay.id, &member).await?;
+        commands::notifications::clear(core.db.pool(), &relay.id, &member).await?;
         assert!(
             get_notification(core.db.pool(), &relay.id, &member, NOW)
                 .await?

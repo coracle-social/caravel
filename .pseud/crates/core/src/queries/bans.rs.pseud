@@ -1,0 +1,9 @@
+% source=crates/core/src/queries/bans.rs lang=rust lines=26 sha=9b0c26e93260
+
+module caravel_core::queries::bans  !db
+  -- Reading who and what a relay refuses.
+
+  pub async fn list_banned_pubkeys(relay_id) -> [Ban] fails  !db        @8-16
+    -- The relay's banned_pubkey rows as Bans whose subject is the pubkey, oldest first.
+  pub async fn list_banned_events(relay_id) -> [Ban] fails  !db         @18-26
+    -- The relay's banned_event rows as Bans whose subject is the event id, oldest first.

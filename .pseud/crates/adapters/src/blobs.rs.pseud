@@ -1,0 +1,33 @@
+% source=crates/adapters/src/blobs.rs lang=rust lines=144 sha=6693f86993f4
+
+module caravel_adapters::blobs  !net !fs !lock
+  -- Media storage keyed by path: a directory, an S3 bucket, or memory for tests.
+
+  const LOCKS = 64  -- how many locks the keys share                    @18-19
+  pub type ByteStream = stream io::Result<Bytes>                        @22-23
+  pub data S3Config  -- the bucket media lives in when it isn't a directory  @26-33
+    endpoint, region, bucket, access_key, secret_key: str
+  pub data Blobs                                                        @35-39
+    store: ObjectStore
+    locks: shared [Mutex]  -- LOCKS of them, shared by every clone
+  pub data BlobRead  -- a blob being read                               @42-46
+    size: u64  -- the whole blob
+    range: Range<u64>  -- the bytes returned
+    stream: ByteStream
+
+  impl Blobs  !net !fs !lock                                            @48-144
+    fn new(store) -> Blobs  -- the store with fresh locks               @49-54
+    pub fn local(dir) -> Blobs fails  !fs  -- create dir if missing and store files under it  @56-59
+    pub fn s3(config: S3Config) -> Blobs fails                          @61-74
+      -- An S3 store; a non-empty endpoint overrides AWS's and allows http when it starts with http://.
+    pub fn memory() -> Blobs                                            @76-78
+    pub async fn lock(self, key) -> MutexGuard  !lock                   @82-86
+      -- Hold key in this process until the guard drops, for a writer changing a blob and its record.
+      -- The key hashes onto one of the LOCKS, so unrelated keys may wait on each other.
+    pub async fn put(self, key, bytes) fails  !net !fs                  @88-93
+    pub async fn get(self, key, range: Range<u64>?) -> BlobRead? fails  !net !fs  @97-112
+      -- The whole blob or the bounded range asked for; None when the key is missing.
+    pub async fn size(self, key) -> u64? fails  !net !fs  -- None when the key is missing  @115-121
+    pub async fn delete(self, key) fails  !net !fs  -- a missing key is not an error  @123-128
+    pub async fn delete_prefix(self, prefix) fails  !net !fs            @131-143
+      -- List every blob under prefix and delete them as a stream.

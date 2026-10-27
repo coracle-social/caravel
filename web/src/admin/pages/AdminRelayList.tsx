@@ -6,6 +6,7 @@ import ResourceState from "@/shared/components/ResourceState"
 import SearchInput from "@/shared/components/SearchInput"
 import useMinLoading from "@/shared/lib/useMinLoading"
 import { listRelays } from "@/shared/lib/api"
+import { loaded } from "@/shared/lib/resource"
 import { usePrimeProfiles } from "@/shared/lib/profiles"
 
 export default function AdminRelayList() {
@@ -13,10 +14,10 @@ export default function AdminRelayList() {
   const [relays] = createResource(listRelays)
   const loading = useMinLoading(() => relays.loading)
 
-  usePrimeProfiles(() => (relays() ?? []).map(r => r.tenant_pubkey))
+  usePrimeProfiles(() => (loaded(relays) ?? []).map(r => r.tenant_pubkey))
 
   const filtered = createMemo(() => {
-    return fuzzySearch(relays() ?? [], ["info_name", "subdomain", "tenant_pubkey"], query().trim())
+    return fuzzySearch(loaded(relays) ?? [], ["info_name", "subdomain", "tenant_pubkey"], query().trim())
   })
 
   return (
@@ -26,7 +27,7 @@ export default function AdminRelayList() {
         <SearchInput value={query()} onInput={setQuery} placeholder="Search relays..." />
       </div>
       <ResourceState loading={loading()} error={relays.error} loadingText="Loading relays..." errorText="Failed to load relays." />
-      <Show when={!loading()}>
+      <Show when={!loading() && loaded(relays)}>
         <Show when={filtered().length > 0} fallback={<p class="py-20 text-center text-gray-500">No relays found.</p>}>
           <ul class="space-y-3">
             <For each={filtered()}>

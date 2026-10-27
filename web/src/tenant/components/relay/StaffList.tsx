@@ -21,12 +21,12 @@ export default function StaffList(props: { relay: Relay }) {
   const isManager = (pubkey: string) => pubkey === props.relay.tenant_pubkey || pubkey === props.relay.pubkey
 
   async function remove(assignee: MethodAssignee) {
-    const removed = await makeChange(async () => {
+    await makeChange(async () => {
       for (const method of assignee.methods) {
         await callRelayMethod(props.relay.id, "unassignmethod", [assignee.pubkey, method])
       }
     }, "Failed to remove staff", "Staff removed")
-    if (removed) void refetch()
+    void refetch()
   }
 
   return (

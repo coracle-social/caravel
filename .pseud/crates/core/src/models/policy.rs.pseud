@@ -1,0 +1,56 @@
+% source=crates/core/src/models/policy.rs lang=rust lines=245 sha=d2792dfb7e0e
+
+module caravel_core::models::policy
+  -- What a relay's rules read and how they answer: snapshots, an event's facts, and refusals.
+
+  pub data RelaySnapshot  -- settings, access and rooms as of the last change to any  @10-36
+    relay_id: str
+    relay_pubkey: str  -- the relay's own key, which signs what it publishes about itself
+    tenant_pubkey: str  -- the tenant who owns the relay
+    public_read, anonymous_read, public_write, public_join, strip_signatures: bool
+    groups_enabled, members_can_invite, charges_members: bool  -- charges: joining needs a claim
+    member_limit: usize?  -- the most members the plan allows, if limited
+    members, banned_pubkeys, banned_events: Set<str>
+    method_grants: Map<pubkey, sorted Set<method>>  -- NIP-86 methods granted individually
+    rooms: Map<room_id, RoomSnapshot>
+  pub data RoomSnapshot  -- what the rules read about one room          @38-55
+    hidden: bool  -- only its members and the relay's managers know it exists
+    private: bool  -- only they may read it or listen to its calls
+    closed: bool  -- join requests without one of its invite codes are ignored
+    livekit: bool  -- the room has calls
+    restricted: bool  -- only they may post to it or speak in its calls
+    members, invites: Set<str>
+    permissions: Map<pubkey, sorted Set<kind>>  -- the moderation kinds members may publish in it
+  pub data EventFacts { kind: u16, pubkey, room: str? }  -- room: what it is about or posted in  @57-64
+  pub enum Join = AlreadyMember | Open | Claim(claim)  -- how a join request is admitted  @66-75
+    -- Already a member; the relay takes anyone; or it presents a claim that must still be live.
+  pub enum Refusal  -- why the relay said no, with NIP-01's machine-readable prefix  @77-98
+    AuthRequired(static str)  -- auth-required: the client has to prove who it is first
+    Blocked(reason)  -- blocked: not taken, whoever is asking
+    Closed(static str)  -- closed: a reconciliation that isn't open
+    Duplicate  -- "duplicate: already have this event", which NIP-01 counts as acceptance
+    Unchanged(reason)  -- duplicate: asks for what is already so, like joining a room twice
+    Error(static str)  -- error: the relay's fault rather than the client's
+    Invalid(reason)  -- invalid: malformed, or asking for something incoherent
+    RateLimited(reason)  -- rate-limited: more at once than the relay allows
+    Restricted(reason)  -- restricted: authenticated as somebody not allowed to do this
+
+  impl Refusal                                                          @100-141
+    ~ constructors: blocked, invalid, restricted, rate_limited          @101-115
+    ~ accepted: only Duplicate, whose event is on the relay; needs_auth: only AuthRequired  @117-125
+    pub fn message(self) -> str  -- the wire message: the variant's prefix, then its reason  @127-140
+
+  impl RelaySnapshot                                                    @143-234
+    pub fn of(relay) -> RelaySnapshot  -- its settings; access lists and rooms left empty  @144-163
+    pub fn can_manage(self, pubkey) -> bool  -- the tenant or the relay's own key  @165-168
+    pub fn has_access(self, pubkey) -> bool  -- a manager or a member   @170-173
+    pub fn is_banned(self, pubkey) -> bool                              @175-177
+    pub fn methods_for(self, pubkey) -> [method]                        @179-205
+      -- Managers get every method; others their grants, plus INVITE_METHODS for members if allowed.
+    pub fn may_call(self, pubkey, method) -> bool  -- holds it; supportedmethods needs any  @207-216
+    pub fn can_moderate_room(self, pubkey, room_id, kind) -> bool  -- a manager, or room_permits  @218-222
+    pub fn room_permits(self, pubkey, room_id, kind) -> bool  -- the room permits pubkey the kind  @224-229
+    pub fn has_room_access(self, room, pubkey) -> bool  -- a manager or a room member  @231-233
+
+  pub enum CallRefusal = NotMember | NoRoom | NoCalls | NotRoomMember   @236-245
+    -- Why a pubkey may not join a room's call; NotRoomMember: the room keeps calls to members.

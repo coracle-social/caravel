@@ -1,0 +1,11 @@
+% source=web/src/shared/lib/subdomain.ts lang=typescript lines=27 sha=a9da2ceea37c
+
+module @/shared/lib/subdomain
+  -- Checking a subdomain label before the API does.
+
+  const SUBDOMAIN_LABEL_MIN_LEN = 3  -- with the two below, the core's rules (domain/relays.rs)  @1-2
+  const SUBDOMAIN_LABEL_MAX_LEN = 63                                    @3
+  const RESERVED_SUBDOMAIN_LABELS = [api, admin, internal]              @4
+  pub fn validateSubdomainLabel(subdomain) -> str?                      @6-27
+    -- What's wrong with it, first of: empty, under 3, over 63, a hyphen at either end, reserved,
+    -- or a character outside a-z, 0-9 and "-"; else null.

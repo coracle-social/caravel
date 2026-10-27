@@ -1,0 +1,25 @@
+% source=crates/core/src/commands/tenants.rs lang=rust lines=184 sha=6bdfa94596eb
+
+module caravel_core::commands::tenants  !db !rand
+  -- Writing tenants.
+
+  pub async fn insert_tenant(tenant: Tenant) fails  !db                 @11-25
+    -- Insert a tenant, doing nothing if its pubkey exists.
+  pub async fn set_tenant_nwc_url(pubkey, nwc_url: str?) fails  !db     @28-39
+    -- Replace the encrypted NWC url and clear nwc_error.
+  pub async fn set_tenant_stripe_payment_method(pubkey, payment_method_id: str?) fails  !db  @43-56
+    -- Cache or clear the Stripe payment method and clear stripe_error.
+  pub async fn ensure_tenant_billing_anchor(pubkey, anchor) -> i64 fails  !db  @59-72
+    -- Set billing_anchor unless already set, returning the anchor in force.
+  pub async fn set_tenant_nwc_error(pubkey, error: str?) fails  !db     @74-85
+  pub async fn set_tenant_stripe_error(pubkey, error: str?) fails  !db  @87-98
+  pub async fn set_tenant_renewed_at(pubkey, at) fails  !db             @100-107
+  pub async fn set_tenant_overage_billed_at(pubkey, at) fails  !db      @109-120
+  pub async fn set_tenant_churned_at(pubkey, at: i64?) fails  !db       @122-133
+  pub async fn set_tenant_stripe_account(pubkey, account_id, ready: bool) fails  !db  @135-150
+  pub async fn set_tenant_banned_at(pubkey, at: i64?) fails  !db        @152-163
+  pub async fn forgive_and_purge_in_tx(conn, pubkey, now) -> [relay_id] fails  !db !rand  @168-184
+    -- Clear a tenant's balance and purge its relays, returning the relays purged.
+    forgive its unbilled activity, then void its open invoices and their items
+    purge_relay_in_tx each relay not already purged
+      after the forgiving, so the purges stay unbilled and their credit is owed if it returns

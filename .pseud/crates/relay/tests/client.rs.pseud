@@ -1,0 +1,14 @@
+% source=crates/relay/tests/client.rs lang=rust lines=120 sha=123872076051
+
+module caravel_relay::tests::client
+  -- The adapters' Nostr client and the robot against a relay served here: auth, publish, read, ask.
+
+  tests  !panic                                                         @21-120
+    const TIMEOUT = 5s                                                  @21
+    async fn relay_at(server, host) -> (Relay, SecretKey, url)  !panic  @24-35
+      -- A publicly readable relay that also answers on host, and its ws url there.
+    test the_robot_sends_a_dm_its_recipient_can_open                    @38-84
+      -- the recipient lists the relay as outbox and inbox; the robot finds it through its indexer
+      the recipient fetches one gift wrap, unseals it, and reads the robot's message
+    test a_request_waits_for_the_event_that_answers_it                  @87-120
+      -- the client's request resolves with the reply a subscriber publishes, tagging its id

@@ -1,0 +1,9 @@
+% source=crates/core/src/commands/notifications.rs lang=rust lines=39 sha=ea9a376686c8
+
+module caravel_core::commands::notifications  !db
+  -- Replacing and clearing notifications.
+
+  pub async fn clear(relay_id, pubkey) fails  !db                       @8-15
+    -- Drop the pubkey's message; connections already sent it aren't told.
+  pub async fn set_notification(relay_id, pubkey, message, expires_at: i64?, now) fails  !db  @18-39
+    -- Upsert the pubkey's one message on the relay, replacing message, time and expiry.

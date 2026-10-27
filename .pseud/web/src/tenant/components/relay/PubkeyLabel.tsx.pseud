@@ -1,0 +1,7 @@
+% source=web/src/tenant/components/relay/PubkeyLabel.tsx lang=typescript lines=21 sha=5a67f58bd675
+
+module @/tenant/components/relay/PubkeyLabel  !net
+  -- How the relay pages show a pubkey.
+
+  pub fn PubkeyLabel(props: { pubkey })  !net                           @7-21
+    -- Its avatar and profile name when it has one, with its npub to copy.

@@ -16,6 +16,7 @@ import { banTenant, deleteTenant, getTenant, listTenantInvoices, listTenantRelay
 import { formatDateTime, formatError } from "@/shared/lib/format"
 import { setToastMessage } from "@/shared/lib/state"
 import { shortenNpub } from "@/shared/lib/pubkey"
+import { loaded } from "@/shared/lib/resource"
 
 type Action = "delete" | "ban" | "unban"
 
@@ -71,6 +72,7 @@ export default function AdminTenantDetail() {
   const [relays, { refetch: refetchRelays }] = createResource(tenantId, listTenantRelays)
   const [invoices, { refetch: refetchInvoices }] = createResource(tenantId, listTenantInvoices)
   const loading = useMinLoading(() => tenant.loading || relays.loading || invoices.loading)
+  const failed = () => tenant.error || relays.error || invoices.error
   const metadata = useProfileMetadata(tenantId)
 
   const [pendingAction, setPendingAction] = createSignal<Action>()
@@ -117,7 +119,7 @@ export default function AdminTenantDetail() {
             </p>
           </div>
         </div>
-        <Show when={tenant()}>
+        <Show when={loaded(tenant)}>
           {(t) => (
             <ActionsMenu>
               {(close) => (
@@ -159,12 +161,12 @@ export default function AdminTenantDetail() {
           )}
         </Show>
       </div>
-      <ResourceState loading={loading()} error={tenant.error || relays.error || invoices.error} loadingText="Loading tenant..." errorText="Failed to load tenant." class="mb-4" />
-      <Show when={!loading()}>
+      <ResourceState loading={loading()} error={failed()} loadingText="Loading tenant..." errorText="Failed to load tenant." class="mb-4" />
+      <Show when={!loading() && !failed()}>
         <div class="space-y-6">
           <section class="bg-white border border-gray-200 rounded-xl p-6">
             <h2 class="text-lg font-semibold mb-4">Status</h2>
-            <Show when={tenant()}>
+            <Show when={loaded(tenant)}>
               {(t) => (
                 <dl class="grid gap-y-3 text-sm">
                   <div class="flex gap-2 items-center">
@@ -213,9 +215,9 @@ export default function AdminTenantDetail() {
           </section>
           <section class="bg-white border border-gray-200 rounded-xl p-6">
             <h2 class="text-lg font-semibold mb-4">Relays</h2>
-            <Show when={(relays()?.length ?? 0) > 0} fallback={<p class="text-gray-500">No relays.</p>}>
+            <Show when={(loaded(relays)?.length ?? 0) > 0} fallback={<p class="text-gray-500">No relays.</p>}>
               <ul class="space-y-3">
-                <For each={relays() ?? []}>
+                <For each={loaded(relays) ?? []}>
                   {(relay) => <RelayListItem relay={relay} href={`/admin/relays/${relay.id}`} />}
                 </For>
               </ul>
@@ -223,9 +225,9 @@ export default function AdminTenantDetail() {
           </section>
           <section class="bg-white border border-gray-200 rounded-xl p-6">
             <h2 class="text-lg font-semibold mb-4">Invoices</h2>
-            <Show when={(invoices()?.length ?? 0) > 0} fallback={<p class="text-gray-500">No invoices.</p>}>
+            <Show when={(loaded(invoices)?.length ?? 0) > 0} fallback={<p class="text-gray-500">No invoices.</p>}>
               <ul class="space-y-3">
-                <For each={invoices() ?? []}>
+                <For each={loaded(invoices) ?? []}>
                   {(invoice) => <AdminInvoiceListItem invoice={invoice} href={`/admin/invoices/${invoice.id}`} />}
                 </For>
               </ul>

@@ -160,6 +160,10 @@ export default function RelayPage() {
                     }
                   >
                     <Show when={!current.loading || current()} fallback={<p class="text-sm text-zinc-500">Loading your membership…</p>}>
+                      <Show when={current.error && !hasStatus(current.error, 401)}>
+                        <Notice tone="error">We couldn't load your membership. Try again in a moment.</Notice>
+                      </Show>
+
                       <Show when={status() === "active"}>
                         <Notice tone="success">
                           <p class="font-medium">You're a member.</p>
@@ -209,7 +213,7 @@ export default function RelayPage() {
                         </Notice>
                       </Show>
 
-                      <Show when={status() !== "active"}>
+                      <Show when={loaded(current) && status() !== "active"}>
                         <Show
                           when={o().accepting_payment}
                           fallback={<Notice tone="neutral">This relay isn't taking payments right now.</Notice>}

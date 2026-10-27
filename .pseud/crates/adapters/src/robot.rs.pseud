@@ -1,0 +1,54 @@
+% source=crates/adapters/src/robot.rs lang=rust lines=337 sha=153f7a7bbf93
+
+module caravel_adapters::robot  !net !lock !time
+  -- The platform's own Nostr identity: publishes its profile and relay lists, DMs tenants.
+
+  const FETCH_TIMEOUT = 5s  -- waiting for relays to answer a lookup    @22
+  const PUBLISH_TIMEOUT = 10s  -- waiting for relays to take an event   @25
+  const CACHE_TTL = 300s  -- how long a recipient's relay lists are trusted  @28
+  ~ kinds PROFILE 0, DIRECT_MESSAGE 14, RELAY_LIST 10002, MESSAGING_RELAYS 10050  @30-33
+  pub data RobotProfile  -- the robot's identity and relays, as the app configures them  @36-44
+    name, picture, description: str
+    outbox_relays, indexer_relays, messaging_relays: [str]
+  pub data Robot  -- cloned handles share both caches                   @49-56
+    secret: SecretKey; client: nostr::Client; profile: RobotProfile
+    outbox_cache, dm_cache: RelayListCache  -- recipients' 10002 and 10050 lists
+  type RelayListCache = shared Map<pubkey, CacheEntry>  -- tokio Mutex  @59
+  data CacheEntry { values: [str], fetched_at: Instant }                @61-65
+
+  impl Robot  !net !lock !time                                          @67-255
+    pub fn new(secret, profile) -> Robot fails  -- parse the hex key; no I/O  @70-79
+    pub fn allowing_private(secret, profile) -> Robot fails  -- also reaches loopback, for tests  @82-88
+    pub async fn publish_identity(self, now) fails  !net                @93-135
+      -- Publish the robot's profile and relay lists so tenants' clients can find and trust its DMs.
+      each goes to outbox_relays and indexer_relays together, deduplicated, as NIP-65 and NIP-17
+      ask lists to be spread, and so the lookups send_dm makes of a recipient find the robot
+      publish kind 0 with the non-empty name, about and picture
+        fail if picture is set but isn't a url
+      publish kind 10002 naming each outbox relay for read and write
+      publish kind 10050 naming messaging_relays
+      each publish must succeed before the next is attempted
+    pub async fn send_dm(self, recipient, message, now) fails  !net !lock !time  @138-187
+      -- Send a NIP-17 direct message over the recipient's messaging relays.
+      look up recipient's 10002 "r" relays on indexer_relays; fail if there are none
+      look up their 10050 "relay" relays on those outbox relays; fail if there are none
+      build a kind 14 rumor p-tagged to recipient at now
+      seal it (NIP-44 to recipient), gift-wrap it, and publish the wrap to the messaging relays
+    async fn fetch_relay_list(self, cache, pubkey, relays, kind, tag, now) -> [str] fails  !net !lock !time  @191-217
+      -- The tag values of pubkey's newest event of kind on relays, cached for CACHE_TTL.
+      return the cached list if fresh
+      fetch pubkey's events of kind and take the newest one's tag values, or none
+      cache the result, including an empty one
+    pub async fn fetch_nostr_name(self, pubkey, now) -> str?  !net      @220-238
+      -- display_name, else name, from pubkey's newest kind 0 on indexer_relays, trimmed and non-empty.
+      -- Every failure, from a bad pubkey to no relay answering, is None.
+    async fn publish(self, relays, event, now) fails  !net  -- Client::publish with PUBLISH_TIMEOUT  @240-244
+    fn sign(self, stamped) -> Event  -- set the robot's pubkey, hash and sign  @247-249
+    fn signed(self, hashed) -> Event                                    @251-254
+
+  fn author_filter(author, kind) -> Filter  -- the events of one kind one author wrote  @258-264
+  async fn get_cached(cache, key) -> [str]?  !lock !time  -- the entry if younger than CACHE_TTL  @266-273
+  async fn set_cached(cache, key, values)  !lock !time  -- store values stamped with Instant::now  @275-283
+
+  tests                                                                 @285-337
+    ~ publish_identity sends kinds 0, 10002 and 10050 to both an outbox and an indexer relay

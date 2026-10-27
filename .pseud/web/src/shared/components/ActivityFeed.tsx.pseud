@@ -1,0 +1,10 @@
+% source=web/src/shared/components/ActivityFeed.tsx lang=typescript lines=49 sha=f6a715cd4952
+
+module @/shared/components/ActivityFeed
+  -- A relay's activity timeline.
+
+  const ACTIVITY_LABELS  -- words for relay create, update, deactivate, activate  @5-10
+  fn formatDate(ts) -> str  -- unix seconds as a short local date and time  @12-17
+  pub fn ActivityFeed(props: { activity: [Activity], loading, error? })  @19-49
+    -- A loading line, an error, "No activity yet.", or each activity's label and time in order.
+    -- A type without a label shows its own name with spaces for underscores.

@@ -1,0 +1,13 @@
+% source=web/src/tenant/components/TenantShell.tsx lang=typescript lines=195 sha=4b0955acdee9
+
+module @/tenant/components/TenantShell  !net !db !time
+  -- The frame around a signed-in tenant's pages.
+
+  ~ SearchIcon and RelayIcon: the bottom bar's icons                    @17-28
+  pub fn TenantShell(props)  !net !db !time                             @32-195
+    -- A dark sidebar with My Relays and the account, a bottom bar on phones, and the billing banner.
+    read the account's profile and the tenant's relays
+    the sidebar shows Administration only to admins, as rel=external so the router leaves it  @78-81
+    the account shows the profile name, else a copyable npub, with the nip05 beneath  @85-98
+    the phone bar's search opens a sheet fuzzy-matching relays on info_name and subdomain  @45-50
+      picking a relay, Close, or tapping the bar closes it and clears the query

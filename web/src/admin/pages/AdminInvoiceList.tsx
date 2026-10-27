@@ -6,6 +6,7 @@ import ResourceState from "@/shared/components/ResourceState"
 import SearchInput from "@/shared/components/SearchInput"
 import useMinLoading from "@/shared/lib/useMinLoading"
 import { listInvoices } from "@/shared/lib/api"
+import { loaded } from "@/shared/lib/resource"
 import { usePrimeProfiles } from "@/shared/lib/profiles"
 
 export default function AdminInvoiceList() {
@@ -13,10 +14,10 @@ export default function AdminInvoiceList() {
   const [invoices] = createResource(listInvoices)
   const loading = useMinLoading(() => invoices.loading)
 
-  usePrimeProfiles(() => (invoices() ?? []).map(i => i.tenant_pubkey))
+  usePrimeProfiles(() => (loaded(invoices) ?? []).map(i => i.tenant_pubkey))
 
   const filtered = createMemo(() => {
-    return fuzzySearch(invoices() ?? [], ["tenant_pubkey", "id"], query().trim())
+    return fuzzySearch(loaded(invoices) ?? [], ["tenant_pubkey", "id"], query().trim())
   })
 
   return (
@@ -26,7 +27,7 @@ export default function AdminInvoiceList() {
         <SearchInput value={query()} onInput={setQuery} placeholder="Search invoices..." />
       </div>
       <ResourceState loading={loading()} error={invoices.error} loadingText="Loading invoices..." errorText="Failed to load invoices." />
-      <Show when={!loading()}>
+      <Show when={!loading() && loaded(invoices)}>
         <Show when={filtered().length > 0} fallback={<p class="py-20 text-center text-gray-500">No invoices found.</p>}>
           <ul class="space-y-3">
             <For each={filtered()}>

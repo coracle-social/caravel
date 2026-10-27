@@ -1,0 +1,14 @@
+% source=crates/core/src/commands/activity.rs lang=rust lines=81 sha=1dc34f9d5156
+
+module caravel_core::commands::activity  !db !rand
+  -- Writing a relay's activity log, which billing reconciles.
+
+  pub async fn insert_relay_activity(conn, activity_type, relay, status, now) -> Activity fails  !db !rand  @12-35
+    -- Record an activity with a snapshot of the relay's plan_id and `status`, under a new uuid.
+    tenant_pubkey is copied from the stored relay row, not from `relay`
+  pub async fn record_status_change(conn, relay, status, activity_type, now) -> Activity fails  !db !rand  @38-47
+    -- commands::relays::set_relay_status, then insert_relay_activity with that status.
+  pub async fn mark_activity_billed(activity_id, now) -> bool fails  !db  @51-63
+    -- Claim an activity as billed, only if unbilled; false means another pass claimed it first.
+  pub async fn forgive_unbilled_activity_for_tenant(tenant_pubkey, now) fails  !db  @67-81
+    -- Mark the tenant's unbilled activity billed, except purges, whose credit stays owed.

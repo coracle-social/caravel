@@ -1,0 +1,9 @@
+% source=crates/core/src/domain/calls.rs lang=rust lines=31 sha=4f63229c56af
+
+module caravel_core::domain::calls
+  -- Calls: naming the LiveKit rooms a relay's NIP-29 rooms meet in, and reading who is in one.
+
+  pub fn livekit_room(relay_id, room_id) -> str  -- "relay_id:room_id", as relays share one project  @6-10
+  pub fn split_livekit_room(name) -> (relay_id, room_id)?  -- split at the first colon  @12-15
+  pub fn participant_pubkeys(identities: [str]) -> [pubkey]             @17-31
+    -- The distinct, lowercased hex64 pubkeys before each identity's first colon, others dropped.

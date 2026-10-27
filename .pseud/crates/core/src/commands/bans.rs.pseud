@@ -1,0 +1,21 @@
+% source=crates/core/src/commands/bans.rs lang=rust lines=84 sha=8947d85eb074
+
+module caravel_core::commands::bans  !db
+  -- Banning pubkeys and events from a relay, and lifting bans.
+
+  pub async fn ban_pubkey(conn, key, relay_id, tenant_pubkey, pubkey, reason, now) -> [Event] fails  !db  @13-41
+    -- Ban a pubkey, removing it as a member and deleting all it wrote on the relay but tombstones.
+    commands::members::remove, which refuses the owner and the relay's own key
+    insert into banned_pubkey; an existing ban keeps its reason
+    fail invalid "invalid-pubkey" if pubkey isn't hex
+    commands::events::delete_events_by_author, which keeps its deletions and vanish requests
+    return what the removal published
+  pub async fn unban_pubkey(relay_id, pubkey) fails  !db                @43-50
+    -- Delete the pubkey's banned_pubkey row.
+  pub async fn ban_event(conn, relay_id, event_id, reason, now) fails  !db  @53-75
+    -- Ban an event: delete it and refuse it from then on.
+    fail invalid "invalid-id" if event_id isn't hex
+    commands::events::delete_event
+    insert into banned_event; banning it again replaces the reason
+  pub async fn allow_event(relay_id, event_id) fails  !db               @77-84
+    -- Delete the event's banned_event row.

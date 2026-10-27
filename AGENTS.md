@@ -8,7 +8,7 @@ There is one right place to document any given information:
 
 - Functions should have a doc comment explaining the purpose of the function, not its implementation.
 - Only very strange behavior should be documented using non-doc comments.
-- Models and their fields are documented where the model is defined, in the core module that owns it (e.g. `Relay` in `crates/core/src/relays/mod.rs`), not in migrations, implementations, or anywhere in the web apps.
+- Models and their fields are documented where the model is defined, in the core's models (e.g. `Relay` in `crates/core/src/models/relays.rs`), not in migrations, implementations, or anywhere in the web apps.
 - Database indexes are documented in migrations.
 
 ## Data Modeling
@@ -41,7 +41,7 @@ Don't add re-export shims to preserve old import paths. When something moves, im
 
 ## Architecture
 
-The backend is one Cargo workspace under `crates/`, layered so each crate depends only on the ones below it: `db` and `adapters` at the bottom, then `core`, then `relay` and `api`, then `app`, which builds the `caravel` binary. `crates/app/tests/layers.rs` enforces the layering. The `architecture` skill describes each layer and where new code goes.
+The backend is one Cargo workspace under `crates/`, layered so each crate depends only on the ones below it: `db` and `adapters` at the bottom, then `core`, then `relay` and `api`, then `app`, which builds the `caravel` binary. `crates/app/tests/layers.rs` enforces the layering. The core is layered too: models, then pure domain rules, then queries that read and commands that write, then the subsystems that run them against a `Core`; outside the core, state changes only through subsystems. `crates/core/tests/layers.rs` enforces that. The `architecture` skill describes each layer and where new code goes.
 
 Read configuration from the environment only in `crates/app/src/config.rs`, and the time only through the core's `Clock`; clippy enforces both.
 

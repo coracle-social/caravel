@@ -1,0 +1,10 @@
+% source=web/src/shared/components/Modal.tsx lang=typescript lines=59 sha=7490c6fe1992
+
+module @/shared/components/Modal  !time
+  -- The panel every dialog is built on.
+
+  const DURATION_MS = 200                                               @3
+  pub fn Modal(props: { open, onClose, wrapperClass?, panelClass? })  !time  @6-59
+    -- A panel over the page that fades in and out, a centered dialog unless given classes.
+    opening mounts it and fades it in; closing fades it out and unmounts it after DURATION_MS  @17-37
+    a click on the backdrop calls onClose; clicks inside the panel don't reach it  @44-53

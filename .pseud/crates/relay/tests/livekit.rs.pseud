@@ -1,0 +1,34 @@
+% source=crates/relay/tests/livekit.rs lang=rust lines=330 sha=5a218fc91650
+
+module caravel_relay::tests::livekit
+  -- Calls, ported from zooid: tokens for members of rooms with calls, and the metering webhook.
+
+  tests  !panic !net !db !lock !spawn !time                             @23-330
+    async fn fake_livekit() -> (url, shared [str])  !panic !lock !spawn  @23-47
+      -- A LiveKit room service that creates any room and lists the shared participant identities.
+    async fn start() -> (Server, participants, url)  !panic !net !db !lock !spawn !time  @49-54
+      -- A server whose core talks to a fresh fake LiveKit.
+    async fn call_relay(server) -> (Relay, SecretKey)  !panic           @58-77
+      -- A relay with calls on basic, and rooms: call, restricted and private with calls, quiet without.
+    async fn token(server, relay, signer: SecretKey?, room) -> HttpResponse  !panic  @79-99
+      -- GET the room's token url, NIP-98 signed for exactly that url when a signer is given.
+    fn claims(token) -> Value  !panic  -- the JWT's payload, decoded    @101-110
+    test a_relay_says_whether_it_has_calls                              @113-132
+      -- /.well-known/nip29/livekit is 204 on a relay with calls, 404 on one without
+    test a_member_gets_a_token_for_a_rooms_call                         @135-157
+      -- server_url is LiveKit's; the token is issued by the key, joins the relay-scoped room
+      its subject starts with the member's pubkey
+    test tokens_are_refused_to_those_who_may_not_join                   @160-187
+      -- 401 unsigned, 403 for a non-member, 404 for an unknown room, 403 for a room without calls
+      a plain member is 403 in restricted and private rooms and 200 in call
+      the owner is 200 in restricted
+    async fn webhook(server, relay, livekit, body) -> HttpResponse  !panic  @189-202
+      -- POST a webhook body signed by livekit's key to the relay's host.
+    test a_departure_is_metered_once_and_the_call_published             @205-260
+      -- the same participant_left twice credits 60 seconds once
+      the relay publishes 39004 listing LiveKit's remaining participant
+      after room_finished, 39004 lists nobody
+    test a_webhook_must_be_signed_and_name_a_known_call                 @263-306
+      -- a wrong secret is 401, an unknown relay 404, a room without calls 403, a call 204
+    test a_departure_is_metered_even_from_a_room_without_calls          @309-330
+      -- the webhook answers 403, yet the 30 seconds are credited first

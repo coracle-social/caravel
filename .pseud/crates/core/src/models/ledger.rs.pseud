@@ -1,0 +1,50 @@
+% source=crates/core/src/models/ledger.rs lang=rust lines=99 sha=12e11ecf371b
+
+module caravel_core::models::ledger
+  -- The billing ledger: line items, the invoices that claim them, and payment attempts.
+
+  pub enum InvoiceMethod  -- stored and serialized lowercase            @6-16
+    Nwc
+    Stripe
+    Oob  -- a Lightning invoice paid out of band, such as by scanning its QR code
+    Comp  -- comped: issued paid and never collected
+  pub data Invoice                                                      @18-35
+    -- A tenant's bill for one period: open while paid_at and voided_at are both null.
+    id, tenant_pubkey: str
+    amount: i64  -- the total owed, fixed when the invoice claims its line items
+    period_start, period_end, created_at: i64
+    paid_at: i64?
+    voided_at: i64?
+    notified_at: i64?  -- when the manual-payment reminder DM was last sent
+    method: InvoiceMethod?  -- how it was paid, set when marked paid
+
+  impl Invoice                                                          @37-41
+    pub fn is_open(self) -> bool  -- neither paid nor voided            @38-40
+
+  pub data InvoiceItem                                                  @43-59
+    id: str
+    invoice_id: str?  -- none while outstanding; set once an invoice claims the item
+    activity_id: str?  -- the activity it prices; none for renewals and overage
+    tenant_pubkey, relay_id, plan_id, description: str
+    amount, created_at: i64
+    voided_at: i64?  -- forgiven because the tenant churned or came back; never billed or carried
+  pub data Bolt11                                                       @61-70
+    id, invoice_id, lnbc: str
+    msats, created_at, expires_at: i64
+    settled_at: i64?
+  pub data Checkout                                                     @72-84
+    -- A hosted Stripe Checkout opened to pay an invoice on-session, to clear 3D Secure.
+    id, invoice_id: str
+    session_id: str  -- Stripe's cs_ id
+    url: str  -- the hosted page
+    created_at, expires_at: i64
+    settled_at: i64?
+  pub data Intent                                                       @86-99
+    -- Write-ahead record of an off-session card charge, inserted before the Stripe call.
+    -- Dropped once Stripe refuses the charge.
+    id: str  -- the charge's idempotency key: a retry after a lost settle or no answer replays it
+    invoice_id: str
+    payment_method_id: str  -- the card charged
+    payment_intent_id: str?  -- the Stripe pi_ that settled it
+    created_at: i64
+    settled_at: i64?

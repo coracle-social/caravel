@@ -1,0 +1,61 @@
+% source=crates/core/tests/memberships.rs lang=rust lines=740 sha=e9ed73ab4e86
+
+module caravel_core::tests::memberships
+  -- Paid memberships against a fake Stripe: checkouts, invites, paid joins, and the sweep.
+
+  tests  !panic !net !db !global !lock !spawn !time                     @19-740
+    const DAY = 86400                                                   @19
+    global SERIAL: async Mutex  -- the sweep reads every membership, so tests take turns  @22
+    data Fixture { core, stripe: FakeStripe, relay, _turn }  -- _turn holds SERIAL for the test  @24-29
+    async fn fixture() -> Fixture fails  !panic !net !db !global !lock !spawn  @33-51
+      -- A free-plan relay (ten members) selling $5 memberships; its tenant's Stripe account is ready.
+    async fn price(core, relay, member_price) -> Relay fails  -- hosting::update_relay  @53-59
+    fn pubkey() -> str  -- a fresh random pubkey                        @61-63
+    async fn live(f, pubkey) -> Membership? fails  !db  -- the pubkey's live membership  @65-67
+    async fn member_source(f, pubkey) -> MemberSource? fails  !db       @69-75
+    async fn pay(f, pubkey) -> Membership fails  !panic !db !time       @78-86
+      -- Open a checkout, complete it on the fake for 30 days, then reconcile_checkout it.
+    async fn buy_invite(f) -> str fails  !panic !db !time               @89-102
+      -- Buy and settle an invite checkout, returning its code.
+    async fn join(core, relay, joiner, code) fails Error  !db !time     @105-122
+      -- admit_join with a signed RELAY_JOIN claiming code, as the relay does for NIP-43.
+    test a_paying_member_is_admitted                                    @125-166
+      -- Active for 30 days, source Payment; the session pays the tenant's account less a 10% fee,
+      -- $5 monthly, returning to the relay's host with the session id.
+    test a_checkout_is_refused_when_it_cant_be_granted                  @169-212
+      -- already-a-member, member-limit once ten fill the free plan, payouts-not-ready.
+    test a_session_settles_only_its_own_membership                      @215-237
+      -- Another membership's session is session-mismatch; an unpaid session settles nothing.
+    test an_invite_goes_to_whoever_joins_with_it_first                  @241-285
+      -- Its url shows only while unbound; joining binds it at now as a Payment member; a second
+      -- join is invalid-claim.
+    test settling_an_invite_from_a_stale_copy_leaves_it_spent           @289-307
+      -- activate with the invite as read before its join leaves the spent claim revoked.
+    test racing_joins_bind_a_paid_invite_once  -- exactly one of two concurrent joins wins  @312-336
+    test an_unused_paid_invite_holds_a_seat  -- until it is bound       @340-354
+    test a_renewed_membership_carries_on  -- the sweep picks up Stripe's later period end  @357-375
+    test a_renewal_counts_once_stripe_collects_it                       @379-408
+      -- Not cycled, drafting, then past due: the old period end stands and the member stays; once
+      -- the invoice is paid the next period end is stored.
+    test a_renewal_stripe_cant_collect_lapses_after_its_grace           @412-433
+      -- Past due keeps the member until 14 days past the period's end, then lapses and cancels it.
+    test a_lapse_removes_access_and_tells_the_member_how_to_renew       @436-484
+      -- With renewal canceled, at the period's end membership and member row go; a 30-day notice
+      -- whose link carries a session token for the member is announced on the bus; paying again
+      -- clears it.
+    test a_lapse_leaves_a_member_admitted_another_way  -- a Manual member stays  @488-504
+    test a_canceled_membership_keeps_access_until_its_period_ends       @507-529
+      -- Cancels at period end on Stripe; a renewal checkout anchors billing at the paid period's end.
+    test memberships_are_released_when_their_relay_stops_charging       @533-555
+      -- Price 0: the sweep cancels subscriptions and kills unused invites; members stay.
+    test a_checkout_nobody_finishes_lapses_after_two_days  -- Pending at one day, gone at three  @558-575
+    test a_checkout_reopened_late_is_still_settled                      @579-603
+      -- A checkout reopened a minute before the TTL stays Pending past it, then settles once paid.
+    test the_sweep_settles_a_checkout_its_payer_left                    @608-626
+    test a_member_price_must_be_chargeable_and_need_a_claim             @631-660
+      -- 10 cents is invalid-member-price; a priced relay can't allow public joins (paid-public-join).
+    test an_offer_says_whether_payment_is_taken  -- false once the Stripe account isn't ready  @663-682
+    test a_tenant_onboards_for_payouts                                  @685-713
+      -- No account and not ready, then an onboarding link to a new account, ready once Stripe says.
+    test erasing_a_relay_keeps_what_was_paid_for                        @717-740
+      -- Paying members stay, manually added ones go, and a paid invite still admits.

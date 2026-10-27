@@ -5,16 +5,16 @@
 mod common;
 
 use anyhow::Result;
-use caravel_core::media;
-use caravel_core::plans::{GB, PLAN_BASIC, SECONDS_PER_HOUR};
-use caravel_core::{Core, calls, usage};
+use caravel_core::models::plans::{GB, PLAN_BASIC, SECONDS_PER_HOUR};
+use caravel_core::{Core, commands, queries, usage};
 use common::*;
 
 async fn upload(core: &Core, relay_id: &str, sha256: &str, size: i64, pubkey: &str) -> Result<()> {
     let now = core.clock.now();
     core.db
         .with_tx(async |conn| {
-            media::record_upload(conn, relay_id, sha256, "video/mp4", size, pubkey, now).await
+            commands::media::record_upload(conn, relay_id, sha256, "video/mp4", size, pubkey, now)
+                .await
         })
         .await?;
     Ok(())
@@ -22,14 +22,14 @@ async fn upload(core: &Core, relay_id: &str, sha256: &str, size: i64, pubkey: &s
 
 async fn delete(core: &Core, relay_id: &str, sha256: &str, pubkey: &str) -> Result<()> {
     core.db
-        .with_tx(async |conn| media::delete_upload(conn, relay_id, sha256, pubkey).await)
+        .with_tx(async |conn| commands::media::delete_upload(conn, relay_id, sha256, pubkey).await)
         .await?;
     Ok(())
 }
 
 async fn call(core: &Core, relay_id: &str, sid: &str, hours: i64) -> Result<()> {
     let now = core.clock.now();
-    calls::record_session(
+    commands::calls::record_session(
         core.db.pool(),
         relay_id,
         sid,
@@ -92,7 +92,7 @@ async fn overage_is_billed_from_measured_media_and_calls() -> Result<()> {
     );
 
     // A relay on the free plan isn't metered.
-    let totals = usage::get_usage_totals_for_tenant(
+    let totals = queries::usage::get_usage_totals_for_tenant(
         core.db.pool(),
         &tenant,
         day(2026, 1, 7),

@@ -4,7 +4,8 @@
 mod common;
 
 use axum::http::StatusCode;
-use caravel_core::billing::{self, Collection};
+use caravel_core::billing;
+use caravel_core::billing::Collection;
 use caravel_core::testing::RELAY_DOMAIN;
 use common::*;
 use coracle_lib::keys::SecretKey;
@@ -147,12 +148,23 @@ async fn validation_failures_carry_a_code() {
             "blossom_enabled": blossom,
         })
     };
+    let with_custom_domain = |subdomain: &str, custom_domain: &str| {
+        let mut body = create(subdomain, RELAY_DOMAIN, "free", 0);
+        body["custom_domain"] = json!(custom_domain);
+        body
+    };
 
     for (body, code) in [
         (create("a", RELAY_DOMAIN, "free", 0), "invalid-subdomain"),
         (
             create("admin", RELAY_DOMAIN, "free", 0),
             "invalid-subdomain",
+        ),
+        // Its canonical host would be the dashboards'.
+        (create("app", RELAY_DOMAIN, "free", 0), "invalid-subdomain"),
+        (
+            with_custom_domain("fine-name", "api.test"),
+            "reserved-domain",
         ),
         (
             create("fine-name", "elsewhere.test", "free", 0),
@@ -196,6 +208,50 @@ async fn validation_failures_carry_a_code() {
     let reactivated = api.request("POST", &path, Some(&bearer), None).await;
     assert_eq!(reactivated.status, StatusCode::BAD_REQUEST);
     assert_eq!(reactivated.body["code"], "relay-is-active");
+
+    // A custom domain is taken once another relay has verified it.
+    let claimed = api
+        .request(
+            "POST",
+            "/relays",
+            Some(&bearer),
+            Some(with_custom_domain("claimed-name", "taken.example")),
+        )
+        .await;
+    assert_eq!(claimed.status, StatusCode::CREATED);
+    let claimed_id = claimed.body["data"]["id"].as_str().unwrap();
+    caravel_core::commands::relays::set_custom_domain_verified(
+        api.core.db.pool(),
+        claimed_id,
+        "taken.example",
+        true,
+    )
+    .await
+    .unwrap();
+    let taken = api
+        .request(
+            "POST",
+            "/relays",
+            Some(&bearer),
+            Some(with_custom_domain("another-name", "taken.example")),
+        )
+        .await;
+    assert_eq!(taken.status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(taken.body["code"], "domain-exists");
+}
+
+#[tokio::test]
+async fn an_internal_failure_keeps_its_cause_to_the_server() {
+    let api = TestApi::new().await;
+    let bearer = api.bearer(&SecretKey::generate()).await;
+    api.core.db.pool().close().await;
+
+    let response = api.request("GET", "/identity", Some(&bearer), None).await;
+    assert_eq!(response.status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(
+        response.body,
+        json!({ "error": "internal error", "code": "internal" })
+    );
 }
 
 #[tokio::test]
@@ -254,7 +310,7 @@ async fn a_tenant_and_its_invoices_read_back_in_the_shape_clients_expect() {
         .await;
     assert_eq!(draft.body["data"], json!(null));
 
-    let row = caravel_core::tenants::get_tenant(api.core.db.pool(), &tenant_pubkey)
+    let row = caravel_core::queries::tenants::get_tenant(api.core.db.pool(), &tenant_pubkey)
         .await
         .unwrap()
         .unwrap();

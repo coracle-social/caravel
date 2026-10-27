@@ -1,0 +1,13 @@
+% source=web/src/admin/App.tsx lang=typescript lines=26 sha=45b36e6d3cec
+
+module @/admin/App
+  -- The admin dashboard's route table.
+
+  pub fn App()                                                          @12-26
+    -- One router rooted at Layout, which shows every page to admins only.
+    /admin -> redirect to /admin/tenants                                @15
+    /admin/tenants and /admin/tenants/:id -> AdminTenantList, AdminTenantDetail  @16-17
+    /admin/relays and /admin/relays/:id -> AdminRelayList, AdminRelayDetail  @18-19
+    /admin/relays/:id/edit -> the shared RelayEdit, returning under /admin/relays  @20
+    /admin/invoices and /admin/invoices/:id -> AdminInvoiceList, AdminInvoiceDetail  @21-22
+    /admin/moderation -> AdminModeration                                @23

@@ -1,0 +1,14 @@
+% source=crates/core/src/domain/billing.rs lang=rust lines=50 sha=fc86000e244f
+
+module caravel_core::domain::billing
+  -- Pricing what happened to a tenant's relays.
+
+  pub fn prorated_item(id, tenant, activity, sign: i64, description) -> InvoiceItem? fails  @10-39
+    -- A charge, or a credit with sign -1, for the activity's recorded plan over its period's rest.
+    fail internal if the snapshot's plan isn't in the catalog
+    none for a free plan
+    amount = sign times the plan amount prorated from the activity's time to its period's end
+    outstanding (no invoice), tied to the activity, dated at the activity
+  pub fn recorded_plan(id) -> Plan fails  -- internal error if the catalog lost the plan  @41-44
+  pub fn activity_period(tenant, activity) -> BillingPeriod fails       @46-50
+    -- The period the activity fell in by the tenant's anchor; internal error without one.

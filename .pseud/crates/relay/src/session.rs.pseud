@@ -1,0 +1,56 @@
+% source=crates/relay/src/session.rs lang=rust lines=305 sha=210972032b53
+
+module caravel_relay::session  !net !db !global !lock !spawn !time
+  -- One client connection: a read loop feeding the instance, and a write task owning the socket.
+
+  global NEXT_ID: AtomicU64 = 1  !global  -- session ids, unique within the process  @27
+  const GOING_AWAY = 1001  -- the close code when the server is going away  @29-30
+  pub data Transport                                                    @32-46
+    -- How connections are carried.
+    max_message_size: usize = 512 KiB  -- the largest websocket message decoded
+    send_buffer: usize = 256  -- outbound messages queued per client
+    ping_interval: Duration = 30s
+    pong_wait: Duration = 60s  -- how long a ping may go unanswered
+    write_wait: Duration = 10s  -- how long one frame may take to reach the socket
+  impl Default for Transport  -- the defaults above                     @48-58
+  pub data Session { id: u64, host, sender: mpsc::Sender<RelayMessage> }  @60-67
+    -- A cheap, cloneable handle to one client; sending to one that has gone fails, never blocks.
+  impl Session                                                          @69-91
+    pub fn id(self) -> u64                                              @70-73
+    pub fn host(self) -> str  -- the host connected to, which NIP-42 answers must name  @75-78
+    pub async fn send(self, message) -> bool  -- queue, waiting while full; false once gone  @80-84
+    pub fn try_send(self, message) -> bool  -- queue without waiting, dropping it when full  @86-90
+
+  pub async fn run(socket, addr, host, instance, transport, shutdown)  !net !db !global !lock !spawn !time  @93-132
+    -- Drive one connection until the client leaves, the writer stops, or shutdown fires.
+    -- shutdown is the instance's closed token, so a relay that stops being served ends it too
+    take the next session id; a queue of send_buffer messages
+    spawn write over the socket's sink, cancelling written when it stops
+    instance.on_connect, then read until it ends, shutdown, or written, whichever is first
+    instance.on_disconnect, drop this handle, and wait for the writer
+      it ends once every Session clone is dropped, or on shutdown
+  async fn read(session, instance, stream, pong_wait)  !net !db !lock !time  @134-165
+    -- dispatch each text frame until the client closes, the socket fails, or pongs stop.
+    stop when no frame arrives by the deadline, pong_wait after the last pong
+    text -> dispatch; binary -> a NOTICE refusal
+    pong -> push the deadline back; other control frames are ignored
+  async fn dispatch(session, instance, text)  !net !db !lock !time      @167-229
+    -- Parse one message and hand it to the instance.
+    unparseable -> send malformed and stop
+    EVENT -> screen, then verify the signature, refusing with OK false; else on_event
+      screening first spares the far costlier signature check
+    AUTH -> verify the signature, refusing with OK false; else on_auth
+    REQ, CLOSE, COUNT, NEG-OPEN, NEG-MSG, NEG-CLOSE -> the matching on_* handler
+  fn malformed(text, error) -> RelayMessage                             @231-251
+    -- Refuse on the id a malformed message named, so a client awaiting EOSE isn't left waiting.
+    REQ or COUNT with a valid id -> CLOSED; NEG-OPEN or NEG-MSG -> NEG-ERR; else NOTICE
+  async fn write(sink, receiver, transport, shutdown, written)  !net !time  @253-305
+    -- Serialize queued messages onto the socket, ping between them, and close with 1001 on shutdown.
+    cancel written whenever this returns
+    loop, checking shutdown first
+      shutdown -> send Close 1001 "server shutting down" within write_wait and stop
+      a queued message -> its json; a serialize failure is logged and skipped
+      the queue closed -> stop
+      a ping_interval tick -> a Ping
+      send it within write_wait: a failed send stops; a timed-out one returns without closing
+    close the sink within write_wait

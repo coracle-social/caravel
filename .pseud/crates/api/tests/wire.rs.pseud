@@ -1,0 +1,36 @@
+% source=crates/api/tests/wire.rs lang=rust lines=400 sha=630ed9dfc2ff
+
+module caravel_api::tests::wire
+  -- The JSON shapes the API's clients rely on, Flotilla's among them: field names, flags as 0/1.
+
+  tests                                                                 @14-400
+    const RELAY_FIELDS: [str; 30]                                       @14-45
+      -- Every key of a relay's JSON, sorted.
+      blossom_authenticated_read, blossom_enabled, created_at, custom_domain, custom_domain_verified
+      erased_at, groups_enabled, id, info_description, info_icon, info_name, livekit_enabled
+      management_enabled, member_interval, member_price, members_can_invite, plan_id
+      policy_anonymous_read, policy_public_join, policy_public_read, policy_public_write
+      policy_strip_signatures, pubkey, purged_at, push_enabled, redirect_from, status, subdomain
+      tenant_pubkey, zooid_domain
+    test a_relay_reads_back_in_the_shape_clients_expect                 @48-133
+      -- a created relay has exactly RELAY_FIELDS, and GET returns the same object
+      flags come back 0/1 whether sent as numbers or booleans; groups default on, purged_at null
+      PUT push_enabled 0 reads back 0; activity holds two entries, update_relay newest, exact keys
+      members: no roles, and the tenant as source owner with keys created_at, pubkey, roles, source
+    test validation_failures_carry_a_code                               @136-241
+      -- each refusal is 422 with its code
+      a one-letter or reserved subdomain, or one on the dashboards' host -> invalid-subdomain
+      the API's host as custom domain -> reserved-domain
+      a domain the platform doesn't serve -> invalid-zooid-domain
+      an unknown plan -> invalid-plan; blossom on the free plan -> premium-feature
+      a second relay on a taken subdomain -> subdomain-exists
+      reactivating an active relay is 400 relay-is-active
+      a custom domain another relay verified -> domain-exists
+    test an_internal_failure_keeps_its_cause_to_the_server              @244-255
+      -- with the pool closed, a request is 500 with only "internal error" and code internal
+    test a_tenant_and_its_invoices_read_back_in_the_shape_clients_expect  @258-378
+      -- exact keys for a tenant, an invoice and an invoice item; nwc_is_set is false
+      no draft invoice before billing; after reconcile_subscription the basic plan bills 500
+      another pubkey reading the invoice is 403
+    test plans_read_back_in_the_shape_clients_expect                    @381-400
+      -- a plan's exact keys, amount through storage_overage

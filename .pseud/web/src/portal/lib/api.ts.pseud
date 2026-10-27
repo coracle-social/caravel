@@ -1,0 +1,27 @@
+% source=web/src/portal/lib/api.ts lang=typescript lines=81 sha=e0ee0552e8cb
+
+module @/portal/lib/api  !net
+  -- The portal's member API calls, and the wire types only the portal uses.
+
+  pub type Offer = RelayProfile & { price, interval: MemberInterval, accepting_payment }  @6-10
+    -- What a relay sells memberships for.
+  pub type MembershipView = Membership's status and current_period_end  @13
+  pub type MemberAccount = { pubkey, memberships: [{ offer, membership: MembershipView }] }  @16-19
+  pub type Invite = { offer, status: MembershipStatus, bound, invite_url: str? }  @21-26
+  async fn call<T>(method, path, body?) -> T fails ApiError  !net       @29-40
+    -- Send JSON through request with the member's session as a Bearer token when there is one,
+    -- and unwrap the response; unlike the dashboards it never signs in again on a 401.
+  pub async fn getOffer(relayId) -> Offer  -- GET /relays/:id/offer     @42-44
+  pub async fn getAccount() -> MemberAccount  -- GET /account           @46-48
+  pub async fn getIdentity() -> Identity  -- GET /identity              @50-52
+  pub async fn getMembership(relayId) -> { membership? }  -- GET /relays/:id/membership  @54-56
+  pub async fn createCheckout(relayId, returnUrl?) -> RedirectUrl       @58-60
+    -- POST /relays/:id/membership/checkout
+  pub async fn reconcileCheckout(relayId, checkout) -> { paid }         @62-64
+    -- POST /relays/:id/membership/reconcile
+  pub async fn cancelRenewal(relayId) -> MembershipView                 @66-68
+    -- POST /relays/:id/membership/cancel
+  pub async fn createInvite(relayId, returnUrl?) -> RedirectUrl         @71-73
+    -- POST /relays/:id/invites: buy an invite, which needs no Nostr account.
+  pub async fn getInvite(code) -> Invite  -- GET /invites/:code         @75-77
+  pub async fn reconcileInvite(code, checkout) -> { paid }  -- POST /invites/:code/reconcile  @79-81

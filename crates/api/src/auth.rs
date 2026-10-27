@@ -5,8 +5,8 @@ use axum::extract::FromRequestParts;
 use axum::http::HeaderMap;
 use axum::http::header::AUTHORIZATION;
 use axum::http::request::Parts;
-use caravel_core::auth::{self, Actor};
-use caravel_core::{Core, Error};
+use caravel_core::models::auth::Actor;
+use caravel_core::{Core, Error, domain, sessions};
 
 use crate::response::ApiError;
 
@@ -26,12 +26,12 @@ impl FromRequestParts<Core> for Authed {
 
         let pubkey = match header.strip_prefix("Bearer ") {
             Some(token) => {
-                auth::find_session(core.db.pool(), token.trim(), now)
+                sessions::find(core, token.trim())
                     .await?
                     .ok_or_else(|| Error::Unauthorized("session is invalid or expired".into()))?
                     .pubkey
             }
-            None => auth::verify_base_url_auth(header, &core.config.api_url, now)?,
+            None => domain::auth::verify_base_url_auth(header, &core.config.api_url, now)?,
         };
 
         Ok(Self(Actor::new(&core.config, &pubkey)))

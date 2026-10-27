@@ -6,8 +6,8 @@ use std::collections::HashMap;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
-use caravel_core::auth;
-use caravel_core::{Core, Error, domains, plans};
+use caravel_core::models::plans;
+use caravel_core::{Core, Error, domain, domains, sessions};
 use serde::Serialize;
 
 use crate::auth::{Authed, authorization};
@@ -51,8 +51,8 @@ struct SessionResponse {
 pub async fn create_session(State(core): State<Core>, headers: HeaderMap) -> ApiResult {
     let now = core.clock.now();
     let url = format!("{}/session", core.config.api_url.trim_end_matches('/'));
-    let pubkey = auth::verify_request_auth(authorization(&headers)?, &url, "POST", now)?;
-    let (token, session) = auth::create_session(core.db.pool(), &pubkey, now).await?;
+    let pubkey = domain::auth::verify_request_auth(authorization(&headers)?, &url, "POST", now)?;
+    let (token, session) = sessions::start(&core, &pubkey).await?;
 
     created(SessionResponse {
         pubkey,
@@ -66,7 +66,7 @@ pub async fn delete_session(State(core): State<Core>, headers: HeaderMap) -> Api
     let token = authorization(&headers)?
         .strip_prefix("Bearer ")
         .ok_or_else(|| Error::Unauthorized("a session token is required".into()))?;
-    auth::delete_session(core.db.pool(), token.trim()).await?;
+    sessions::end(&core, token.trim()).await?;
     ok(())
 }
 

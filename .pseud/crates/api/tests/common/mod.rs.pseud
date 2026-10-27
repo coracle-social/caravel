@@ -1,0 +1,21 @@
+% source=crates/api/tests/common/mod.rs lang=rust lines=135 sha=08708dca0912
+
+module caravel_api::tests::common
+  -- A test API: the router over a test core, and helpers to sign requests and read responses.
+
+  tests  !panic !time                                                   @16-135
+    pub data TestApi { core: Core, admin: SecretKey, router }           @16-20
+    pub data Response { status: StatusCode, body: Value }               @22-25
+    impl TestApi  !panic !time                                          @27-123
+      pub async fn new() -> TestApi                                     @28-37
+        -- A test core whose admin is a fresh key, and the API router over it.
+      pub async fn request(self, method, path, authorization: str?, body: Value?) -> Response  !panic  @39-74
+        -- Run one request through the router; a JSON body sets Content-Type, an unparsable reply is Null.
+      pub async fn raw(self, method, path, authorization, body: Body) -> (status, headers, bytes)  !panic  @77-99
+        -- A request with a raw body, returning the raw response.
+      pub async fn bearer(self, secret) -> str  !panic !time            @102-115
+        -- A bearer authorization for a fresh session of secret's pubkey, from a NIP-98 POST /session.
+      pub async fn create_tenant(self, secret) -> str                   @118-122
+        -- Make secret's pubkey a tenant without reaching Stripe; returns the pubkey.
+    pub fn keys(value) -> [str]  !panic                                 @126-135
+      -- The keys of a JSON object, sorted.

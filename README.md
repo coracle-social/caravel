@@ -8,7 +8,7 @@ The backend is a Rust workspace whose crates are layered, each depending only on
 
 - `crates/db` — the Postgres pool, migrations and transactions
 - `crates/adapters` — clients for Stripe, Nostr Wallet Connect, the robot's Nostr identity, DNS, media storage, LiveKit and outbound HTTP
-- `crates/core` — the domain: tenants, relays, access, rooms, events, media, calls, notifications, moderation, transfer, billing, usage, paid memberships, payouts, custom domains, sessions
+- `crates/core` — the domain, in layers: models, the rules over them, the queries and commands that read and write them, and the subsystems (hosting, management, ingest, memberships, billing and the rest) that run them
 - `crates/relay` — the virtual relays: websockets, NIP-11 and NIP-86, Blossom, push, LiveKit tokens and webhooks, and resolving hosts to relays
 - `crates/api` — the JSON API, documented in [crates/api/README.md](./crates/api/README.md)
 - `crates/app` — the `caravel` binary, which reads the environment, serves each request by its host and runs the background workers
@@ -30,8 +30,8 @@ The binary reads these from the environment, or from a `.env` file in its workin
 | `ROBOT_SECRET` | The robot's hex Nostr secret key. It signs the robot's DMs and encrypts stored secrets, relays' keys among them |
 | `ROBOT_NAME`, `ROBOT_DESCRIPTION`, `ROBOT_PICTURE` | The robot's profile, all optional |
 | `ROBOT_WALLET` | The platform's NWC url, which issues the Lightning invoices tenants pay |
-| `ROBOT_OUTBOX_RELAYS` | Relays the robot publishes its profile and relay list to |
-| `ROBOT_INDEXER_RELAYS` | Relays the robot looks up recipients' relay lists and profiles on |
+| `ROBOT_OUTBOX_RELAYS` | Relays the robot publishes its profile and relay lists to |
+| `ROBOT_INDEXER_RELAYS` | Relays the robot looks up recipients' relay lists and profiles on, and publishes its own to |
 | `ROBOT_MESSAGING_RELAYS` | Relays the robot receives DMs on |
 | `RELAY_DOMAINS` | Comma-separated domains relay subdomains live under |
 | `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` | The LiveKit server relays' calls run on. Without them no relay has calls |

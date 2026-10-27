@@ -7,9 +7,9 @@ import { loaded } from "@/shared/lib/resource"
 import Section from "@/tenant/components/relay/Section"
 import { makeChange } from "@/tenant/lib/changes"
 
-// An invite code that's hard to guess and easy to read out.
+// An invite code that's hard to guess and easy to read out: 40 random bits as 8 base36 characters.
 const newCode = () =>
-  Array.from(crypto.getRandomValues(new Uint8Array(5)), byte => byte.toString(36).padStart(2, "0")).join("").slice(0, 8)
+  crypto.getRandomValues(new Uint8Array(5)).reduce((n, byte) => n * 256 + byte, 0).toString(36).padStart(8, "0")
 
 // The relay's invite codes (NIP-43 claims): each lets whoever has it join the relay.
 export default function InviteCodes(props: { relay: Relay }) {

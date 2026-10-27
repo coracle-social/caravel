@@ -1,0 +1,12 @@
+% source=web/src/tenant/components/PayoutsSection.tsx lang=typescript lines=69 sha=82af029a76f1
+
+module @/tenant/components/PayoutsSection  !net !db !time
+  -- The account page's card for the tenant's Stripe payouts account.
+
+  type PayoutState = not_set_up | incomplete | ready                    @7
+  fn payoutState(status) -> PayoutState  -- not_set_up without an account id, else by ready  @9-12
+  pub fn PayoutsSection(props: { pubkey })  !net !db !time              @15-69
+    -- The payout status and platform fee, and one button through useRedirect to Stripe.
+    read getPayoutStatus for the pubkey, which refreshes the account's readiness
+    until ready, the button opens onboarding with this page as the return url; then the dashboard
+    a failed status read or redirect shows its error in the card

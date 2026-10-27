@@ -15,9 +15,11 @@ mod nip86;
 mod push;
 mod session;
 
+pub use session::Transport;
+
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
-use std::sync::{Arc, OnceLock, RwLock};
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
 use axum::Router;
 use axum::extract::{ConnectInfo, Extension, FromRequestParts, Request, State, WebSocketUpgrade};
@@ -25,8 +27,9 @@ use axum::http::{HeaderMap, HeaderName, Method, StatusCode, header};
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{get, post, put};
 use caravel_core::bus::Change;
-use caravel_core::relays::{self, Relay};
-use caravel_core::{Core, Result};
+use caravel_core::models::relays::Relay;
+use caravel_core::{Core, Result, queries};
+use tokio::sync::broadcast;
 use tokio::sync::broadcast::error::RecvError;
 use tokio_util::sync::CancellationToken;
 use tower::ServiceExt;
@@ -35,7 +38,6 @@ use tower_http::cors::{Any, CorsLayer};
 use crate::instance::{InstanceState, RelayInstance};
 use crate::limits::Limiter;
 use crate::push::Pusher;
-use crate::session::Transport;
 
 /// How much any one connection may ask of a relay.
 #[derive(Clone, Copy, Debug)]
@@ -43,6 +45,8 @@ pub struct RelayLimits {
     pub max_subscriptions: usize,
     pub max_identities: usize,
     pub max_reconciliations: usize,
+    /// The most filters one `REQ` or `COUNT` may hold.
+    pub max_filters: usize,
     /// The most stored events one filter returns.
     pub max_limit: usize,
     /// The most events one reconciliation covers.
@@ -55,6 +59,7 @@ impl Default for RelayLimits {
             max_subscriptions: 300,
             max_identities: 16,
             max_reconciliations: 8,
+            max_filters: 200,
             max_limit: 1000,
             max_sync: 20_000,
         }
@@ -104,10 +109,13 @@ struct Inner {
     /// The relay each host belongs to, by id.
     hosts: RwLock<HashMap<String, String>>,
     router: OnceLock<Router>,
+    /// The bus as of before the first load, until `watch` takes it.
+    changes: Mutex<Option<broadcast::Receiver<Change>>>,
 }
 
 impl Relays {
-    /// Load every live relay. `shutdown` closes every connection when cancelled.
+    /// Load every live relay, holding the changes published meanwhile for
+    /// [`Relays::watch`]. `shutdown` closes every connection when cancelled.
     pub async fn load(
         core: Core,
         config: RelaysConfig,
@@ -117,6 +125,7 @@ impl Relays {
             inner: Arc::new(Inner {
                 connecting: Limiter::new(config.connections_per_minute),
                 pusher: Pusher::start(core.clone(), shutdown.clone()),
+                changes: Mutex::new(Some(core.bus.subscribe())),
                 core,
                 config,
                 shutdown,
@@ -174,7 +183,13 @@ impl Relays {
     /// Reload relays as the core reports changes to them, and all of them after
     /// missing some, until `shutdown`.
     pub async fn watch(&self, shutdown: CancellationToken) {
-        let mut changes = self.inner.core.bus.subscribe();
+        let held = self
+            .inner
+            .changes
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .take();
+        let mut changes = held.unwrap_or_else(|| self.inner.core.bus.subscribe());
 
         loop {
             let change = tokio::select! {
@@ -219,7 +234,7 @@ impl Relays {
     /// Bring one relay up to date with its row: serve it if it is live, and stop
     /// serving it otherwise.
     pub async fn reload(&self, relay_id: &str) -> Result<()> {
-        match relays::get_relay(self.inner.core.db.pool(), relay_id).await? {
+        match queries::relays::get_relay(self.inner.core.db.pool(), relay_id).await? {
             Some(relay) if relay.is_served() => self.install(relay).await?,
             _ => self.remove(relay_id),
         }
@@ -237,7 +252,7 @@ impl Relays {
     }
 
     async fn reload_all(&self) -> Result<()> {
-        let live: Vec<Relay> = relays::list_relays(self.inner.core.db.pool())
+        let live: Vec<Relay> = queries::relays::list_relays(self.inner.core.db.pool())
             .await?
             .into_iter()
             .filter(Relay::is_served)
@@ -322,6 +337,7 @@ impl Relays {
             .unwrap_or_else(|error| error.into_inner())
             .retain(|_, id| id != relay_id);
 
+        self.inner.pusher.retain(relay_id, &[]);
         if let Some(instance) = removed {
             instance.close();
         }

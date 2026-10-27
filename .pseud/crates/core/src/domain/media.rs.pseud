@@ -1,0 +1,6 @@
+% source=crates/core/src/domain/media.rs lang=rust lines=6 sha=a22129217d70
+
+module caravel_core::domain::media
+  -- Where a relay's media lives.
+
+  pub fn blob_key(relay_id, sha256) -> str  -- "relay_id/sha256", where a relay keeps a blob's bytes  @3-6

@@ -1,0 +1,8 @@
+% source=web/src/portal/components/RelayHeader.tsx lang=typescript lines=36 sha=94c16c47d8dd
+
+module @/portal/components/RelayHeader
+  -- The top of a portal page: which relay this is.
+
+  pub fn RelayHeader(props: { relay: RelayProfile & { price?, interval? } })  @7-36
+    -- The icon (or the name's initial), name or else host, host, description when set, and
+    -- the price per interval when both are given.

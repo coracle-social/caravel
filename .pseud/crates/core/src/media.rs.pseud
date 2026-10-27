@@ -1,0 +1,13 @@
+% source=crates/core/src/media.rs lang=rust lines=58 sha=25eb247cc6a6
+
+module caravel_core::media  !net !db !fs !lock !time
+  -- Media: the blobs members upload over Blossom, their bytes and records kept in step.
+
+  pub async fn keep_upload(core, relay_id, sha256, content_type, pubkey, bytes) -> Blob fails  !net !db !fs !lock !time  @14-35
+    -- Store an upload's bytes, then record the blob if new and the uploader as an owner.
+    hold the blob's lock throughout, so the last owner's deletion can't interleave
+    put the bytes under blob_key, then record the upload in one transaction
+  pub async fn delete_upload(core, relay_id, sha256, pubkey) -> Deleted fails  !net !db !fs !lock  @39-58
+    -- Drop pubkey's ownership, removing the blob and its bytes with its last owner.
+    hold the blob's lock throughout, as keep_upload does
+    after the transaction, delete the bytes for Last, only logging a failure

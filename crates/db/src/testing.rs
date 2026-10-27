@@ -58,15 +58,15 @@ async fn create_database() -> String {
     url
 }
 
-/// `caravel_test_<binary>`, from the test executable's name without cargo's hash.
+/// `caravel_test_<binary>_<hash>`, from the test executable's name, whose hash
+/// cargo derives from its crate so same-named binaries in two crates differ.
 fn database_name() -> String {
     let exe = std::env::current_exe().expect("no current executable");
     let stem = exe
         .file_stem()
         .and_then(|stem| stem.to_str())
         .unwrap_or("tests");
-    let binary = stem.rsplit_once('-').map_or(stem, |(binary, _)| binary);
-    let binary: String = binary
+    let binary: String = stem
         .chars()
         .map(|c| {
             if c.is_ascii_alphanumeric() {

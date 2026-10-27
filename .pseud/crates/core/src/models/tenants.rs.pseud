@@ -1,0 +1,29 @@
+% source=crates/core/src/models/tenants.rs lang=rust lines=54 sha=8a1c35d81a30
+
+module caravel_core::models::tenants
+  -- Tenants: the pubkeys that host relays on the platform and pay for them.
+
+  pub data Tenant                                                       @3-45
+    pubkey: str
+    return_url: str  -- their account page in their signup client, where the robot's DMs send them
+      -- as-is in the churn DM, with ?invoice=<id> appended in a payment reminder
+    nwc_url: str?  -- their NWC url, encrypted with the platform key, if set
+    nwc_error: str?  -- last NWC auto-payment error; a warning that never blocks a retry
+      -- none when the wallet last paid or was never tried; cleared when the url is updated
+    stripe_error: str?  -- last Stripe auto-payment error, like nwc_error
+    created_at: i64
+    billing_anchor: i64?  -- first billable activity, which monthly periods count from
+    stripe_customer_id: str
+    stripe_payment_method_id: str?  -- the saved card collection charges; none before one is added
+    renewed_at: i64?  -- period_start of the latest period renewed: the renewal idempotency marker
+    overage_billed_at: i64?  -- period_start of the latest closed period whose overage was billed
+      -- overage bills once its period is over, so this trails renewed_at
+    churned_at: i64?  -- churned for an invoice unpaid past grace; its relays delinquent meanwhile
+      -- cleared by new billable activity, which voids the then-open invoices
+    banned_at: i64?  -- an admin ban: blocks relay creation, forgives charges, purges every relay
+      -- unbanning restores none of it
+    stripe_account_id: str?  -- the Connect account members pay into, once onboarding starts
+    stripe_account_ready: bool  -- it can take charges and receive payouts, as Stripe last said
+
+  impl Tenant                                                           @47-54
+    pub fn payout_account(self) -> str?  -- stripe_account_id, only when ready  @48-53

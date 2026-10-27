@@ -397,17 +397,16 @@ export async function signOut() {
 
 // Send an authenticated request, signing in again once if the session was revoked or expired.
 async function authed(path: string, init: RequestInit = {}, failure?: string): Promise<Response> {
-  const send = async () => {
-    const auth = await authorization()
-    return request(path, { ...init, headers: { ...init.headers, ...(auth ? { Authorization: auth } : {}) } }, failure)
-  }
+  const send = (auth?: string) =>
+    request(path, { ...init, headers: { ...init.headers, ...(auth ? { Authorization: auth } : {}) } }, failure)
 
+  const auth = await authorization()
   try {
-    return await send()
+    return await send(auth)
   } catch (e) {
     if (!hasStatus(e, 401) || !account()) throw e
     forgetSession()
-    return send()
+    return send(await authorization())
   }
 }
 
@@ -514,12 +513,17 @@ export function moderateRoom(id: string, kind: number, tags: string[][]) {
   return callApi<void>("POST", `/relays/${id}/rooms/moderate`, { kind, tags })
 }
 
-// A page of the relay's events, newest first, of some kinds or ids; `until` pages back.
-export function listRelayEvents(id: string, params: { kinds?: number[]; ids?: string[]; until?: number; limit?: number } = {}) {
+// A page of the relay's events, newest first, of some kinds or ids; the last event's created_at and id, as `until` and `after`, page back.
+export function listRelayEvents(
+  id: string,
+  params: { kinds?: number[]; ids?: string[]; until?: number; after?: string; exclude_own?: boolean; limit?: number } = {},
+) {
   const query = new URLSearchParams()
   if (params.kinds?.length) query.set("kinds", params.kinds.join(","))
   if (params.ids?.length) query.set("ids", params.ids.join(","))
   if (params.until !== undefined) query.set("until", String(params.until))
+  if (params.after) query.set("after", params.after)
+  if (params.exclude_own) query.set("exclude_own", "true")
   if (params.limit !== undefined) query.set("limit", String(params.limit))
   return callApi<NostrEvent[]>("GET", `/relays/${id}/events?${query}`)
 }

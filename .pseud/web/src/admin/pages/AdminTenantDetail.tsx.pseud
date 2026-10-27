@@ -1,0 +1,23 @@
+% source=web/src/admin/pages/AdminTenantDetail.tsx lang=typescript lines=248 sha=403f5f2ab464
+
+module @/admin/pages/AdminTenantDetail  !net !db !time
+  -- An admin's page for one tenant, where it is deleted, banned or unbanned.
+
+  type Action = "delete" | "ban" | "unban"                              @21
+  fn confirmation(action, label) -> Confirmation                        @23-66
+    -- The dialog for each action, spelling out what it does:
+    delete -> relays deleted and subdomains freed, billing settled, not banned, nothing restored  @25-38
+    ban -> relays deleted, billing settled, no new relays, lifting it restores nothing  @39-52
+    unban -> relays may be created again, billing resumes on new activity, nothing restored  @53-64
+  pub fn AdminTenantDetail()  !net !db !time                            @68-248
+    -- The tenant the :id param names: its profile header, an actions menu, its status (Stripe
+    -- customer, ban and delinquency dates, payment errors), and its relays and invoices.
+    fetch the tenant, its relays and its invoices by id; loading until all three settle  @71-74
+    the menu offers Unban to a banned tenant, and Delete and Ban to anyone else  @122-162
+    async fn confirmAction()  !net !db !time                            @83-107
+      return unless an action is pending and none is running            @84-85
+      delete, ban or unban the tenant, and toast the success            @87-98
+      refetch the tenant, relays and invoices, then close the dialog    @99-101
+      on failure toast "Failed to <action> tenant" and keep the dialog open  @102-103
+    the dialog can't be closed while an action runs                     @242-244
+    reads all three through loaded; a failure of any shows one error in place of the body  @75-166

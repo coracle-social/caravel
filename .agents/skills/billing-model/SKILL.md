@@ -97,7 +97,7 @@ Delinquency is the visible signal — to the customer and to admins — that the
 
 ## Coming back (reactivation)
 
-A churned customer who re-engages with the service is welcomed back automatically: their churn is cleared and their delinquent relays are restored to active. Critically, **old unpaid invoices do not have to be settled to return** — the past balance was already forgiven at churn, so reactivation is a clean slate rather than a debt collection.
+A churned customer who re-engages with the service is welcomed back automatically: their churn is cleared, their delinquent relays are restored to active, and the rest of the period is charged as for any reactivation. Re-engaging means changing or creating a relay, or saving a way to pay — connecting a Lightning wallet or a card — which is what the churn notice and the dashboard ask them to do. Critically, **old unpaid invoices do not have to be settled to return** — the past balance was already forgiven at churn, so there is nothing to pay off and reactivation is a clean slate rather than a debt collection.
 
 ## Banning (administrative, not billing)
 

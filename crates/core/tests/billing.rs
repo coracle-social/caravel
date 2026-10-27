@@ -9,10 +9,12 @@
 mod common;
 
 use anyhow::Result;
-use caravel_core::billing::ledger::InvoiceMethod;
-use caravel_core::plans::{PLAN_BASIC, PLAN_GROWTH};
-use caravel_core::relays::RelayStatus;
-use caravel_core::{hosting, testing};
+use caravel_core::billing::Collection;
+use caravel_core::models::ledger::InvoiceMethod;
+use caravel_core::models::plans::{PLAN_BASIC, PLAN_GROWTH};
+use caravel_core::models::relays::RelayStatus;
+use caravel_core::{Error, billing, commands, hosting, queries, testing};
+use common::stripe::FakeStripe;
 use common::*;
 
 #[tokio::test]
@@ -215,6 +217,78 @@ async fn a_deactivated_relay_is_credited_and_stops_renewing() -> Result<()> {
     Ok(())
 }
 
+// A double submit, or any request on a stale copy of the relay, is judged on the
+// relay as it is now.
+#[tokio::test]
+async fn a_stale_relay_is_paused_and_purged_with_one_credit() -> Result<()> {
+    let core = core().await;
+
+    travel(&core, day(2026, 1, 7));
+    let tenant = create_tenant(&core).await?;
+    let stale = create_relay(&core, &tenant, PLAN_GROWTH).await?;
+    reconcile_and_pay(&core, &tenant).await?;
+
+    travel(&core, day(2026, 1, 22));
+    hosting::deactivate_relay(&core, &stale).await?;
+    assert!(matches!(
+        hosting::deactivate_relay(&core, &stale).await,
+        Err(Error::Conflict {
+            code: "relay-is-inactive",
+            ..
+        })
+    ));
+
+    // Purged while inactive, so there is nothing more to refund.
+    hosting::purge_relay(&core, &stale).await?;
+    assert!(matches!(
+        hosting::purge_relay(&core, &stale).await,
+        Err(Error::Conflict {
+            code: "relay-is-purged",
+            ..
+        })
+    ));
+
+    // Only the pause's 16/31 comes back: 2500 * 16/31 = 1290.32.
+    reconcile_and_pay(&core, &tenant).await?;
+    assert_eq!(outstanding(&core, &tenant).await?, -1290);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_paused_relays_plan_change_is_priced_when_it_comes_back() -> Result<()> {
+    let core = core().await;
+
+    travel(&core, day(2026, 1, 7));
+    let tenant = create_tenant(&core).await?;
+    let relay = create_relay(&core, &tenant, PLAN_BASIC).await?;
+    reconcile_and_pay(&core, &tenant).await?;
+
+    // The pause credits 500 * 16/31 = 258.06, and the upgrade while paused nothing.
+    travel(&core, day(2026, 1, 22));
+    deactivate_relay(&core, &relay.id).await?;
+    change_plan(&core, &relay.id, PLAN_GROWTH).await?;
+    reconcile_and_pay(&core, &tenant).await?;
+    assert_eq!(outstanding(&core, &tenant).await?, -258);
+
+    // Back on Growth for 11 of 31 days: 2500 * 11/31 = 887.10, less the credit.
+    travel(&core, day(2026, 1, 27));
+    activate_relay(&core, &relay.id).await?;
+    reconcile_and_pay(&core, &tenant).await?;
+    assert_eq!(invoice_amounts(&core, &tenant).await?, vec![500, 629]);
+
+    let returned = &invoices(&core, &tenant).await?[1];
+    assert_eq!(
+        line_items(&core, returned).await?,
+        vec![
+            ("Relay deactivated".to_string(), -258),
+            ("Relay reactivated".to_string(), 887),
+        ]
+    );
+
+    Ok(())
+}
+
 // Deleting a tenant settles their billing as a ban does, but doesn't keep them out.
 #[tokio::test]
 async fn a_deleted_tenant_is_forgiven_and_may_come_back() -> Result<()> {
@@ -409,6 +483,116 @@ async fn an_unpaid_invoice_churns_at_the_end_of_grace_and_a_return_forgives_it()
     Ok(())
 }
 
+// A churned tenant who connects a wallet is back, and the rest of the period is
+// charged at the next reconcile: 500 * 18/31 = 290.32.
+#[tokio::test]
+async fn a_churned_tenant_who_connects_a_wallet_is_back() -> Result<()> {
+    let core = core().await;
+
+    travel(&core, day(2026, 1, 7));
+    let tenant = create_tenant(&core).await?;
+    let relay = create_relay(&core, &tenant, PLAN_BASIC).await?;
+    reconcile(&core, &tenant).await?;
+
+    travel(&core, day(2026, 1, 14));
+    reconcile(&core, &tenant).await?;
+    assert!(get_tenant(&core, &tenant).await?.churned_at.is_some());
+
+    travel(&core, day(2026, 1, 20));
+    let nwc_url = "nostr+walletconnect://wallet?relay=wss://relay.test&secret=00";
+    hosting::set_tenant_nwc_url(&core, &tenant, nwc_url).await?;
+    assert_eq!(get_tenant(&core, &tenant).await?.churned_at, None);
+    assert_eq!(
+        get_relay(&core, &relay.id).await?.status,
+        RelayStatus::Active
+    );
+
+    reconcile(&core, &tenant).await?;
+    assert_eq!(invoice_amounts(&core, &tenant).await?, vec![500, 290]);
+    let comeback = &invoices(&core, &tenant).await?[1];
+    assert_eq!(
+        line_items(&core, comeback).await?,
+        vec![("Relay reactivated".to_string(), 290)]
+    );
+
+    Ok(())
+}
+
+// A card saved in the billing portal brings a churned tenant back, whichever pass
+// first sees it: the tenant's own reconcile, or the hourly one.
+#[tokio::test]
+async fn a_churned_tenant_who_saves_a_card_is_back() -> Result<()> {
+    let stripe = FakeStripe::start().await;
+    let mut core = core().await;
+    core.stripe = stripe.stripe();
+
+    travel(&core, day(2026, 1, 7));
+    let (by_hand, hourly) = (create_tenant(&core).await?, create_tenant(&core).await?);
+    for tenant in [&by_hand, &hourly] {
+        create_relay(&core, tenant, PLAN_BASIC).await?;
+        reconcile(&core, tenant).await?;
+    }
+
+    travel(&core, day(2026, 1, 14));
+    for tenant in [&by_hand, &hourly] {
+        reconcile(&core, tenant).await?;
+        let churned = get_tenant(&core, tenant).await?;
+        assert!(churned.churned_at.is_some());
+        stripe.save_card(&churned.stripe_customer_id, "pm_new");
+    }
+
+    travel(&core, day(2026, 1, 20));
+    billing::reconcile_tenant(&core, &get_tenant(&core, &by_hand).await?).await?;
+    let pass = get_tenant(&core, &hourly).await?;
+    billing::reconcile_subscription(&core, &pass, Collection::Charge).await?;
+    reconcile(&core, &hourly).await?;
+
+    for tenant in [&by_hand, &hourly] {
+        let back = get_tenant(&core, tenant).await?;
+        assert_eq!(back.churned_at, None);
+        assert_eq!(back.stripe_payment_method_id.as_deref(), Some("pm_new"));
+        assert_eq!(invoice_amounts(&core, tenant).await?, vec![500, 290]);
+    }
+
+    Ok(())
+}
+
+// The hourly pass reads every tenant before reconciling them, so it can hold one
+// from before another pass brought them back.
+#[tokio::test]
+async fn a_pass_holding_a_churned_tenant_leaves_their_comeback_alone() -> Result<()> {
+    let core = core().await;
+
+    travel(&core, day(2026, 1, 7));
+    let tenant = create_tenant(&core).await?;
+    create_relay(&core, &tenant, PLAN_BASIC).await?;
+    reconcile(&core, &tenant).await?;
+
+    travel(&core, day(2026, 1, 14));
+    reconcile(&core, &tenant).await?;
+    let churned = get_tenant(&core, &tenant).await?;
+    assert!(churned.churned_at.is_some());
+
+    // Back with a new relay, each charged for 18 of 31 days: 500 * 18/31 = 290.32.
+    travel(&core, day(2026, 1, 20));
+    create_relay(&core, &tenant, PLAN_BASIC).await?;
+    reconcile(&core, &tenant).await?;
+    assert_eq!(invoice_amounts(&core, &tenant).await?, vec![500, 580]);
+    let comeback = invoices(&core, &tenant).await?[1].id.clone();
+
+    create_relay(&core, &tenant, PLAN_BASIC).await?;
+    billing::reconcile_subscription(&core, &churned, Collection::Settle).await?;
+
+    let comeback = invoices(&core, &tenant)
+        .await?
+        .into_iter()
+        .find(|invoice| invoice.id == comeback)
+        .expect("the comeback's invoice is kept");
+    assert!(comeback.voided_at.is_none());
+
+    Ok(())
+}
+
 #[tokio::test]
 async fn a_31st_anchor_renews_once_a_month_through_short_months() -> Result<()> {
     let core = core().await;
@@ -482,6 +666,77 @@ async fn operators_are_invoiced_but_never_collected_or_churned() -> Result<()> {
         get_relay(&core, &relay.id).await?.status,
         RelayStatus::Active
     );
+
+    Ok(())
+}
+
+// Only an invoice's latest Lightning invoice is looked up again, so neither a paid
+// one nor an expired one that may have been paid is replaced.
+#[tokio::test]
+async fn a_lightning_invoice_that_may_have_been_paid_isnt_replaced() -> Result<()> {
+    let core = core().await;
+
+    travel(&core, day(2026, 1, 7));
+    let tenant = create_tenant(&core).await?;
+    create_relay(&core, &tenant, PLAN_BASIC).await?;
+    reconcile(&core, &tenant).await?;
+    let open = invoices(&core, &tenant).await?[0].clone();
+
+    // The test wallet can't be reached, so the expired one can't be judged unpaid.
+    let now = core.clock.now();
+    let expired =
+        commands::ledger::insert_bolt11(core.db.pool(), &open.id, "lnbc-expired", 0, now, now)
+            .await?;
+    travel(&core, now + 1);
+    let error = billing::ensure_bolt11_for_invoice(&core, &open)
+        .await
+        .expect_err("an unjudged expired invoice isn't replaced");
+    assert!(error.to_string().contains("lookup invoice"), "{error}");
+
+    // A caller still holding the invoice open is given the settled one back.
+    pay_invoices(&core, &tenant).await?;
+    let paid = queries::ledger::get_bolt11_for_invoice(core.db.pool(), &open.id).await?;
+    let paid = paid.expect("the invoice has a Lightning invoice");
+    assert_ne!(paid.id, expired.id);
+    assert_eq!(
+        billing::ensure_bolt11_for_invoice(&core, &open).await?.id,
+        paid.id
+    );
+
+    Ok(())
+}
+
+// Stripe replays the first answer given for an idempotency key, declines included,
+// so each charge after a decline is a new attempt.
+#[tokio::test]
+async fn a_declined_card_is_charged_afresh_on_the_next_pass() -> Result<()> {
+    let stripe = FakeStripe::start().await;
+    let mut core = core().await;
+    core.stripe = stripe.stripe();
+
+    travel(&core, day(2026, 1, 7));
+    let tenant = create_tenant(&core).await?;
+    stripe.save_card(
+        &get_tenant(&core, &tenant).await?.stripe_customer_id,
+        "pm_1",
+    );
+    create_relay(&core, &tenant, PLAN_BASIC).await?;
+
+    stripe.set_decline_charges(true);
+    let pass = get_tenant(&core, &tenant).await?;
+    billing::reconcile_subscription(&core, &pass, Collection::Charge).await?;
+    assert!(invoices(&core, &tenant).await?[0].paid_at.is_none());
+    assert!(get_tenant(&core, &tenant).await?.stripe_error.is_some());
+
+    stripe.set_decline_charges(false);
+    travel(&core, day(2026, 1, 7) + 3600);
+    let pass = get_tenant(&core, &tenant).await?;
+    billing::reconcile_subscription(&core, &pass, Collection::Charge).await?;
+    assert_eq!(
+        invoices(&core, &tenant).await?[0].method,
+        Some(InvoiceMethod::Stripe)
+    );
+    assert_eq!(get_tenant(&core, &tenant).await?.stripe_error, None);
 
     Ok(())
 }

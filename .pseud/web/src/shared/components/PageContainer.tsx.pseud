@@ -1,0 +1,7 @@
+% source=web/src/shared/components/PageContainer.tsx lang=typescript lines=12 sha=162d2c580f04
+
+module @/shared/components/PageContainer
+  -- The centered column every page sits in.
+
+  type PageContainerProps = { children, size?: narrow | wide }          @3-6
+  pub fn PageContainer(props: PageContainerProps)  -- max-w-4xl, or max-w-2xl when narrow  @8-12

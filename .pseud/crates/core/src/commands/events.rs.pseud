@@ -1,0 +1,33 @@
+% source=crates/core/src/commands/events.rs lang=rust lines=204 sha=f17735e3962b
+
+module caravel_core::commands::events  !db
+  -- Writing the event store: keeping events, publishing the relay's own, and acting on deletions.
+
+  pub async fn save_event(conn, relay_id, event, now) -> Saved fails  !db  @18-38
+    -- Store a client's event unless a tombstone refuses it.
+    unless it is itself a deletion or vanish request, return Deleted if is_tombstoned
+    save_relay_event
+  pub async fn publish(conn, key, relay_id, kind: u16, tags, now) -> Event fails  !db  @42-53
+    -- Sign an event as the relay with empty content and store it, for delivery after commit.
+  async fn save_relay_event(conn, relay_id, event, now) -> Saved fails  !db  @57-102
+    -- Store an event with no tombstone check; the relay's own state is the authority.
+    insert it with its tag_values, slot as d, NIP-40 expiration, and seen_at = now
+    if it has a slot, overwrite the stored version in place, new seq included
+      only when the stored one is no newer and isn't this same event
+      so the last of several versions written in one second wins
+    otherwise do nothing if the relay has its id
+    return New if a row was written, else Duplicate
+  pub async fn apply_deletion(conn, relay_id, deletion: Event) -> u64 fails  !db  @107-142
+    -- Delete the events a NIP-09 deletion names that its author wrote, returning how many.
+    by e tag: any of the author's events with that id, except deletions and vanish requests
+    by a tag: the author's addressed or replaceable event, if created at or before the deletion
+      addresses whose pubkey part isn't the author are ignored
+  pub async fn apply_vanish(conn, relay_id, pubkey: [u8; 32], until) -> u64 fails  !db  @146-164
+    -- For a NIP-62 request, delete everything the pubkey wrote up to `until`, but vanish requests.
+    also delete gift wraps (kind 1059) p-tagging the pubkey up to `until`, whoever wrote them
+  pub async fn delete_event(relay_id, id: [u8; 32]) fails  !db          @167-174
+    -- Delete one of the relay's events.
+  pub async fn delete_events_by_author(relay_id, pubkey: [u8; 32]) fails  !db  @178-189
+    -- Delete everything the pubkey wrote on the relay but its deletions and vanish requests.
+  pub async fn delete_expired_events(now, batch) -> u64 fails  !db      @193-204
+    -- Delete up to `batch` events past their NIP-40 expiration across every relay; return how many.

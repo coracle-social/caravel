@@ -1,0 +1,7 @@
+% source=web/src/portal/index.tsx lang=typescript lines=9 sha=b57f25be7fa5
+
+module @/portal/index
+  -- The member portal's entry point.
+
+  set document.title to the portal relay's name, or "Membership"        @7
+  render App into #root                                                 @9

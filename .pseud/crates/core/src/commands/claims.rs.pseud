@@ -1,0 +1,10 @@
+% source=crates/core/src/commands/claims.rs lang=rust lines=47 sha=728b73f2aaf6
+
+module caravel_core::commands::claims  !db
+  -- Creating and revoking a relay's claims.
+
+  pub async fn create_claim(relay_id, code, now) fails  !db             @9-29
+    -- Register a claim, or clear a revoked one's revoked_at; a live one is unchanged.
+    fail invalid "claim-required" if the code is empty
+  pub async fn revoke_claim(relay_id, code, now) fails  !db             @32-47
+    -- Stamp revoked_at on a live claim, keeping its row.

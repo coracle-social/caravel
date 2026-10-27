@@ -256,6 +256,7 @@ dependencies = [
  "bytes",
  "caravel-core",
  "coracle-lib",
+ "http-body",
  "http-body-util",
  "serde",
  "serde_json",

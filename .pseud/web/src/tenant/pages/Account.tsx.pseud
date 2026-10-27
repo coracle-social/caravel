@@ -1,0 +1,16 @@
+% source=web/src/tenant/pages/Account.tsx lang=typescript lines=185 sha=4ad6e42f2339
+
+module @/tenant/pages/Account  !net !db !time
+  -- The tenant's account page: payment methods, payouts, invoices and signing out.
+
+  const INVOICE_PAGE_SIZE = 10                                          @19
+  pub fn Account()  !net !db !time                                      @21-185
+    -- Account status, NWC and card setup, PayoutsSection, the draft and paid invoices, Log out.
+    whenever the signed-in pubkey is set, run autopay                   @35-38
+      Stripe returns here, so landing settles what was paid there and collects with a new method
+    closing the payment dialog or either method's setup dialog runs autopay again  @153-182
+    the invoice list shows the draft first, then 10 invoices with a Show all toggle
+    each invoice prints as a PDF; the draft's items come from listDraftInvoiceItems
+    fn logout()  !net !db                                               @60-64
+      signOut, which ends the session on the server and ignores a failure there
+      clear all of localStorage, then load / afresh

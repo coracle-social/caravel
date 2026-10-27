@@ -1,0 +1,35 @@
+% source=crates/relay/tests/access.rs lang=rust lines=493 sha=6b7a3d66ba83
+
+module caravel_relay::tests::access
+  -- Access over the wire: NIP-43 joins and leaves, NIP-86 management, NIP-29 rooms, API changes.
+
+  tests                                                                 @14-493
+    test a_claim_lets_a_stranger_join_and_read                          @15-54
+      -- refused "no claim tag" bare and "failed to validate invite code" with a wrong claim
+      the right claim admits, and the joiner may then read
+    test an_open_relay_takes_joins_up_to_its_plans_member_limit         @57-87
+      -- with the free plan's ten members held, an open join is refused "reached its member limit"
+    test leaving_takes_away_access                                      @90-127
+      -- after joining and leaving an open relay, a REQ is CLOSED "not a member of this relay"
+    test management_calls_are_authorized_per_method                     @130-189
+      -- the owner holds every MANAGED_METHOD; a stranger gets "only relay admins" or "not authorized"
+      the owner creates and lists a claim, and a pubkey assigned banevent then supports it
+    test membership_changes_reach_subscribers_as_the_relay_publishes_them  @192-234
+      -- allowpubkey delivers 8000 and 13534, unallowpubkey 8001 and 13534, signed by the relay
+      a second join by an existing member is accepted and publishes nothing more
+    fn published_kinds(client, pubkey, count) -> [u64]                  @238-247
+      -- The sorted kinds of the next count events a subscriber receives, each signed by pubkey.
+    test a_relay_with_management_off_takes_no_calls  -- a NIP-86 POST is 404  @250-271
+    test a_management_call_must_be_signed_over_its_body                 @274-320
+      -- "payload mismatch" for a wrong payload, "url mismatch" for another relay's url
+      no authorization at all is "please authenticate in order to manage this relay"
+    test members_of_an_inviting_relay_may_create_claims                 @323-350
+      -- a plain member creates a claim, and is "not authorized" once members_can_invite is off
+    test a_banned_member_stops_receiving_at_once                        @353-393
+      -- an open subscription gets nothing after banpubkey, and the member's own write is refused
+    test a_member_added_through_the_api_can_read_straight_away          @396-420
+      -- a REQ CLOSED before management::add_member reaches EOSE once the bus reloads the relay
+      polls every 50ms, up to twenty tries
+    test a_private_room_is_read_only_by_its_members_stored_and_live     @423-493
+      -- a member who joined the private room gets a post live and stored; an outsider gets neither
+      the outsider's stored `#h` query is empty, and its `#d` query returns the 39000 alone

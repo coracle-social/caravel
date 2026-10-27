@@ -1,0 +1,20 @@
+% source=crates/api/src/response.rs lang=rust lines=66 sha=7d743cacc567
+
+module caravel_api::response
+  -- The API's envelope: {"data", "code": "ok"} on success and {"error", "code"} on failure.
+
+  pub type ApiResult = Result<Response, ApiError>                       @10
+  pub data ApiError(Error)  -- a core error on its way out as a response  @14
+  impl From for ApiError  -- from anything that converts into a core Error  @16-20
+
+  impl IntoResponse for ApiError                                        @22-42
+    fn into_response(self) -> Response                                  @23-41
+      -- The error envelope, with the error's message as its text, except for a 500.
+      Unauthorized -> 401 unauthorized; Forbidden -> 403 forbidden; NotFound -> 404 not-found
+      Conflict -> 400 and Invalid -> 422, each with its own code
+      Internal -> the cause logged, then 500 internal with the text "internal error"
+
+  pub fn ok(data) -> ApiResult  -- 200 with data in the envelope        @44-46
+  pub fn created(data) -> ApiResult  -- 201 with data in the envelope   @48-50
+  fn envelope(status, data) -> Response                                 @52-58
+  pub fn error(status, code, message) -> Response                       @60-66

@@ -1,0 +1,15 @@
+% source=web/src/shared/components/StatusBadge.tsx lang=typescript lines=35 sha=fc5df775b245
+
+module @/shared/components/StatusBadge
+  -- The colored status pill.
+
+  ~ GREEN, GRAY, RED, YELLOW pill colors                                @3-6
+  const STATUS_STYLES                                                   @9-26
+    -- Every badge's colors, for relays, tenants, invoices, memberships, payouts and payment methods.
+    green: active, verified, paid, ready, ok
+    yellow: canceled, open, incomplete
+    red: delinquent, deleted, error
+    gray: inactive, void, not_set_up
+    blue: draft; dark gray: banned
+  pub fn StatusBadge(props: { status, children? })                      @29-35
+    -- A status as a pill, gray when unknown, labeled with its words unless given children.

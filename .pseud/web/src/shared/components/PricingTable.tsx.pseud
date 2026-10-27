@@ -1,0 +1,13 @@
+% source=web/src/shared/components/PricingTable.tsx lang=typescript lines=128 sha=735051aa23e8
+
+module @/shared/components/PricingTable
+  -- The plans as pricing cards, for marketing them or picking a relay's plan.
+
+  fn XIcon()  -- the cross for a feature a plan lacks                   @7-15
+  fn rateLabel(rate, unit) -> str  -- ", then $x.xx/unit" past the allowance, "" at rate 0  @18-21
+  type PricingTableProps = { selectable?, selectedPlanId?, onSelect?, onCta? }  @23-28
+  pub fn PricingTable(props: PricingTableProps)                         @30-128
+    -- A card per plan with its price, member limit, and Blossom storage and A/V hours with overage.
+    if selectable, each card is a button calling onSelect, the selected plan outlined  @86-96
+    else BASIC is marked popular and each card's "Get started" calls onCta  @74-82
+    else a last "Custom" card links to booking a call                   @105-125

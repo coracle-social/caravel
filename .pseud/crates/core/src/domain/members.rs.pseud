@@ -1,0 +1,7 @@
+% source=crates/core/src/domain/members.rs lang=rust lines=15 sha=fe5813eed91b
+
+module caravel_core::domain::members
+  -- The events a relay publishes about its members.
+
+  pub fn member_list_tags(members: [RelayMember]) -> [tag]              @6-15
+    -- Tags of the member list (kind 13534): "-", then ["member", pubkey, roles...] per member.

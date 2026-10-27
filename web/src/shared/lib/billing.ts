@@ -55,7 +55,7 @@ export function activeBillingPrompt(
       kind: "churned",
       severity: "error",
       message:
-        "Your account is past due and some relays are paused. Pay your balance or update your payment method to restore service.",
+        "Your account is past due and some relays are paused. Add a payment method to restore service.",
     }
   }
 

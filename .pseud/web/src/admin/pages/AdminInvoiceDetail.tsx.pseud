@@ -1,0 +1,10 @@
+% source=web/src/admin/pages/AdminInvoiceDetail.tsx lang=typescript lines=43 sha=2c5cfee19772
+
+module @/admin/pages/AdminInvoiceDetail  !net !db !time
+  -- An admin's page for one invoice.
+
+  pub fn AdminInvoiceDetail()  !net !db !time                           @12-43
+    -- The invoice the :id param names in an InvoiceDetailCard, then its line items if any.
+    fetch the invoice and its items, both keyed by the id               @15-16
+    items that fail to load show as none                                @16-24
+    reads the invoice through loaded, so a failed fetch shows its error alone  @30-31

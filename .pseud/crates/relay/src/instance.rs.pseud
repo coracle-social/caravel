@@ -1,0 +1,135 @@
+% source=crates/relay/src/instance.rs lang=rust lines=743 sha=be74db37a45e
+
+module caravel_relay::instance  !db !lock !spawn !time !rand
+  -- One served relay: its swappable state, its connections, and how it answers each client message.
+
+  const SYNC_FRAME_BYTES = 60_000  -- per negentropy round; the rest folds into a fingerprint  @30-32
+
+  pub data InstanceState                                                @34-42
+    -- A relay's row, key and policy snapshot, replaced together on reload.
+    relay: Relay
+    key: RelayKey
+    snapshot: RelaySnapshot
+    push: [push::Subscription]  -- empty unless push_enabled
+  impl InstanceState  !db !time                                         @44-59
+    pub async fn load(core, relay) -> InstanceState fails  !db !time    @45-58
+      -- Decrypt the relay's key, load its policy snapshot, and its push subscriptions if push is on.
+
+  pub data RelayInstance                                                @61-72
+    core: Core
+    limits: RelayLimits
+    state: shared InstanceState  -- swapped whole; readers keep the Arc they took
+    reloading: async Mutex  -- held across a reload's reads, so older state can't replace newer
+    connections: Connections
+    pusher: Pusher  -- shared by every instance
+    closed: CancellationToken  -- cancelled when the relay stops being served
+
+  impl RelayInstance  !db !lock !spawn !time !rand                      @74-736
+    pub fn new(core, limits, state, pusher, closed) -> RelayInstance    @75-91
+    ~ accessors: core, relay_id, and state (the current Arc)            @93-106
+    pub async fn reload(self, relay) fails  !db !lock !time             @108-112
+      -- install the relay's new row under the reload lock; connections stay open.
+    pub async fn refresh(self)  !db !lock !time                         @114-121
+      -- Under the reload lock, re-install from the current row; a failure is only logged.
+    async fn install(self, relay) fails  !db !lock !time                @123-132
+      -- Load an InstanceState and swap it in, after pusher.retain forgets the failures of push
+      -- subscriptions it no longer holds.
+    pub async fn apply_access_change(self, published: [Event])  !db !lock !time  @134-141
+      -- refresh, then broadcast each event the change published.
+    pub fn closed(self) -> CancellationToken                            @143-146
+    pub fn close(self)  -- cancel closed, which ends every connection   @148-151
+    pub fn screen(self, event) -> () fails Refusal  !time               @153-156
+      -- domain::policy::screen at now, run before the signature is verified.
+    pub async fn on_connect(self, session)  !lock !rand                 @158-164
+      -- Register the connection with a fresh challenge and send AUTH at once.
+    pub fn on_disconnect(self, session)  !lock  -- forget the connection  @166-168
+    pub async fn on_event(self, session, event)  !db !lock !time        @170-181
+      -- Ingest an event, answer OK, then broadcast it and what it published.
+      match ingest
+        ok -> send OK accepted; broadcast the event, then each published event
+        refusal -> refuse_event
+    async fn ingest(self, session, event) -> [Event] fails Refusal  !db !lock !time  @183-228
+      -- Admit, act on and keep an event, reloading the snapshot before the client hears back.
+      domain::policy::admit_write against the snapshot and the connection's pubkeys
+      fail invalid if the event holds a NUL character
+      if a push subscription
+        check_push_subscription with the relay's hosts and the author's other subscriptions
+        fail invalid if outbound.check rejects its callback as local or internal
+      match kind
+        RELAY_JOIN -> join
+        RELAY_LEAVE -> leave
+        not stored (ephemeral) -> nothing
+        else -> store
+      refresh if anything was published or the kind moderates a room
+        or push is on and it is a push subscription, deletion or vanish
+      return the published events
+    async fn join(self, state, event) -> [Event] fails Refusal  !db !time  @230-246
+      -- NIP-43 join: admit_join on the snapshot, then ingest::join.
+      Conflict -> restricted with its message; any other error is logged and refused generically
+    async fn leave(self, state, event) -> [Event] fails Refusal  !db !time  @248-262
+      -- ingest::leave for the author; a Conflict (the owner) is no error and publishes nothing.
+    async fn store(self, state, event) -> [Event] fails Refusal  !db !time  @264-288
+      -- ingest::store, which applies deletions, vanishes and room changes in its transaction.
+      fail invalid if a vanish request names another relay
+      store with groups_enabled; a store error is logged and refused generically
+      New -> its published events; Duplicate -> duplicate
+      Deleted -> blocked "this event was deleted"
+    fn is_addressed(self, relay, event) -> bool                         @290-296
+      -- A relay tag is ALL_RELAYS or names one of the relay's hosts.
+    pub fn broadcast(self, event)  !lock                                @298-307
+      -- A client's event or the relay's own: fanout, then if push_enabled pusher.push it
+    fn fanout(self, event)  !lock !-panic  -- the expect is unreachable: to_json writes valid json  @309-345
+      -- Live delivery to every matching subscription whose connection may still see the event.
+      for each match connections.matching collected
+        skip it unless can_deliver for the connection's current pubkeys
+        render the event at most twice, signed and stripped, as strips_signature picks per reader
+        try_send, dropping the event for a reader whose queue is full
+    pub async fn on_req(self, session, subscription_id, filters)  !db !lock !time  @347-359
+      -- read; a refusal re-offers the challenge when it needs auth, then answers CLOSED.
+    async fn read(self, session, subscription_id, filters) fails Refusal  !db !lock !time !-panic  @361-444
+      -- Subscribe, then send each filter's stored matches the connection may see, then EOSE.
+      -- the expect is unreachable: to_json writes valid json
+      admit_req against the snapshot and the connection's pubkeys
+      blocked if there are more than max_filters filters
+      subscribe first, so nothing published mid-query is missed; rate-limited past max_subscriptions
+      for each filter
+        query up to max_limit stored events; on failure unsubscribe and refuse  !db
+        skip ids already sent and events can_any_receive refuses
+        send each, stripped where strips_signature says; stop quietly once the connection is gone
+      send EOSE
+    pub fn on_close(self, session, subscription_id)  !lock  -- unsubscribe  @446-448
+    pub async fn on_count(self, session, subscription_id, filters)  !db !lock !time  @450-472
+      -- count, answering COUNT, or a refusal as CLOSED after re-offering the challenge.
+    async fn count(self, session, filters) -> u64 fails Refusal  !db !lock !time  @474-505
+      -- admit_req, count_event_groups over all filters at once, then count_visible decides per group.
+      -- Blocked, like a REQ, past max_filters filters.
+    pub async fn on_auth(self, session, event)  !db !lock !time         @507-565
+      -- Prove a pubkey on the connection, then send its pending notification.
+      refuse unless the connection has a challenge outstanding
+      auth::validate against the challenge, the session's host and now; else refuse invalid
+      record the pubkey; rate-limited past max_identities
+      send OK accepted
+      send NOTIFY with the pubkey's live notification, if any; a read failure is only logged  !db
+    pub fn deliver_notification(self, pubkey, message)  !lock           @567-572
+      -- try_send NOTIFY to every connection authenticated as the pubkey; a full queue drops it.
+    pub async fn on_neg_open(self, session, subscription_id, filter, message)  !db !lock !spawn !time  @574-598
+      -- open_reconciliation, then its first round; a refusal re-offers the challenge, then NEG-ERR.
+    pub async fn on_neg_msg(self, session, subscription_id, message)  !lock !spawn  @600-619
+      -- Another round of an open reconciliation; an unknown id or a failure answers NEG-ERR.
+    pub fn on_neg_close(self, session, subscription_id)  !lock  -- release the set  @621-624
+    async fn open_reconciliation(self, session, subscription_id, filter) -> SyncSet fails Refusal  !db !lock !time  @626-691
+      -- Snapshot the event heads the connection may see and register them under the id.
+      admit_req
+      read up to max_sync heads; blocked if the filter matches more  !db
+      keep the heads can_any_receive allows, as (created_at, id) items
+      register the set, replacing one of the same id; rate-limited past max_reconciliations
+    async fn reconcile(self, session, subscription_id, set, message) fails Refusal  !lock !spawn  @693-720
+      -- One negentropy round within SYNC_FRAME_BYTES, answered as NEG-MSG.
+      a message that isn't hex negentropy closes the reconciliation and is refused invalid
+      fingerprint on a blocking thread, since a large set is too slow for an async worker
+    async fn refuse_event(self, session, event_id, refusal)  !lock  -- offer_challenge, then OK false  @722-725
+    async fn offer_challenge(self, session, refusal)  !lock             @727-735
+      -- Re-send AUTH with the connection's challenge when the refusal needs auth.
+
+  fn registration_refusal(error, too_many) -> Refusal                   @738-743
+    -- TooMany -> rate-limited with the given message; Gone -> error "the connection is closing".

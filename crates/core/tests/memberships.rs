@@ -5,15 +5,13 @@
 mod common;
 
 use anyhow::Result;
-use caravel_core::access::{self, MemberSource};
-use caravel_core::events::kinds;
-use caravel_core::hosting::{self, RelaySettings};
-use caravel_core::memberships::{self, Membership, MembershipStatus};
-use caravel_core::notifications;
-use caravel_core::relay_policy::Join;
-use caravel_core::relays::Relay;
+use caravel_core::models::kinds;
+use caravel_core::models::members::MemberSource;
+use caravel_core::models::memberships::{Membership, MembershipStatus};
+use caravel_core::models::policy::Join;
+use caravel_core::models::relays::{Relay, RelaySettings};
 use caravel_core::testing::sign_event;
-use caravel_core::{Core, Error, auth, tenants};
+use caravel_core::{Core, Error, commands, hosting, management, memberships, queries, sessions};
 use common::stripe::FakeStripe;
 use common::*;
 use coracle_lib::keys::SecretKey;
@@ -40,7 +38,8 @@ async fn fixture() -> Result<Fixture> {
     travel(&core, day(2030, 3, 1));
 
     let tenant = create_tenant(&core).await?;
-    tenants::set_tenant_stripe_account(core.db.pool(), &tenant, "acct_ready", true).await?;
+    commands::tenants::set_tenant_stripe_account(core.db.pool(), &tenant, "acct_ready", true)
+        .await?;
     let relay = create_relay(&core, &tenant, "free").await?;
     let relay = price(&core, relay, 500).await?;
     Ok(Fixture {
@@ -64,13 +63,15 @@ fn pubkey() -> String {
 }
 
 async fn live(f: &Fixture, pubkey: &str) -> Result<Option<Membership>> {
-    Ok(memberships::get_live_membership(f.core.db.pool(), &f.relay.id, pubkey).await?)
+    Ok(queries::memberships::get_live_membership(f.core.db.pool(), &f.relay.id, pubkey).await?)
 }
 
 async fn member_source(f: &Fixture, pubkey: &str) -> Result<Option<MemberSource>> {
-    Ok(access::get_member(f.core.db.pool(), &f.relay.id, pubkey)
-        .await?
-        .map(|member| member.source))
+    Ok(
+        queries::members::get_member(f.core.db.pool(), &f.relay.id, pubkey)
+            .await?
+            .map(|member| member.source),
+    )
 }
 
 /// Pay for a membership through checkout, coming back to settle it.
@@ -90,11 +91,12 @@ async fn buy_invite(f: &Fixture) -> Result<String> {
     let session = f.stripe.last_session();
     f.stripe
         .complete(&session.id, f.core.clock.now() + 30 * DAY);
-    let membership = memberships::list_memberships_for_relay(f.core.db.pool(), &f.relay.id)
-        .await?
-        .into_iter()
-        .find(|membership| membership.id == session.membership_id)
-        .expect("no invite");
+    let membership =
+        queries::memberships::list_memberships_for_relay(f.core.db.pool(), &f.relay.id)
+            .await?
+            .into_iter()
+            .find(|membership| membership.id == session.membership_id)
+            .expect("no invite");
     assert!(memberships::reconcile_checkout(&f.core, &membership, &session.id).await?);
     Ok(membership.invite_code.expect("no invite code"))
 }
@@ -112,7 +114,9 @@ async fn join(core: &Core, relay: &Relay, joiner: &SecretKey, code: &str) -> Res
     let join = Join::Claim(code.to_string());
     let now = core.clock.now();
     core.db
-        .with_tx(async |conn| memberships::admit_join(conn, &key, relay, &event, &join, now).await)
+        .with_tx(async |conn| {
+            commands::memberships::admit_join(conn, &key, relay, &event, &join, now).await
+        })
         .await
         .map(drop)
 }
@@ -178,7 +182,7 @@ async fn a_checkout_is_refused_when_it_cant_be_granted() -> Result<()> {
 
     // Ten members fill the free plan, the owner among them.
     for _ in 0..8 {
-        hosting::add_member(&f.core, &f.relay, &pubkey()).await?;
+        management::add_member(&f.core, &f.relay, &pubkey()).await?;
     }
     let full = memberships::open_checkout(&f.core, &f.relay, &pubkey(), None).await;
     assert!(matches!(
@@ -189,7 +193,7 @@ async fn a_checkout_is_refused_when_it_cant_be_granted() -> Result<()> {
         })
     ));
 
-    tenants::set_tenant_stripe_account(
+    commands::tenants::set_tenant_stripe_account(
         f.core.db.pool(),
         &f.relay.tenant_pubkey,
         "acct_ready",
@@ -280,6 +284,29 @@ async fn an_invite_goes_to_whoever_joins_with_it_first() -> Result<()> {
     Ok(())
 }
 
+// The sweep may settle an invite from a copy it read before the invite was used.
+#[tokio::test]
+async fn settling_an_invite_from_a_stale_copy_leaves_it_spent() -> Result<()> {
+    let f = fixture().await?;
+    memberships::open_invite_checkout(&f.core, &f.relay, None).await?;
+    let session = f.stripe.last_session();
+    let subscription_id = f
+        .stripe
+        .complete(&session.id, f.core.clock.now() + 30 * DAY);
+    let stale = queries::memberships::list_memberships_for_relay(f.core.db.pool(), &f.relay.id)
+        .await?
+        .into_iter()
+        .find(|membership| membership.id == session.membership_id)
+        .expect("no invite");
+    let code = stale.invite_code.clone().expect("no invite code");
+    assert!(memberships::reconcile_checkout(&f.core, &stale, &session.id).await?);
+    join(&f.core, &f.relay, &SecretKey::generate(), &code).await?;
+
+    assert!(memberships::activate(&f.core, &stale, &session.customer, &subscription_id).await?);
+    assert!(!queries::claims::is_live_claim(f.core.db.pool(), &f.relay.id, &code).await?);
+    Ok(())
+}
+
 // Two joins racing on one paid invite: exactly one gets it.
 #[tokio::test]
 async fn racing_joins_bind_a_paid_invite_once() -> Result<()> {
@@ -294,7 +321,7 @@ async fn racing_joins_bind_a_paid_invite_once() -> Result<()> {
     assert_eq!([a.is_ok(), b.is_ok()].iter().filter(|ok| **ok).count(), 1);
 
     let bound: Vec<Membership> =
-        memberships::list_memberships_for_relay(f.core.db.pool(), &f.relay.id)
+        queries::memberships::list_memberships_for_relay(f.core.db.pool(), &f.relay.id)
             .await?
             .into_iter()
             .filter(|membership| membership.pubkey.is_some())
@@ -314,13 +341,13 @@ async fn an_unused_paid_invite_holds_a_seat() -> Result<()> {
     let f = fixture().await?;
     let code = buy_invite(&f).await?;
     assert_eq!(
-        memberships::count_reserved_seats(f.core.db.pool(), &f.relay.id).await?,
+        queries::memberships::count_reserved_seats(f.core.db.pool(), &f.relay.id).await?,
         1
     );
 
     join(&f.core, &f.relay, &SecretKey::generate(), &code).await?;
     assert_eq!(
-        memberships::count_reserved_seats(f.core.db.pool(), &f.relay.id).await?,
+        queries::memberships::count_reserved_seats(f.core.db.pool(), &f.relay.id).await?,
         0
     );
     Ok(())
@@ -347,11 +374,70 @@ async fn a_renewed_membership_carries_on() -> Result<()> {
     Ok(())
 }
 
+// Stripe moves a subscription to its next period before it collects for it.
+#[tokio::test]
+async fn a_renewal_counts_once_stripe_collects_it() -> Result<()> {
+    let f = fixture().await?;
+    let member = pubkey();
+    let membership = pay(&f, &member).await?;
+    let subscription_id = membership.stripe_subscription_id.clone().unwrap();
+    let period_end = membership.current_period_end.unwrap();
+
+    // Not cycled yet, then drafting the renewal's invoice, then retrying its charge.
+    travel(&f.core, period_end + 1);
+    memberships::sweep(&f.core).await?;
+    f.stripe
+        .start_renewal(&subscription_id, period_end + 30 * DAY);
+    memberships::sweep(&f.core).await?;
+    f.stripe
+        .set_past_due(&subscription_id, period_end + 30 * DAY);
+    travel(&f.core, period_end + 3 * DAY);
+    memberships::sweep(&f.core).await?;
+    let waiting = live(&f, &member).await?.unwrap();
+    assert_eq!(waiting.status, MembershipStatus::Active);
+    assert_eq!(waiting.current_period_end, Some(period_end));
+    assert!(member_source(&f, &member).await?.is_some());
+
+    f.stripe.pay_renewal(&subscription_id);
+    memberships::sweep(&f.core).await?;
+    assert_eq!(
+        live(&f, &member).await?.unwrap().current_period_end,
+        Some(period_end + 30 * DAY)
+    );
+    Ok(())
+}
+
+// While Stripe retries a renewal, the member keeps access for RENEWAL_GRACE.
+#[tokio::test]
+async fn a_renewal_stripe_cant_collect_lapses_after_its_grace() -> Result<()> {
+    let f = fixture().await?;
+    let member = pubkey();
+    let membership = pay(&f, &member).await?;
+    let subscription_id = membership.stripe_subscription_id.clone().unwrap();
+    let period_end = membership.current_period_end.unwrap();
+
+    f.stripe
+        .set_past_due(&subscription_id, period_end + 30 * DAY);
+    travel(&f.core, period_end + 14 * DAY - 60);
+    memberships::sweep(&f.core).await?;
+    assert!(live(&f, &member).await?.is_some());
+    assert!(!f.stripe.subscription(&subscription_id).canceled);
+
+    travel(&f.core, period_end + 14 * DAY + 1);
+    memberships::sweep(&f.core).await?;
+    assert!(live(&f, &member).await?.is_none());
+    assert_eq!(member_source(&f, &member).await?, None);
+    // Nothing retries the charge for a membership that has ended.
+    assert!(f.stripe.subscription(&subscription_id).canceled);
+    Ok(())
+}
+
 #[tokio::test]
 async fn a_lapse_removes_access_and_tells_the_member_how_to_renew() -> Result<()> {
     let f = fixture().await?;
     let member = pubkey();
     let membership = pay(&f, &member).await?;
+    memberships::cancel_renewal(&f.core, &f.relay, &member).await?;
     let mut changes = f.core.bus.subscribe();
 
     travel(&f.core, membership.current_period_end.unwrap() + 1);
@@ -361,9 +447,10 @@ async fn a_lapse_removes_access_and_tells_the_member_how_to_renew() -> Result<()
     assert_eq!(member_source(&f, &member).await?, None);
 
     let now = f.core.clock.now();
-    let notice = notifications::get_notification(f.core.db.pool(), &f.relay.id, &member, now)
-        .await?
-        .expect("no notice");
+    let notice =
+        queries::notifications::get_notification(f.core.db.pool(), &f.relay.id, &member, now)
+            .await?
+            .expect("no notice");
     assert!(
         notice.message.starts_with("Your membership of"),
         "{}",
@@ -377,9 +464,7 @@ async fn a_lapse_removes_access_and_tells_the_member_how_to_renew() -> Result<()
         .split("token=")
         .nth(1)
         .expect("no session in the link");
-    let session = auth::find_session(f.core.db.pool(), token, now)
-        .await?
-        .expect("no session");
+    let session = sessions::find(&f.core, token).await?.expect("no session");
     assert_eq!(session.pubkey, member);
 
     let mut announced = false;
@@ -391,7 +476,7 @@ async fn a_lapse_removes_access_and_tells_the_member_how_to_renew() -> Result<()
     // Paying again clears the notice and opens a new membership.
     pay(&f, &member).await?;
     assert!(
-        notifications::get_notification(f.core.db.pool(), &f.relay.id, &member, now)
+        queries::notifications::get_notification(f.core.db.pool(), &f.relay.id, &member, now)
             .await?
             .is_none()
     );
@@ -403,8 +488,9 @@ async fn a_lapse_removes_access_and_tells_the_member_how_to_renew() -> Result<()
 async fn a_lapse_leaves_a_member_admitted_another_way() -> Result<()> {
     let f = fixture().await?;
     let member = pubkey();
-    hosting::add_member(&f.core, &f.relay, &member).await?;
+    management::add_member(&f.core, &f.relay, &member).await?;
     let membership = pay(&f, &member).await?;
+    memberships::cancel_renewal(&f.core, &f.relay, &member).await?;
 
     travel(&f.core, membership.current_period_end.unwrap() + 1);
     memberships::sweep(&f.core).await?;
@@ -464,7 +550,7 @@ async fn memberships_are_released_when_their_relay_stops_charging() -> Result<()
         member_source(&f, &member).await?,
         Some(MemberSource::Payment)
     );
-    assert!(!access::is_live_claim(f.core.db.pool(), &f.relay.id, &code).await?);
+    assert!(!queries::claims::is_live_claim(f.core.db.pool(), &f.relay.id, &code).await?);
     Ok(())
 }
 
@@ -475,6 +561,7 @@ async fn a_checkout_nobody_finishes_lapses_after_two_days() -> Result<()> {
     memberships::open_checkout(&f.core, &f.relay, &member, None).await?;
 
     travel(&f.core, f.core.clock.now() + DAY);
+    f.stripe.expire(&f.stripe.last_session().id);
     memberships::sweep(&f.core).await?;
     assert_eq!(
         live(&f, &member).await?.unwrap().status,
@@ -484,6 +571,35 @@ async fn a_checkout_nobody_finishes_lapses_after_two_days() -> Result<()> {
     travel(&f.core, f.core.clock.now() + 2 * DAY);
     memberships::sweep(&f.core).await?;
     assert!(live(&f, &member).await?.is_none());
+    Ok(())
+}
+
+// A checkout reopened just before its membership would give up is still settled.
+#[tokio::test]
+async fn a_checkout_reopened_late_is_still_settled() -> Result<()> {
+    let f = fixture().await?;
+    let member = pubkey();
+    memberships::open_checkout(&f.core, &f.relay, &member, None).await?;
+    travel(&f.core, f.core.clock.now() + DAY);
+    f.stripe.expire(&f.stripe.last_session().id);
+
+    travel(&f.core, f.core.clock.now() + DAY - 60);
+    memberships::open_checkout(&f.core, &f.relay, &member, None).await?;
+    let reopened = f.stripe.last_session();
+    travel(&f.core, f.core.clock.now() + 60 * 60);
+    memberships::sweep(&f.core).await?;
+    assert_eq!(
+        live(&f, &member).await?.unwrap().status,
+        MembershipStatus::Pending
+    );
+
+    f.stripe
+        .complete(&reopened.id, f.core.clock.now() + 30 * DAY);
+    memberships::sweep(&f.core).await?;
+    assert_eq!(
+        live(&f, &member).await?.unwrap().status,
+        MembershipStatus::Active
+    );
     Ok(())
 }
 
@@ -550,7 +666,7 @@ async fn an_offer_says_whether_payment_is_taken() -> Result<()> {
     let offer = memberships::get_offer(&f.core, &f.relay).await?;
     assert_eq!((offer.price, offer.accepting_payment), (500, true));
 
-    tenants::set_tenant_stripe_account(
+    commands::tenants::set_tenant_stripe_account(
         f.core.db.pool(),
         &f.relay.tenant_pubkey,
         "acct_ready",
@@ -604,7 +720,7 @@ async fn erasing_a_relay_keeps_what_was_paid_for() -> Result<()> {
     pay(&f, &paying).await?;
     let code = buy_invite(&f).await?;
     let added = pubkey();
-    hosting::add_member(&f.core, &f.relay, &added).await?;
+    management::add_member(&f.core, &f.relay, &added).await?;
 
     hosting::erase_relay(&f.core, &f.relay).await?;
 

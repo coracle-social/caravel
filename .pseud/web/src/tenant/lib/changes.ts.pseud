@@ -1,0 +1,7 @@
+% source=web/src/tenant/lib/changes.ts lang=typescript lines=14 sha=c72f7ad6cbe0
+
+module @/tenant/lib/changes
+  -- Running a dashboard change and toasting how it went.
+
+  pub async fn makeChange(action, failure, success?) -> bool            @5-14
+    -- Run action, toasting success if given or else formatError(failure); true when it succeeded.

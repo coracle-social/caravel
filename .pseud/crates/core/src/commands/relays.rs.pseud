@@ -1,0 +1,44 @@
+% source=crates/core/src/commands/relays.rs lang=rust lines=362 sha=c1d9c4fe9da1
+
+module caravel_core::commands::relays  !db !rand
+  -- Writing relays: their rows, the hosts that redirect to them, and erasing what they hold.
+
+  pub async fn insert_relay(conn, relay: Relay) fails  !db              @15-58
+    -- Insert the relay's row; a taken subdomain becomes a validation error.
+  pub async fn update_relay(conn, relay: Relay) fails  !db              @65-109
+    -- Write the relay's settings; redirects, status, keys and purge marker have their own writers.
+    -- A taken subdomain becomes a validation error.
+    keep custom_domain_verified only if the stored custom domain, subdomain and domain are unchanged
+      compared in SQL against the stored row, so a verification since the relay was read survives
+  pub async fn set_relay_info(relay_id, name: str?, description: str?, icon: str?) fails  !db  @113-132
+    -- Change the published name, description or icon, leaving Nones as they are.
+  pub async fn set_relay_status(relay_id, status: RelayStatus) fails  !db  @134-145
+  pub async fn set_relay_purged_at(relay_id, at) fails  !db             @147-154
+  pub async fn set_custom_domain_verified(relay_id, custom_domain, verified: bool) -> bool fails  !db  @159-180
+    -- Record DNS verification, only while the unpurged relay's custom domain is still this one.
+    -- Returns whether it wrote; it never verifies a domain another live relay has verified.
+  pub async fn add_host_redirect(host, relay_id, now) fails  !db        @183-199
+    -- Make host redirect to the relay, taking it from whichever relay it redirected to.
+  pub async fn remove_host_redirects(hosts: [str]) fails  !db           @202-208
+    -- Stop redirecting hosts a relay now answers on itself.
+  pub async fn set_relay_erased_at(id, now) fails  !db                  @211-218
+  pub async fn purge_relay_in_tx(conn, relay: Relay, now) fails  !db !rand  @222-237
+    -- Set purged_at and record a PurgeRelay activity with the status it was purged from.
+    -- billing credits the purge only if that status was active
+  fn map_relay_write_error(error: Error) -> Error  !-db  -- inspects a returned sqlx error only  @240-255
+    -- A unique violation of relay_subdomain_key becomes invalid "subdomain-exists"; else passes.
+  pub async fn rebuild_derived(conn, key, relay_id, now) -> [Event] fails  !db  @260-287
+    -- Republish everything the relay says about its state, from the tables that hold it.
+    publish_member_list, then publish_role for each role
+    for each room: publish_metadata, publish_admins, publish_members and publish_pins
+  pub async fn erase_relay_data(conn, relay_id) -> [sha256] fails  !db  @293-339
+    -- Erase what a relay holds but keep its settings, returning the blobs whose bytes should go.
+    delete its events, rooms, roles, method grants, bans and notifications
+      rooms take their members and invites with them
+    delete its members but the owner and pubkeys with an active or canceled membership
+    clear every remaining member's roles
+    delete its claims, but those of active or canceled invite memberships
+    delete its blobs, owners cascading, returning their hashes
+  pub async fn erase_purged_relay_data(conn, relay_id) fails  !db       @343-362
+    -- Delete everything a purged relay held; billing's records, memberships and calls stay.
+    -- events, rooms, members, roles, bans, claims, blobs, notifications, redirects

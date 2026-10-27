@@ -1,0 +1,57 @@
+% source=crates/core/tests/relay_policy.rs lang=rust lines=713 sha=437038e61d26
+
+module caravel_core::tests::relay_policy
+  -- The relay policy's pure rules (from zooid): who writes, reads, sees what, gets signatures.
+
+  tests                                                                 @16-713
+    const NOW = 1_800_000_000                                           @16
+    data Fixture { snapshot: RelaySnapshot, owner, relay, member, stranger }  @18-24
+    fn fixture() -> Fixture  -- a snapshot with owner as tenant, a relay key and one member  @26-47
+    fn facts(kind, pubkey) -> EventFacts  -- facts for an event outside any room  @49-55
+    fn hex(secret) -> str  -- its public key in hex                     @57-59
+    test members_and_managers_may_write_and_strangers_may_not  -- unless public_write is on  @62-84
+    test writing_needs_authentication_as_the_author                     @87-110
+      -- Unauthenticated is AuthRequired, another key is restricted; the relay's own events may be
+      -- delivered by anyone authenticated.
+    test a_gift_wrap_or_zap_for_a_member_needs_no_authentication        @113-137
+      -- Only when the p tag names a member.
+    test events_dated_too_far_ahead_are_refused  -- CREATED_AT_UPPER_LIMIT itself is allowed  @140-154
+    test kinds_the_relay_writes_itself_are_refused                      @157-173
+      -- Add/remove member, member list, role and Blossom auth, even from the owner.
+    test banned_authors_and_events_are_blocked                          @176-197
+    test a_protected_event_is_published_only_by_its_authenticated_author  @200-228
+      -- A "-" event needs its author authenticated, and a repost of one is blocked.
+    test reading_needs_authentication_unless_anonymous_reads_are_on     @231-246
+    test a_private_relay_is_read_only_by_its_members                    @249-273
+      -- One member key among several suffices; public_read admits anyone not banned.
+    fn pubkey_of_nobody() -> str  -- a fresh random pubkey              @275-277
+    fn rooms_fixture(f) -> RelaySnapshot                                @281-316
+      -- Groups and anonymous reads on, with open, private, hidden, closed (invite "sesame") and
+      -- restricted rooms, each holding member.
+    fn in_room(kind, pubkey, room) -> EventFacts                        @318-324
+    test rooms_decide_who_sees_their_events                             @327-386
+      -- As owner, member, outsider and anonymous: private rooms show outsiders only metadata,
+      -- hidden rooms nothing; an uncreated room's posts reach only the owner but its deletion
+      -- everyone; with groups off nothing is hidden.
+    test a_count_includes_only_what_the_reader_may_see                  @389-417
+      -- Counts apply the same visibility; invites are never counted, push subscriptions only
+      -- for their author; anonymous counts as an outsider; any member key among several counts.
+    test a_restricted_room_takes_posts_only_from_its_members            @420-481
+      -- Outsiders may still request to join; closed rooms take posts; unknown rooms are "group not
+      -- found"; only managers edit metadata or create rooms.
+    test a_gift_wrap_or_zap_for_a_member_still_answers_to_its_room      @485-506
+      -- An outsider's zap for a member lands in an open room, not a restricted, hidden or unknown one.
+    test a_room_event_must_name_its_room                                @511-536
+      -- Moderation kinds and join requests with no, empty or valueless h are "missing group id";
+      -- so is a post with an empty h, while a post with no h is fine.
+    test credentials_and_requests_are_never_served                      @539-561
+      -- Invites, joins, leaves and Blossom auth go to nobody; a push subscription only to its author.
+    test stripping_spares_whoever_manages_the_relay  -- and nothing strips when it's off  @564-575
+    test ephemeral_kinds_are_not_stored                                 @578-582
+    test relay_urls_name_their_host_without_scheme_port_or_path  -- lowercased, trailing dot dropped  @585-588
+    test a_push_subscription_is_admitted_like_a_subscription            @593-610
+      -- A stranger's is refused unless the relay is public_read; a member's is admitted.
+    test a_push_subscription_may_name_any_of_the_relays_hosts  -- matched by url_host  @614-647
+    test a_push_subscription_says_what_is_wrong_with_it                 @650-713
+      -- d, relay, filter (valid JSON, ignore tags too), exactly one http(s) callback, each with
+      -- its own message.

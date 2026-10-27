@@ -1,0 +1,30 @@
+% source=crates/app/tests/layers.rs lang=rust lines=133 sha=5bf7bcb625d6
+
+module caravel_app::tests::layers
+  -- The workspace's layering, checked against cargo metadata, and state changes outside the core.
+
+  tests  !panic !exec                                                   @13-132
+    const LAYERS                                                        @13-29
+      -- Each workspace crate and the workspace crates it may depend on.
+      caravel-db, caravel-adapters -> none
+      caravel-core -> caravel-db, caravel-adapters
+      caravel-relay, caravel-api -> caravel-core
+      caravel-app -> all five others
+    const CONFINED                                                      @32-43
+      -- Third-party crates and the only workspace crates that may depend on them.
+      sqlx -> caravel-db, caravel-core
+      reqwest, tokio-tungstenite, coracle-kinds -> caravel-adapters
+      axum -> caravel-relay, caravel-api, caravel-app
+      tower-http -> caravel-relay, caravel-app
+      coracle-lib -> caravel-adapters, caravel-core, caravel-relay
+    fn dependencies() -> Map<str, Set<str>>  !panic !exec               @46-69
+      -- Each workspace package's normal (not dev or build) dependencies, via `cargo metadata`.
+    test every_workspace_crate_has_a_layer  -- every workspace package is named in LAYERS  @72-77
+    test crates_depend_only_on_the_layers_below_them                    @80-93
+      -- a LAYERS crate's caravel-* normal dependencies are all in its allowed list
+    test protocol_clients_stay_in_their_layer  -- only its owners take a CONFINED crate  @96-107
+    test only_core_subsystems_change_state                              @113-132
+      fail if a file directly in crates/{relay,api,app}/src has these words outside `//` lines
+        commands, which an aliased import names too
+        with_tx, begin or try_begin, which open a transaction
+      a subdirectory under src fails the test, since it is read as a file

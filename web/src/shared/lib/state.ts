@@ -118,14 +118,14 @@ export function ensureSessionTenant(): Promise<void> {
 }
 
 try {
-  accountManager.fromJSON(JSON.parse(localStorage.getItem("caravel.accounts")!))
+  accountManager.fromJSON(JSON.parse(localStorage.getItem("caravel.accounts")!), true)
 } catch {
   // pass
 }
 
 const active = localStorage.getItem("caravel.accounts.active")
 
-if (active) {
+if (active && accountManager.getAccount(active)) {
   accountManager.setActive(active)
 }
 

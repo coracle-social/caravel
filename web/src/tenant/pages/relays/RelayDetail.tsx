@@ -6,8 +6,10 @@ import PostPaidPrompts, { usePostPaidFlow } from "@/shared/components/PostPaidPr
 import RelayDetailCard from "@/shared/components/RelayDetailCard"
 import ResourceState from "@/shared/components/ResourceState"
 import type { PlanId } from "@/shared/lib/api"
+import { formatError } from "@/shared/lib/format"
 import { FREE } from "@/shared/lib/plans"
 import { useRelayActivity, useRelayMembers } from "@/shared/lib/relays"
+import { setToastMessage } from "@/shared/lib/state"
 import useMinLoading from "@/shared/lib/useMinLoading"
 import useRelayActions from "@/shared/lib/useRelayActions"
 import { useFramedRelay } from "@/tenant/components/RelayFrame"
@@ -24,7 +26,8 @@ export default function RelayDetail() {
 
   async function changePlan(planId: PlanId) {
     await updatePlan(planId)
-    if (planId !== FREE) await postPaid.start()
+    // Not awaited: the card reports the plan change, and the prompts report their own failure.
+    if (planId !== FREE) void postPaid.start().catch(e => setToastMessage(formatError(e, "Failed to update billing")))
   }
 
   return (

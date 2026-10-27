@@ -17,41 +17,53 @@ export default function SignIn() {
   const [busy, setBusy] = createSignal(false)
   const [error, setError] = createSignal("")
 
+  // Aborting it stops waiting for the signer app, which closes its signer.
   let abort: AbortController | undefined
-  let signer: NostrConnectSigner | undefined
 
-  onCleanup(() => {
-    abort?.abort()
-    void signer?.close()
-  })
+  const stopRemote = () => abort?.abort()
 
+  onCleanup(stopRemote)
+
+  // Sign in with a signer, and say whether it worked.
   async function complete(using: ISigner) {
     setBusy(true)
     setError("")
     try {
       signIn((await createSession(using)).token)
+      return true
     } catch (e) {
       setError(formatError(e, "Signing in failed"))
+      return false
     } finally {
       setBusy(false)
     }
   }
 
+  // Offer signer-app codes until one signs in or the flow stops, with a new one after a failed sign-in.
   async function startRemote() {
+    stopRemote()
+    const stop = (abort = new AbortController())
     setRemote(true)
     setError("")
 
-    signer = new NostrConnectSigner({ relays: NOSTR_CONNECT_RELAYS })
-    const link = signer.getNostrConnectURI({ name: "Membership", url: location.origin, permissions: PERMISSIONS })
-    setUri(link)
-    setQr(await QRCode.toDataURL(link, { width: 240, margin: 1 }))
+    while (!stop.signal.aborted) {
+      setQr("")
+      const signer = new NostrConnectSigner({ relays: NOSTR_CONNECT_RELAYS })
+      const link = signer.getNostrConnectURI({ name: "Membership", url: location.origin, permissions: PERMISSIONS })
+      setUri(link)
+      const image = await QRCode.toDataURL(link, { width: 240, margin: 1 })
+      if (stop.signal.aborted) return
+      setQr(image)
 
-    abort = new AbortController()
-    try {
-      await signer.waitForSigner(abort.signal)
-      await complete(signer)
-    } catch (e) {
-      if (!abort.signal.aborted) setError(formatError(e, "Your signer didn't connect"))
+      try {
+        await signer.waitForSigner(stop.signal)
+        if (await complete(signer)) return
+      } catch (e) {
+        if (!stop.signal.aborted) setError(formatError(e, "Your signer didn't connect"))
+        return
+      } finally {
+        void signer.close()
+      }
     }
   }
 
@@ -60,8 +72,9 @@ export default function SignIn() {
     setBusy(true)
     setError("")
     try {
-      signer = await NostrConnectSigner.fromBunkerURI(bunker().trim(), { permissions: PERMISSIONS })
+      const signer = await NostrConnectSigner.fromBunkerURI(bunker().trim(), { permissions: PERMISSIONS })
       await complete(signer)
+      void signer.close()
     } catch (e) {
       setError(formatError(e, "That bunker link didn't work"))
       setBusy(false)
@@ -101,7 +114,12 @@ export default function SignIn() {
                 Connect
               </button>
             </form>
-            <button type="button" onClick={() => setRemote(false)} class="w-full text-sm text-zinc-500 hover:text-zinc-700">
+            <button
+              type="button"
+              onClick={() => { stopRemote(); setRemote(false) }}
+              disabled={busy()}
+              class="w-full text-sm text-zinc-500 hover:text-zinc-700 disabled:opacity-50"
+            >
               Back
             </button>
           </div>

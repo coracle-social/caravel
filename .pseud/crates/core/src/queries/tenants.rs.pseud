@@ -1,0 +1,13 @@
+% source=crates/core/src/queries/tenants.rs lang=rust lines=40 sha=81573bf9b405
+
+module caravel_core::queries::tenants  !db
+  -- Reading tenants.
+
+  pub async fn list_tenants() -> [Tenant] fails  !db                    @8-14
+    -- Every tenant, newest first.
+  pub async fn get_tenant(pubkey) -> Tenant? fails  !db                 @16-23
+  pub async fn require_tenant(pubkey) -> Tenant fails  !db              @26-30
+    -- get_tenant, failing NotFound "tenant not found" when missing.
+  pub async fn lock_tenant(conn, pubkey) -> Tenant fails  !db           @34-40
+    -- Read the tenant FOR UPDATE until the transaction ends, serializing its billing writes.
+    fail NotFound "tenant not found" when missing

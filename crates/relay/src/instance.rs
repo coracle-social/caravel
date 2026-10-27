@@ -5,14 +5,13 @@
 use std::collections::HashSet;
 use std::sync::{Arc, RwLock};
 
-use caravel_core::access;
 use caravel_core::crypto::RelayKey;
-use caravel_core::events::kinds::{self, DELETION, VANISH};
-use caravel_core::events::{self, Saved, StoredEvent};
-use caravel_core::relay_policy::{self, EventFacts, Refusal, RelaySnapshot};
-use caravel_core::relays::{self, Relay};
-use caravel_core::{Core, Error};
-use caravel_core::{memberships, notifications, rooms};
+use caravel_core::models::events::{Saved, StoredEvent};
+use caravel_core::models::kinds;
+use caravel_core::models::kinds::{DELETION, VANISH};
+use caravel_core::models::policy::{EventFacts, Refusal, RelaySnapshot};
+use caravel_core::models::relays::Relay;
+use caravel_core::{Core, Error, domain, ingest, queries};
 use coracle_lib::events::{Event, EventId};
 use coracle_lib::filters::Filter;
 use coracle_lib::sync::{FrameBudget, Item, Message as SyncMessage, SyncSet, reconcile_responder};
@@ -52,7 +51,7 @@ impl InstanceState {
 
         Ok(Self {
             key: core.relay_key(&relay)?,
-            snapshot: relay_policy::load_snapshot(core.db.pool(), &relay).await?,
+            snapshot: queries::policy::load_snapshot(core.db.pool(), &relay).await?,
             push,
             relay,
         })
@@ -124,6 +123,7 @@ impl RelayInstance {
     /// Build the relay's state from `relay` and serve it, with the reload lock held.
     async fn install(&self, relay: Relay) -> caravel_core::Result<()> {
         let state = InstanceState::load(&self.core, relay).await?;
+        self.pusher.retain(&state.relay.id, &state.push);
         *self
             .state
             .write()
@@ -136,7 +136,7 @@ impl RelayInstance {
     pub async fn apply_access_change(&self, published: &[Event]) {
         self.refresh().await;
         for event in published {
-            self.fanout(event);
+            self.broadcast(event);
         }
     }
 
@@ -152,7 +152,7 @@ impl RelayInstance {
 
     /// The checks that settle an event before its signature is verified.
     pub fn screen(&self, event: &Event) -> Result<(), Refusal> {
-        relay_policy::screen(event, self.core.clock.now())
+        domain::policy::screen(event, self.core.clock.now())
     }
 
     /// Challenge every connection as it opens, so a reader can prove itself before
@@ -171,15 +171,9 @@ impl RelayInstance {
         match self.ingest(session, &event).await {
             Ok(published) => {
                 session.send(RelayMessage::accepted(event.id)).await;
-                self.fanout(&event);
+                self.broadcast(&event);
                 for event in &published {
-                    self.fanout(event);
-                }
-
-                let state = self.state();
-                if state.relay.push_enabled {
-                    self.pusher
-                        .push(&state.snapshot, &state.push, &state.relay.host(), &event);
+                    self.broadcast(event);
                 }
             }
             Err(refusal) => self.refuse_event(session, event.id, refusal).await,
@@ -196,14 +190,14 @@ impl RelayInstance {
         let authed = self.connections.pubkeys(session);
         let now = self.core.clock.now();
 
-        relay_policy::admit_write(&state.snapshot, event, &authed, now)?;
+        domain::policy::admit_write(&state.snapshot, event, &authed, now)?;
 
-        if !events::is_storable(event) {
+        if !domain::events::is_storable(event) {
             return Err(Refusal::invalid("event contains a NUL character"));
         }
 
         if event.kind == kinds::PUSH_SUBSCRIPTION {
-            relay_policy::check_push_subscription(
+            domain::policy::check_push_subscription(
                 event,
                 &state.relay.hosts(),
                 push::held_by(&state.push, event),
@@ -218,15 +212,15 @@ impl RelayInstance {
         }
 
         let published = match event.kind {
-            kinds::RELAY_JOIN => self.join(&state, event, now).await?,
-            kinds::RELAY_LEAVE => self.leave(&state, event, now).await?,
-            kind if !relay_policy::is_stored(kind) => Vec::new(),
-            _ => self.store(&state, event, now).await?,
+            kinds::RELAY_JOIN => self.join(&state, event).await?,
+            kinds::RELAY_LEAVE => self.leave(&state, event).await?,
+            kind if !domain::policy::is_stored(kind) => Vec::new(),
+            _ => self.store(&state, event).await?,
         };
 
         let changes_push = state.relay.push_enabled
             && matches!(event.kind, kinds::PUSH_SUBSCRIPTION | DELETION | VANISH);
-        if !published.is_empty() || rooms::is_moderation_kind(event.kind) || changes_push {
+        if !published.is_empty() || domain::rooms::is_moderation_kind(event.kind) || changes_push {
             self.refresh().await;
         }
 
@@ -236,21 +230,10 @@ impl RelayInstance {
     /// Admit a NIP-43 join request: a member already, anyone on an open relay, or
     /// the holder of a live claim, within the plan's member limit. A paid invite's
     /// claim also gives the joiner its membership.
-    async fn join(
-        &self,
-        state: &InstanceState,
-        event: &Event,
-        now: i64,
-    ) -> Result<Vec<Event>, Refusal> {
+    async fn join(&self, state: &InstanceState, event: &Event) -> Result<Vec<Event>, Refusal> {
         let relay_id = state.relay.id.as_str();
-        let join = relay_policy::admit_join(&state.snapshot, event)?;
-        let result = self
-            .core
-            .db
-            .with_tx(async |conn| {
-                memberships::admit_join(conn, &state.key, &state.relay, event, &join, now).await
-            })
-            .await;
+        let join = domain::policy::admit_join(&state.snapshot, event)?;
+        let result = ingest::join(&self.core, &state.relay, &state.key, event, &join).await;
 
         match result {
             Ok(published) => Ok(published),
@@ -263,29 +246,10 @@ impl RelayInstance {
     }
 
     /// Act on a NIP-43 leave request. The owner can't leave, which is no error.
-    async fn leave(
-        &self,
-        state: &InstanceState,
-        event: &Event,
-        now: i64,
-    ) -> Result<Vec<Event>, Refusal> {
+    async fn leave(&self, state: &InstanceState, event: &Event) -> Result<Vec<Event>, Refusal> {
         let relay = &state.relay;
         let pubkey = event.pubkey.to_hex();
-        let result = self
-            .core
-            .db
-            .with_tx(async |conn| {
-                access::remove(
-                    conn,
-                    &state.key,
-                    &relay.id,
-                    &relay.tenant_pubkey,
-                    &pubkey,
-                    now,
-                )
-                .await
-            })
-            .await;
+        let result = ingest::leave(&self.core, relay, &state.key, &pubkey).await;
 
         match result {
             Ok(published) => Ok(published),
@@ -299,12 +263,7 @@ impl RelayInstance {
 
     /// Keep an event, applying a deletion, a request to vanish, or a change to a
     /// room in the same transaction.
-    async fn store(
-        &self,
-        state: &InstanceState,
-        event: &Event,
-        now: i64,
-    ) -> Result<Vec<Event>, Refusal> {
+    async fn store(&self, state: &InstanceState, event: &Event) -> Result<Vec<Event>, Refusal> {
         if event.kind == VANISH && !self.is_addressed(&state.relay, event) {
             return Err(Refusal::invalid(
                 "this request to vanish names another relay",
@@ -313,42 +272,13 @@ impl RelayInstance {
 
         let relay_id = state.relay.id.as_str();
         let rooms_enabled = state.snapshot.groups_enabled;
-        let (saved, published) = self
-            .core
-            .db
-            .with_tx(async |conn| {
-                let saved = events::save_event(&mut *conn, relay_id, event, now).await?;
-                let mut published = Vec::new();
-                if saved == Saved::New {
-                    match event.kind {
-                        DELETION => {
-                            events::apply_deletion(conn, relay_id, event).await?;
-                        }
-                        VANISH => {
-                            events::apply_vanish(
-                                conn,
-                                relay_id,
-                                &event.pubkey.as_bytes(),
-                                event.created_at,
-                            )
-                            .await?;
-                        }
-                        kind if rooms_enabled
-                            && rooms::is_room_event(kind, rooms::room_id(event)) =>
-                        {
-                            published =
-                                rooms::apply_event(conn, &state.key, relay_id, event, now).await?;
-                        }
-                        _ => {}
-                    }
-                }
-                Ok::<_, Error>((saved, published))
-            })
-            .await
-            .map_err(|error| {
-                tracing::warn!(relay = relay_id, error = %error, "failed to store event");
-                Refusal::Error("the event could not be stored")
-            })?;
+        let (saved, published) =
+            ingest::store(&self.core, &state.relay, &state.key, rooms_enabled, event)
+                .await
+                .map_err(|error| {
+                    tracing::warn!(relay = relay_id, error = %error, "failed to store event");
+                    Refusal::Error("the event could not be stored")
+                })?;
 
         match saved {
             Saved::New => Ok(published),
@@ -361,14 +291,25 @@ impl RelayInstance {
     fn is_addressed(&self, relay: &Relay, event: &Event) -> bool {
         let hosts = relay.hosts();
         event.tags.find_all("relay").any(|tag| {
-            tag.value() == "ALL_RELAYS" || hosts.contains(&relays::url_host(tag.value()))
+            tag.value() == "ALL_RELAYS" || hosts.contains(&domain::relays::url_host(tag.value()))
         })
+    }
+
+    /// Deliver a new event, a client's or the relay's own, to the subscriptions it
+    /// matches and, when push is on, to its push subscriptions.
+    pub fn broadcast(&self, event: &Event) {
+        self.fanout(event);
+        let state = self.state();
+        if state.relay.push_enabled {
+            self.pusher
+                .push(&state.snapshot, &state.push, &state.relay.host(), event);
+        }
     }
 
     /// Send an event to every subscription that matches it and whose connection
     /// may still read the relay and see the event, without signatures where the
     /// relay strips them.
-    pub fn fanout(&self, event: &Event) {
+    fn fanout(&self, event: &Event) {
         let state = self.state();
         let author = event.pubkey.to_hex();
         let facts = EventFacts::of(event, &author);
@@ -377,11 +318,11 @@ impl RelayInstance {
         let mut stripped: Option<RawEvent> = None;
 
         for matched in self.connections.matching(event) {
-            if !relay_policy::can_deliver(&state.snapshot, &matched.pubkeys, facts) {
+            if !domain::policy::can_deliver(&state.snapshot, &matched.pubkeys, facts) {
                 continue;
             }
 
-            let strip = relay_policy::strips_signature(&state.snapshot, &matched.pubkeys);
+            let strip = domain::policy::strips_signature(&state.snapshot, &matched.pubkeys);
             let rendered = if strip { &mut stripped } else { &mut signed };
             let raw = rendered
                 .get_or_insert_with(|| {
@@ -430,7 +371,13 @@ impl RelayInstance {
         let authed = self.connections.pubkeys(session);
         let now = self.core.clock.now();
 
-        relay_policy::admit_req(&state.snapshot, &authed)?;
+        domain::policy::admit_req(&state.snapshot, &authed)?;
+        if filters.len() > self.limits.max_filters {
+            return Err(Refusal::blocked(format!(
+                "a request may have at most {} filters",
+                self.limits.max_filters
+            )));
+        }
 
         self.connections
             .subscribe(
@@ -449,11 +396,11 @@ impl RelayInstance {
                 )
             })?;
 
-        let strip = relay_policy::strips_signature(&state.snapshot, &authed);
+        let strip = domain::policy::strips_signature(&state.snapshot, &authed);
         let mut sent = HashSet::new();
 
         for filter in &filters {
-            let found = events::query_events(
+            let found = queries::events::query_events(
                 self.core.db.pool(),
                 &state.relay.id,
                 filter,
@@ -470,7 +417,7 @@ impl RelayInstance {
             for stored in found {
                 let author = stored.head.pubkey_hex();
                 if !sent.insert(stored.head.id)
-                    || !relay_policy::can_any_receive(
+                    || !domain::policy::can_any_receive(
                         &state.snapshot,
                         &authed,
                         EventFacts::of_head(&stored.head, &author),
@@ -530,9 +477,15 @@ impl RelayInstance {
         let state = self.state();
         let authed = self.connections.pubkeys(session);
 
-        relay_policy::admit_req(&state.snapshot, &authed)?;
+        domain::policy::admit_req(&state.snapshot, &authed)?;
+        if filters.len() > self.limits.max_filters {
+            return Err(Refusal::blocked(format!(
+                "a request may have at most {} filters",
+                self.limits.max_filters
+            )));
+        }
 
-        let groups = events::count_event_groups(
+        let groups = queries::events::count_event_groups(
             self.core.db.pool(),
             &state.relay.id,
             filters,
@@ -544,7 +497,7 @@ impl RelayInstance {
             Refusal::Error("the count could not be run")
         })?;
 
-        Ok(relay_policy::count_visible(
+        Ok(domain::policy::count_visible(
             &state.snapshot,
             &authed,
             &groups,
@@ -591,7 +544,7 @@ impl RelayInstance {
 
         // A message written while the pubkey was away reaches it as it returns.
         let relay_id = self.relay_id();
-        match notifications::get_notification(
+        match queries::notifications::get_notification(
             self.core.db.pool(),
             &relay_id,
             &pubkey,
@@ -680,9 +633,9 @@ impl RelayInstance {
         let state = self.state();
         let authed = self.connections.pubkeys(session);
 
-        relay_policy::admit_req(&state.snapshot, &authed)?;
+        domain::policy::admit_req(&state.snapshot, &authed)?;
 
-        let heads = events::query_event_heads(
+        let heads = queries::events::query_event_heads(
             self.core.db.pool(),
             &state.relay.id,
             &filter,
@@ -705,7 +658,7 @@ impl RelayInstance {
             .into_iter()
             .filter(|head| {
                 let author = head.pubkey_hex();
-                relay_policy::can_any_receive(
+                domain::policy::can_any_receive(
                     &state.snapshot,
                     &authed,
                     EventFacts::of_head(head, &author),

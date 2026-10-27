@@ -141,7 +141,6 @@ type RelayDetailCardProps = {
 
 export default function RelayDetailCard(props: RelayDetailCardProps) {
   const r = () => props.relay
-  const [planId, setPlanId] = createSignal<PlanId>(props.relay.plan_id)
   const [pendingAction, setPendingAction] = createSignal<Action>()
   const [customDomainModalOpen, setCustomDomainModalOpen] = createSignal(false)
   const [dataTransferModalOpen, setDataTransferModalOpen] = createSignal(false)
@@ -162,7 +161,6 @@ export default function RelayDetailCard(props: RelayDetailCardProps) {
   const busy = () => props.busy ?? false
 
   async function changePlanId(planId: PlanId) {
-    setPlanId(planId)
     try {
       await props.onUpdatePlan?.(planId)
       setToastMessage(`Plan updated to ${planId}`, "success")
@@ -345,7 +343,7 @@ export default function RelayDetailCard(props: RelayDetailCardProps) {
             <div class="lg:col-span-2 space-y-4">
               <PricingTable
                 selectable
-                selectedPlanId={planId()}
+                selectedPlanId={r().plan_id}
                 onSelect={changePlanId}
               />
             </div>

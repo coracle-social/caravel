@@ -1,0 +1,11 @@
+% source=web/src/shared/components/relay/MemberPayments.tsx lang=typescript lines=86 sha=4fbf49a9e3ee
+
+module @/shared/components/relay/MemberPayments
+  -- A relay's member pricing section.
+
+  type Props = { relay(), mutateRelay(relay) }                          @10-13
+  pub fn MemberPayments(props: Props)                                   @16-86
+    -- What a relay charges its members, the portal link they pay at, and who is paying.
+    fetch the relay's memberships; active and canceled ones are listed with their period end  @18-20
+    a paid relay shows its portal url, which a button copies            @39-52
+    the price button opens MemberPriceModal, whose saved relay goes to mutateRelay  @78-83

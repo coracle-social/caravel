@@ -1,0 +1,15 @@
+% source=crates/core/src/commands/sessions.rs lang=rust lines=65 sha=fd159e29aa0a
+
+module caravel_core::commands::sessions  !db !rand
+  -- Starting and ending sessions.
+
+  pub async fn create_session(pubkey, now) -> (token, Session) fails  !db !rand  @11-30
+    -- Store a session under the hash of a new random token, for SESSION_TTL; return the token.
+  pub async fn delete_session(token) fails  !db                         @32-38
+    -- Delete the session stored under the token's hash.
+  pub async fn revoke_sessions(pubkey) -> u64 fails  !db                @41-47
+    -- End every session the pubkey holds, returning how many.
+  pub async fn delete_expired_sessions(now) -> u64 fails  !db           @49-55
+    -- Delete sessions whose expires_at is at or before now, returning how many.
+  pub async fn touch_session(token, now) fails  !db                     @58-65
+    -- Set the session's last_used_at, whether or not it has expired.

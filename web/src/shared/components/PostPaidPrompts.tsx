@@ -60,6 +60,7 @@ export default function PostPaidPrompts(props: { flow: PostPaidFlow; onDone?: ()
           <PaymentDialog
             invoice={inv()}
             open={true}
+            offerSetup={false}
             onClose={() => {
               refetchBilling()
               props.flow.setStep({ kind: "setup" })

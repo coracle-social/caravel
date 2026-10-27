@@ -1,0 +1,18 @@
+{
+  "out": ".pseud",
+  "include": [
+    "**/*"
+  ],
+  "exclude": [],
+  "minCoverage": 0.9,
+  "minRatio": 2.5,
+  "maxLineLength": 100,
+  "anchorColumn": 72,
+  "detectors": {
+    "rust": {
+      "time": [
+        "\\bclock\\.now\\(\\)"
+      ]
+    }
+  }
+}

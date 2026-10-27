@@ -1,0 +1,20 @@
+% source=web/src/shared/lib/useInvoicePdf.ts lang=typescript lines=125 sha=122a9b5fe5e4
+
+module @/shared/lib/useInvoicePdf  !net !db !time
+  -- Printing an invoice from an off-screen frame, in sats too when it could be paid by Lightning.
+
+  fn escapeHtml(value) -> str  -- escapes & < > " and '                 @7-10
+  pub fn useInvoicePdf() -> { printInvoice, printing }  !net !db !time  @12-45
+    -- printInvoice(invoice, loadItems?) prints one invoice at a time, dropping calls meanwhile.
+    load items with loadItems, which the unstored draft passes, else GET the invoice's items
+      on failure log it and print without them
+    unless it is the draft, voided, or paid by stripe or comp, ensureInvoiceBolt11 for a sats line
+      which may mint a Lightning invoice for an open one; a failure leaves the line out
+    printHtml(buildHtml(invoice, items, sats))
+  fn buildHtml(opts { invoice, items, sats? }) -> html                  @47-93
+    -- Platform, status ("draft" for the draft), id, tenant, dates, method, items, sats and total.
+    without items, one "Relay subscription" line for the whole amount
+    descriptions, the id, tenant, platform name and method label are HTML-escaped
+  fn printHtml(html)  !time                                             @95-125
+    -- Write html into a zero-size iframe, print it 150ms later, and remove the frame 1s after
+    -- printing or 60s after the print call, whichever comes first.

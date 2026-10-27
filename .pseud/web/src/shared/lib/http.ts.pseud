@@ -1,0 +1,20 @@
+% source=web/src/shared/lib/http.ts lang=typescript lines=53 sha=3546eda0e043
+
+module @/shared/lib/http  !net !time
+  -- The API transport every app uses: its error, sending a request, the envelope, signing in.
+
+  pub class ApiError  -- a response the API refused, carrying its message and status  @4-13
+    status: number
+  pub data Session { pubkey, token, expires_at }  -- a session token issued to a signer's pubkey  @15-20
+  pub fn hasStatus(error, status) -> bool  -- whether error is an ApiError with that status  @22-24
+  fn apiUrl(path) -> url  -- API_URL without a trailing slash, then path  @26
+  pub async fn request(path, init = {}, failure = "Request failed") -> Response fails ApiError  !net  @28-35
+    -- Call the API, throwing an ApiError with the API's own message when it refuses.
+    fetch apiUrl(path)  !net
+    if not ok, fail ApiError with the payload's error, else "<failure> (<status>)"
+      an unreadable error body counts as none
+  pub async fn unwrap<T>(response) -> T  -- the `{ data }` envelope's payload; undefined on 204  @37-41
+  pub async fn createSession(signer) -> Session fails ApiError  !net !time  @43-53
+    -- Sign one NIP-98 request for exactly `POST /session`, which buys a session token.
+    sign kind 27235 now, tagged u = apiUrl("/session") and method POST  !time
+    POST /session with it as `Authorization: Nostr <base64 event>`, failing "Failed to sign in"

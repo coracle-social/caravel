@@ -10,7 +10,7 @@ use axum::body::Body;
 use axum::http::{HeaderValue, Method, Request, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use caravel_core::config::Config;
-use caravel_core::relays::RelayProfile;
+use caravel_core::models::relays::RelayProfile;
 use caravel_relay::blossom;
 use serde::Serialize;
 

@@ -1,0 +1,38 @@
+% source=crates/core/src/commands/ledger.rs lang=rust lines=260 sha=d1efc6a87295
+
+module caravel_core::commands::ledger  !db !rand
+  -- Writing the billing ledger: invoices, their items, and the payment attempts on them.
+
+  pub async fn insert_invoice_for_outstanding_items(conn, tenant_pubkey, period, comped, now) -> Invoice? fails  !db !rand  @12-57
+    -- Claim the tenant's outstanding items onto a new invoice for the period.
+    total the tenant's unclaimed, unvoided items with get_outstanding_total
+    return None if the total is at most 100 cents, which carries forward
+      so a small credit can't drop an invoice under Stripe's $0.50 minimum
+    insert the invoice for the total; a comped one is issued paid now with method Comp
+    claim every unclaimed, unvoided item of the tenant onto it
+    -- total-then-claim holds: callers lock the tenant, and an item insert's FK check waits on it
+  pub async fn mark_invoice_paid(invoice_id, method: InvoiceMethod, now) fails  !db  @61-77
+    -- Set method and paid_at only while the invoice is open, never on a voided or paid one.
+  pub async fn mark_invoice_notified(invoice_id, now) fails  !db        @79-90
+  pub async fn void_open_invoices_for_tenant(conn, tenant_pubkey, now) fails  !db  @94-119
+    -- Forgive the tenant's balance so no credit or charge bleeds into a later invoice.
+    void the tenant's open invoices
+    then void every live item that is unclaimed or on an unpaid invoice
+      after the invoices, so the ones just voided count as unpaid
+  pub async fn insert_invoice_item(item: InvoiceItem) fails  !db        @121-140
+  pub async fn insert_bolt11(invoice_id, lnbc, msats, expires_at, now) -> Bolt11 fails  !db !rand  @142-162
+    -- Record a Lightning invoice for an invoice under a new uuid.
+  pub async fn mark_bolt11_settled(bolt11_id, now) fails  !db           @165-172
+    -- Stamp settled_at, keeping an earlier stamp.
+  pub async fn insert_checkout(invoice_id, session_id, url, expires_at, now) -> Checkout fails  !db !rand  @174-194
+    -- Record a Stripe Checkout session for an invoice under a new uuid.
+  pub async fn mark_checkout_settled(checkout_id, now) fails  !db       @197-208
+    -- Stamp settled_at, keeping an earlier stamp.
+  pub async fn ensure_pending_intent(invoice_id, payment_method_id, now) -> Intent fails  !db !rand  @212-231
+    -- The invoice's unsettled intent, or a new one charging payment_method_id, in one statement.
+    insert, and on the one-unsettled-per-invoice conflict return the existing row unchanged
+      so a retry re-confirms the same charge on its original payment method
+  pub async fn mark_intent_settled(intent_id, payment_intent_id, now) fails  !db  @235-250
+    -- Stamp settled_at and the confirming PaymentIntent, keeping an earlier stamp.
+  pub async fn delete_intent(intent_id) fails  !db                      @254-260
+    -- Drop a failed intent, so the next attempt uses the tenant's current payment method.

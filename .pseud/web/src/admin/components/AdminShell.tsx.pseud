@@ -1,0 +1,14 @@
+% source=web/src/admin/components/AdminShell.tsx lang=typescript lines=81 sha=45a178b01ee6
+
+module @/admin/components/AdminShell  !net !db
+  -- The admin dashboard's frame and its sign-out.
+
+  const SECTIONS = [Tenants, Relays, Invoices, Moderation]  -- each at /admin/<name>  @11-16
+  pub async fn signOutOfAdmin()  !net !db                               @19-23
+    -- End the session on the server, clear all of localStorage, and load /admin.
+    -- Clearing the origin's storage also forgets the tenant dashboard's accounts and sessions.
+  pub fn AdminShell(props: { children })  !net !db                      @27-81
+    -- A dark top bar: the logo and Admin badge linking to tenants, the section links, and an
+    -- account menu (avatar, name or short npub) whose one item is Sign out.
+    a section is current when the path is its href or below it          @32-35
+    below md the sections move to a second, scrolling row               @76

@@ -4,9 +4,8 @@ use axum::body::Body;
 use axum::extract::{Path, Query, State};
 use axum::http::header;
 use axum::response::IntoResponse;
-use caravel_core::billing::ledger;
 use caravel_core::crypto::is_hex64;
-use caravel_core::{Core, Error, auth, hosting, media, moderation, relays, tenants};
+use caravel_core::{Core, Error, domain, hosting, queries, sessions};
 use serde::Deserialize;
 
 use crate::auth::Admin;
@@ -14,7 +13,7 @@ use crate::response::{ApiResult, ok};
 use crate::tenant::TenantView;
 
 pub async fn list_tenants(State(core): State<Core>, _: Admin) -> ApiResult {
-    let tenants = tenants::list_tenants(core.db.pool()).await?;
+    let tenants = queries::tenants::list_tenants(core.db.pool()).await?;
     ok(tenants
         .into_iter()
         .map(TenantView::from)
@@ -29,7 +28,7 @@ pub async fn ban_tenant(
 ) -> ApiResult {
     hosting::ban_tenant(&core, &pubkey).await?;
     ok(TenantView::from(
-        tenants::require_tenant(core.db.pool(), &pubkey).await?,
+        queries::tenants::require_tenant(core.db.pool(), &pubkey).await?,
     ))
 }
 
@@ -41,7 +40,7 @@ pub async fn unban_tenant(
 ) -> ApiResult {
     hosting::unban_tenant(&core, &pubkey).await?;
     ok(TenantView::from(
-        tenants::require_tenant(core.db.pool(), &pubkey).await?,
+        queries::tenants::require_tenant(core.db.pool(), &pubkey).await?,
     ))
 }
 
@@ -53,7 +52,7 @@ pub async fn delete_tenant(
 ) -> ApiResult {
     hosting::delete_tenant(&core, &pubkey).await?;
     ok(TenantView::from(
-        tenants::require_tenant(core.db.pool(), &pubkey).await?,
+        queries::tenants::require_tenant(core.db.pool(), &pubkey).await?,
     ))
 }
 
@@ -63,16 +62,16 @@ pub async fn revoke_sessions(
     _: Admin,
     Path(pubkey): Path<String>,
 ) -> ApiResult {
-    let revoked = auth::revoke_sessions(core.db.pool(), &pubkey).await?;
+    let revoked = sessions::revoke(&core, &pubkey).await?;
     ok(serde_json::json!({ "revoked": revoked }))
 }
 
 pub async fn list_relays(State(core): State<Core>, _: Admin) -> ApiResult {
-    ok(relays::list_relays(core.db.pool()).await?)
+    ok(queries::relays::list_relays(core.db.pool()).await?)
 }
 
 pub async fn list_invoices(State(core): State<Core>, _: Admin) -> ApiResult {
-    ok(ledger::list_invoices(core.db.pool()).await?)
+    ok(queries::ledger::list_invoices(core.db.pool()).await?)
 }
 
 #[derive(Deserialize)]
@@ -89,7 +88,13 @@ pub async fn list_moderation(
     _: Admin,
     Query(window): Query<ModerationWindow>,
 ) -> ApiResult {
-    ok(moderation::list_moderation(&core, window.since, window.until).await?)
+    ok(queries::moderation::list_moderation(
+        core.db.pool(),
+        &core.config.admin_pubkeys,
+        window.since,
+        window.until,
+    )
+    .await?)
 }
 
 /// One of a relay's blobs, raw rather than in the envelope, for admins reviewing
@@ -111,12 +116,12 @@ pub async fn get_moderation_blob(
         return Err(Error::invalid("invalid-sha256", "sha256 is invalid").into());
     }
 
-    let blob = media::get_blob(core.db.pool(), &relay_id, &sha256)
+    let blob = queries::media::get_blob(core.db.pool(), &relay_id, &sha256)
         .await?
         .ok_or(Error::NotFound("blob not found"))?;
     let read = core
         .blobs
-        .get(&media::blob_key(&relay_id, &sha256), None)
+        .get(&domain::media::blob_key(&relay_id, &sha256), None)
         .await
         .map_err(Error::from)?
         .ok_or(Error::NotFound("blob not found"))?;

@@ -117,7 +117,7 @@ function RoleDialog(props: { relayId: string; role?: RelayRole | "new"; onClose:
     setId(existing?.id ?? "")
     setLabel(existing?.label ?? "")
     setDescription(existing?.description ?? "")
-    setHue(existing?.hue || 210)
+    setHue(existing?.hue ?? 210)
     setPosition(existing?.position ?? 0)
     setError("")
   }))

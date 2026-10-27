@@ -1,0 +1,18 @@
+% source=web/src/tenant/components/relay/RoomDialog.tsx lang=typescript lines=130 sha=401516276132
+
+module @/tenant/components/relay/RoomDialog  !net !db !time !rand
+  -- Creating a NIP-29 room or editing its metadata.
+
+  const EDITED = [name, about, picture, livekit, ...ROOM_FLAGS]  -- the tags this form owns  @8
+  data RoomDialogProps { relayId, room?: Room | "new", calls, onClose, onSaved }  @10-17
+    calls: bool  -- offer the text/voice choice; without it a room keeps its livekit tag
+  pub fn RoomDialog(props: RoomDialogProps)  !net !db !time !rand       @20-130
+    -- Name, about, picture, room type and flags, keeping any tags this form doesn't know.
+    reset the fields from the room's tags each time it changes          @31-39
+    fn save(e)  !net !db !time !rand                                    @44-73
+      fail inline "Give the room a name." when the trimmed name is empty
+      tags: h with the room's id or a fresh newRoomId, the room's tags outside EDITED  @52-60
+        then name, about and picture when set, livekit for voice, and each checked flag
+      moderateRoom with EDIT_METADATA for an existing room, else CREATE_GROUP
+        the relay signs it and replaces the room's tags with these      @crates/core/src/commands/rooms.rs:30-46
+      on success onSaved and close; on failure show the error and stay open

@@ -1,0 +1,15 @@
+% source=web/src/shared/lib/format.ts lang=typescript lines=50 sha=023d5238ff01
+
+module @/shared/lib/format  !time
+  -- Every display formatter: money, dates, elapsed time, sizes and errors.
+
+  pub fn formatUsd(cents) -> str  -- "$12.34"                           @3
+  pub fn formatPrice(cents, interval) -> str  -- "$5.00 / month"        @5
+  pub fn formatDate(secs) -> str  -- the locale's date                  @7
+  pub fn formatLongDate(secs) -> str  -- the locale's date with the month spelled out  @9-10
+  pub fn formatDateTime(secs) -> str  -- the locale's date and time     @12
+  pub fn formatPeriod(startSecs?, endSecs?) -> str  -- "start – end", or "" unless both are set  @14-15
+  pub fn formatError(error, fallback) -> str  -- an Error's message, else fallback  @17-18
+  const RELATIVE_UNITS = [year 365d, month 30d, day, hour, minute]      @20-26
+  pub fn formatTimeAgo(secs) -> str  !time  -- "3 hours ago" in the largest unit elapsed, never ahead  @28-37
+  pub fn formatBytes(bytes) -> str  -- B, KB, MB or GB in steps of 1024, one decimal past B  @39-50

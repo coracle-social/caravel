@@ -22,10 +22,8 @@ pub struct Settings {
     pub web: WebSettings,
 }
 
-/// How the dashboards and the member portal are served and branded.
+/// How the dashboards and the member portal are branded.
 pub struct WebSettings {
-    /// The dashboards' public url. Without one, this process serves no dashboard.
-    pub platform_url: Option<String>,
     pub platform_name: String,
     pub platform_logo: String,
 }
@@ -57,6 +55,7 @@ pub fn load() -> Result<Settings> {
         database_url: required("DATABASE_URL")?,
         config: Config {
             api_url,
+            platform_url: optional("PLATFORM_URL").map(|url| url.trim_end_matches('/').to_string()),
             admin_pubkeys: list("ADMIN_PUBKEYS"),
             relay_domains: required_list("RELAY_DOMAINS")?,
             platform_key,
@@ -99,7 +98,6 @@ pub fn load() -> Result<Settings> {
             None => None,
         },
         web: WebSettings {
-            platform_url: optional("PLATFORM_URL").map(|url| url.trim_end_matches('/').to_string()),
             platform_name: optional("PLATFORM_NAME").unwrap_or_else(|| "Caravel".to_string()),
             platform_logo: optional("PLATFORM_LOGO").unwrap_or_else(|| "/caravel.png".to_string()),
         },

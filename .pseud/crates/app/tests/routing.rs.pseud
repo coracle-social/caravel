@@ -1,0 +1,42 @@
+% source=crates/app/tests/routing.rs lang=rust lines=334 sha=f2bd4e57e91a
+
+module caravel_app::tests::routing
+  -- The routing matrix: what each kind of host answers for each request, via the real dispatcher.
+
+  tests  !panic !db !lock !spawn !time !rand                            @20-334
+    const PLATFORM, API, UNKNOWN = platform.test, api.test, unknown.test  @20-22
+    const BLOB  -- a 64-hex sha256 for a blob path                      @23
+    fn files() -> Map<str, bytes>                                       @25-36
+      -- Fake embedded web files: tenant, admin and portal shells titled by name, a script and a png.
+    async fn app(core, api_url, platform_url: str?) -> Router  !panic !db !lock !spawn  @39-54
+      -- The dispatcher the binary serves, over the relays as they stand now.
+    data Fixture { core, app, relay, custom, old }                      @56-64
+      -- custom is the relay's verified custom domain and primary host; old redirects to it
+    async fn fixture(api_url) -> Fixture  !panic !db !lock !spawn !time !rand  @66-93
+      -- A relay with a verified custom domain and a host redirect, served with the platform host.
+    data Answer { status, location: str?, body: str }                   @95-99
+    impl Answer  !panic                                                 @101-113
+      fn shell(self) -> str?  -- the page's <title>, which names the shell served  @102-106
+      fn config(self) -> Value  !panic  -- the runtime config JSON written into the page  @108-112
+    async fn get(app, host, path, accept) -> Answer  !panic             @115-133
+      -- GET path on host with an Accept header, through the router.
+    const PAGE, JSON, NIP11  -- Accept values: html, application/json, application/nostr+json  @135-137
+    test each_host_answers_for_what_it_serves                           @140-246
+      platform: tenant shell at / and its routes, admin shell under /admin, files, 404 for missing
+      the shell's config carries the api url
+      API host: the API at its root, and no pages
+      primary host: the portal to browsers with the relay's id and host, NIP-11 to clients
+        assets are served; a blob path is 404 since media is off; API paths are 404
+      canonical and old hosts 308 pages to the custom domain, keeping path and query
+        they serve NIP-11 as they are
+      unknown host: 404 for pages and the API; /healthz and /domains/check answer
+        the TLS ask is 200 for a served host, 404 for anything else
+    test the_api_can_share_the_platform_host_under_a_path               @249-272
+      -- /api/plans is the API, /plans and /admin stay pages; the API at the platform's root is refused
+    test an_api_on_its_own_host_answers_with_and_without_its_path       @275-283
+      -- with API_URL's path /plan, both /plan/plans and /plans reach the API's /plans
+    test a_relay_cant_take_over_the_platforms_hosts                     @286-314
+      -- relays verified for the API's and the dashboards' hosts get neither: the API and the
+      -- tenant shell still answer there
+    test a_relay_name_cant_break_out_of_the_portal_config               @317-334
+      -- a name with a closing script tag is escaped in the page yet reads back intact in the config

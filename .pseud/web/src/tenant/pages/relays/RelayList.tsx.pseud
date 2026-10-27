@@ -1,0 +1,8 @@
+% source=web/src/tenant/pages/relays/RelayList.tsx lang=typescript lines=48 sha=72c10c914093
+
+module @/tenant/pages/relays/RelayList  !net !db !time
+  -- The tenant's relays.
+
+  pub fn RelayList()  !net !db !time                                    @11-48
+    -- The tenant's relays fuzzy-searched by name and subdomain, filtered by status, with Add Relay.
+    the status filter offers All, Active and Inactive, so delinquent relays show only under All

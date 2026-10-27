@@ -1,31 +1,37 @@
-//! The platform's domain logic and persistence, partitioned by concern. Every
-//! operation takes a [`Core`], which carries the database and the adapters.
+//! The platform's domain logic and persistence, in layers: models, the pure rules
+//! over them, the queries that read them and the commands that write them, and
+//! the subsystems that run those against a [`Core`], which carries the database,
+//! the clock, the bus and the adapters.
 
-pub mod access;
-pub mod auth;
-pub mod billing;
+// The foundations every layer builds on; only subsystems use the bus and the clock.
 pub mod blank;
 pub mod bus;
-pub mod calls;
 pub mod clock;
 pub mod config;
 pub mod crypto;
-pub mod domains;
 pub mod error;
-pub mod events;
 pub mod flag;
+
+// The layers: models, then domain, queries and commands, each using only those
+// before it.
+pub mod commands;
+pub mod domain;
+pub mod models;
+pub mod queries;
+
+// The subsystems, which run the layers against a `Core`.
+pub mod billing;
+pub mod calls;
+pub mod domains;
+pub mod events;
 pub mod hosting;
+pub mod ingest;
 pub mod management;
 pub mod media;
 pub mod memberships;
-pub mod moderation;
 pub mod notifications;
 pub mod payouts;
-pub mod plans;
-pub mod relay_policy;
-pub mod relays;
-pub mod rooms;
-pub mod tenants;
+pub mod sessions;
 pub mod transfer;
 pub mod usage;
 
@@ -68,7 +74,7 @@ impl Core {
     }
 
     /// A relay's own key, decrypted with the platform key.
-    pub fn relay_key(&self, relay: &relays::Relay) -> Result<crypto::RelayKey> {
+    pub fn relay_key(&self, relay: &models::relays::Relay) -> Result<crypto::RelayKey> {
         Ok(crypto::RelayKey::decrypt(
             &self.config.platform_key,
             &relay.secret,

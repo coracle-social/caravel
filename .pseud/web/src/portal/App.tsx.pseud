@@ -1,0 +1,8 @@
+% source=web/src/portal/App.tsx lang=typescript lines=19 sha=eb338c68d8ca
+
+module @/portal/App
+  -- The member portal's route table, at the root of its relay's host.
+
+  pub fn App()                                                          @9-19
+    -- Under PORTAL_BASE: / RelayPage, /join JoinPage, /invites/:code InvitePage,
+    -- /account AccountPage, and anything else NotFound.

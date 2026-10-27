@@ -1,0 +1,9 @@
+% source=crates/core/src/models/roles.rs lang=rust lines=15 sha=591ce1ad3601
+
+module caravel_core::models::roles
+  -- Roles: labels a relay gives some of its members, which clients show.
+
+  pub data Role                                                         @5-15
+    id, label, description: str
+    hue: i32  -- a color hue from 0 to 360, or 0 for the client's default
+    position: i32  -- where it sorts among the relay's roles, or 0 for the client's default

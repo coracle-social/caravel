@@ -1,0 +1,26 @@
+% source=crates/core/src/queries/ledger.rs lang=rust lines=137 sha=b368ede7d2e7
+
+module caravel_core::queries::ledger  !db
+  -- Reading the billing ledger.
+
+  pub async fn get_invoice(id) -> Invoice? fails  !db                   @8-15
+  pub async fn require_invoice(id) -> Invoice fails  !db                @18-22
+    -- get_invoice, failing NotFound "invoice not found" when missing.
+  pub async fn list_invoices() -> [Invoice] fails  !db                  @24-30
+    -- Every invoice, newest first.
+  pub async fn list_invoices_for_tenant(tenant_pubkey) -> [Invoice] fails  !db  @32-42
+    -- The tenant's invoices, newest first.
+  pub async fn list_open_invoices_for_tenant(tenant_pubkey) -> [Invoice] fails  !db  @46-58
+    -- The tenant's unpaid, unvoided invoices oldest first; the oldest starts the grace period.
+  pub async fn list_invoice_items_for_invoice(invoice_id) -> [InvoiceItem] fails  !db  @61-71
+    -- The items on an invoice, oldest first.
+  pub async fn list_outstanding_invoice_items_for_tenant(tenant_pubkey) -> [InvoiceItem] fails  !db  @74-86
+    -- The tenant's unclaimed, unvoided items oldest first: what the next invoice would claim.
+  pub async fn get_bolt11_for_invoice(invoice_id) -> Bolt11? fails  !db  @89-99
+    -- The invoice's latest Lightning invoice.
+  pub async fn get_checkout_for_invoice(invoice_id) -> Checkout? fails  !db  @103-113
+    -- The invoice's latest Checkout session, settled or not, so Stripe can still expire it.
+  pub async fn list_pending_checkouts_for_invoice(invoice_id) -> [Checkout] fails  !db  @116-126
+    -- The invoice's unsettled Checkout sessions, newest first, to expire once it's paid.
+  pub async fn get_outstanding_total(tenant_pubkey) -> i64 fails  !db   @129-137
+    -- The sum of the tenant's unclaimed, unvoided items, 0 when none.

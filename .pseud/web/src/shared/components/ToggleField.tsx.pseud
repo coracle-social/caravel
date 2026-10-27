@@ -1,0 +1,6 @@
+% source=web/src/shared/components/ToggleField.tsx lang=typescript lines=10 sha=27d9f25b8bfd
+
+module @/shared/components/ToggleField
+  -- A labeled switch in a definition list.
+
+  pub fn ToggleField(props: { label })  -- the label as a dt with the switch beside it as its dd  @3-10

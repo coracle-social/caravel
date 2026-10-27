@@ -1,0 +1,63 @@
+% source=crates/relay/tests/protocol.rs lang=rust lines=845 sha=88e520e2a3d1
+
+module caravel_relay::tests::protocol
+  -- The relays over a real socket, each by its own host: NIP-01, NIP-42, live delivery, the walls.
+
+  tests                                                                 @23-845
+    test the_information_document_describes_the_relay                   @24-96
+      -- NIP-11 open to any origin: owner, self, auth and restricted writes, 300s ahead
+      lists NIPs 1, 29, 42, 43, 45, 77, 86 and 9a; public policy clears both flags
+      rooms, management and push off drop 29, 86 and 9a
+    test reading_needs_authentication_and_offers_the_challenge_again    @99-110
+      -- an unauthenticated REQ gets the same AUTH challenge again, then CLOSED auth-required
+    test the_owner_publishes_and_a_subscriber_sees_it_live_and_stored   @113-146
+      -- delivered live with its signature and stored by id
+      publishing it again is accepted as duplicate and not redelivered
+    test strangers_may_neither_read_nor_write_a_private_relay           @149-177
+      -- an unauthenticated write gets the challenge again, then OK false auth-required
+      once authenticated, its writes and REQs are refused "not a member of this relay"
+    test an_answer_for_another_relay_does_not_authenticate              @180-198
+      -- an AUTH whose relay tag names another relay's host is OK false invalid
+    test relays_are_walled_off_from_each_other                          @201-221
+      -- one relay's event reaches another relay's subscriber neither live nor stored
+    test a_public_relay_strips_signatures_for_everyone_but_its_managers  @224-256
+      -- a stranger reads stored and live events without sig; the owner gets it
+    test an_anonymous_relay_serves_readers_who_never_authenticate       @259-282
+    test a_deletion_removes_the_event_from_later_reads                  @285-301
+      -- gone from reads, and republishing it is refused "this event was deleted"
+    test negentropy_reconciles_a_client_against_what_it_may_read        @304-366
+      -- an empty client needs exactly the three published ids; unauthenticated NEG-OPEN is NEG-ERR
+      a client holding all three reconciles to nothing needed, nothing to send and no next round
+    test a_closed_subscription_hears_nothing_more                       @369-386
+      -- a later REQ's round trip proves the CLOSE was handled first
+    test events_with_a_bad_id_or_signature_are_refused                  @389-410
+      -- tampered content and a zero sig are each OK false invalid, and nothing is stored
+    test a_count_is_admitted_and_filtered_like_a_subscription           @413-500
+      -- a private room's posts count for its member (5) but not for another member (3)
+      filters are a union counted once, and a limit doesn't cap a count
+      a non-member's COUNT is CLOSED "not a member"; an anonymous one gets AUTH, then CLOSED
+    fn count(client, filters) -> Value  -- send COUNT "c" with filters, return the answer  @503-508
+    test a_request_holds_at_most_max_filters_filters                    @511-542
+      -- with max_filters 2, a REQ or COUNT of three is CLOSED "blocked: …"; a COUNT of two counts
+    test a_change_published_before_watching_starts_is_applied           @545-570
+      -- a relay created after load but before watch starts is served once watch runs
+    test a_limit_of_zero_serves_nothing_stored_but_listens              @573-591
+    test several_filters_are_answered_together_without_duplicates       @594-619
+      -- a note matching two of three filters is served once, alongside the reaction
+    test ephemeral_events_are_delivered_but_not_stored                  @622-638
+    test a_deactivated_relay_closes_its_connections_and_stops_answering  @641-655
+      -- after deactivate_relay and a reload, the socket is dropped and the host no longer resolves
+    test a_verified_custom_domain_and_the_canonical_host_both_serve_the_relay  @658-694
+      -- both hosts resolve with the custom domain as primary; a page on the canonical one is 308
+      a client authenticates on each host, naming that host
+    test a_custom_domain_stays_with_the_relay_that_verified_it          @697-743
+      -- two relays claim one domain; verifying the second returns false and it resolves to the first
+      the second keeps its pending claim through other changes; a third's claim is domain-exists
+    test renaming_a_relay_withdraws_its_custom_domains_verification     @746-769
+      -- a new subdomain leaves the domain unverified and unserved, and the new host served
+    test shutting_down_closes_every_connection_as_going_away            @772-780
+      -- cancelling the shutdown token closes an open socket with 1001
+    test a_request_to_vanish_must_name_a_host_the_relay_answers_on      @783-812
+      -- an unverified custom domain "names another relay"; the canonical host with :443 is accepted
+    test a_browser_may_preflight_any_relay_endpoint                     @815-845
+      -- OPTIONS /upload allows any origin, PUT, and the authorization and x-sha-256 headers

@@ -1,0 +1,27 @@
+% source=crates/core/src/models/plans.rs lang=rust lines=93 sha=26735a024623
+
+module caravel_core::models::plans
+  -- The plans relays are sold on.
+
+  ~ plan ids PLAN_FREE "free", PLAN_BASIC "basic", PLAN_GROWTH "growth"; never reused or repriced  @6-10
+  pub const GB = 1_000_000_000  -- decimal, the unit storage is sold in  @12-13
+  pub const SECONDS_PER_HOUR = 3600  -- the participant-hour A/V call time is sold in  @15-16
+  pub data Plan                                                         @18-37
+    id, name: str
+    amount: i64
+    members: i64?  -- the member limit, none for unlimited
+    blossom, livekit: bool
+    storage_gb: i64  -- GB amount covers; a period bills each whole GB its peak stood above
+    storage_overage: i64  -- minor units per GB per period past storage_gb
+    av_hours: i64  -- participant hours amount covers per period (four on a half hour spend two)
+    av_overage: i64  -- minor units per whole hour past av_hours
+
+  impl Plan                                                             @39-44
+    pub fn is_paid(self) -> bool  -- amount > 0                         @40-43
+
+  pub fn list_plans() -> [Plan]                                         @46-89
+    -- The catalog: paid tiers sell an allowance, not a cap, priced so outgrowing Basic meets Growth.
+    Free: 0, 10 members, neither blossom nor livekit, no allowance      @52-63
+    Basic: 500, 100 members, both, 1 GB then 200 per GB, 30 hours then 10 per hour  @64-75
+    Growth: 2500, no member limit, both, 10 GB then 75 per GB, 300 hours then 4 per hour  @76-87
+  pub fn get_plan(plan_id) -> Plan?                                     @91-93

@@ -7,6 +7,7 @@ import PageContainer from "@/shared/components/PageContainer"
 import SearchInput from "@/shared/components/SearchInput"
 import { fuzzySearch } from "@/shared/lib/search"
 import { useProfileMetadataMap } from "@/shared/lib/profiles"
+import { loaded } from "@/shared/lib/resource"
 
 const TYPE_FILTERS = [
   {value: "all", label: "All"},
@@ -35,13 +36,6 @@ const startOfRange = (range: RangeValue) => {
 const itemKey = (item: ModerationItem) =>
   item.type === "upload" ? `${item.relay_id}:${item.data.sha256}` : `${item.relay_id}:${item.data.id}`
 
-// Relay machinery rather than content: membership, roles, relay and group lists, and NIP-29 management.
-const CONTROL_KINDS = new Set([8000, 8001, 10002, 10009, 13534])
-
-const isControlEvent = (item: ModerationItem) =>
-  item.type === "event" &&
-  (CONTROL_KINDS.has(item.data.kind) || (item.data.kind >= 9000 && item.data.kind <= 9022))
-
 export default function AdminModeration() {
   const [items, setItems] = createSignal<ModerationItem[]>([])
   const [loading, setLoading] = createSignal(false)
@@ -56,11 +50,8 @@ export default function AdminModeration() {
   // Bumped when the window changes, so a response for the old one is dropped.
   let generation = 0
 
-  const relaysById = createMemo(() => new Map((relays() ?? []).map(relay => [relay.id, relay])))
-
-  // Control events stay in `items` for paging and dedupe, and are only hidden.
-  const visible = createMemo(() => items().filter(item => !isControlEvent(item)))
-  const metadata = useProfileMetadataMap(() => uniq(visible().map(item => item.data.pubkey)))
+  const relaysById = createMemo(() => new Map((loaded(relays) ?? []).map(relay => [relay.id, relay])))
+  const metadata = useProfileMetadataMap(() => uniq(items().map(item => item.data.pubkey)))
 
   const loadMore = async () => {
     if (loading() || exhausted()) return
@@ -71,14 +62,14 @@ export default function AdminModeration() {
     setError(undefined)
 
     try {
-      const loaded = items()
-      const oldest = loaded[loaded.length - 1]
+      const existing = items()
+      const oldest = existing[existing.length - 1]
       const page = await listModeration({since: since(), until: oldest?.seen_at})
 
       if (current !== generation) return
 
       // `until` is inclusive, so a page repeats the items that share its last second.
-      const seen = new Set(loaded.map(itemKey))
+      const seen = new Set(existing.map(itemKey))
       const fresh = page.items.filter(item => !seen.has(itemKey(item)))
 
       setItems(prev => [...prev, ...fresh])
@@ -112,7 +103,7 @@ export default function AdminModeration() {
   // Filters what has loaded, so paging back can find more matches.
   const filtered = createMemo(() => {
     const type = typeFilter()
-    const matching = type === "all" ? visible() : visible().filter(item => item.type === type)
+    const matching = type === "all" ? items() : items().filter(item => item.type === type)
     const q = query().trim()
 
     if (!q) return matching

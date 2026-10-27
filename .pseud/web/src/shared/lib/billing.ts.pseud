@@ -1,0 +1,24 @@
+% source=web/src/shared/lib/billing.ts lang=typescript lines=111 sha=2dacd4947122
+
+module @/shared/lib/billing
+  -- The signed-in tenant's billing status, and the one billing prompt to show for it.
+
+  pub type BillingPromptKind = churned | pay_invoice | update_method | setup_autopay  @7
+  pub type Severity = error | warn | info                               @9
+  pub data BillingPrompt { kind, severity, message }                    @11-15
+  pub data BillingStatusSnapshot { tenant?, openInvoice?, hasPaidSubscription }  @17-21
+  pub fn useBillingStatus()                                             @23-42
+    -- The billing resources from state, with what they imply, and autopay as autopayBilling.
+    openInvoice is the oldest payable invoice, which collection charges first
+    hasPaidSubscription when some active relay is on a plan whose amount is above zero
+    loading while the tenant, its invoices or its draft load
+  pub fn activeBillingPrompt(s, opts { suppressInline? }) -> BillingPrompt?  @44-96
+    -- The first prompt that applies; `suppressInline` drops the invoice and autopay ones.
+    none without a tenant
+    churned -> error: past due, some relays paused; add a payment method to restore service
+    an open invoice, not suppressed -> warn pay_invoice, even with autopay, which may not have run
+    NWC or card last failed -> warn update_method, naming the wallet when NWC failed
+    a paid subscription without autopay or an open invoice, not suppressed -> info setup_autopay
+  pub type AccountStatus = active | inactive | delinquent               @98
+  pub fn accountStatus(s) -> AccountStatus                              @100-111
+    -- Delinquent once churned; active with a paid relay, an open invoice or autopay; else inactive.

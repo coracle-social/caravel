@@ -1,8 +1,10 @@
 //! The workspace's layering, checked against `cargo metadata`: each crate depends
 //! only on the layers below it, and third-party protocol clients stay in the layer
-//! that owns them.
+//! that owns them. Above the core, state changes only through its subsystems.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
+use std::path::Path;
 use std::process::Command;
 
 use serde_json::Value;
@@ -27,7 +29,8 @@ const LAYERS: [(&str, &[&str]); 6] = [
 ];
 
 /// Third-party crates and the only workspace crates that may depend on them.
-const CONFINED: [(&str, &[&str]); 6] = [
+const CONFINED: [(&str, &[&str]); 7] = [
+    ("sqlx", &["caravel-db", "caravel-core"]),
     ("reqwest", &["caravel-adapters"]),
     ("tokio-tungstenite", &["caravel-adapters"]),
     ("coracle-kinds", &["caravel-adapters"]),
@@ -97,6 +100,32 @@ fn protocol_clients_stay_in_their_layer() {
                 assert!(
                     owners.contains(&name.as_str()),
                     "{name} may not depend on {confined}"
+                );
+            }
+        }
+    }
+}
+
+/// The crates above the core may read through its queries, but change state only
+/// through its subsystems, which own their transactions and tell the bus: their
+/// code never names the core's commands or a way to open a transaction.
+#[test]
+fn only_core_subsystems_change_state() {
+    let crates = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    for name in ["relay", "api", "app"] {
+        for entry in fs::read_dir(crates.join(name).join("src")).unwrap() {
+            let path = entry.unwrap().path();
+            let text = fs::read_to_string(&path).unwrap();
+            let words: BTreeSet<&str> = text
+                .lines()
+                .filter(|line| !line.trim_start().starts_with("//"))
+                .flat_map(|line| line.split(|c: char| !c.is_alphanumeric() && c != '_'))
+                .collect();
+            for word in ["commands", "with_tx", "begin", "try_begin"] {
+                assert!(
+                    !words.contains(word),
+                    "{} changes state outside the core's subsystems: {word}",
+                    path.display()
                 );
             }
         }

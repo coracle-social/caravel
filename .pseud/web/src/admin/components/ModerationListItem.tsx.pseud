@@ -1,0 +1,22 @@
+% source=web/src/admin/components/ModerationListItem.tsx lang=typescript lines=161 sha=aa3477c63177
+
+module @/admin/components/ModerationListItem  !net !db !time
+  -- One item of the admin moderation feed: an event or an upload, its author and its relay.
+
+  fn FileIcon()  -- a generic file glyph                                @12-19
+  fn UploadPreview(props: { upload, relayId })  !net !db !time          @22-79
+    -- A thumbnail of an image upload, or a file tile when its type rules that out or it fails.
+    skip fetching when the upload has a type that isn't image/*         @25
+    when the tile first comes within 300px of view, stop observing      @40-44
+      fetch the blob through the admin proxy as an object URL           @46
+      if the row was disposed meanwhile, revoke the URL instead of keeping it  @49
+      on failure show the file tile                                     @54
+    revoke the object URL and stop observing on cleanup                 @31-34
+    link to the object URL once loaded, else to the blob on its relay, which only members open  @68
+  type ModerationListItemProps = { item, relay?, metadata? }            @81-85
+  pub fn ModerationListItem(props)  !time                               @87-161
+    -- The author's avatar, profile name and npub, a label (Upload or the event kind's) and age,
+    -- and a footer linking to the relay's admin page by name and host, or by id.
+    a kind 0 event says "<name> updated their profile"                  @117-122
+    any other event shows its content with its tags, or "No content"    @124-131
+    an upload shows its preview, its sha256 linking to its url, and its type and size  @136-150

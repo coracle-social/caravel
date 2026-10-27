@@ -9,7 +9,7 @@ use axum::Router;
 use axum::extract::{Request, State};
 use axum::http::{Method, StatusCode, Uri, header};
 use axum::response::{IntoResponse, Redirect, Response};
-use caravel_core::relays;
+use caravel_core::domain;
 use caravel_relay::{Relays, Route};
 use tower::ServiceExt;
 
@@ -74,10 +74,7 @@ async fn dispatch(State(dispatch): State<Dispatch>, request: Request) -> Respons
         _ => {}
     }
 
-    if let Some(route) = dispatch.relays.resolve(&host) {
-        return relay_host(&dispatch, route, request).await;
-    }
-
+    // The platform's own hosts come before relays', so no relay can take one over.
     let prefix = &dispatch.hosts.api_prefix;
     let on_platform = dispatch.hosts.platform.as_deref() == Some(host.as_str());
     if host == dispatch.hosts.api && (!on_platform || is_under(&path, prefix)) {
@@ -86,6 +83,10 @@ async fn dispatch(State(dispatch): State<Dispatch>, request: Request) -> Respons
 
     if on_platform {
         return platform_host(&dispatch, &request);
+    }
+
+    if let Some(route) = dispatch.relays.resolve(&host) {
+        return relay_host(&dispatch, route, request).await;
     }
 
     StatusCode::NOT_FOUND.into_response()
@@ -152,8 +153,9 @@ fn is_under(path: &str, prefix: &str) -> bool {
     prefix.is_empty() || path == prefix || path.starts_with(&format!("{prefix}/"))
 }
 
+/// The request with `prefix` dropped from its path, if the path is under it.
 fn strip_prefix(mut request: Request, prefix: &str) -> Request {
-    if prefix.is_empty() {
+    if prefix.is_empty() || !is_under(request.uri().path(), prefix) {
         return request;
     }
 
@@ -189,5 +191,5 @@ fn request_host(request: &Request) -> String {
                 .map(|authority| authority.as_str())
         })
         .unwrap_or_default();
-    relays::url_host(host)
+    domain::relays::url_host(host)
 }

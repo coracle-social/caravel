@@ -1,4 +1,4 @@
-import { createMemo, createResource, createSignal, Show } from "solid-js"
+import { createEffect, createMemo, createResource, createSignal, Show } from "solid-js"
 import { useSearchParams } from "@solidjs/router"
 import PromptBanner, { type PromptBannerAction } from "@/shared/components/PromptBanner"
 import PaymentDialog from "@/shared/components/PaymentDialog"
@@ -6,7 +6,9 @@ import PaymentSetup from "@/shared/components/PaymentSetup"
 import { getInvoice, type Invoice } from "@/shared/lib/api"
 import { activeBillingPrompt, useBillingStatus, type BillingPromptKind } from "@/shared/lib/billing"
 import { account } from "@/shared/lib/account"
-import { billingFlowActive } from "@/shared/lib/state"
+import { formatError } from "@/shared/lib/format"
+import { loaded } from "@/shared/lib/resource"
+import { billingFlowActive, setToastMessage } from "@/shared/lib/state"
 
 // The banner asking a tenant to sort out billing, and its dialogs. A
 // `?invoice=<id>` link, as billing DMs send, opens that invoice's.
@@ -25,8 +27,12 @@ export default function BillingPrompts() {
 
   // A resource keeps its value after its source clears, so this reads the param too.
   const deepLinkedInvoice = createMemo(() =>
-    searchParams.invoice ? deepLinked() : undefined,
+    searchParams.invoice ? loaded(deepLinked) : undefined,
   )
+
+  createEffect(() => {
+    if (deepLinked.error) setToastMessage(formatError(deepLinked.error, "Failed to load the invoice"))
+  })
 
   const prompt = createMemo(() =>
     activeBillingPrompt(
@@ -56,12 +62,7 @@ export default function BillingPrompts() {
     const open = status.openInvoice()
     switch (p.kind) {
       case "churned":
-        return open
-          ? [
-              { label: "Pay now", onClick: () => setPayInvoice(open) },
-              { label: "Update payment method", onClick: () => openSetup("nwc") },
-            ]
-          : [{ label: "Update payment method", onClick: () => openSetup("nwc") }]
+        return [{ label: "Update payment method", onClick: () => openSetup("nwc") }]
       case "pay_invoice":
         return open ? [{ label: "Pay now", onClick: () => setPayInvoice(open) }] : []
       case "update_method":

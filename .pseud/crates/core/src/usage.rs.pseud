@@ -1,0 +1,9 @@
+% source=crates/core/src/usage.rs lang=rust lines=36 sha=bf6986f7011d
+
+module caravel_core::usage  !db !time !rand
+  -- Metering usage: hourly readings of each paid relay's storage and A/V call time.
+
+  pub async fn sample_usage(core) fails  !db !time !rand                @11-36
+    -- Record a reading for every relay that is served, on a paid plan, and has Blossom or LiveKit on.
+    for each such relay, insert a sample of its stored bytes and call clock, stamped now
+    a failed read or insert ends the pass, so later relays go unread this hour

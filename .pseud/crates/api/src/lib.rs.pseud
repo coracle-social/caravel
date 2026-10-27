@@ -1,0 +1,34 @@
+% source=crates/api/src/lib.rs lang=rust lines=151 sha=beed32d510e9
+
+module caravel_api
+  -- The headless JSON API for the dashboards and clients such as Flotilla: handlers load what a
+  -- request names, authorize the actor against it with the core's rules, then call the core.
+
+  data ReturnTo { return_url? }  -- where a request asks for its caller to be sent back to  @20-22
+
+  pub fn router(core) -> Router  -- every route in routes, at the root of wherever it is mounted  @25-32
+
+  pub fn routes() -> [(path, MethodRouter)]                             @35-151
+    -- Each route's path and its handlers by method, public so tests can check every route.
+    -- By the module handling it:
+    -- public: GET /plans, GET /plans/{id}, GET /identity, GET /domains/check, POST, DELETE /session
+    -- admin: GET /tenants, GET /relays, GET /invoices, DELETE /sessions/{pubkey}, GET /moderation
+    -- admin: POST /tenants/{pubkey}/ban, POST /tenants/{pubkey}/unban, POST /tenants/{pubkey}/delete
+    -- admin: GET /moderation/blob/{relay_id}/{sha256}
+    -- tenant: POST /tenants, GET, PUT /tenants/{pubkey}, GET /tenants/{pubkey}/relays
+    -- tenant: GET /tenants/{pubkey}/invoices, GET /tenants/{pubkey}/invoices/draft
+    -- tenant: GET /tenants/{pubkey}/invoices/draft/items, POST /tenants/{pubkey}/reconcile
+    -- tenant: GET /tenants/{pubkey}/stripe/session, GET /tenants/{pubkey}/payouts
+    -- tenant: POST /tenants/{pubkey}/payouts/onboard, POST /tenants/{pubkey}/payouts/dashboard
+    -- tenant: POST /relays, GET, PUT /relays/{id}, PUT, DELETE /relays/{id}/members/{pubkey}
+    -- tenant: GET /relays/{id}/memberships, GET /relays/{id}/activity, GET /relays/{id}/export
+    -- tenant: POST /relays/{id}/deactivate, POST /relays/{id}/reactivate, POST /relays/{id}/purge
+    -- tenant: POST /relays/{id}/erase, POST /relays/{id}/import
+    -- tenant: GET /invoices/{id}, GET /invoices/{id}/items, POST /invoices/{id}/reconcile
+    -- tenant: POST /invoices/{id}/bolt11, POST /invoices/{id}/checkout
+    -- management: GET /relays/{id}/members, GET /relays/{id}/rooms, GET /relays/{id}/events
+    -- management: POST /relays/{id}/management, POST /relays/{id}/rooms/moderate
+    -- member: GET /account, GET /relays/{id}/offer, GET /relays/{id}/membership
+    -- member: POST /relays/{id}/membership/checkout, POST /relays/{id}/membership/reconcile
+    -- member: POST /relays/{id}/membership/cancel, POST /relays/{id}/invites, GET /invites/{code}
+    -- member: POST /invites/{code}/reconcile

@@ -11,8 +11,10 @@ use axum::http::StatusCode;
 use axum::routing::post;
 use axum::{Json, Router};
 use caravel_adapters::outbound::Outbound;
-use caravel_core::relays::Relay;
-use caravel_core::testing::{self, sign_event};
+use caravel_core::models::kinds;
+use caravel_core::models::relays::Relay;
+use caravel_core::testing;
+use caravel_core::testing::sign_event;
 use common::*;
 use coracle_lib::events::Event;
 use coracle_lib::keys::SecretKey;
@@ -229,27 +231,80 @@ async fn a_matching_event_is_pushed_to_other_members() {
     assert!(next(&mut pushed).await.is_none());
 }
 
-// zooid pushed to any subscriber; a relay's events only reach those who may read it.
+// The relay's own events, whether a NIP-86 call or a client's event led to them.
+#[tokio::test]
+async fn the_relays_own_events_are_pushed_like_a_members() {
+    let server = Server::start().await;
+    let (relay, owner) = server.relay().await;
+    let (url, mut pushed) = callback(StatusCode::OK).await;
+
+    let mut subscriber = server.connect(&relay.canonical_host()).await;
+    subscriber.auth(&owner, server.now()).await;
+    let filter = json!({"kinds": [kinds::RELAY_ADD_MEMBER, kinds::RELAY_REMOVE_MEMBER]});
+    assert!(
+        subscriber
+            .publish(&subscription(&server, &relay, &owner, "a", &url, filter))
+            .await
+            .0
+    );
+
+    let joined = member(&server, &relay, &owner).await;
+    let payload = next(&mut pushed).await.expect("no push for the addition");
+    assert_eq!(payload["event"]["kind"], kinds::RELAY_ADD_MEMBER);
+    assert_eq!(payload["event"]["pubkey"], relay.pubkey);
+
+    let mut client = server.connect(&relay.canonical_host()).await;
+    client.auth(&joined, server.now()).await;
+    let leave = sign_event(&joined, kinds::RELAY_LEAVE, "", &[], server.now());
+    assert!(client.publish(&leave).await.0);
+    let payload = next(&mut pushed).await.expect("no push for the removal");
+    assert_eq!(payload["event"]["kind"], kinds::RELAY_REMOVE_MEMBER);
+    assert_eq!(payload["event"]["pubkey"], relay.pubkey);
+}
+
+// zooid took subscriptions from anyone and pushed to every one; a relay's events
+// only reach those who may read it.
 #[tokio::test]
 async fn an_outsider_is_not_pushed_a_closed_relays_events() {
     let server = Server::start().await;
     let (relay, owner) = server.relay().await;
     let outsider = SecretKey::generate();
     let (url, mut pushed) = callback(StatusCode::OK).await;
+    let filter = json!({"kinds": [1]});
 
+    let mut stranger = server.connect(&relay.canonical_host()).await;
+    stranger.auth(&outsider, server.now()).await;
+    let event = subscription(&server, &relay, &outsider, "a", &url, filter.clone());
+    assert_eq!(
+        stranger.publish(&event).await,
+        (
+            false,
+            "restricted: you are not a member of this relay".to_string()
+        )
+    );
+
+    // A member's subscription outlives their membership, but is pushed nothing after.
+    let former = member(&server, &relay, &owner).await;
     let mut subscriber = server.connect(&relay.canonical_host()).await;
-    subscriber.auth(&outsider, server.now()).await;
-    let event = subscription(&server, &relay, &outsider, "a", &url, json!({"kinds": [1]}));
+    subscriber.auth(&former, server.now()).await;
+    let event = subscription(&server, &relay, &former, "a", &url, filter);
     assert!(subscriber.publish(&event).await.0);
 
     let mut writer = server.connect(&relay.canonical_host()).await;
     writer.auth(&owner, server.now()).await;
-    assert!(
-        writer
-            .publish(&sign_event(&owner, 1, "members only", &[], server.now()))
-            .await
-            .0
-    );
+    let note = |content: &str| sign_event(&owner, 1, content, &[], server.now());
+    assert!(writer.publish(&note("while a member")).await.0);
+    assert!(next(&mut pushed).await.is_some());
+
+    server
+        .manage(
+            &relay.canonical_host(),
+            &owner,
+            "unallowpubkey",
+            json!([former.public_key().to_hex()]),
+        )
+        .await;
+    assert!(writer.publish(&note("members only")).await.0);
     assert!(next(&mut pushed).await.is_none());
 }
 

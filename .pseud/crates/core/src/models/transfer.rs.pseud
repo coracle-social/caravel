@@ -1,0 +1,27 @@
+% source=crates/core/src/models/transfer.rs lang=rust lines=71 sha=de8bac46087b
+
+module caravel_core::models::transfer
+  -- Moving a relay's events in and out as JSONL: what an import reports and what a dump line holds.
+
+  pub const MAX_PROBLEMS = 100  -- problems reported one by one; past this only counted  @7-8
+  pub data ImportProblem { line: usize?, event_id: str?, message }      @10-19
+    -- A line, its event, or a room that didn't become a stored event; absent fields unserialized.
+  pub data ImportResult                                                 @21-34
+    -- What an import did; an event already held counts as imported, so reimports report the same.
+    imported, invalid: usize
+    skipped: usize  -- events describing the source relay's own state, which this relay writes
+    rooms_rebuilt: usize
+    problems: [ImportProblem]
+    ~ skipped, rooms_rebuilt and problems are left out of JSON when empty
+  fn is_zero(value) -> bool                                             @36-38
+
+  impl ImportResult                                                     @40-62
+    pub fn fail(mut self, problem)  -- count it invalid and note it     @41-44
+    pub fn note(mut self, problem)  -- keep it only while under MAX_PROBLEMS  @46-50
+    pub fn add(mut self, other)  -- sum other's counts and note its problems  @52-61
+
+  pub enum Line  -- what one line of a dump holds                       @64-71
+    Blank
+    Invalid(ImportProblem)
+    SourceState  -- an event describing the source relay's own state
+    Event(Event)

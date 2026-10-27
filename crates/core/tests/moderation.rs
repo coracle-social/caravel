@@ -5,11 +5,11 @@
 mod common;
 
 use anyhow::Result;
-use caravel_core::events::kinds;
-use caravel_core::media;
-use caravel_core::moderation::{self, Subject};
-use caravel_core::testing::{self, sign_event};
-use caravel_core::{Core, events};
+use caravel_core::models::kinds;
+use caravel_core::models::moderation::Subject;
+use caravel_core::models::rooms;
+use caravel_core::testing::sign_event;
+use caravel_core::{Core, commands, queries, testing};
 use common::*;
 use coracle_lib::events::Event;
 use coracle_lib::keys::SecretKey;
@@ -19,7 +19,7 @@ async fn save(core: &Core, relay_id: &str, events: &[Event]) -> Result<()> {
     core.db
         .with_tx(async |conn| {
             for event in events {
-                events::save_event(&mut *conn, relay_id, event, now).await?;
+                commands::events::save_event(&mut *conn, relay_id, event, now).await?;
             }
             Ok::<_, caravel_core::Error>(())
         })
@@ -31,7 +31,8 @@ async fn upload(core: &Core, relay_id: &str, sha256: &str, pubkey: &str) -> Resu
     let now = core.clock.now();
     core.db
         .with_tx(async |conn| {
-            media::record_upload(conn, relay_id, sha256, "image/png", 10, pubkey, now).await
+            commands::media::record_upload(conn, relay_id, sha256, "image/png", 10, pubkey, now)
+                .await
         })
         .await?;
     Ok(())
@@ -63,7 +64,13 @@ async fn the_feed_holds_moderated_events_and_uploads_newest_first() -> Result<()
     upload(&core, &relay.id, "abc", &author.public_key().to_hex()).await?;
     upload(&core, &unmoderated.id, "def", &author.public_key().to_hex()).await?;
 
-    let page = moderation::list_moderation(&core, Some(start), Some(start + 10)).await?;
+    let page = queries::moderation::list_moderation(
+        core.db.pool(),
+        &core.config.admin_pubkeys,
+        Some(start),
+        Some(start + 10),
+    )
+    .await?;
     assert!(!page.truncated);
     let seen: Vec<i64> = page.items.iter().map(|item| item.seen_at).collect();
     assert_eq!(seen, vec![start + 10, start]);
@@ -102,7 +109,13 @@ async fn the_feed_window_is_inclusive_at_both_ends() -> Result<()> {
         .await?;
     }
 
-    let page = moderation::list_moderation(&core, Some(start + 1), Some(start + 2)).await?;
+    let page = queries::moderation::list_moderation(
+        core.db.pool(),
+        &core.config.admin_pubkeys,
+        Some(start + 1),
+        Some(start + 2),
+    )
+    .await?;
     let seen: Vec<i64> = page.items.iter().map(|item| item.seen_at).collect();
     assert_eq!(seen, vec![start + 2, start + 1]);
     Ok(())
@@ -122,8 +135,65 @@ async fn a_full_page_says_it_was_truncated() -> Result<()> {
         .collect();
     save(&core, &relay.id, &notes).await?;
 
-    let page = moderation::list_moderation(&core, Some(start), Some(start)).await?;
+    let page = queries::moderation::list_moderation(
+        core.db.pool(),
+        &core.config.admin_pubkeys,
+        Some(start),
+        Some(start),
+    )
+    .await?;
     assert_eq!(page.items.len(), 1000);
     assert!(page.truncated);
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_feed_leaves_out_what_runs_the_relay() -> Result<()> {
+    let core = core().await;
+    let start = day(2033, 1, 1);
+    let author = SecretKey::generate();
+    let tenant = create_tenant(&core).await?;
+    let relay = create_relay(&core, &tenant, "free").await?;
+    let key = core.relay_key(&relay)?;
+
+    travel(&core, start);
+    let note = sign_event(&author, 1, "note", &[], start);
+    let room_tag = vec!["d".to_string(), "lobby".to_string()];
+    save(
+        &core,
+        &relay.id,
+        &[
+            note.clone(),
+            key.sign(rooms::kinds::METADATA, vec![room_tag], "", start),
+            key.sign(kinds::RELAY_ROLE, vec![], "", start),
+            sign_event(
+                &author,
+                rooms::kinds::JOIN_REQUEST,
+                "",
+                &[&["h", "lobby"]],
+                start,
+            ),
+            sign_event(&author, kinds::RELAY_LIST, "", &[], start),
+            sign_event(&author, kinds::ROOM_LIST, "", &[], start),
+        ],
+    )
+    .await?;
+
+    let page = queries::moderation::list_moderation(
+        core.db.pool(),
+        &core.config.admin_pubkeys,
+        Some(start),
+        Some(start),
+    )
+    .await?;
+    let ids: Vec<String> = page
+        .items
+        .iter()
+        .filter_map(|item| match &item.subject {
+            Subject::Event(event) => event["id"].as_str().map(String::from),
+            Subject::Upload(_) => None,
+        })
+        .collect();
+    assert_eq!(ids, vec![note.id.to_hex()]);
     Ok(())
 }

@@ -3,9 +3,9 @@
 
 use axum::Json;
 use axum::extract::{Path, State};
-use caravel_core::memberships::{self, Membership, MembershipStatus};
-use caravel_core::relays::{self, Relay};
-use caravel_core::{Core, Error};
+use caravel_core::models::memberships::{Membership, MembershipStatus};
+use caravel_core::models::relays::Relay;
+use caravel_core::{Core, Error, memberships, queries};
 use serde::{Deserialize, Serialize};
 
 use crate::ReturnTo;
@@ -30,7 +30,7 @@ impl From<&Membership> for MembershipView {
 
 /// A relay that sells memberships, or a 404.
 async fn load_selling_relay(core: &Core, id: &str) -> Result<Relay, Error> {
-    relays::get_relay(core.db.pool(), id)
+    queries::relays::get_relay(core.db.pool(), id)
         .await?
         .filter(Relay::charges_members)
         .ok_or(Error::NotFound("relay not found"))
@@ -46,9 +46,12 @@ pub struct ReconcileRequest {
 pub async fn get_account(State(core): State<Core>, Authed(actor): Authed) -> ApiResult {
     let mut entries = Vec::new();
     for membership in
-        memberships::list_live_memberships_for_pubkey(core.db.pool(), &actor.pubkey).await?
+        queries::memberships::list_live_memberships_for_pubkey(core.db.pool(), &actor.pubkey)
+            .await?
     {
-        if let Some(relay) = relays::get_relay(core.db.pool(), &membership.relay_id).await? {
+        if let Some(relay) =
+            queries::relays::get_relay(core.db.pool(), &membership.relay_id).await?
+        {
             entries.push(serde_json::json!({
                 "offer": memberships::get_offer(&core, &relay).await?,
                 "membership": MembershipView::from(&membership),
@@ -72,7 +75,7 @@ pub async fn get_membership(
 ) -> ApiResult {
     let relay = load_selling_relay(&core, &id).await?;
     let membership =
-        memberships::get_live_membership(core.db.pool(), &relay.id, &actor.pubkey).await?;
+        queries::memberships::get_live_membership(core.db.pool(), &relay.id, &actor.pubkey).await?;
     ok(serde_json::json!({ "membership": membership.as_ref().map(MembershipView::from) }))
 }
 
@@ -98,9 +101,10 @@ pub async fn reconcile_checkout(
     Json(request): Json<ReconcileRequest>,
 ) -> ApiResult {
     let relay = load_selling_relay(&core, &id).await?;
-    let membership = memberships::get_live_membership(core.db.pool(), &relay.id, &actor.pubkey)
-        .await?
-        .ok_or(Error::NotFound("membership not found"))?;
+    let membership =
+        queries::memberships::get_live_membership(core.db.pool(), &relay.id, &actor.pubkey)
+            .await?
+            .ok_or(Error::NotFound("membership not found"))?;
     let paid = memberships::reconcile_checkout(&core, &membership, &request.checkout).await?;
     ok(serde_json::json!({ "paid": paid }))
 }
@@ -140,7 +144,7 @@ pub async fn reconcile_invite(
     Path(code): Path<String>,
     Json(request): Json<ReconcileRequest>,
 ) -> ApiResult {
-    let membership = memberships::get_membership_by_invite(core.db.pool(), &code)
+    let membership = queries::memberships::get_membership_by_invite(core.db.pool(), &code)
         .await?
         .ok_or(Error::NotFound("invite not found"))?;
     let paid = memberships::reconcile_checkout(&core, &membership, &request.checkout).await?;

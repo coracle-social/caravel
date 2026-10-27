@@ -1,0 +1,5 @@
+% source=crates/adapters/src/lib.rs lang=rust lines=13 sha=3bab309a3882
+
+module caravel_adapters
+  -- Clients for systems outside the database; each speaks one protocol and returns plain values.
+  ~ declares bitcoin, blobs, dns, livekit, nostr, outbound, robot, stripe, wallet  @5-13

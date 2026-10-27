@@ -1,0 +1,14 @@
+% source=crates/core/src/commands/methods.rs lang=rust lines=77 sha=1544c9e16b08
+
+module caravel_core::commands::methods  !db
+  -- Granting NIP-86 methods to pubkeys, and taking them back.
+
+  pub async fn grant_method(conn, key, relay_id, tenant_pubkey, pubkey, method, now) -> [Event] fails  !db  @14-51
+    -- Grant a pubkey a NIP-86 method, making it a member first.
+    fail invalid "unknown-method" unless method is in MANAGED_METHODS
+    fail conflict "implicit-methods" for the owner or relay's own key, who hold every method
+    commands::members::admit as Manual
+    insert into method_grant, doing nothing if already granted
+    return what admit published
+  pub async fn revoke_method(relay_id, tenant_pubkey, relay_pubkey, pubkey, method) fails  !db  @55-77
+    -- Delete the grant; fail conflict "implicit-methods" for the owner or the relay's own key.

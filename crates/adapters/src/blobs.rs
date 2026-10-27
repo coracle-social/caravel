@@ -1,6 +1,7 @@
 //! Where uploaded media lives: a directory on disk, an S3 bucket, or memory for
 //! tests. Blobs are keyed by path, and read back in whole or by byte range.
 
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -12,6 +13,10 @@ use object_store::local::LocalFileSystem;
 use object_store::memory::InMemory;
 use object_store::path::Path;
 use object_store::{GetOptions, GetRange, ObjectStore, PutPayload};
+use tokio::sync::{Mutex, MutexGuard};
+
+/// How many locks the keys share.
+const LOCKS: usize = 64;
 
 /// A stream of bytes being read.
 pub type ByteStream =
@@ -30,6 +35,7 @@ pub struct S3Config {
 #[derive(Clone)]
 pub struct Blobs {
     store: Arc<dyn ObjectStore>,
+    locks: Arc<[Mutex<()>]>,
 }
 
 /// A blob being read: its whole size, and the bytes asked for.
@@ -40,11 +46,16 @@ pub struct BlobRead {
 }
 
 impl Blobs {
+    fn new(store: Arc<dyn ObjectStore>) -> Self {
+        Self {
+            store,
+            locks: (0..LOCKS).map(|_| Mutex::new(())).collect(),
+        }
+    }
+
     pub fn local(dir: &str) -> Result<Self> {
         std::fs::create_dir_all(dir)?;
-        Ok(Self {
-            store: Arc::new(LocalFileSystem::new_with_prefix(dir)?),
-        })
+        Ok(Self::new(Arc::new(LocalFileSystem::new_with_prefix(dir)?)))
     }
 
     pub fn s3(config: &S3Config) -> Result<Self> {
@@ -59,15 +70,19 @@ impl Blobs {
                 .with_allow_http(config.endpoint.starts_with("http://"));
         }
 
-        Ok(Self {
-            store: Arc::new(builder.build()?),
-        })
+        Ok(Self::new(Arc::new(builder.build()?)))
     }
 
     pub fn memory() -> Self {
-        Self {
-            store: Arc::new(InMemory::new()),
-        }
+        Self::new(Arc::new(InMemory::new()))
+    }
+
+    /// Hold `key` in this process until the guard drops, for a writer that changes
+    /// a blob and the record of it together. Unrelated keys may share a lock.
+    pub async fn lock(&self, key: &str) -> MutexGuard<'_, ()> {
+        let mut hasher = DefaultHasher::new();
+        key.hash(&mut hasher);
+        self.locks[hasher.finish() as usize % LOCKS].lock().await
     }
 
     pub async fn put(&self, key: &str, bytes: Bytes) -> Result<()> {

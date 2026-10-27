@@ -1,0 +1,12 @@
+% source=crates/core/src/queries/usage.rs lang=rust lines=38 sha=5add56d672b7
+
+module caravel_core::queries::usage  !db
+  -- Reading metered usage.
+
+  pub async fn get_usage_totals_for_tenant(tenant_pubkey, start, end) -> [RelayUsageTotals] fails  !db  @13-38
+    -- Per relay with samples in [start, end): peak storage, and how far the call clock moved.
+    group the tenant's usage_sample rows in the window by relay
+    peak_storage_bytes is the highest storage reading
+    participant_seconds is the highest clock reading minus a baseline, clamped at zero
+      baseline: the relay's last sample before start, else the window's lowest reading
+      the clamp makes a clock that restarted read as no usage rather than a credit

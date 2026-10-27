@@ -1,0 +1,7 @@
+% source=web/src/portal/components/Notice.tsx lang=typescript lines=12 sha=82ab1e97c904
+
+module @/portal/components/Notice
+  -- A tinted message box.
+
+  const TONES = { success, warning, error, neutral }  -- border, background and text colors  @3-8
+  pub fn Notice(props: { tone, children })  -- the children in the tone's colors  @10-12

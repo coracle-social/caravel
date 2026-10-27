@@ -1,0 +1,54 @@
+% source=crates/relay/tests/common/mod.rs lang=rust lines=346 sha=ad2d7fea0f39
+
+module caravel_relay::tests::common
+  -- A relay server on a real socket for protocol tests, and a client speaking to it under a host.
+
+  tests  !panic !net !db !global !lock !spawn !time !rand               @28-346
+    pub data Server { core: Core, relays: Relays, addr: SocketAddr, shutdown: CancellationToken }  @28-33
+    impl Server  !panic !net !db !global !lock !spawn !time !rand       @35-186
+      pub async fn start() -> Server  !panic !net !db !global !lock !spawn !time !rand  -- start_with a fresh test core  @36-38
+      pub async fn start_with(core) -> Server  !panic !net !db !lock !spawn  -- start_configured with the default RelaysConfig  @41-43
+      pub async fn start_configured(core, config: RelaysConfig) -> Server  !panic !net !db !lock !spawn  @46-79
+        -- A server that serves its relays as config says.
+        load the relays, then spawn their bus watcher until shutdown
+        spawn axum on 127.0.0.1:0 dispatching by host, shutting down gracefully on the token
+      pub async fn relay(self) -> (Relay, SecretKey)  !panic !db !time !rand  @82-89
+        -- A new relay, served from now on, with its tenant's key.
+      pub async fn update(self, relay, settings: Value) -> Relay  !panic !db !time !rand  @92-102
+        -- Change a relay's settings through hosting::update_relay and reload it.
+      pub async fn connect(self, host) -> Client  !panic !net           @104-127
+        -- Open a websocket under that Host; assert the first message is AUTH and keep its challenge.
+      pub fn now(self) -> i64  !time  -- the core's clock               @129-131
+      pub async fn http(self, request) -> HttpResponse  !panic          @134-144
+        -- Serve an HTTP request straight through the relay its Host resolves to, without the socket.
+      pub async fn manage(self, host, signer, method, params) -> Value  !panic !time  @147-168
+        -- Make a NIP-86 call as signer: NIP-98 over `https://<host>/`, POST and the body's sha256.
+      pub async fn manage_with(self, host, auth: Event, body: str) -> Value  !panic  @170-185
+        -- POST a nostr+json+rpc body with that authorization through the relay; returns the JSON reply.
+    async fn dispatch(relays, request) -> Response                      @188-203
+      -- Serve the relay the Host header (port stripped) resolves to, else 404.
+    pub data Client { ws, host: str, challenge: str }                   @205-209
+    impl Client  !panic !time                                           @211-320
+      pub async fn send(mut self, message: Value)  !panic               @212-217
+      pub async fn recv(mut self) -> Value fails  !time                 @221-233
+        -- The next text message; an error after two seconds without one or when the connection closes.
+      pub async fn recv_skipping_auth(mut self) -> Value fails  !time   @236-243
+        -- The next message other than an AUTH challenge.
+      pub async fn is_dropped(mut self) -> bool  !time                  @247-258
+        -- Whether the relay drops the connection within ten seconds, reading past what it sent first.
+      pub async fn listen(mut self, duration)  !time                    @262-265
+        -- Read and discard for duration, answering pings as a client does.
+      pub async fn is_quiet(mut self) -> bool  !time  -- nothing arrives for a quarter second  @268-272
+      pub async fn auth(mut self, secret, now)  !panic !time            @274-285
+        -- Answer the challenge with a NIP-42 event for `wss://<host>/`; asserts it is accepted.
+      pub async fn publish(mut self, event) -> (accepted, message)  !panic !time  @287-289
+      async fn publish_as(mut self, verb, event) -> (accepted, message)  !panic !time  @291-302
+        -- Send [verb, event] and wait for its OK, dropping every other message meanwhile.
+      pub async fn req(mut self, subscription_id, filter) -> (events, ending)  !panic !time  @306-319
+        -- Open a subscription and collect its stored events until its EOSE or CLOSED.
+    pub data HttpResponse { status, headers, body: bytes }              @322-326
+    impl HttpResponse                                                   @328-336
+      pub fn json(self) -> Value  -- the body as JSON, Null if it isn't  @329-331
+      pub fn header(self, name) -> str?                                 @333-335
+    pub async fn serve_local(router) -> SocketAddr  !panic !net !spawn  @339-346
+      -- Serve a router on a local port, for the servers a relay calls out to.

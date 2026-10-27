@@ -1,0 +1,25 @@
+% source=crates/core/src/queries/relays.rs lang=rust lines=113 sha=cd4b265c4a6b
+
+module caravel_core::queries::relays  !db
+  -- Reading relays, and finding the one a host belongs to.
+
+  const SELECT_RELAY  -- relay.* plus redirect_from: its host_redirect hosts, sorted  @8-10
+  pub async fn list_relays() -> [Relay] fails  !db                      @12-18
+    -- Every relay, newest first.
+  pub async fn list_relays_for_tenant(tenant_pubkey) -> [Relay] fails  !db  @20-30
+    -- The tenant's relays, newest first, purged ones included.
+  pub async fn get_relay(id) -> Relay? fails  !db                       @32-39
+  pub async fn require_relay(id) -> Relay fails  !db                    @42-46
+    -- get_relay, failing NotFound "relay not found" when missing.
+  pub async fn lock_relay(conn, id) fails  !db                          @49-55
+    -- Lock the relay's row FOR UPDATE until the transaction ends, serializing its joins.
+  pub async fn get_relay_by_host(host) -> Relay? fails  !db             @59-74
+    -- The unpurged relay a host belongs to.
+    split host at its first dot into subdomain and domain
+    match its canonical subdomain and domain, its verified custom domain, or a host_redirect
+  pub async fn is_custom_domain_taken(custom_domain, relay_id) -> bool fails  !db  @77-92
+    -- Whether a live relay other than relay_id has verified custom_domain.
+  pub async fn list_relays_with_custom_domain(verified: bool) -> [Relay] fails  !db  @94-104
+    -- Unpurged relays with a custom domain whose verification is `verified`.
+  pub async fn list_unerased_relays() -> [Relay] fails  !db             @107-113
+    -- Purged relays whose data is still to be erased.

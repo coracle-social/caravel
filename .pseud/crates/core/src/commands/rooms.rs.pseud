@@ -1,0 +1,40 @@
+% source=crates/core/src/commands/rooms.rs lang=rust lines=361 sha=ee7262db6d45
+
+module caravel_core::commands::rooms  !db
+  -- Applying NIP-29 room events to their rooms, and republishing what the relay says about each.
+
+  pub async fn apply_event(conn, key, relay_id, event, now) -> [Event] fails  !db  @18-252
+    -- Apply a client's room event to its room, returning what the relay published.
+    -- The caller has already checked the author may publish it.
+    return nothing if the event names no room
+    match event.kind
+      CREATE_GROUP | EDIT_METADATA -> upsert the room with its tags but h; publish metadata, admins  @30-52
+      PUT_USER -> upsert each p-tagged member with the tag's roles; publish_membership  @53-69
+      ASSIGN_PERMISSION -> upsert each p-tagged member, adding its kinds; publish_membership  @70-93
+        so a grantee becomes a member; a tag whose kinds don't parse adds none
+      UNASSIGN_PERMISSION -> remove each p tag's kinds from that member; publish_admins  @94-116
+      REMOVE_USER -> delete every p-tagged member; publish_membership   @117-128
+      JOIN_REQUEST -> add the author unless the room is missing, or closed and no invite  @129-152
+        if newly added, publish_member_change with PUT_USER
+      LEAVE_REQUEST -> delete the author; if they were in, publish_member_change REMOVE_USER  @153-177
+      CREATE_INVITE -> insert each code tag as an invite, ignoring repeats  @178-192
+      PUT_PINS -> set the room's pins to the event's e and a tags; publish_pins  @193-207
+      DELETE_EVENT -> delete the e-tagged events that are h-tagged to the room  @208-229
+        but not METADATA..PINS kinds or MODERATION_KINDS, which describe the room
+      DELETE_GROUP -> delete the room, its members and invites cascading, and its events  @230-249
+        h-tagged ones and metadata kinds with d = room, but not DELETE_GROUP events
+      other kinds -> nothing
+    -- arms without a publish return no events
+  async fn publish_member_change(conn, key, relay_id, room_id, pubkey, kind, now) -> [Event] fails  !db  @256-281
+    -- Publish a put-user or remove-user (`kind`) for one member, then publish_membership.
+  async fn publish_membership(conn, key, relay_id, room_id, now) -> [Event] fails  !db  @284-295
+    -- publish_members, then publish_admins.
+  pub async fn publish_metadata(conn, key, relay_id, room_id, now) -> Event fails  !db  @298-310
+    -- Publish METADATA (kind 39000): a d tag and the room's stored tags, none if it's gone.
+  pub async fn publish_admins(conn, key, relay_id, room_id, now) -> Event fails  !db  @315-329
+    -- Publish ADMINS (kind 39001) via domain::rooms::admins_tags with each admin's kinds.
+    -- The relay's owner leads, holding every moderation kind, then members permitted any.
+  pub async fn publish_members(conn, key, relay_id, room_id, now) -> Event fails  !db  @332-343
+    -- Publish MEMBERS (kind 39002): every member with their roles.
+  pub async fn publish_pins(conn, key, relay_id, room_id, now) -> Event fails  !db  @346-361
+    -- Publish PINS (kind 39005): a "-" tag, a d tag and the room's pins.

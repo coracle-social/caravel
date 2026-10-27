@@ -78,10 +78,25 @@ impl Robot {
         })
     }
 
-    /// Publish the robot's profile, outbox relays, and messaging relays, so
-    /// tenants' clients can find and trust the DMs it sends.
+    /// A robot that also reaches local addresses, for tests' relays on loopback.
+    pub fn allowing_private(secret: &str, profile: RobotProfile) -> Result<Self> {
+        let robot = Self::new(secret, profile)?;
+        Ok(Self {
+            client: Client::allowing_private(robot.secret.clone()),
+            ..robot
+        })
+    }
+
+    /// Publish the robot's profile, outbox relays, and messaging relays to its
+    /// outbox and indexer relays, so tenants' clients can find and trust the DMs it
+    /// sends wherever they look it up.
     pub async fn publish_identity(&self, now: i64) -> Result<()> {
         let profile = &self.profile;
+        let relays: Vec<String> =
+            BTreeSet::from_iter(profile.outbox_relays.iter().chain(&profile.indexer_relays))
+                .into_iter()
+                .cloned()
+                .collect();
 
         let mut metadata = ProfileWriter::new();
         if !profile.name.is_empty() {
@@ -95,7 +110,7 @@ impl Robot {
             metadata = metadata.with_picture(&profile.picture);
         }
         let metadata = self.sign(metadata.render_template()?.with_created_at(now));
-        self.publish(&profile.outbox_relays, &metadata, now).await?;
+        self.publish(&relays, &metadata, now).await?;
 
         let outbox = profile
             .outbox_relays
@@ -104,7 +119,7 @@ impl Robot {
                 list.add_read_url(url).add_write_url(url)
             });
         let outbox = self.sign(outbox.render_template()?.with_created_at(now));
-        self.publish(&profile.outbox_relays, &outbox, now).await?;
+        self.publish(&relays, &outbox, now).await?;
 
         let messaging = profile
             .messaging_relays
@@ -116,7 +131,7 @@ impl Robot {
                 .with_kind(MESSAGING_RELAYS)
                 .with_created_at(now),
         );
-        self.publish(&profile.indexer_relays, &messaging, now).await
+        self.publish(&relays, &messaging, now).await
     }
 
     /// Send a NIP-17 direct message to a recipient over their messaging relays.
@@ -265,4 +280,58 @@ async fn set_cached(cache: &RelayListCache, key: &str, values: Vec<String>) {
             fetched_at: Instant::now(),
         },
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use futures_util::{SinkExt, StreamExt};
+    use serde_json::{Value, json};
+    use tokio::net::TcpListener;
+    use tokio::sync::mpsc;
+    use tokio_tungstenite::tungstenite::Message;
+
+    use super::*;
+
+    /// A relay that takes every event, reporting each one's kind, and its url.
+    async fn recording_relay() -> (String, mpsc::UnboundedReceiver<u64>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("ws://{}", listener.local_addr().unwrap());
+        let (sender, receiver) = mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            while let Ok((stream, _)) = listener.accept().await {
+                let sender = sender.clone();
+                tokio::spawn(async move {
+                    let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+                    while let Some(Ok(Message::Text(text))) = socket.next().await {
+                        let message: Value = serde_json::from_str(&text).unwrap();
+                        if message[0] == "EVENT" {
+                            let _ = sender.send(message[1]["kind"].as_u64().unwrap());
+                            let ok = json!(["OK", message[1]["id"], true, ""]);
+                            let _ = socket.send(Message::Text(ok.to_string().into())).await;
+                        }
+                    }
+                });
+            }
+        });
+        (url, receiver)
+    }
+
+    #[tokio::test]
+    async fn the_robot_announces_itself_on_its_indexers_as_well_as_its_outbox() {
+        let (outbox, mut on_outbox) = recording_relay().await;
+        let (indexer, mut on_indexer) = recording_relay().await;
+        let profile = RobotProfile {
+            name: "caravel".to_string(),
+            outbox_relays: vec![outbox],
+            indexer_relays: vec![indexer],
+            ..Default::default()
+        };
+        let robot = Robot::allowing_private(&SecretKey::generate().to_hex(), profile).unwrap();
+        robot.publish_identity(0).await.unwrap();
+
+        for kinds in [&mut on_outbox, &mut on_indexer] {
+            let received = [kinds.recv().await, kinds.recv().await, kinds.recv().await];
+            assert_eq!(received, [Some(0), Some(10002), Some(10050)]);
+        }
+    }
 }

@@ -1,0 +1,9 @@
+% source=web/src/portal/lib/relay.ts lang=typescript lines=16 sha=1cc9746d2ec8
+
+module @/portal/lib/relay  !db !env
+  -- Which relay this portal is for, and where its pages live.
+
+  pub fn portalRelay() -> RelayProfile?  !db !env                       @5-13
+    -- The relay the server wrote into the page; under vite dev, the one ?relay= names,
+    -- remembered in sessionStorage, as a bare profile with the id for its host.
+  pub const PORTAL_BASE = "/portal" under vite dev, else ""  !env       @16

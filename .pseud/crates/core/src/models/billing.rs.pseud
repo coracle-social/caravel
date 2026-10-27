@@ -1,0 +1,21 @@
+% source=crates/core/src/models/billing.rs lang=rust lines=60 sha=d6f59cda9759
+
+module caravel_core::models::billing
+  -- Billing periods: calendar months counted from a tenant's billing anchor.
+
+  pub data BillingPeriod { start, end: i64 }  -- one month, half-open [start, end)  @5-11
+
+  impl BillingPeriod                                                    @13-60
+    pub fn at(anchor: i64?, at: i64) -> BillingPeriod?                  @14-39
+      -- The period containing at; none for a tenant without an anchor (no billable activity yet).
+      an anchor outside chrono's range reads as the epoch
+      start = the last whole-calendar-month step from the anchor not after at
+      end = anchor plus one more month, counted from the anchor so the 29th to 31st leave no gaps
+      an at before the anchor gives the first period, which billing::reconcile_overage relies on  @22-33
+    fn fraction_remaining(self, at) -> f64                              @41-53
+      -- Unused share of the period at at, in [0, 1], with the remaining time rounded to the day.
+      if the period has no length, 1.0
+      exact                                                             @51
+        let remaining = ((self.end - at) + DAY / 2) / DAY * DAY;
+      rounding by the day bills a relay created in a period's first half-day the full amount
+    pub fn prorate(self, amount: i64, at) -> i64  -- amount times fraction_remaining, rounded  @55-59

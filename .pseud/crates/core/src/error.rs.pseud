@@ -1,0 +1,20 @@
+% source=crates/core/src/error.rs lang=rust lines=61 sha=bb0b63225d5b
+
+module caravel_core::error
+  -- The core's error, saying what went wrong in terms the API maps to a response.
+
+  pub type Result<T, E = Error>                                         @6
+  pub enum Error                                                        @8-24
+    Unauthorized(str)
+    Forbidden(static str)
+    NotFound(static str)
+    Conflict { code, message }  -- the resource's state doesn't allow the operation
+    Invalid { code, message }  -- well-formed input that isn't acceptable
+    Internal(anyhow)  -- from any anyhow error, displayed transparently
+
+  impl Error                                                            @26-44
+    ~ constructors: conflict(code, message), invalid(code, message), internal(message)  @27-43
+
+  impl From<sqlx::Error> for Error  !-db  -- wraps it as Internal; converts, never queries  @46-50
+  impl Retryable for Error                                              @52-61
+    fn is_retryable(self) -> bool  !-db  -- only an Internal wrapping a retryable sqlx error; no query  @53-60

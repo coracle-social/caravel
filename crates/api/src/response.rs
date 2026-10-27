@@ -27,9 +27,13 @@ impl IntoResponse for ApiError {
             Error::NotFound(_) => (StatusCode::NOT_FOUND, "not-found"),
             Error::Conflict { code, .. } => (StatusCode::BAD_REQUEST, *code),
             Error::Invalid { code, .. } => (StatusCode::UNPROCESSABLE_ENTITY, *code),
-            Error::Internal(error) => {
-                tracing::error!(error = ?error, "request failed");
-                (StatusCode::INTERNAL_SERVER_ERROR, "internal")
+            Error::Internal(cause) => {
+                tracing::error!(error = ?cause, "request failed");
+                return error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "internal",
+                    "internal error",
+                );
             }
         };
 

@@ -3,13 +3,14 @@
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
-use caravel_core::access::MANAGED_METHODS;
-use caravel_core::auth::Actor;
 use caravel_core::bus::Change;
-use caravel_core::management::{self, Call, Outcome};
-use caravel_core::relays::{self, Relay};
-use caravel_core::rooms::{self, Room, RoomMember};
-use caravel_core::{Core, Error, access, events};
+use caravel_core::models::auth::Actor;
+use caravel_core::models::events::EventPage;
+use caravel_core::models::management::{Call, Outcome};
+use caravel_core::models::methods::MANAGED_METHODS;
+use caravel_core::models::relays::Relay;
+use caravel_core::models::rooms::{Room, RoomMember};
+use caravel_core::{Core, Error, management, queries};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -21,7 +22,7 @@ const MAX_EVENTS: usize = 100;
 
 /// A live relay its caller may manage.
 async fn managed_relay(core: &Core, actor: &Actor, id: &str) -> Result<Relay, Error> {
-    let relay = relays::require_relay(core.db.pool(), id).await?;
+    let relay = queries::relays::require_relay(core.db.pool(), id).await?;
     actor.require_pubkey_or_admin(&relay.tenant_pubkey)?;
     relay.require_unpurged()?;
     Ok(relay)
@@ -65,11 +66,10 @@ pub async fn list_members(
     Authed(actor): Authed,
     Path(id): Path<String>,
 ) -> ApiResult {
-    let relay = relays::require_relay(core.db.pool(), &id).await?;
-    actor.require_pubkey_or_admin(&relay.tenant_pubkey)?;
+    let relay = managed_relay(&core, &actor, &id).await?;
     ok(serde_json::json!({
-        "members": access::list_members(core.db.pool(), &relay.id).await?,
-        "roles": access::list_roles(core.db.pool(), &relay.id).await?,
+        "members": queries::members::list_members(core.db.pool(), &relay.id).await?,
+        "roles": queries::roles::list_roles(core.db.pool(), &relay.id).await?,
     }))
 }
 
@@ -90,10 +90,10 @@ pub async fn list_rooms(
 ) -> ApiResult {
     let relay = managed_relay(&core, &actor, &id).await?;
     let pool = core.db.pool();
-    let members = rooms::list_room_members(pool, &relay.id).await?;
-    let invites = rooms::list_room_invites(pool, &relay.id).await?;
+    let members = queries::rooms::list_room_members(pool, &relay.id).await?;
+    let invites = queries::rooms::list_room_invites(pool, &relay.id).await?;
 
-    let views: Vec<RoomView> = rooms::list_rooms(pool, &relay.id)
+    let views: Vec<RoomView> = queries::rooms::list_rooms(pool, &relay.id)
         .await?
         .into_iter()
         .map(|room| RoomView {
@@ -139,11 +139,13 @@ pub struct EventQuery {
     /// Comma-separated hex ids.
     ids: Option<String>,
     until: Option<i64>,
+    after: Option<String>,
+    #[serde(default)]
+    exclude_own: bool,
     limit: Option<usize>,
 }
 
-/// The relay's stored events, newest first: of the given `kinds` or `ids`, from
-/// `until` back, `limit` (at most a hundred) at a time.
+/// A page of the relay's stored events, at most a hundred.
 pub async fn list_events(
     State(core): State<Core>,
     Authed(actor): Authed,
@@ -165,18 +167,17 @@ pub async fn list_events(
         .map(|kind| kind.parse::<u16>())
         .collect::<Result<Vec<_>, _>>()
         .map_err(|_| Error::invalid("invalid-kinds", "kinds must be numbers"))?;
-    let limit = query.limit.unwrap_or(MAX_EVENTS).min(MAX_EVENTS);
+    let page = EventPage {
+        kinds,
+        ids: list(&query.ids),
+        until: query.until,
+        after: query.after,
+        exclude_own: query.exclude_own,
+        limit: query.limit.unwrap_or(MAX_EVENTS).min(MAX_EVENTS),
+    };
 
-    let stored = events::page_events(
-        core.db.pool(),
-        &relay.id,
-        &kinds,
-        &list(&query.ids),
-        query.until,
-        limit,
-        core.clock.now(),
-    )
-    .await?;
+    let stored =
+        queries::events::page_events(core.db.pool(), &relay, &page, core.clock.now()).await?;
     let events = stored
         .iter()
         .map(|event| serde_json::from_str::<Value>(&event.to_json(false)))

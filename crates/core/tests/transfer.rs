@@ -4,12 +4,12 @@
 
 use anyhow::Result;
 use bytes::Bytes;
-use caravel_core::events::{self, StoredEvent};
-use caravel_core::relays::Relay;
-use caravel_core::rooms::{self, kinds};
-use caravel_core::testing::{self, create_relay, sign_event};
-use caravel_core::transfer::{self, ImportResult};
-use caravel_core::{Core, Error};
+use caravel_core::models::events::StoredEvent;
+use caravel_core::models::relays::Relay;
+use caravel_core::models::rooms::kinds;
+use caravel_core::models::transfer::ImportResult;
+use caravel_core::testing::{create_relay, sign_event};
+use caravel_core::{Core, Error, domain, queries, testing, transfer};
 use coracle_lib::events::Event;
 use coracle_lib::filters::{Filter, TagMatch};
 use coracle_lib::keys::SecretKey;
@@ -48,7 +48,7 @@ async fn export(core: &Core, relay: &Relay) -> Result<String> {
 }
 
 async fn stored(core: &Core, relay: &Relay, kind: u16, room_id: &str) -> Result<Vec<StoredEvent>> {
-    let tag = if rooms::is_metadata_kind(kind) {
+    let tag = if domain::rooms::is_metadata_kind(kind) {
         "d"
     } else {
         "h"
@@ -58,18 +58,18 @@ async fn stored(core: &Core, relay: &Relay, kind: u16, room_id: &str) -> Result<
         ..Filter::new()
     }
     .add_tag(TagMatch::Any, tag, room_id);
-    Ok(events::query_events(core.db.pool(), &relay.id, &filter, 1000, NOW).await?)
+    Ok(queries::events::query_events(core.db.pool(), &relay.id, &filter, 1000, NOW).await?)
 }
 
 async fn is_room_member(core: &Core, relay: &Relay, room_id: &str, pubkey: &str) -> Result<bool> {
-    Ok(rooms::list_room_members(core.db.pool(), &relay.id)
+    Ok(queries::rooms::list_room_members(core.db.pool(), &relay.id)
         .await?
         .iter()
         .any(|member| member.room_id == room_id && member.pubkey == pubkey))
 }
 
 async fn room_name(core: &Core, relay: &Relay, room_id: &str) -> Result<Option<String>> {
-    Ok(rooms::list_rooms(core.db.pool(), &relay.id)
+    Ok(queries::rooms::list_rooms(core.db.pool(), &relay.id)
         .await?
         .into_iter()
         .find(|room| room.id == room_id)
@@ -112,7 +112,7 @@ async fn an_export_imports_into_another_relay() -> Result<()> {
     assert_eq!(result.invalid, 0, "{result:?}");
     assert!(result.skipped > 0, "{result:?}");
 
-    let ids: Vec<[u8; 32]> = events::get_events(
+    let ids: Vec<[u8; 32]> = queries::events::get_events(
         core.db.pool(),
         &target.id,
         &[first.id.to_bytes(), second.id.to_bytes()],
@@ -298,6 +298,47 @@ async fn an_import_admits_join_requests() -> Result<()> {
 
     assert_eq!(import(&core, &relay, &dump).await?.imported, 2);
     assert!(is_room_member(&core, &relay, "room", &joiner.public_key().to_hex()).await?);
+    Ok(())
+}
+
+// A room is rebuilt from what the import stored, so a line it refused changes nothing.
+#[tokio::test]
+async fn an_import_replays_only_the_history_it_stored() -> Result<()> {
+    let core = core().await;
+    let (relay, _) = create_relay(&core).await;
+    let owner = SecretKey::generate();
+    let joiner = SecretKey::generate();
+
+    let join = sign_event(
+        &joiner,
+        kinds::JOIN_REQUEST,
+        "",
+        &[&["h", "room"]],
+        NOW - 200,
+    );
+    let dump = [
+        sign_event(
+            &owner,
+            kinds::CREATE_GROUP,
+            "",
+            &[&["h", "room"]],
+            NOW - 300,
+        ),
+        sign_event(&joiner, 5, "", &[&["e", &join.id.to_hex()]], NOW - 100),
+        join,
+    ]
+    .iter()
+    .map(line)
+    .collect::<Vec<_>>()
+    .join("\n");
+
+    let result = import(&core, &relay, &dump).await?;
+    assert_eq!(
+        (result.imported, result.invalid, result.rooms_rebuilt),
+        (2, 1, 1),
+        "{result:?}"
+    );
+    assert!(!is_room_member(&core, &relay, "room", &joiner.public_key().to_hex()).await?);
     Ok(())
 }
 
@@ -592,7 +633,7 @@ async fn an_import_refuses_group_events_naming_no_group() -> Result<()> {
             .collect::<Vec<_>>(),
         [Some(1), Some(2), Some(3)]
     );
-    let ids: Vec<String> = rooms::list_rooms(core.db.pool(), &relay.id)
+    let ids: Vec<String> = queries::rooms::list_rooms(core.db.pool(), &relay.id)
         .await?
         .into_iter()
         .map(|room| room.id)

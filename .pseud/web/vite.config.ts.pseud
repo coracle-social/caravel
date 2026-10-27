@@ -1,0 +1,15 @@
+% source=web/vite.config.ts lang=typescript lines=50 sha=8d7de68850a4
+
+module vite.config  !env
+  -- The Vite build of the three apps, and serving each under `vite dev` the way the server does.
+
+  fn page(name) -> path  -- the absolute path of <name>.html beside this file  @6
+  fn pickApp() -> Plugin                                                @8-25
+    -- Dev middleware that picks the app the server would serve for a page request.
+    for a GET accepting text/html, rewrite the url to the app's page, keeping the query
+      /portal... -> portal.html; /admin or /admin/... -> admin.html; anything else -> tenant.html
+  pub const default  !env  -- the config for a mode, with the env files loaded  @27-50
+    plugins: pickApp, tailwindcss, solid
+    `@` aliased to src
+    build inputs: tenant.html, admin.html, portal.html
+    dev port: VITE_PORT, else 5173

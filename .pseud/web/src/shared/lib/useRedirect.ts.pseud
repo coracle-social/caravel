@@ -1,0 +1,9 @@
+% source=web/src/shared/lib/useRedirect.ts lang=typescript lines=24 sha=51a92b24be9e
+
+module @/shared/lib/useRedirect
+  -- Sending the browser to a page the API names, such as one of Stripe's.
+
+  pub fn useRedirect() -> Redirect                                      @5-22
+    -- go(open, failure) navigates to the url open returns, staying "redirecting" on success;
+    -- a failure shows its error and stops redirecting. reset clears the error.
+  pub type Redirect  -- what useRedirect returns                        @24

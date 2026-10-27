@@ -1,0 +1,7 @@
+% source=web/src/shared/components/Avatar.tsx lang=typescript lines=19 sha=02a8cfc3b941
+
+module @/shared/components/Avatar
+  -- A profile's round avatar.
+
+  pub fn Avatar(props: { profile?, pubkey, class, fallbackClass, alt? })  @6-19
+    -- The profile's picture, or else the first letter of its name or pubkey.

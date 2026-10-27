@@ -1,0 +1,12 @@
+% source=web/src/tenant/pages/relays/RelayBans.tsx lang=typescript lines=104 sha=edf0e2698196
+
+module @/tenant/pages/relays/RelayBans  !net !db !time
+  -- A relay's bans tab: banned users and banned events, over NIP-86.
+
+  pub fn RelayBans()  !net !db !time                                    @12-104
+    -- Banned users with Lift ban and a Ban a user dialog; banned events with Allow.
+    read the lists with NIP-86 listbannedpubkeys and listbannedevents
+    fn unban(pubkey)  !net !db !time  -- NIP-86 unbanpubkey, no confirmation; toasts, refetches on success  @18-22
+    fn allow(id)  !net !db !time  -- NIP-86 allowevent, no confirmation; toasts, refetches on success  @24-28
+    ban -> PubkeyDialog with a reason, then NIP-86 banpubkey [pubkey, reason] and refetch  @90-101
+      the relay removes them as a member and deletes what they published; errors stay inline

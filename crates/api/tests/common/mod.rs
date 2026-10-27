@@ -6,8 +6,8 @@
 use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use caravel_core::Core;
-use caravel_core::testing::{self, API_URL};
+use caravel_core::testing::API_URL;
+use caravel_core::{Core, testing};
 use coracle_lib::keys::SecretKey;
 use http_body_util::BodyExt;
 use serde_json::Value;
@@ -79,13 +79,13 @@ impl TestApi {
         method: &str,
         path: &str,
         authorization: &str,
-        body: Vec<u8>,
+        body: impl Into<Body>,
     ) -> (StatusCode, axum::http::HeaderMap, axum::body::Bytes) {
         let request = Request::builder()
             .method(method)
             .uri(path)
             .header("Authorization", authorization)
-            .body(Body::from(body))
+            .body(body.into())
             .expect("invalid request");
         let response = self
             .router

@@ -1,0 +1,28 @@
+% source=crates/core/src/models/rooms.rs lang=rust lines=75 sha=246db719118c
+
+module caravel_core::models::rooms
+  -- NIP-29 rooms: moderation events stay as history, projected into tables the relay republishes.
+
+  module kinds  -- NIP-29 room kinds                                    @9-28
+    ~ PUT_USER 9000, REMOVE_USER 9001, EDIT_METADATA 9002, DELETE_EVENT 9005  @10-13
+    ~ CREATE_GROUP 9007, DELETE_GROUP 9008, CREATE_INVITE 9009, PUT_PINS 9010  @14-17
+    ~ ASSIGN_PERMISSION 9011, UNASSIGN_PERMISSION 9012, JOIN_REQUEST 9021, LEAVE_REQUEST 9022  @18-21
+    ~ relay-signed: METADATA 39000, ADMINS 39001, MEMBERS 39002, ROLES 39003  @22-25
+    ~ relay-signed: LIVEKIT_PARTICIPANTS 39004, PINS 39005              @26-27
+  pub const MODERATION_KINDS: [u16; 10]  -- PUT_USER through UNASSIGN_PERMISSION  @30-43
+    -- Kinds that change a room; only managers and members permitted the kind may publish them.
+  pub data Room  -- a room's settings, as its creator and moderators set them  @45-56
+    id: str
+    tags: Json<[[str]]>  -- metadata tags of its latest create or edit, minus h: name, picture,
+      -- about, and the flags hidden, private and closed
+    pins: Json<[[str]]>  -- the e and a tags of its pinned events
+    created_at: i64
+
+  impl Room                                                             @58-64
+    pub fn has_flag(self, name) -> bool  -- some tag is named name      @59-63
+
+  pub data RoomMember                                                   @66-75
+    room_id, pubkey: str
+    roles: [str]  -- labels its moderators give the member, which grant nothing
+    permissions: [i32]  -- the moderation kinds the member may publish in the room
+    created_at: i64

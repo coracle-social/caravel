@@ -5,8 +5,11 @@
 mod common;
 
 use anyhow::Result;
-use caravel_core::billing::{self, Collection};
-use caravel_core::plans::PLAN_BASIC;
+use caravel_core::billing::Collection;
+use caravel_core::models::activity::ActivityType;
+use caravel_core::models::plans::PLAN_BASIC;
+use caravel_core::models::relays::RelayStatus;
+use caravel_core::{billing, queries};
 use common::*;
 use futures_util::future::try_join_all;
 
@@ -83,6 +86,37 @@ async fn racing_passes_bill_overage_once() -> Result<()> {
 
     // 3 GB past the 1 included at $2, on the renewal's invoice.
     assert_eq!(invoice_amounts(&core, &tenant).await?, vec![500, 1100]);
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn racing_passes_churn_once() -> Result<()> {
+    let core = core().await;
+
+    travel(&core, day(2026, 1, 7));
+    let tenant = create_tenant(&core).await?;
+    let relay = create_relay(&core, &tenant, PLAN_BASIC).await?;
+    reconcile(&core, &tenant).await?;
+
+    travel(&core, day(2026, 1, 14));
+    race_reconciles(&core, &tenant).await?;
+
+    assert_eq!(
+        get_tenant(&core, &tenant).await?.churned_at,
+        Some(day(2026, 1, 14))
+    );
+    assert_eq!(
+        get_relay(&core, &relay.id).await?.status,
+        RelayStatus::Delinquent
+    );
+    let paused = queries::activity::list_activity_for_relay(core.db.pool(), &relay.id)
+        .await?
+        .into_iter()
+        .filter(|activity| activity.activity_type == ActivityType::MarkRelayDelinquent)
+        .count();
+    assert_eq!(paused, 1);
+    assert!(invoices(&core, &tenant).await?[0].voided_at.is_some());
 
     Ok(())
 }

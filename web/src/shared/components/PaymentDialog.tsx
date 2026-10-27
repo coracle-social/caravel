@@ -12,6 +12,7 @@ import { useRedirect } from "@/shared/lib/useRedirect"
 import { createInvoiceCheckout, ensureInvoiceBolt11, listInvoiceItems, reconcileInvoice, type Invoice } from "@/shared/lib/api"
 import { autopayConfigured } from "@/shared/lib/paymentMethod"
 import { formatError, formatPeriod, formatUsd } from "@/shared/lib/format"
+import { loaded } from "@/shared/lib/resource"
 
 type PayStatus = "idle" | "loading" | "success" | "error"
 type PayMethod = "lightning" | "card"
@@ -23,6 +24,8 @@ type PaymentDialogProps = {
   invoice: PaymentInvoice
   open: boolean
   onClose: () => void
+  // Off when the caller asks for automatic payments itself once the dialog closes.
+  offerSetup?: boolean
 }
 
 export default function PaymentDialog(props: PaymentDialogProps) {
@@ -109,8 +112,8 @@ export default function PaymentDialog(props: PaymentDialogProps) {
           when={payStatus() === "success"}
           fallback={
             <div class="w-full space-y-4">
-              <Show when={(items() ?? []).length > 0}>
-                <InvoiceItemsList items={items() ?? []} />
+              <Show when={(loaded(items) ?? []).length > 0}>
+                <InvoiceItemsList items={loaded(items) ?? []} />
               </Show>
 
               <SegmentedTabs
@@ -159,7 +162,7 @@ export default function PaymentDialog(props: PaymentDialogProps) {
             </div>
             <p class="text-sm font-medium text-gray-900">Payment confirmed!</p>
             <p class="text-xs text-gray-500">Thank you. Your account is up to date.</p>
-            <Show when={!hasAutopay()}>
+            <Show when={(props.offerSetup ?? true) && !hasAutopay()}>
               <button
                 type="button"
                 onClick={() => setShowPaymentSetup(true)}

@@ -1,0 +1,6 @@
+% source=crates/core/src/models/bans.rs lang=rust lines=11 sha=fe59bd872ea8
+
+module caravel_core::models::bans
+  -- Bans: the pubkeys and events a relay refuses.
+
+  pub data Ban { subject, reason, created_at: i64 }  -- a banned pubkey or event id, and why  @5-11

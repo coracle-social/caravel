@@ -1,0 +1,13 @@
+% source=crates/relay/tests/payments.rs lang=rust lines=85 sha=b7fee8b2a651
+
+module caravel_relay::tests::payments
+  -- A relay that sells memberships, ported from zooid: what NIP-11 says about paying, who may join.
+
+  tests  !panic                                                         @16-85
+    async fn info(server, host) -> Value  !panic  -- the host's NIP-11 document  @16-27
+    test a_paid_relay_states_its_price_and_where_to_pay                 @30-53
+      -- free: payment_required false, no payments_url or fees
+      member_price 500: payment_required, payments_url on the relay's host, 500 USD per 30 days
+      member_interval year makes the period 365 days
+    test a_paid_relay_takes_joins_only_with_a_claim                     @56-85
+      -- a bare join is refused "requires a paid membership"; one with a live claim is accepted

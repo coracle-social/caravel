@@ -1,0 +1,24 @@
+% source=web/src/portal/components/SignIn.tsx lang=typescript lines=154 sha=2d92ac87a245
+
+module @/portal/components/SignIn  !net !db !global !time
+  -- Signing a member in with one NIP-98 signature, keeping only the session token it buys.
+
+  const PERMISSIONS = permission to sign kind 27235 only                @9
+  pub fn SignIn()  !net !db !global !time                               @12-154
+    -- An extension button when window.nostr exists, and a signer-app flow: a nostrconnect
+    -- QR code and link, or a pasted bunker:// link.
+    fn stopRemote()  -- abort the wait on the signer app, whose abort closes its signer  @20-23
+    on cleanup, and on Back, which is disabled while signing in, stopRemote  @25
+    async fn complete(using) -> bool  !net !db !global !time            @27-40
+      -- Buy a session with the signer and keep its token through signIn; show any failure.
+    async fn startRemote()  !net !db !global !time                      @42-68
+      stopRemote any earlier flow, then until stopped                   @44-49
+        create a NostrConnectSigner on NOSTR_CONNECT_RELAYS             @50-51
+        show its URI as a link, and as a QR code unless stopped meanwhile  @52-56
+        wait for the signer to connect until stopped, then complete with it; done on success  @58-60
+        a failed sign-in keeps its error and offers a new code          @60
+        a failed wait shows its failure unless stopped, and ends the flow  @61-63
+        close the signer however it ends                                @64-66
+    async fn connectBunker(e)  !net !db !global !time                   @70-82
+      -- Connect through the pasted bunker link and complete with it, then close it; show a bad
+      -- link's error.

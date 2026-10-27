@@ -1,0 +1,33 @@
+% source=web/src/shared/lib/state.ts lang=typescript lines=154 sha=47f9e78b6ad4
+
+module @/shared/lib/state  !net !db !time
+  -- The applesauce singletons, the signed-in account, and the identity, plans, billing and toast.
+
+  pub global eventStore  -- the event store, which loads missing events through the pool  @13
+  pub global pool  -- the relay pool, which the store's loader and NostrConnect signers use  @14-22
+  pub global accountManager  -- with applesauce's common account types registered  @24-26
+  pub global toastMessage  -- the toast and its error or success variant, set by setToastMessage  @28-31
+  pub fn setToastMessage(message, variant = "error")  -- show a toast   @33-36
+  pub global billingFlowActive  -- set while a page prompts for an invoice, so the banner doesn't  @38-39
+  pub global plans  !net  -- resource of the plan catalog, [] until it loads  @41
+  pub global identity  !net !db !time  -- resource of GET /identity, refetched when the account's pubkey changes  @43
+  global billingPubkey  -- whose billing the reads below fetch, set only once that tenant exists  @45-46
+  pub global billingTenant  !net !db !time  -- and billingInvoices, billingRelays, billingDraftInvoice over it  @48-51
+  pub fn refetchBilling()  !net !db !time  -- refetch all four, toasting once if any fails  @53-66
+  global autopayInFlight: { pubkey, promise }?                          @68
+  pub fn autopayBilling(pubkey) -> Promise  !net !db !time              @70-97
+    -- Bring billing up to date and pay what's owed; concurrent calls for a pubkey share a run.
+    ensureSessionTenant unless billing reads already run for pubkey, then reconcileTenant
+    with autopay configured and no page prompting, reconcileInvoice each payable one oldest first
+      the first failure stops the rest; it is toasted, and billing always refetches
+  global tenantEnsure: { pubkey, promise }?                             @99
+  pub fn ensureSessionTenant() -> Promise  !net !db !time               @101-118
+    -- Make the signed-in pubkey a tenant, then let billing reads run; concurrent calls share a run.
+    createTenant with <origin>/account, then set billingPubkey if that account is still signed in
+  restore accounts from "caravel.accounts", ignoring a missing or unreadable list  @120-124
+    and quietly skipping any one account that doesn't load
+  activate the stored "caravel.accounts.active" id, if it was restored  @126-130
+  global accountSubscription  !net !db !time                            @132-154
+    -- Follows the active account for the page's life, except across a Vite hot update.
+    set account, persist the accounts and active id, and refetchIdentity
+    unset billingPubkey, then for a signed-in account ensureSessionTenant, toasting a failure

@@ -1,0 +1,12 @@
+% source=web/src/portal/pages/JoinPage.tsx lang=typescript lines=80 sha=3c81932961cd
+
+module @/portal/pages/JoinPage  !db !env
+  -- Buying a membership without a Nostr account: an invite that makes one in Flotilla.
+
+  pub fn JoinPage()  !db !env                                           @15-80
+    -- The relay's offer and the three steps, Continue to payment while it takes payments, and
+    -- a link to sign in instead that keeps return_url.
+    fetch the offer only when the portal has a relay                    @20
+    no relay, or no offer (404), says the relay doesn't sell memberships  @24
+    fn buy()                                                            @26-29
+      -- Redirect to an invite checkout for this relay, passing return_url on.

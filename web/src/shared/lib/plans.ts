@@ -1,6 +1,6 @@
 import type { PlanId } from "@/shared/lib/api"
 
-// Permanent billing keys, never reused or repriced; the catalog is crates/core/src/plans.rs.
+// Permanent billing keys, never reused or repriced; the catalog is crates/core/src/models/plans.rs.
 export const FREE: PlanId = "free"
 export const BASIC: PlanId = "basic"
 

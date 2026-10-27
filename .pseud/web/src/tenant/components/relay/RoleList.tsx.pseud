@@ -1,0 +1,17 @@
+% source=web/src/tenant/components/relay/RoleList.tsx lang=typescript lines=193 sha=c14935163c9b
+
+module @/tenant/components/relay/RoleList  !net !db !time
+  -- The roles a relay gives its members (NIP-43), which clients show and which grant nothing.
+
+  data RoleListProps { relayId, roles, onChanged }                      @13-17
+  pub fn RoleList(props: RoleListProps)  !net !db !time                 @20-101
+    -- Each role's chip, id and description, with New role, Edit and Delete.
+    fn remove()  !net !db !time                                         @25-40
+      -- After a confirmation: NIP-86 deleterole, toasting; on success close and onChanged.
+  fn RoleDialog(props: { relayId, role?: RelayRole | "new", onClose, onSaved })  !net !db !time  @104-193
+    -- Creating a role, or editing one whose id is fixed; label, id, description, hue and order.
+    reset the fields from the role each time it changes, a new role's hue starting at 210  @115-123
+    fn save(e)  !net !db !time                                          @125-144
+      a new role's id is slugify(id, else label); fail inline "Give the role a label." when empty
+      NIP-86 createrole or editrole with [id, trimmed label, trimmed description, hue, order]
+      on success onSaved and close; on failure show the error and stay open

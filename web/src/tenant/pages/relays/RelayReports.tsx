@@ -1,6 +1,6 @@
 import { useParams } from "@solidjs/router"
 import { createMemo, createResource, For, Show } from "solid-js"
-import { uniq } from "@welshman/lib"
+import { chunk, uniq } from "@welshman/lib"
 import NoteContent from "@/shared/components/NoteContent"
 import PageContainer from "@/shared/components/PageContainer"
 import { callRelayMethod, listRelayEvents, type NostrEvent } from "@/shared/lib/api"
@@ -21,13 +21,13 @@ const reportReason = (report: NostrEvent) => tagValue(report, "e", 2) || tagValu
 // Reports (NIP-56) members sent the relay, and what to do about each one.
 export default function RelayReports() {
   const params = useParams()
-  const feed = usePagedEvents(() => params.id!, [REPORT], 20)
+  const feed = usePagedEvents(() => params.id!, { kinds: [REPORT] }, 20)
 
-  // The reported events the relay still holds, fetched for each page of reports.
+  // The reported events the relay still holds, fetched for each page of reports in batches of 100, the most a page returns.
   const targetIds = createMemo(() => uniq(feed.events().flatMap(report => report.tags.filter(tag => tag[0] === "e").map(tag => tag[1]))))
   const [targets] = createResource(
     () => (targetIds().length ? targetIds() : undefined),
-    (ids) => listRelayEvents(params.id!, { ids, limit: 100 }),
+    async (ids) => (await Promise.all(chunk(100, ids).map(batch => listRelayEvents(params.id!, { ids: batch, limit: 100 })))).flat(),
   )
   const target = (id?: string) => (loaded(targets) ?? []).find(event => event.id === id)
 
@@ -36,20 +36,23 @@ export default function RelayReports() {
     feed.drop(event => event.id === report.id)
   }
 
+  // Delete the reported event, and dismiss every shown report of it.
   async function deleteTarget(report: NostrEvent, id: string) {
-    const deleted = await makeChange(async () => {
+    const reports = feed.events().filter(event => event.tags.some(tag => tag[0] === "e" && tag[1] === id))
+    await makeChange(async () => {
       await callRelayMethod(params.id!, "banevent", [id, reportReason(report)])
-      await dismiss(report)
+      await Promise.all(reports.map(dismiss))
     }, "Failed to delete the event", "Event deleted")
-    if (deleted) feed.drop(event => event.tags.some(tag => tag[0] === "e" && tag[1] === id))
   }
 
+  // Ban the reported user, which deletes the reports they made, and dismiss every shown report of them.
   async function banAuthor(report: NostrEvent, pubkey: string) {
+    const reports = feed.events().filter(event => event.pubkey !== pubkey && (event === report || event.tags.some(tag => tag[0] === "p" && tag[1] === pubkey)))
     const banned = await makeChange(async () => {
       await callRelayMethod(params.id!, "banpubkey", [pubkey, reportReason(report)])
-      await dismiss(report)
+      await Promise.all(reports.map(dismiss))
     }, "Failed to ban the user", "User banned")
-    if (banned) feed.drop(event => event.pubkey === pubkey || event.tags.some(tag => tag[0] === "p" && tag[1] === pubkey))
+    if (banned) feed.drop(event => event.pubkey === pubkey)
   }
 
   return (

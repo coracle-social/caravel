@@ -1,0 +1,4 @@
+% source=crates/core/src/queries/mod.rs lang=rust lines=22 sha=1af9f48712a2
+
+module caravel_core::queries
+  -- Reads: each takes an executor and returns models, on the pool or in a caller's transaction.

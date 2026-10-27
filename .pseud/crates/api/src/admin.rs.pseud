@@ -1,0 +1,26 @@
+% source=crates/api/src/admin.rs lang=rust lines=145 sha=3d7af1bbb683
+
+module caravel_api::admin  !db !time !rand
+  -- Routes only platform admins may call, each gated by the Admin extractor.
+
+  pub async fn list_tenants(Admin) -> [TenantView] fails  !db  -- GET /tenants  @15-21
+  pub async fn ban_tenant(Admin, pubkey) -> TenantView fails  !db !time !rand  @24-33
+    -- POST /tenants/{pubkey}/ban: block relay creation, forgive what they owe, purge their relays.
+  pub async fn unban_tenant(Admin, pubkey) -> TenantView fails  !db     @36-45
+    -- POST /tenants/{pubkey}/unban: lift the ban; purged relays stay purged.
+  pub async fn delete_tenant(Admin, pubkey) -> TenantView fails  !db !time !rand  @48-57
+    -- POST /tenants/{pubkey}/delete: forgive what they owe and purge their relays, without a ban.
+  pub async fn revoke_sessions(Admin, pubkey) -> {revoked} fails  !db   @60-67
+    -- DELETE /sessions/{pubkey}: end every session the pubkey holds.
+  pub async fn list_relays(Admin) -> [Relay] fails  !db  -- GET /relays  @69-71
+  pub async fn list_invoices(Admin) -> [Invoice] fails  !db  -- GET /invoices  @73-75
+  pub data ModerationWindow { since?, until? }                          @78-81
+  pub async fn list_moderation(Admin, window) -> ModerationPage fails  !db  @86-98
+    -- GET /moderation?since=&until=: what every relay not owned by an admin saw in the seen_at
+    -- window, newest first; page back by moving until, and items sharing a second can repeat.
+  pub async fn get_moderation_blob(Admin, relay_id, sha256) -> Response fails  !db  @102-145
+    -- GET /moderation/blob/{relay_id}/{sha256}: a blob's raw bytes, for members-only media.
+    fail invalid-relay unless relay_id is non-empty and only ASCII letters, digits, _ and -
+    fail invalid-sha256 unless sha256 is 64 hex
+    404 unless the relay's blob row exists and the blob store still has its bytes
+    stream it with its stored type, a private one-day immutable cache, nosniff and a sandbox CSP

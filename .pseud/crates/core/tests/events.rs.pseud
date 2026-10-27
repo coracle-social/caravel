@@ -1,0 +1,46 @@
+% source=crates/core/tests/events.rs lang=rust lines=671 sha=426704bade0d
+
+module caravel_core::tests::events
+  -- The shared event store (ported from zooid): replaceable slots, tombstones, expiry, query rules.
+
+  tests  !panic !db                                                     @16-671
+    const NOW = 1_800_000_000                                           @16
+    async fn core() -> Core  -- a test core with a fresh admin, clock pinned at NOW  @18-22
+    async fn save(core, relay_id, event) -> Saved fails  !db            @24-50
+      -- Save at NOW in one transaction, applying a new deletion or vanish request as ingest does.
+    async fn query(core, relay_id, filter) -> [StoredEvent] fails  !panic !db  @54-65
+      -- Up to 1000 matches at NOW, leaving out the events the relay signed itself.
+    async fn ids(core, relay_id, filter) -> [id] fails  !panic !db  -- query's event ids, in order  @67-73
+    fn kinds(kinds) -> Filter  -- a filter on just these kinds          @75-80
+    test a_saved_event_reads_back_exactly  -- escapes and tags survive; it still verifies  @83-103
+    test relays_never_see_each_others_events                            @106-132
+      -- The same event is stored independently per relay; deleting one copy leaves the other.
+    test queries_match_kinds_authors_ids_tags_and_time                  @135-196
+      -- Any-of and all-of tag matches, since/until, and newest first.
+    test an_absent_field_matches_everything_and_an_empty_one_nothing    @199-223
+      -- Only single-letter tags are indexed, so a longer tag name matches nothing.
+    test limits_cap_results_and_ties_break_on_id                        @226-270
+      -- Ties within a second order by ascending id; limit 0 returns nothing; the relay's cap
+      -- wins over a larger limit.
+    test search_matches_words_in_sequence  -- words in order; tsquery syntax doesn't error  @273-306
+    test a_saved_event_is_a_duplicate_the_second_time  -- 8 racing saves: 1 New, 7 Duplicate  @309-329
+    test a_replaceable_event_keeps_one_newest_version_per_slot          @332-370
+      -- A late older version or a repeat is Duplicate; the later of two in one second wins;
+      -- each relay has its own slot.
+    test addressable_events_have_a_slot_per_d_tag                       @373-391
+    test racing_versions_of_a_slot_leave_the_newest  -- 10 concurrent versions  @394-410
+    test a_deletion_removes_its_authors_events_and_refuses_them_after   @413-441
+      -- Only the deleter's own event goes and is refused as Deleted after; a stranger's stays.
+    test deleting_an_address_removes_versions_up_to_the_deletion        @444-468
+      -- Older versions are refused as Deleted; one newer than the deletion is New.
+    test vanishing_removes_an_author_and_their_gift_wraps               @471-498
+      -- Their events and wraps addressed to them go; older ones are refused, newer ones accepted.
+    test a_deletion_cannot_lift_a_request_to_vanish                     @502-519
+      -- NIP-62: a kind 5 naming the vanish request leaves it stored and refusing.
+    test expired_events_are_hidden_then_swept  -- hidden at the expiration second, then deleted  @523-546
+    test counts_group_matching_events_by_kind_author_and_room_tags      @549-605
+      -- Filters are a union counted once per event, limits don't bound counts, expired events
+      -- don't count; groups are by kind, author, d and each h tag.
+    test events_with_a_nul_character_are_not_storable  -- in content or in a tag  @608-631
+    test a_stripped_event_reads_back_without_a_signature  -- otherwise identical  @634-648
+    test negentropy_heads_refuse_sets_over_the_cap  -- None when matches exceed the cap  @651-671

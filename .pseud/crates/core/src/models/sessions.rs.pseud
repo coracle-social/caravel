@@ -1,0 +1,8 @@
+% source=crates/core/src/models/sessions.rs lang=rust lines=13 sha=7e9e2190145b
+
+module caravel_core::models::sessions
+  -- Sessions: the bearer tokens a NIP-98 signature buys, held as their hashes.
+
+  pub const SESSION_TTL = 30 days                                       @3-4
+  pub data Session { pubkey, created_at, expires_at, last_used_at: i64 }  @6-13
+    -- A sign-in, held as the hash of the bearer token that stands for it.

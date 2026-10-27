@@ -6,6 +6,7 @@ import PageContainer from "@/shared/components/PageContainer"
 import RelayDetailCard from "@/shared/components/RelayDetailCard"
 import ResourceState from "@/shared/components/ResourceState"
 import { useRelay, useRelayActivity, useRelayMembers } from "@/shared/lib/relays"
+import { loaded } from "@/shared/lib/resource"
 import useMinLoading from "@/shared/lib/useMinLoading"
 import useRelayActions from "@/shared/lib/useRelayActions"
 
@@ -22,7 +23,7 @@ export default function AdminRelayDetail() {
     <PageContainer>
       <BackLink label="Back" />
       <ResourceState loading={loading()} error={relay.error} loadingText="Loading relay..." errorText="Failed to load relay." class="mb-4" />
-      <Show when={!loading() && relay()}>
+      <Show when={!loading() && loaded(relay)}>
         {(r) => (
           <div class="space-y-6 mb-6">
             <RelayDetailCard
@@ -43,7 +44,7 @@ export default function AdminRelayDetail() {
               showPlanActions={false}
               mutateRelay={actions.mutate}
             />
-            <ActivityFeed activity={activity() ?? []} loading={activity.loading} />
+            <ActivityFeed activity={loaded(activity) ?? []} loading={activity.loading} error={activity.error} />
           </div>
         )}
       </Show>

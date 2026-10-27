@@ -1,0 +1,16 @@
+% source=crates/core/tests/moderation.rs lang=rust lines=199 sha=b40270c7c32a
+
+module caravel_core::tests::moderation
+  -- The moderation feed (ported from zooid); each test reads its own time window of every relay.
+
+  tests  !db !time                                                      @17-199
+    async fn save(core, relay_id, events) fails  !db !time  -- save each event in one transaction, seen now  @17-28
+    async fn upload(core, relay_id, sha256, pubkey) fails  !db !time  -- record a 10-byte png upload now  @30-39
+    test the_feed_holds_moderated_events_and_uploads_newest_first       @42-92
+      -- Ordered by seen_at; join requests and the admin's own relays are left out; an upload's
+      -- url is on the relay's canonical host.
+    test the_feed_window_is_inclusive_at_both_ends  -- the window filters on seen_at  @95-122
+    test a_full_page_says_it_was_truncated  -- 1001 events give 1000 items and truncated  @125-148
+    test the_feed_leaves_out_what_runs_the_relay                        @150-199
+      -- Of a note, relay-signed room metadata and role, a join request and relay and room
+      -- lists, only the note is in the feed.

@@ -1,0 +1,12 @@
+% source=crates/core/src/clock.rs lang=rust lines=31 sha=bf876371202a
+
+module caravel_core::clock  !time
+  -- The only source of the current time, which tests pin.
+
+  pub data Clock  -- unix seconds from the system, or a pinned value while one is set  @6-10
+    pinned: shared AtomicI64  -- 0 means not pinned; shared by every clone
+
+  impl Clock  !time                                                     @12-31
+    pub fn now(self) -> i64  !time  -- the pinned value, or the system time when it is 0  @13-20
+    pub fn pin(self, at: i64)  -- report at until pinned again or released  @22-25
+    pub fn release(self)  -- back to the system clock                   @27-30

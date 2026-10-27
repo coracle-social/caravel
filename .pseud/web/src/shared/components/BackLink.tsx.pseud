@@ -1,0 +1,7 @@
+% source=web/src/shared/components/BackLink.tsx lang=typescript lines=25 sha=1a43e73f6cae
+
+module @/shared/components/BackLink
+  -- A "← label" link back at the top of a page.
+
+  type BackLinkProps = { href?, label }                                 @4-8
+  pub fn BackLink(props: BackLinkProps)  -- links to href, or without one goes back in history  @10-25

@@ -1,0 +1,9 @@
+% source=web/src/shared/lib/kinds.ts lang=typescript lines=16 sha=ada24c1dbcaf
+
+module @/shared/lib/kinds
+  -- Names for the event kinds relays carry most.
+
+  const KIND_LABELS                                                     @1-14
+    0 Profile, 1 Note, 7 Reaction, 9 Chat message, 11 Thread, 20 Picture
+    1063 File, 1111 Comment, 1984 Report, 9802 Highlight, 30023 Article
+  pub fn kindLabel(kind) -> str  -- its label, else "Kind <n>"          @16

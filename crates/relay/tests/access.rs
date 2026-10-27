@@ -3,9 +3,9 @@
 
 mod common;
 
-use caravel_core::events::kinds;
-use caravel_core::hosting;
-use caravel_core::management::{self, Call};
+use caravel_core::management;
+use caravel_core::models::kinds;
+use caravel_core::models::management::Call;
 use caravel_core::testing::sign_event;
 use common::*;
 use coracle_lib::keys::SecretKey;
@@ -51,12 +51,6 @@ async fn a_claim_lets_a_stranger_join_and_read() {
 
     let (_, eose) = client.req("sub", json!({"kinds": [1]})).await;
     assert_eq!(eose[0], "EOSE", "a member may read");
-
-    let log = caravel_core::access::get_claim_log(server.core.db.pool(), &relay.id, "welcome")
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(log.uses[0].pubkey, stranger.public_key().to_hex());
 }
 
 #[tokio::test]
@@ -69,7 +63,7 @@ async fn an_open_relay_takes_joins_up_to_its_plans_member_limit() {
 
     // The free plan holds ten members, the owner among them.
     for _ in 0..9 {
-        hosting::add_member(
+        management::add_member(
             &server.core,
             &relay,
             &SecretKey::generate().public_key().to_hex(),
@@ -144,7 +138,7 @@ async fn management_calls_are_authorized_per_method() {
         .await;
     assert_eq!(
         methods["result"].as_array().unwrap().len(),
-        caravel_core::access::MANAGED_METHODS.len()
+        caravel_core::models::methods::MANAGED_METHODS.len()
     );
 
     let refused = server
@@ -331,7 +325,7 @@ async fn members_of_an_inviting_relay_may_create_claims() {
     let (relay, _) = server.relay().await;
     let host = relay.canonical_host();
     let member = SecretKey::generate();
-    hosting::add_member(&server.core, &relay, &member.public_key().to_hex())
+    management::add_member(&server.core, &relay, &member.public_key().to_hex())
         .await
         .unwrap();
     server.relays.reload(&relay.id).await.unwrap();
@@ -362,7 +356,7 @@ async fn a_banned_member_stops_receiving_at_once() {
     let host = relay.canonical_host();
     let member = SecretKey::generate();
     let member_hex = member.public_key().to_hex();
-    hosting::add_member(&server.core, &relay, &member_hex)
+    management::add_member(&server.core, &relay, &member_hex)
         .await
         .unwrap();
     server.relays.reload(&relay.id).await.unwrap();
@@ -410,7 +404,7 @@ async fn a_member_added_through_the_api_can_read_straight_away() {
     assert_eq!(closed[0], "CLOSED");
 
     // The API's change reaches the relay over the bus.
-    hosting::add_member(&server.core, &relay, &member.public_key().to_hex())
+    management::add_member(&server.core, &relay, &member.public_key().to_hex())
         .await
         .unwrap();
     let mut eose = serde_json::Value::Null;
@@ -433,7 +427,7 @@ async fn a_private_room_is_read_only_by_its_members_stored_and_live() {
     let insider = SecretKey::generate();
     let outsider = SecretKey::generate();
     for member in [&insider, &outsider] {
-        hosting::add_member(&server.core, &relay, &member.public_key().to_hex())
+        management::add_member(&server.core, &relay, &member.public_key().to_hex())
             .await
             .unwrap();
     }
@@ -488,10 +482,10 @@ async fn a_private_room_is_read_only_by_its_members_stored_and_live() {
     assert!(outside.is_quiet().await, "an outsider gets nothing live");
 
     let (stored, _) = outside.req("again", json!({"#h": ["secret"]})).await;
-    assert!(
-        stored.iter().all(|event| event["kind"] == 39000),
-        "only the metadata shows: {stored:?}"
-    );
+    assert!(stored.is_empty(), "nothing in the room shows: {stored:?}");
+    let (stored, _) = outside.req("about", json!({"#d": ["secret"]})).await;
+    assert_eq!(stored.len(), 1, "only the metadata shows: {stored:?}");
+    assert_eq!(stored[0]["kind"], 39000);
     let (stored, _) = inside
         .req("again", json!({"#h": ["secret"], "kinds": [9]}))
         .await;

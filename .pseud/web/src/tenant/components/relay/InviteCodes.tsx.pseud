@@ -1,0 +1,13 @@
+% source=web/src/tenant/components/relay/InviteCodes.tsx lang=typescript lines=73 sha=caa032a6afc3
+
+module @/tenant/components/relay/InviteCodes  !net !db !time !rand
+  -- A relay's NIP-43 invite codes, managed over NIP-86.
+
+  fn newCode() -> str  !rand  -- 40 random bits as 8 base36 characters, zero-padded  @11-12
+  pub fn InviteCodes(props: { relay })  !net !db !time !rand            @15-73
+    -- The relay's codes, each copyable as a Flotilla join link, with New code and Revoke.
+    read the codes with NIP-86 listclaims
+    fn create()  !net !db !time !rand                                   @21-30
+      NIP-86 createclaim with a fresh newCode, not optimistic
+      on success refetch the codes and copy its Flotilla join link (r = canonical host, c = code)
+    fn revoke(code)  !net !db !time  -- NIP-86 deleteclaim with no confirmation, then refetch the codes  @32-36

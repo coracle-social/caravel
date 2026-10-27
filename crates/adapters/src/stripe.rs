@@ -76,7 +76,9 @@ impl Stripe {
     // --- Customers ---
 
     /// Create a Stripe customer for a tenant and return its id. Idempotent on
-    /// `tenant_pubkey` so retrying a tenant's creation reuses the same customer.
+    /// `tenant_pubkey` so retrying a tenant's creation reuses the same customer. The
+    /// name is set by a second request, since Stripe refuses a retried key whose
+    /// body differs and the name can change between attempts.
     pub async fn create_customer(&self, tenant_pubkey: &str, name: &str) -> Result<String> {
         let body = self
             .post("/customers")
@@ -84,10 +86,16 @@ impl Stripe {
                 "Idempotency-Key",
                 self.idempotency_key(&["create_customer", tenant_pubkey]),
             )
-            .form(&[("name", name), ("metadata[tenant_pubkey]", tenant_pubkey)])
+            .form(&[("metadata[tenant_pubkey]", tenant_pubkey)])
             .send_json()
             .await?;
-        field(&body, "id", "customer id")
+        let id = field(&body, "id", "customer id")?;
+
+        self.post(&format!("/customers/{id}"))
+            .form(&[("name", name)])
+            .send_ok()
+            .await?;
+        Ok(id)
     }
 
     // --- Payment methods ---
@@ -108,23 +116,24 @@ impl Stripe {
 
     // --- Intents ---
 
-    /// Charge `amount` cents to a saved card off-session, returning the
-    /// PaymentIntent's id. A decline, or a charge that needs the customer, fails.
-    /// Idempotent on the invoice and the card, so a retry against one card reuses
-    /// its charge while a fall-back to another card makes a new one.
+    /// Charge `amount` cents to a saved card off-session for an invoice. Idempotent
+    /// on `attempt_id`: Stripe replays an attempt's first answer, refusals included,
+    /// so retrying an attempt can't charge twice and a new attempt charges afresh.
+    /// Fails when it can't be known whether the card was charged.
     pub async fn create_payment_intent(
         &self,
         customer_id: &str,
         payment_method_id: &str,
+        attempt_id: &str,
         invoice_id: &str,
         amount: i64,
-    ) -> Result<String> {
+    ) -> Result<Charge> {
         let amount = amount.to_string();
-        let body = self
+        let resp = self
             .post("/payment_intents")
             .header(
                 "Idempotency-Key",
-                self.idempotency_key(&["payment_intent", invoice_id, payment_method_id]),
+                self.idempotency_key(&["payment_intent", attempt_id]),
             )
             .form(&[
                 ("amount", amount.as_str()),
@@ -135,16 +144,28 @@ impl Stripe {
                 ("off_session", "true"),
                 ("confirm", "true"),
             ])
-            .send_json()
+            .send()
             .await?;
 
-        // Anything but success, such as `requires_action`, needs the customer.
-        let status = body["status"].as_str().unwrap_or_default();
-        if status != "succeeded" {
-            return Err(anyhow!("payment intent not succeeded (status: {status})"));
-        }
+        // A 4xx charged nothing, unless it is a 409 for a request still in flight or a 429.
+        let status = resp.status();
+        let refused = status.is_client_error()
+            && status != reqwest::StatusCode::CONFLICT
+            && status != reqwest::StatusCode::TOO_MANY_REQUESTS;
+        let body: serde_json::Value = match error_for_status(resp).await {
+            Ok(resp) => resp.json().await?,
+            Err(error) if refused => return Ok(Charge::Refused(error.to_string())),
+            Err(error) => return Err(error),
+        };
 
-        field(&body, "id", "payment intent id")
+        match body["status"].as_str().unwrap_or_default() {
+            "succeeded" => Ok(Charge::Succeeded(field(&body, "id", "payment intent id")?)),
+            "processing" => Err(anyhow!("payment intent still processing")),
+            // Anything else, such as `requires_action`, needs the customer.
+            status => Ok(Charge::Refused(format!(
+                "payment intent not succeeded (status: {status})"
+            ))),
+        }
     }
 
     // --- Checkout ---
@@ -386,15 +407,20 @@ impl Stripe {
             .collect())
     }
 
-    /// When a subscription's current period ends, and whether it stops then.
+    /// When a subscription's current period ends, whether it stops then, where it
+    /// stands, and whether its latest invoice is paid.
     pub async fn get_subscription(&self, subscription_id: &str) -> Result<Subscription> {
         let body = self
             .get(&format!("/subscriptions/{subscription_id}"))
+            .query(&[("expand[]", "latest_invoice")])
             .send_json()
             .await?;
         Ok(Subscription {
             current_period_end: body["items"]["data"][0]["current_period_end"].as_i64(),
             cancel_at_period_end: body["cancel_at_period_end"].as_bool().unwrap_or(false),
+            in_good_standing: matches!(body["status"].as_str(), Some("active" | "trialing")),
+            past_due: body["status"].as_str() == Some("past_due"),
+            latest_invoice_paid: body["latest_invoice"]["status"].as_str() == Some("paid"),
         })
     }
 
@@ -470,6 +496,14 @@ pub struct MembershipCheckoutParams<'a> {
     pub cancel_url: &'a str,
 }
 
+/// How an off-session charge ended, when Stripe's answer settles it.
+pub enum Charge {
+    /// The card was charged, by this PaymentIntent.
+    Succeeded(String),
+    /// Nothing was charged, for this reason.
+    Refused(String),
+}
+
 /// An invoice's Checkout session.
 pub struct CheckoutSession {
     pub id: String,
@@ -488,6 +522,14 @@ pub struct MembershipCheckout {
 pub struct Subscription {
     pub current_period_end: Option<i64>,
     pub cancel_at_period_end: bool,
+    /// Active or trialing. Stripe moves a subscription to its next period before
+    /// collecting for it, so a period running doesn't mean it was paid for.
+    pub in_good_standing: bool,
+    /// A payment failed and Stripe is retrying it.
+    pub past_due: bool,
+    /// A renewal's invoice stays a draft for about an hour, then is open until
+    /// Stripe collects it.
+    pub latest_invoice_paid: bool,
 }
 
 /// A string field of a response, which Stripe always sends.

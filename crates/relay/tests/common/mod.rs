@@ -11,10 +11,9 @@ use axum::Router;
 use axum::extract::{Request, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use caravel_core::Core;
-use caravel_core::events::kinds;
-use caravel_core::relays::Relay;
-use caravel_core::testing;
+use caravel_core::models::kinds;
+use caravel_core::models::relays::Relay;
+use caravel_core::{Core, testing};
 use caravel_relay::{Relays, RelaysConfig};
 use coracle_lib::events::Event;
 use coracle_lib::keys::SecretKey;
@@ -40,14 +39,15 @@ impl Server {
 
     /// A server for a core the test set up itself.
     pub async fn start_with(core: Core) -> Server {
+        Self::start_configured(core, RelaysConfig::default()).await
+    }
+
+    /// A server that serves its relays as `config` says.
+    pub async fn start_configured(core: Core, config: RelaysConfig) -> Server {
         let shutdown = CancellationToken::new();
-        let relays = Relays::load(
-            core.clone(),
-            RelaysConfig::default(),
-            shutdown.child_token(),
-        )
-        .await
-        .expect("failed to load relays");
+        let relays = Relays::load(core.clone(), config, shutdown.child_token())
+            .await
+            .expect("failed to load relays");
 
         tokio::spawn({
             let (relays, shutdown) = (relays.clone(), shutdown.clone());
@@ -240,6 +240,28 @@ impl Client {
                 return Ok(message);
             }
         }
+    }
+
+    /// Whether the relay drops the connection within ten seconds, reading past
+    /// whatever it sent first.
+    pub async fn is_dropped(&mut self) -> bool {
+        tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                match self.ws.next().await {
+                    None | Some(Err(_)) | Some(Ok(Message::Close(_))) => return,
+                    Some(Ok(_)) => continue,
+                }
+            }
+        })
+        .await
+        .is_ok()
+    }
+
+    /// Read for `duration`, discarding what arrives and answering pings as a
+    /// client does.
+    pub async fn listen(&mut self, duration: Duration) {
+        let _ =
+            tokio::time::timeout(duration, async { while self.ws.next().await.is_some() {} }).await;
     }
 
     /// Whether nothing arrives for a quarter second.

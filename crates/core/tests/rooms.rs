@@ -5,14 +5,15 @@
 use std::collections::BTreeMap;
 
 use anyhow::Result;
-use caravel_core::Core;
 use caravel_core::crypto::RelayKey;
-use caravel_core::events::{self, Saved};
-use caravel_core::management::{self, Call};
-use caravel_core::relay_policy::{self, Refusal, RelaySnapshot};
-use caravel_core::relays::Relay;
-use caravel_core::rooms::{self, kinds};
-use caravel_core::testing::{self, create_relay, sign_event};
+use caravel_core::models::events::Saved;
+use caravel_core::models::management::Call;
+use caravel_core::models::policy::{Refusal, RelaySnapshot};
+use caravel_core::models::relays::Relay;
+use caravel_core::models::rooms;
+use caravel_core::models::rooms::kinds;
+use caravel_core::testing::{create_relay, sign_event};
+use caravel_core::{Core, commands, domain, management, queries, testing};
 use coracle_lib::events::Event;
 use coracle_lib::filters::Filter;
 use coracle_lib::keys::SecretKey;
@@ -42,7 +43,7 @@ impl Fixture {
     }
 
     async fn snapshot(&self) -> RelaySnapshot {
-        relay_policy::load_snapshot(self.core.db.pool(), &self.relay)
+        queries::policy::load_snapshot(self.core.db.pool(), &self.relay)
             .await
             .unwrap()
     }
@@ -56,33 +57,36 @@ impl Fixture {
         tags: &[&[&str]],
     ) -> Result<Vec<Event>, Refusal> {
         let event = sign_event(author, kind, "", tags, self.now());
-        relay_policy::check_room_write(&self.snapshot().await, &event)?;
+        domain::policy::check_room_write(&self.snapshot().await, &event)?;
 
         let now = self.now();
         let published = self
             .core
             .db
             .with_tx(async |conn| {
-                let saved = events::save_event(&mut *conn, &self.relay.id, &event, now).await?;
+                let saved =
+                    commands::events::save_event(&mut *conn, &self.relay.id, &event, now).await?;
                 assert_eq!(saved, Saved::New);
-                rooms::apply_event(conn, &self.key, &self.relay.id, &event, now).await
+                commands::rooms::apply_event(conn, &self.key, &self.relay.id, &event, now).await
             })
             .await
             .unwrap();
         Ok(published)
     }
 
-    async fn store(&self, event: &Event) {
+    async fn store(&self, event: &Event) -> Saved {
         let now = self.now();
         self.core
             .db
-            .with_tx(async |conn| events::save_event(conn, &self.relay.id, event, now).await)
+            .with_tx(async |conn| {
+                commands::events::save_event(conn, &self.relay.id, event, now).await
+            })
             .await
-            .unwrap();
+            .unwrap()
     }
 
     async fn exists(&self, event: &Event) -> bool {
-        !events::get_events(self.core.db.pool(), &self.relay.id, &[event.id.to_bytes()])
+        !queries::events::get_events(self.core.db.pool(), &self.relay.id, &[event.id.to_bytes()])
             .await
             .unwrap()
             .is_empty()
@@ -94,10 +98,15 @@ impl Fixture {
             Filter::new()
                 .add_kind(kind)
                 .add_tag(coracle_lib::filters::TagMatch::Any, "d", room);
-        let found =
-            events::query_events(self.core.db.pool(), &self.relay.id, &filter, 1, self.now())
-                .await
-                .unwrap();
+        let found = queries::events::query_events(
+            self.core.db.pool(),
+            &self.relay.id,
+            &filter,
+            1,
+            self.now(),
+        )
+        .await
+        .unwrap();
         found
             .first()
             .map(|stored| serde_json::from_str(&stored.to_json(false)).unwrap())
@@ -112,16 +121,16 @@ fn values(event: &Event, name: &str) -> Vec<String> {
 fn an_event_names_its_room_by_d_for_room_state_and_h_otherwise() {
     let author = SecretKey::generate();
     let message = sign_event(&author, 9, "hi", &[&["h", "room"]], 0);
-    assert_eq!(rooms::room_id(&message), Some("room"));
+    assert_eq!(domain::rooms::room_id(&message), Some("room"));
 
     let pins = sign_event(&author, kinds::PINS, "", &[&["d", "room"]], 0);
-    assert_eq!(rooms::room_id(&pins), Some("room"));
+    assert_eq!(domain::rooms::room_id(&pins), Some("room"));
 
     let put_pins = sign_event(&author, kinds::PUT_PINS, "", &[&["h", "room"]], 0);
-    assert_eq!(rooms::room_id(&put_pins), Some("room"));
+    assert_eq!(domain::rooms::room_id(&put_pins), Some("room"));
 
     let elsewhere = sign_event(&author, 1, "hi", &[&["p", "x"]], 0);
-    assert_eq!(rooms::room_id(&elsewhere), None);
+    assert_eq!(domain::rooms::room_id(&elsewhere), None);
 }
 
 #[tokio::test]
@@ -617,6 +626,10 @@ async fn deleting_events_stays_within_the_room_and_spares_its_state() -> Result<
     assert!(!f.exists(&here).await);
     assert!(f.exists(&there).await, "another room's event stays");
     assert!(f.exists(&metadata).await, "the room's own state stays");
+
+    // What a moderator deleted stays deleted, and only in its room.
+    assert_eq!(f.store(&here).await, Saved::Deleted);
+    assert_eq!(f.store(&there).await, Saved::Duplicate);
     Ok(())
 }
 
@@ -651,7 +664,7 @@ async fn deleting_a_room_removes_it_and_everything_in_it() -> Result<()> {
     assert!(!f.exists(&message).await);
 
     // Only the deletion is left, and the room can be created again from nothing.
-    let left = events::query_events(
+    let left = queries::events::query_events(
         f.core.db.pool(),
         &f.relay.id,
         &Filter::new().add_tag(coracle_lib::filters::TagMatch::Any, "h", "room"),
@@ -685,7 +698,7 @@ async fn rooms_that_are_off_take_no_room_events() -> Result<()> {
         f.now(),
     );
     assert_eq!(
-        relay_policy::check_room_write(&snapshot, &event),
+        domain::policy::check_room_write(&snapshot, &event),
         Err(Refusal::invalid("groups are not enabled"))
     );
     Ok(())
@@ -702,7 +715,7 @@ async fn rebuilding_the_published_state_reproduces_it() -> Result<()> {
     management::call(
         &f.core,
         &f.relay,
-        Call::CreateRole(caravel_core::access::Role {
+        Call::CreateRole(caravel_core::models::roles::Role {
             id: "mod".into(),
             label: "Mod".into(),
             ..Default::default()
@@ -761,7 +774,9 @@ async fn rebuilding_the_published_state_reproduces_it() -> Result<()> {
     let rebuilt = f
         .core
         .db
-        .with_tx(async |conn| management::rebuild_derived(conn, &f.key, &f.relay.id, now).await)
+        .with_tx(async |conn| {
+            commands::relays::rebuild_derived(conn, &f.key, &f.relay.id, now).await
+        })
         .await?;
 
     let rebuilt: BTreeMap<(u16, String), Vec<Vec<String>>> = rebuilt
@@ -785,7 +800,7 @@ async fn published_state(f: &Fixture) -> BTreeMap<(u16, String), Vec<Vec<String>
     let filter = Filter::new()
         .add_author(f.key.pubkey().parse().unwrap())
         .add_kinds([13534, 33534, 39000, 39001, 39002, 39005]);
-    events::query_events(f.core.db.pool(), &f.relay.id, &filter, 1000, f.now())
+    queries::events::query_events(f.core.db.pool(), &f.relay.id, &filter, 1000, f.now())
         .await
         .unwrap()
         .iter()

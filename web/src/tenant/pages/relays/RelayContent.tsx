@@ -1,5 +1,5 @@
 import { useParams } from "@solidjs/router"
-import { createMemo, createSignal, For, Show } from "solid-js"
+import { createSignal, For, Show } from "solid-js"
 import ActionsMenu, { ActionsMenuItem } from "@/shared/components/ActionsMenu"
 import ConfirmDialog from "@/shared/components/ConfirmDialog"
 import NoteContent from "@/shared/components/NoteContent"
@@ -9,8 +9,6 @@ import { copyToClipboard } from "@/shared/lib/clipboard"
 import { formatTimeAgo } from "@/shared/lib/format"
 import { kindLabel } from "@/shared/lib/kinds"
 import { shortenNpub } from "@/shared/lib/pubkey"
-import { loaded } from "@/shared/lib/resource"
-import { useFramedRelay } from "@/tenant/components/RelayFrame"
 import FeedFooter from "@/tenant/components/relay/FeedFooter"
 import PubkeyLabel from "@/tenant/components/relay/PubkeyLabel"
 import { makeChange } from "@/tenant/lib/changes"
@@ -19,12 +17,9 @@ import usePagedEvents from "@/tenant/lib/usePagedEvents"
 // Everything a relay holds, newest first, with what the relay writes about itself left out.
 export default function RelayContent() {
   const params = useParams()
-  const [relay] = useFramedRelay()
-  const feed = usePagedEvents(() => params.id!)
+  const feed = usePagedEvents(() => params.id!, { exclude_own: true })
   const [banning, setBanning] = createSignal<string>()
   const [busy, setBusy] = createSignal(false)
-
-  const shown = createMemo(() => feed.events().filter(event => event.pubkey !== loaded(relay)?.pubkey))
 
   async function remove(event: NostrEvent) {
     if (await makeChange(() => callRelayMethod(params.id!, "banevent", [event.id, ""]), "Failed to delete the event", "Event deleted")) {
@@ -51,7 +46,7 @@ export default function RelayContent() {
       <p class="mb-6 mt-1 text-sm text-gray-500">Everything published to the relay, newest first.</p>
 
       <ul class="space-y-3">
-        <For each={shown()}>
+        <For each={feed.events()}>
           {(event) => (
             <li class="rounded-xl border border-gray-200 bg-white p-4">
               <div class="flex items-start justify-between gap-3">
@@ -83,7 +78,7 @@ export default function RelayContent() {
       </ul>
 
       <FeedFooter
-        count={shown().length}
+        count={feed.events().length}
         loading={feed.loading()}
         error={feed.error()}
         exhausted={feed.exhausted()}

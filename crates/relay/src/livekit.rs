@@ -5,8 +5,8 @@ use axum::body::Bytes;
 use axum::extract::{Extension, Path, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use caravel_core::relay_policy::{self, CallRefusal};
-use caravel_core::{auth, calls};
+use caravel_core::models::policy::CallRefusal;
+use caravel_core::{calls, domain};
 use serde_json::json;
 
 use crate::{Relays, Route};
@@ -47,16 +47,20 @@ pub async fn token(
         .and_then(|value| value.to_str().ok())
         .unwrap_or_default();
     let path = format!("{}/.well-known/nip29/livekit/{room_id}", route.host);
-    let pubkey =
-        match auth::verify_request_auth(authorization, &format!("https://{path}"), "GET", now)
-            .or_else(|_| {
-                auth::verify_request_auth(authorization, &format!("http://{path}"), "GET", now)
-            }) {
-            Ok(pubkey) => pubkey,
-            Err(error) => return refuse(StatusCode::UNAUTHORIZED, error.to_string()),
-        };
+    let pubkey = match domain::auth::verify_request_auth(
+        authorization,
+        &format!("https://{path}"),
+        "GET",
+        now,
+    )
+    .or_else(|_| {
+        domain::auth::verify_request_auth(authorization, &format!("http://{path}"), "GET", now)
+    }) {
+        Ok(pubkey) => pubkey,
+        Err(error) => return refuse(StatusCode::UNAUTHORIZED, error.to_string()),
+    };
 
-    if let Err(refusal) = relay_policy::admit_call(&state.snapshot, &pubkey, &room_id) {
+    if let Err(refusal) = domain::policy::admit_call(&state.snapshot, &pubkey, &room_id) {
         return match refusal {
             CallRefusal::NotMember => refuse(StatusCode::FORBIDDEN, "not a member of this relay"),
             CallRefusal::NoRoom => refuse(StatusCode::NOT_FOUND, "group not found"),
@@ -67,7 +71,7 @@ pub async fn token(
         };
     }
 
-    let name = calls::livekit_room(&state.relay.id, &room_id);
+    let name = domain::calls::livekit_room(&state.relay.id, &room_id);
     if let Err(error) = livekit.ensure_room(&name, now).await {
         tracing::warn!(relay = %state.relay.id, error = %error, "failed to create a call");
         return refuse(StatusCode::INTERNAL_SERVER_ERROR, "failed to create room");
@@ -111,7 +115,7 @@ pub async fn webhook(State(relays): State<Relays>, headers: HeaderMap, body: Byt
     let Some(name) = event.room.as_ref().map(|room| room.name.clone()) else {
         return (StatusCode::BAD_REQUEST, "missing room").into_response();
     };
-    let Some((relay_id, room_id)) = calls::split_livekit_room(&name) else {
+    let Some((relay_id, room_id)) = domain::calls::split_livekit_room(&name) else {
         return StatusCode::NOT_FOUND.into_response();
     };
 
@@ -122,7 +126,7 @@ pub async fn webhook(State(relays): State<Relays>, headers: HeaderMap, body: Byt
         "participant_left" | "participant_connection_aborted"
     ) && let Some(participant) = &event.participant
         && let Err(error) = calls::record_departure(
-            core.db.pool(),
+            core,
             relay_id,
             room_id,
             &participant.sid,
@@ -149,7 +153,7 @@ pub async fn webhook(State(relays): State<Relays>, headers: HeaderMap, body: Byt
         "room_finished" => Vec::new(),
         "participant_joined" | "participant_left" | "participant_connection_aborted" => {
             match livekit.list_participants(&name, core.clock.now()).await {
-                Ok(identities) => calls::participant_pubkeys(&identities),
+                Ok(identities) => domain::calls::participant_pubkeys(&identities),
                 Err(error) => {
                     return (
                         StatusCode::INTERNAL_SERVER_ERROR,
@@ -164,7 +168,7 @@ pub async fn webhook(State(relays): State<Relays>, headers: HeaderMap, body: Byt
 
     match calls::publish_participants(core, &state.key, relay_id, room_id, &participants).await {
         Ok(published) => {
-            instance.fanout(&published);
+            instance.broadcast(&published);
             StatusCode::NO_CONTENT.into_response()
         }
         Err(error) => (

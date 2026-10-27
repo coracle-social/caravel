@@ -1,0 +1,11 @@
+% source=crates/relay/tests/notify.rs lang=rust lines=81 sha=293b1dbc5ea7
+
+module caravel_relay::tests::notify
+  -- NOTIFY, ported from zooid: a pubkey's message reaches each connection authenticated as it.
+
+  tests                                                                 @11-81
+    test a_waiting_message_arrives_on_authentication                    @12-31
+      -- a message left before connecting arrives right after the AUTH is accepted
+    test a_new_message_reaches_its_pubkey_alone                         @34-61
+      -- an open connection authed as the pubkey gets it; another pubkey's and an anonymous one don't
+    test an_expired_message_is_not_sent                                 @64-81

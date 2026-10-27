@@ -1,0 +1,26 @@
+% source=crates/core/src/commands/memberships.rs lang=rust lines=170 sha=ea4ae94a5aa6
+
+module caravel_core::commands::memberships  !db
+  -- Writing paid memberships, and admitting the NIP-43 joins that can bind one.
+
+  pub async fn insert_membership(membership: Membership) fails  !db     @15-34
+  pub async fn set_customer(id, customer_id) fails  !db                 @36-43
+    -- Set the membership's stripe_customer_id.
+  pub async fn set_status(id, status: MembershipStatus, period_end: i64?) fails  !db  @46-61
+    -- Set the status, and current_period_end when one is given.
+  pub async fn admit_join(conn, key, relay: Relay, event, join: Join, now) -> [Event] fails  !db  @68-109
+    -- Admit a NIP-43 join, returning what the relay published.
+    lock the relay's row, so racing joins see each other's seats
+    match join
+      AlreadyMember -> admit nobody
+      Open -> admit as PublicJoin
+      Claim(code) -> fail conflict "invalid-claim" unless the claim is live
+        bind_invite: Payment if it bound a paid invite, else Claim
+    if admitting, fail conflict "member-limit" unless has_seat, then commands::members::admit
+  async fn bind_invite(conn, relay_id, code, pubkey, now) -> bool fails  !db  @113-145
+    -- Give a paid, unused invite's membership to pubkey, and revoke its claim.
+    return false if pubkey already holds a live membership of the relay
+    set pubkey and bound_at on the invite's membership if unbound and active or canceled
+    return false if none matched; else revoke_claim and return true
+  pub async fn set_paid(id, status, period_end, customer_id, subscription_id) fails  !db  @149-170
+    -- Record a subscription paying the membership: status, period end, Stripe ids.

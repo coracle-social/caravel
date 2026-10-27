@@ -1,155 +1,19 @@
-//! Managing a relay's access and rooms together: carrying out NIP-86 calls and
-//! room moderation, and rewriting every event the relay publishes about its own
-//! state.
+//! Managing a relay's access and rooms: its members, NIP-86 calls, and room
+//! moderation from the dashboards.
 
 use coracle_lib::events::Event;
-use serde_json::{Value, json};
+use serde_json::json;
 use sqlx::PgConnection;
 
 use crate::Core;
-use crate::access::{self, MANAGED_METHODS, Role};
 use crate::bus::Change;
-use crate::crypto::{RelayKey, is_hex64};
+use crate::crypto::RelayKey;
 use crate::error::{Error, Result};
-use crate::relay_policy;
-use crate::relays::{self, Relay};
-use crate::{events, rooms};
-
-/// A NIP-86 call, decoded from its method and params.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Call {
-    ChangeRelayName(String),
-    ChangeRelayDescription(String),
-    ChangeRelayIcon(String),
-    BanPubkey(String, String),
-    UnbanPubkey(String),
-    AllowPubkey(String),
-    UnallowPubkey(String),
-    ListBannedPubkeys,
-    ListAllowedPubkeys,
-    BanEvent(String, String),
-    AllowEvent(String),
-    ListBannedEvents,
-    CreateRole(Role),
-    EditRole(Role),
-    DeleteRole(String),
-    AssignRole(String, String),
-    UnassignRole(String, String),
-    AssignMethod(String, String),
-    UnassignMethod(String, String),
-    ListMethodAssignees,
-    ListClaims,
-    CreateClaim(String),
-    DeleteClaim(String),
-}
-
-/// What a call did.
-pub enum Outcome {
-    /// It answered without touching the relay's access lists or rooms.
-    Answer(Value),
-    /// It changed the relay's access lists or rooms, publishing these events about
-    /// it, for the caller to reload the relay and deliver them.
-    AccessChanged(Vec<Event>),
-}
-
-impl Outcome {
-    /// What the call answers with.
-    pub fn result(&self) -> Value {
-        match self {
-            Outcome::Answer(result) => result.clone(),
-            Outcome::AccessChanged(_) => json!(true),
-        }
-    }
-}
-
-impl Call {
-    /// Decode a call. `supportedmethods` isn't a call: it is answered from what the
-    /// caller may do.
-    pub fn decode(method: &str, params: &[Value]) -> Result<Self> {
-        let string = |i: usize| {
-            params
-                .get(i)
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string()
-        };
-        let required = |i: usize, what: &str| {
-            params
-                .get(i)
-                .and_then(Value::as_str)
-                .map(str::to_string)
-                .ok_or_else(|| invalid_params(&format!("missing {what} param for '{method}'")))
-        };
-        let hex64 = |i: usize, what: &str| {
-            let value = required(i, what)?;
-            if is_hex64(&value) {
-                Ok(value.to_lowercase())
-            } else {
-                Err(invalid_params(&format!(
-                    "invalid {what} param for '{method}'"
-                )))
-            }
-        };
-        let integer = |i: usize| {
-            params
-                .get(i)
-                .and_then(Value::as_f64)
-                .filter(|n| n.fract() == 0.0)
-        };
-        let role = || -> Result<Role> {
-            if params.len() < 5 {
-                return Err(invalid_params(&format!(
-                    "invalid number of params for '{method}'"
-                )));
-            }
-            let position = integer(4)
-                .ok_or_else(|| invalid_params(&format!("invalid order param for '{method}'")))?;
-            Ok(Role {
-                id: string(0),
-                label: string(1),
-                description: string(2),
-                hue: integer(3).unwrap_or_default() as i32,
-                position: position as i32,
-            })
-        };
-
-        Ok(match method {
-            "changerelayname" => Self::ChangeRelayName(required(0, "name")?),
-            "changerelaydescription" => Self::ChangeRelayDescription(required(0, "description")?),
-            "changerelayicon" => Self::ChangeRelayIcon(required(0, "icon")?),
-            "banpubkey" => Self::BanPubkey(hex64(0, "pubkey")?, string(1)),
-            "unbanpubkey" => Self::UnbanPubkey(hex64(0, "pubkey")?),
-            "allowpubkey" => Self::AllowPubkey(hex64(0, "pubkey")?),
-            "unallowpubkey" => Self::UnallowPubkey(hex64(0, "pubkey")?),
-            "listbannedpubkeys" => Self::ListBannedPubkeys,
-            "listallowedpubkeys" => Self::ListAllowedPubkeys,
-            "banevent" => Self::BanEvent(hex64(0, "id")?, string(1)),
-            "allowevent" => Self::AllowEvent(hex64(0, "id")?),
-            "listbannedevents" => Self::ListBannedEvents,
-            "createrole" => Self::CreateRole(role()?),
-            "editrole" => Self::EditRole(role()?),
-            "deleterole" => Self::DeleteRole(required(0, "id")?),
-            "assignrole" => Self::AssignRole(hex64(0, "pubkey")?, string(1)),
-            "unassignrole" => Self::UnassignRole(hex64(0, "pubkey")?, string(1)),
-            "assignmethod" => Self::AssignMethod(hex64(0, "pubkey")?, string(1)),
-            "unassignmethod" => Self::UnassignMethod(hex64(0, "pubkey")?, string(1)),
-            "listmethodassignees" => Self::ListMethodAssignees,
-            "listclaims" => Self::ListClaims,
-            "createclaim" => Self::CreateClaim(string(0)),
-            "deleteclaim" => Self::DeleteClaim(string(0)),
-            _ => {
-                return Err(Error::conflict(
-                    "unsupported",
-                    format!("method {method} not supported"),
-                ));
-            }
-        })
-    }
-}
-
-fn invalid_params(reason: &str) -> Error {
-    Error::invalid("invalid-params", format!("invalid params: {reason}"))
-}
+use crate::models::management::{Call, Outcome};
+use crate::models::members::MemberSource;
+use crate::models::methods::MANAGED_METHODS;
+use crate::models::relays::Relay;
+use crate::{commands, domain, queries};
 
 /// Carry out a NIP-86 call on a relay, whose caller may make it.
 pub async fn call(core: &Core, relay: &Relay, call: Call) -> Result<Outcome> {
@@ -160,7 +24,7 @@ pub async fn call(core: &Core, relay: &Relay, call: Call) -> Result<Outcome> {
 
     match &call {
         Call::ListBannedPubkeys => {
-            let bans = access::list_banned_pubkeys(pool, relay_id).await?;
+            let bans = queries::bans::list_banned_pubkeys(pool, relay_id).await?;
             Ok(Outcome::Answer(json!(
                 bans.into_iter()
                     .map(|ban| json!({"pubkey": ban.subject, "reason": ban.reason}))
@@ -168,7 +32,7 @@ pub async fn call(core: &Core, relay: &Relay, call: Call) -> Result<Outcome> {
             )))
         }
         Call::ListAllowedPubkeys => {
-            let members = access::list_members(pool, relay_id).await?;
+            let members = queries::members::list_members(pool, relay_id).await?;
             Ok(Outcome::Answer(json!(
                 members
                     .into_iter()
@@ -177,7 +41,7 @@ pub async fn call(core: &Core, relay: &Relay, call: Call) -> Result<Outcome> {
             )))
         }
         Call::ListBannedEvents => {
-            let bans = access::list_banned_events(pool, relay_id).await?;
+            let bans = queries::bans::list_banned_events(pool, relay_id).await?;
             Ok(Outcome::Answer(json!(
                 bans.into_iter()
                     .map(|ban| json!({"id": ban.subject, "reason": ban.reason}))
@@ -190,7 +54,7 @@ pub async fn call(core: &Core, relay: &Relay, call: Call) -> Result<Outcome> {
                 json!({"pubkey": tenant_pubkey, "methods": all}),
                 json!({"pubkey": relay.pubkey, "methods": all}),
             ];
-            for (pubkey, methods) in access::list_method_grants(pool, relay_id).await? {
+            for (pubkey, methods) in queries::methods::list_method_grants(pool, relay_id).await? {
                 if pubkey != tenant_pubkey && pubkey != relay.pubkey {
                     assignees.push(json!({"pubkey": pubkey, "methods": methods}));
                 }
@@ -199,7 +63,7 @@ pub async fn call(core: &Core, relay: &Relay, call: Call) -> Result<Outcome> {
             Ok(Outcome::Answer(json!(assignees)))
         }
         Call::ListClaims => Ok(Outcome::Answer(json!(
-            access::list_claims(pool, relay_id).await?
+            queries::claims::list_claims(pool, relay_id).await?
         ))),
         Call::ChangeRelayName(name) => change_info(core, relay_id, Some(name), None, None).await,
         Call::ChangeRelayDescription(description) => {
@@ -207,19 +71,19 @@ pub async fn call(core: &Core, relay: &Relay, call: Call) -> Result<Outcome> {
         }
         Call::ChangeRelayIcon(icon) => change_info(core, relay_id, None, None, Some(icon)).await,
         Call::UnbanPubkey(pubkey) => {
-            access::unban_pubkey(pool, relay_id, pubkey).await?;
+            commands::bans::unban_pubkey(pool, relay_id, pubkey).await?;
             Ok(Outcome::AccessChanged(Vec::new()))
         }
         Call::AllowEvent(id) => {
-            access::allow_event(pool, relay_id, id).await?;
+            commands::bans::allow_event(pool, relay_id, id).await?;
             Ok(Outcome::AccessChanged(Vec::new()))
         }
         Call::CreateClaim(code) => {
-            access::create_claim(pool, relay_id, code, now).await?;
+            commands::claims::create_claim(pool, relay_id, code, now).await?;
             Ok(Outcome::AccessChanged(Vec::new()))
         }
         Call::DeleteClaim(code) => {
-            access::revoke_claim(pool, relay_id, code, now).await?;
+            commands::claims::revoke_claim(pool, relay_id, code, now).await?;
             Ok(Outcome::AccessChanged(Vec::new()))
         }
         Call::BanPubkey(..)
@@ -253,7 +117,7 @@ pub async fn moderate_room(
     tags: Vec<Vec<String>>,
 ) -> Result<()> {
     relay.require_unpurged()?;
-    if !rooms::is_moderation_kind(kind) {
+    if !domain::rooms::is_moderation_kind(kind) {
         return Err(Error::invalid(
             "invalid-kind",
             format!("{kind} is not a group management kind"),
@@ -263,15 +127,15 @@ pub async fn moderate_room(
     let key = core.relay_key(relay)?;
     let now = core.clock.now();
     let event = key.sign(kind, tags, "", now);
-    let snapshot = relay_policy::load_snapshot(core.db.pool(), relay).await?;
-    relay_policy::check_room_write(&snapshot, &event)
+    let snapshot = queries::policy::load_snapshot(core.db.pool(), relay).await?;
+    domain::policy::check_room_write(&snapshot, &event)
         .map_err(|refusal| Error::invalid("refused", refusal.message()))?;
 
     let mut published = core
         .db
         .with_tx(async |conn| {
-            events::save_event(&mut *conn, &relay.id, &event, now).await?;
-            rooms::apply_event(conn, &key, &relay.id, &event, now).await
+            commands::events::save_event(&mut *conn, &relay.id, &event, now).await?;
+            commands::rooms::apply_event(conn, &key, &relay.id, &event, now).await
         })
         .await?;
     published.insert(0, event);
@@ -291,7 +155,7 @@ async fn change_info(
     description: Option<&str>,
     icon: Option<&str>,
 ) -> Result<Outcome> {
-    relays::set_relay_info(core.db.pool(), relay_id, name, description, icon).await?;
+    commands::relays::set_relay_info(core.db.pool(), relay_id, name, description, icon).await?;
     core.bus.publish(Change::RelayChanged {
         relay_id: relay_id.to_string(),
     });
@@ -311,58 +175,85 @@ async fn write(
 
     match call {
         Call::BanPubkey(pubkey, reason) => {
-            access::ban_pubkey(conn, key, relay_id, tenant_pubkey, pubkey, reason, now).await
+            commands::bans::ban_pubkey(conn, key, relay_id, tenant_pubkey, pubkey, reason, now)
+                .await
         }
-        Call::AllowPubkey(pubkey) => access::allow_pubkey(conn, key, relay_id, pubkey, now).await,
+        Call::AllowPubkey(pubkey) => {
+            commands::members::allow_pubkey(conn, key, relay_id, pubkey, now).await
+        }
         Call::UnallowPubkey(pubkey) => {
-            access::remove(conn, key, relay_id, tenant_pubkey, pubkey, now).await
+            commands::members::remove(conn, key, relay_id, tenant_pubkey, pubkey, now).await
         }
         Call::BanEvent(id, reason) => {
-            access::ban_event(conn, relay_id, id, reason, now).await?;
+            commands::bans::ban_event(conn, relay_id, id, reason, now).await?;
             Ok(Vec::new())
         }
-        Call::CreateRole(role) => access::create_role(conn, key, relay_id, role, now).await,
-        Call::EditRole(role) => access::edit_role(conn, key, relay_id, role, now).await,
-        Call::DeleteRole(id) => access::delete_role(conn, key, relay_id, id, now).await,
+        Call::CreateRole(role) => {
+            commands::roles::create_role(conn, key, relay_id, role, now).await
+        }
+        Call::EditRole(role) => commands::roles::edit_role(conn, key, relay_id, role, now).await,
+        Call::DeleteRole(id) => commands::roles::delete_role(conn, key, relay_id, id, now).await,
         Call::AssignRole(pubkey, role_id) => {
-            access::assign_role(conn, key, relay_id, pubkey, role_id, now).await
+            commands::roles::assign_role(conn, key, relay_id, pubkey, role_id, now).await
         }
         Call::UnassignRole(pubkey, role_id) => {
-            access::unassign_role(conn, key, relay_id, pubkey, role_id, now).await
+            commands::roles::unassign_role(conn, key, relay_id, pubkey, role_id, now).await
         }
         Call::AssignMethod(pubkey, method) => {
-            access::grant_method(conn, key, relay_id, tenant_pubkey, pubkey, method, now).await
+            commands::methods::grant_method(conn, key, relay_id, tenant_pubkey, pubkey, method, now)
+                .await
         }
         Call::UnassignMethod(pubkey, method) => {
-            access::revoke_method(conn, relay_id, tenant_pubkey, &relay.pubkey, pubkey, method)
-                .await?;
+            commands::methods::revoke_method(
+                conn,
+                relay_id,
+                tenant_pubkey,
+                &relay.pubkey,
+                pubkey,
+                method,
+            )
+            .await?;
             Ok(Vec::new())
         }
         _ => unreachable!("{call:?} doesn't write in a transaction"),
     }
 }
 
-/// Rewrite every event the relay publishes about its own state from the tables
-/// that hold it: the member list, each role, and each room's metadata, admins,
-/// members and pins.
-pub async fn rebuild_derived(
-    conn: &mut PgConnection,
-    key: &RelayKey,
-    relay_id: &str,
-    now: i64,
-) -> Result<Vec<Event>> {
-    let mut published = vec![access::publish_member_list(&mut *conn, key, relay_id, now).await?];
+/// Make a pubkey a member of a relay by hand.
+pub async fn add_member(core: &Core, relay: &Relay, pubkey: &str) -> Result<()> {
+    relay.require_unpurged()?;
+    let key = core.relay_key(relay)?;
+    let now = core.clock.now();
+    let published = core
+        .db
+        .with_tx(async |conn| {
+            commands::members::admit(conn, &key, &relay.id, pubkey, MemberSource::Manual, now).await
+        })
+        .await?;
 
-    for role in access::list_roles(&mut *conn, relay_id).await? {
-        published.push(access::publish_role(&mut *conn, key, relay_id, &role, now).await?);
-    }
+    core.bus.publish(Change::AccessChanged {
+        relay_id: relay.id.clone(),
+        published,
+    });
+    Ok(())
+}
 
-    for room in rooms::list_rooms(&mut *conn, relay_id).await? {
-        published.push(rooms::publish_metadata(&mut *conn, key, relay_id, &room.id, now).await?);
-        published.push(rooms::publish_admins(&mut *conn, key, relay_id, &room.id, now).await?);
-        published.push(rooms::publish_members(&mut *conn, key, relay_id, &room.id, now).await?);
-        published.push(rooms::publish_pins(&mut *conn, key, relay_id, &room.id, now).await?);
-    }
+/// Remove a member from a relay. Its owner can't be removed.
+pub async fn remove_member(core: &Core, relay: &Relay, pubkey: &str) -> Result<()> {
+    relay.require_unpurged()?;
+    let key = core.relay_key(relay)?;
+    let now = core.clock.now();
+    let published = core
+        .db
+        .with_tx(async |conn| {
+            commands::members::remove(conn, &key, &relay.id, &relay.tenant_pubkey, pubkey, now)
+                .await
+        })
+        .await?;
 
-    Ok(published)
+    core.bus.publish(Change::AccessChanged {
+        relay_id: relay.id.clone(),
+        published,
+    });
+    Ok(())
 }

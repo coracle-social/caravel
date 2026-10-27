@@ -1,0 +1,14 @@
+% source=web/src/shared/components/relay/RelayCardHeader.tsx lang=typescript lines=170 sha=d7a652e71498
+
+module @/shared/components/relay/RelayCardHeader
+  -- The header of a relay's page, with its actions menu.
+
+  pub fn PlanBadge(props: { planId })  -- the plan as a pill, gray for FREE and branded otherwise  @12-21
+  type RelayCardHeaderProps  -- relay(), showTenant?, tenantProfile(), editHref?, busy?, onRequest*  @23-35
+  pub fn RelayCardHeader(props: RelayCardHeaderProps)                   @38-170
+    -- A relay's icon, name, status, plan, address and description, and with showTenant its
+    -- owner, linking to their admin page.
+    the actions menu shows unless the relay is purged or no action is given  @42-46
+    each item shows only given its handler: edit, custom domain, import/export, erase, delete  @87-163
+    Deactivate only while active, Reactivate only while inactive        @116-139
+    every item that runs an action is disabled while busy, labeled as in progress  @119

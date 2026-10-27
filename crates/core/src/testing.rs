@@ -19,6 +19,9 @@ pub const RELAY_DOMAIN: &str = "relay.test";
 /// The API base url test requests sign for.
 pub const API_URL: &str = "http://api.test";
 
+/// The dashboards' url in tests, under the relay domain as a deployment may put it.
+pub const PLATFORM_URL: &str = "http://app.relay.test";
+
 const DEAD_RELAY: &str = "ws://127.0.0.1:1";
 
 /// The LiveKit server test cores call, which isn't there.
@@ -36,6 +39,7 @@ pub async fn core(admin_pubkey: &str) -> Core {
 
     let config = Config {
         api_url: API_URL.to_string(),
+        platform_url: Some(PLATFORM_URL.to_string()),
         admin_pubkeys: vec![admin_pubkey.to_string()],
         relay_domains: vec![RELAY_DOMAIN.to_string()],
         member_fee_percent: 10.0,
@@ -113,7 +117,7 @@ pub fn http_auth(
 ) -> String {
     let event = sign_event(
         secret,
-        crate::events::kinds::HTTP_AUTH,
+        crate::models::kinds::HTTP_AUTH,
         "",
         &[&["u", url], &["method", method]],
         created_at,
@@ -123,9 +127,9 @@ pub fn http_auth(
 
 /// Make a pubkey a tenant, without reaching Stripe.
 pub async fn insert_tenant(core: &Core, pubkey: &str) {
-    crate::tenants::insert_tenant(
+    crate::commands::tenants::insert_tenant(
         core.db.pool(),
-        &crate::tenants::Tenant {
+        &crate::models::tenants::Tenant {
             pubkey: pubkey.to_string(),
             return_url: "http://localhost/account".to_string(),
             created_at: core.clock.now(),
@@ -144,7 +148,9 @@ pub fn subdomain() -> String {
 
 /// A tenant and a relay of theirs on the free plan, without reaching Stripe.
 /// Returns the relay and the tenant's secret key.
-pub async fn create_relay(core: &Core) -> (crate::relays::Relay, coracle_lib::keys::SecretKey) {
+pub async fn create_relay(
+    core: &Core,
+) -> (crate::models::relays::Relay, coracle_lib::keys::SecretKey) {
     let secret = coracle_lib::keys::SecretKey::generate();
     let pubkey = secret.public_key().to_hex();
     insert_tenant(core, &pubkey).await;
@@ -152,7 +158,7 @@ pub async fn create_relay(core: &Core) -> (crate::relays::Relay, coracle_lib::ke
     let relay = crate::hosting::create_relay(
         core,
         &pubkey,
-        crate::hosting::RelaySettings {
+        crate::models::relays::RelaySettings {
             subdomain: Some(subdomain()),
             domain: Some(RELAY_DOMAIN.to_string()),
             plan_id: Some("free".to_string()),

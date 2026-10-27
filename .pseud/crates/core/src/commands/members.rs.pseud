@@ -1,0 +1,22 @@
+% source=crates/core/src/commands/members.rs lang=rust lines=125 sha=5f553092e82e
+
+module caravel_core::commands::members  !db
+  -- Admitting and removing a relay's members; each change republishes the member list.
+
+  pub async fn admit(conn, key, relay_id, pubkey, source: MemberSource, now) -> [Event] fails  !db  @17-55
+    -- Make a pubkey a member, publishing its addition and the new member list.
+    insert into relay_member, doing nothing on conflict, so an existing member keeps its source
+    if nothing was inserted, return no events
+    publish RELAY_ADD_MEMBER with a "-" tag and the member's p tag
+    return it with publish_member_list
+  pub async fn remove(conn, key, relay_id, tenant_pubkey, pubkey, now) -> [Event] fails  !db  @59-99
+    -- Remove a member, publishing the removal and the new member list.
+    fail conflict "owner" if pubkey is the tenant or the relay's own key
+    delete from relay_member, which cascades to the member's method_grant rows
+    if nothing was deleted, return no events
+    publish RELAY_REMOVE_MEMBER with a "-" tag and the member's p tag
+    return it with publish_member_list
+  pub async fn allow_pubkey(conn, key, relay_id, pubkey, now) -> [Event] fails  !db  @102-112
+    -- admit as Manual, then commands::bans::unban_pubkey; returns what admit published.
+  pub async fn publish_member_list(conn, key, relay_id, now) -> Event fails  !db  @115-125
+    -- Publish RELAY_MEMBERS (kind 13534) tagging every member with their roles.

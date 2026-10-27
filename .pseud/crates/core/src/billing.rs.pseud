@@ -1,0 +1,157 @@
+% source=crates/core/src/billing.rs lang=rust lines=950 sha=259a4bb4bd03
+
+module caravel_core::billing  !net !db !time !rand
+  -- Subscription billing: line items from activity, renewal, overage, invoices, collection, churn.
+
+  const GRACE_PERIOD_SECS = 7 days                                      @20
+  const FRESH_INVOICE_DM_GRACE_SECS = 1 day  -- a new invoice is shown in-app before any DM  @24
+  const MANUAL_PAYMENT_DM_INTERVAL_SECS = 12 days                       @26
+  const MANUAL_PAYMENT_DM = "Payment is due … pay by Lightning or card:"  @28
+  const CHURN_DM = "… paused. You can restore service any time by adding a payment method …"  @30
+  pub enum Collection                                                   @33-41
+    -- How far collecting an open invoice goes.
+    Settle  -- only settle what the tenant already paid out of band
+    Charge  -- also charge the tenant's wallet, then their saved card
+    ChargeAndRemind  -- also DM a payment reminder when neither charge goes through
+
+  pub async fn reconcile_subscriptions(core) fails  !net !db !time !rand  @44-64
+    -- The hourly pass: sample usage, then reconcile every tenant with ChargeAndRemind.
+    sample usage first, so a period closing now rolls up a fresh reading; a failure is logged
+    list every tenant once, then reconcile_subscription each; a failure is logged and skipped
+  pub async fn reconcile_subscription(core, tenant, collection: Collection) fails  !net !db !time !rand  @71-145
+    -- Bring a tenant's billing up to date, then churn them or collect their open invoices.
+    return if the tenant is banned, since the ban forgave what they owed
+    list the tenant's unbilled billable activity, oldest first
+    a churned tenant with any of it is back: reactivate_tenant, pricing its restorations too
+    for each activity
+      the first sets the billing anchor at its created_at if there is none
+      reconcile_activity
+    if the tenant has a billing period now
+      reconcile_overage of the period just closed, then reconcile_renewal of this one
+      under the tenant's row lock, claim outstanding items onto an invoice once they pass $1
+        an admin's invoice is issued paid
+    list the open invoices, oldest first
+    return if maybe_churn_tenant finds the tenant past due
+    unless Settle, refresh the saved card from Stripe  !net
+    reconcile_payments for each open invoice
+  fn reconcile_activity(core, tenant, activity) fails  !db !time !rand  @149-182
+    -- Price one activity, then claim it with its item in one transaction so it bills once.
+    match activity type, prorated over what remains of its period at the snapshot's plan
+      CreateRelay -> charge "New relay created"
+      ActivateRelay, UnmarkRelayDelinquent -> charge "Relay reactivated"
+      DeactivateRelay -> credit "Relay deactivated"
+      PurgeRelay of a relay its snapshot says was Active -> credit "Relay purged"
+      UpdateRelay -> plan_change_item
+      any other PurgeRelay, MarkRelayDelinquent -> nothing
+    in one transaction: claim it, even at no cost, adding the item only if this call won the claim
+  fn plan_change_item(core, tenant, activity) -> InvoiceItem? fails  !db !rand  @189-230
+    -- The prorated difference between this update's plan and the relay's plan just before it.
+    nothing unless the update's snapshot says Active; reactivating charges the new plan
+    fail internal if the relay has no earlier activity
+    nothing if the plan didn't change, or if the prorated difference is zero
+    else an item "Plan changed from <old> to <new>" for prorate(new) - prorate(old), maybe a credit
+
+  fn reconcile_renewal(core, tenant, period: BillingPeriod) fails  !db !rand  @236-294
+    -- Charge a full period for each relay active on a paid plan at period.start, once per period.
+    return if renewed_at already reaches period.start
+    for each unpurged relay, take its last activity strictly before period.start
+      skip it if it has none (created this period), wasn't Active, or was on a free plan
+      add a "Subscription renewal" item at the plan's full price, dated period.start
+    nothing to renew leaves the marker unmoved, so a relay renewable later renews next boundary
+    under the tenant's row lock: re-check renewed_at, insert the items, advance it to period.start
+  fn reconcile_overage(core, tenant, period: BillingPeriod) fails  !db !rand  @301-405
+    -- Bill the period before `period` for usage past each relay's allowance, once per period.
+    return in the tenant's first period, or if overage_billed_at already reaches the closed one
+    for each relay's usage totals over the closed period
+      price it at the plan of its last activity before the close; skip a free plan
+      round peak storage up to whole GB and participant seconds up to whole hours
+      for storage and A/V call time, bill (used - included) * rate when positive, dated the close
+    under the tenant's row lock: re-check overage_billed_at, insert the items, advance it
+      the marker advances even when nothing ran over
+
+  fn maybe_churn_tenant(core, tenant, invoices: [Invoice]) -> bool fails  !net !db !time !rand  @412-430
+    -- Whether the oldest open invoice is past GRACE_PERIOD_SECS, churning the tenant the first time.
+    false without an open invoice, or while the oldest is inside its grace
+    if the tenant isn't churned and churn_tenant churns them, DM CHURN_DM with their return_url  !net
+      a failed DM is logged and never retried
+    true, so collection is skipped
+  fn churn_tenant(core, tenant_pubkey) -> bool fails  !db !time !rand   @433-473
+    -- Pause and forgive a tenant in one transaction, then RelayChanged per paused relay.
+    under the tenant's row lock
+      return false if the locked row is already churned, by a concurrent pass
+      set churned_at to now
+      mark each served relay Delinquent, recording MarkRelayDelinquent
+      void the open invoices and every outstanding item
+    publish RelayChanged per paused relay, then return true
+  pub(crate) fn reactivate_tenant(core, tenant_pubkey) -> [Activity] fails  !db !time !rand  @476-516
+    -- Unchurn a tenant in one transaction, returning the unbilled activities restoring its relays.
+    -- Also how a saved NWC url or card brings a churned tenant back.
+    under the tenant's row lock
+      return none if the locked row isn't churned, since a concurrent pass brought it back
+      clear churned_at
+      mark each unpurged Delinquent relay Active, recording UnmarkRelayDelinquent
+      void the open invoices and every outstanding item
+    publish RelayChanged per restored relay
+
+  fn reconcile_payments(core, tenant, invoice, collection: Collection) fails  !net !db !time !rand  @524-607
+    -- Collect one invoice as far as `collection` goes, settling payments already made first.
+    if its latest Lightning invoice is unsettled and the platform wallet sees it paid  !net
+      in one transaction mark it settled and the invoice paid as Oob, then cleanup; done
+    if its latest Checkout session is unsettled and Stripe says it was paid  !net
+      in one transaction clear stripe_error, mark it settled and the invoice paid as Stripe
+      then cleanup; done
+    a wallet or Stripe lookup that errors counts as unpaid
+    stop here for Settle
+    with an NWC url, if pay_with_nwc succeeds: cleanup; done
+    with a saved card, if pay_with_card succeeds: cleanup; done
+    for ChargeAndRemind, send_payment_reminder; a failure is logged
+  fn pay_with_nwc(core, tenant, encrypted_nwc_url, invoice) fails  !net !db !time !rand  @610-650
+    -- Pay an invoice from the tenant's wallet, storing any failure as their nwc_error.
+    decrypt the url, open the wallet, ensure_bolt11_for_invoice
+    pay the Lightning invoice from the tenant's wallet  !net
+      an error still counts as paid if the platform wallet sees it settled or the invoice got paid
+    in one transaction: clear nwc_error, mark the bolt11 settled and the invoice paid as Nwc
+      an invoice already paid keeps its method, but the bolt11 is marked settled anyway
+    on any failure, store its message as nwc_error, then return it
+  fn pay_with_card(core, tenant, invoice, payment_method_id) fails  !net !db !time !rand  @652-711
+    -- Charge the saved card off-session for an invoice.
+    ensure a pending intent row, which keeps the card of one already pending
+    create a confirmed PaymentIntent, idempotent on the intent row's id  !net
+      Refused -> delete the row so the next pass makes a new attempt, store stripe_error, fail
+      an unknown outcome -> keep the row for the next pass to replay, store stripe_error, fail
+    in one transaction: clear stripe_error, mark the intent settled and the invoice paid as Stripe
+  fn send_payment_reminder(core, tenant, invoice) fails  !net !db !time  @715-734
+    -- DM a link to pay by hand, once the invoice is a day old and at most every twelve days.
+    skip if the invoice is younger than FRESH_INVOICE_DM_GRACE_SECS or was DM'd within the interval
+    DM MANUAL_PAYMENT_DM with return_url?invoice=<id>, then mark the invoice notified  !net
+  fn cleanup_pending_payments(core, invoice) fails  !net !db            @738-752
+    -- Expire the paid invoice's unsettled Checkout sessions, ignoring failures; bolt11s stay payable.
+  pub async fn ensure_bolt11_for_invoice(core, invoice) -> Bolt11 fails  !net !db !time !rand  @758-810
+    -- A payable Lightning invoice for an open invoice, reusing the latest if unsettled and unexpired.
+    a paid or voided invoice gets its latest one, or fails conflict "invoice-not-open"
+    return the latest if it is settled, as the invoice was paid since the caller read it
+    return the latest while it is unexpired
+    an expired one is looked up first, since only the latest is ever looked up again  !net
+      a failed lookup fails, replacing nothing
+      paid: in one transaction mark it settled and the invoice paid as Oob, cleanup, return it
+    otherwise price the amount in msats at the current BTC price, and issue a 1-hour invoice  !net
+    store it, expiring at now + 3600
+  pub async fn ensure_checkout_for_invoice(core, tenant, invoice, return_url) -> Checkout fails  !net !db !time !rand  @815-860
+    -- A hosted Checkout session for an open invoice, reusing the latest unexpired one.
+    fail conflict "invoice-not-open" unless the invoice is open
+    reuse the latest session while unexpired, or fail conflict "checkout-settled" if it was paid
+    otherwise create one returning to return_url on success or cancel, and store it  !net
+
+  pub async fn reconcile_tenant(core, tenant) fails  !net !db !time !rand  @865-869
+    -- At the tenant's request: sync_stripe_customer, re-read them, reconcile with Settle.
+    -- A card that brought them back has its restorations priced by that reconcile.
+  pub async fn collect_invoice(core, tenant, invoice) fails  !net !db !time !rand  @873-876
+    -- At the tenant's request: ensure a Lightning invoice, then reconcile_payments with Charge.
+  pub async fn open_billing_portal(core, tenant, return_url?) -> url fails  !net  @879-888
+    -- A Stripe billing portal session where the tenant manages their saved cards.
+  fn sync_stripe_customer(core, tenant) -> payment_method_id?  !net !db  @893-921
+    -- The tenant's saved card from Stripe, stored if it changed; the cached one if anything fails.
+    -- A new card saved by a churned tenant first reactivate_tenant, so a failure retries next sync.
+  pub async fn get_draft_invoice(core, tenant) -> Invoice? fails  !db !time  @925-950
+    -- An unsaved "draft" invoice summing the outstanding items over the current period.
+    -- None without a billing period or outstanding items; the sum may be a credit.

@@ -1,0 +1,18 @@
+% source=web/src/tenant/lib/usePagedEvents.ts lang=typescript lines=37 sha=9074fc8f23d0
+
+module @/tenant/lib/usePagedEvents  !net !db !time
+  -- Paging back through a relay's stored events.
+
+  pub fn usePagedEvents(relayId, query { kinds?, exclude_own? } = {}, pageSize = 30) -> feed  !net !db !time  @5-37
+    -- A relay's events of some kinds (any, if none), newest first, a page at a time from mount;
+    -- exclude_own leaves out those the relay signed itself.
+    -- The feed is its events, loading, error and exhausted signals, loadMore and drop.
+    fn loadMore()  !net !db !time                                       @14-29
+      skip while a page is loading or the feed is exhausted
+      listRelayEvents of query, limit pageSize, after the last event fetched  @20-21
+        its created_at as until and its id as after, so no page repeats or skips one
+        kept apart from what's shown, so dropping events doesn't move it
+      append the page; exhausted once a page is short
+      on failure keep the error for the footer; the shown events stay
+    load the first page on mount                                        @31
+    fn drop(gone)  -- stop showing events gone matches, such as ones just deleted  @34

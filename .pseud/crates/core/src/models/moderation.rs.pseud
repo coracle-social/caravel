@@ -1,0 +1,22 @@
+% source=crates/core/src/models/moderation.rs lang=rust lines=45 sha=973f6933ce63
+
+module caravel_core::models::moderation
+  -- The moderation feed: the events and uploads every moderated relay saw, for admins to review.
+
+  pub data ModerationItem                                               @7-15
+    -- One reviewable item, from relay_id, which first stored it at seen_at.
+    relay_id: str
+    seen_at: i64
+    subject: Subject  -- flattened
+  pub enum Subject  -- what is up for review, as { type, data }         @17-24
+    Event(Value)  -- an event, as NIP-01 JSON
+    Upload(Upload)
+  pub data Upload  -- a blob a member uploaded                          @26-38
+    sha256: str
+    url: str  -- where the relay serves it
+    content_type: str  -- "type" on the wire
+    size: i64
+    pubkey: str  -- the uploader
+    created_at: i64
+  pub data ModerationPage { items: [ModerationItem], truncated: bool }  @40-45
+    -- One page of the feed, and whether its window held more than fit.

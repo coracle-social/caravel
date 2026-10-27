@@ -4,10 +4,13 @@
 
 mod common;
 
+use std::time::Duration;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use caravel_core::events::kinds;
-use caravel_core::testing::sign_event;
+use caravel_core::models::kinds;
+use caravel_core::testing::{self, sign_event};
+use caravel_relay::{RelayLimits, Relays, RelaysConfig};
 use common::*;
 use coracle_lib::events::EventId;
 use coracle_lib::keys::SecretKey;
@@ -15,6 +18,7 @@ use coracle_lib::sync::{
     FrameBudget, Item, Message as SyncMessage, SyncSet, initiate, reconcile_initiator,
 };
 use serde_json::{Value, json};
+use tokio_util::sync::CancellationToken;
 
 #[tokio::test]
 async fn the_information_document_describes_the_relay() {
@@ -307,7 +311,7 @@ async fn negentropy_reconciles_a_client_against_what_it_may_read() {
     for i in 0..3 {
         let event = sign_event(&owner, 1, &i.to_string(), &[], server.now() - i);
         assert!(client.publish(&event).await.0);
-        published.push(event.id);
+        published.push(event);
     }
 
     let local = SyncSet::new();
@@ -321,17 +325,27 @@ async fn negentropy_reconciles_a_client_against_what_it_may_read() {
     let output = reconcile_initiator(&local, &incoming, FrameBudget::unlimited());
     let mut need: Vec<EventId> = output.need;
     need.sort();
-    published.sort();
-    assert_eq!(need, published);
-
-    // A client holding everything already has nothing to fetch.
-    let full = SyncSet::from_items(published.iter().map(|id| Item {
-        timestamp: 0,
-        id: *id,
-    }));
-    assert!(!full.is_empty());
+    let mut ids: Vec<EventId> = published.iter().map(|event| event.id).collect();
+    ids.sort();
+    assert_eq!(need, ids);
     client.send(json!(["NEG-CLOSE", "sync"])).await;
     assert!(client.is_quiet().await);
+
+    // A client holding everything already has nothing to fetch or send.
+    let full = SyncSet::from_items(published.iter().map(|event| Item {
+        timestamp: event.created_at,
+        id: event.id,
+    }));
+    client
+        .send(json!(["NEG-OPEN", "full", {"kinds": [1]}, initiate(&full).to_hex()]))
+        .await;
+    let reply = client.recv().await.unwrap();
+    assert_eq!(reply[0], "NEG-MSG");
+    let incoming = SyncMessage::from_hex(reply[2].as_str().unwrap()).unwrap();
+    let output = reconcile_initiator(&full, &incoming, FrameBudget::unlimited());
+    assert!(output.need.is_empty(), "{:?}", output.need);
+    assert!(output.have.is_empty(), "{:?}", output.have);
+    assert!(output.next.is_none());
 
     // Reconciling needs authentication like reading does.
     let mut anonymous = server.connect(&relay.canonical_host()).await;
@@ -402,7 +416,7 @@ async fn a_count_is_admitted_and_filtered_like_a_subscription() {
     let host = relay.canonical_host();
     let (insider, outsider) = (SecretKey::generate(), SecretKey::generate());
     for member in [&insider, &outsider] {
-        caravel_core::hosting::add_member(&server.core, &relay, &member.public_key().to_hex())
+        caravel_core::management::add_member(&server.core, &relay, &member.public_key().to_hex())
             .await
             .unwrap();
     }
@@ -494,6 +508,68 @@ async fn count(client: &mut Client, filters: Vec<Value>) -> Value {
 }
 
 #[tokio::test]
+async fn a_request_holds_at_most_max_filters_filters() {
+    let core = testing::core(&SecretKey::generate().public_key().to_hex()).await;
+    let config = RelaysConfig {
+        limits: RelayLimits {
+            max_filters: 2,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let server = Server::start_configured(core, config).await;
+    let (relay, owner) = server.relay().await;
+    let mut client = server.connect(&relay.canonical_host()).await;
+    client.auth(&owner, server.now()).await;
+
+    let refused = json!([
+        "CLOSED",
+        "c",
+        "blocked: a request may have at most 2 filters"
+    ]);
+    let mut req = vec![json!("REQ"), json!("c")];
+    req.extend(vec![json!({"kinds": [1]}); 3]);
+    client.send(Value::Array(req)).await;
+    assert_eq!(client.recv().await.unwrap(), refused);
+    assert_eq!(
+        count(&mut client, vec![json!({"kinds": [1]}); 3]).await,
+        refused
+    );
+    assert_eq!(
+        count(&mut client, vec![json!({"kinds": [1]}); 2]).await,
+        json!(["COUNT", "c", {"count": 0}])
+    );
+}
+
+#[tokio::test]
+async fn a_change_published_before_watching_starts_is_applied() {
+    let core = testing::core(&SecretKey::generate().public_key().to_hex()).await;
+    let shutdown = CancellationToken::new();
+    let relays = Relays::load(
+        core.clone(),
+        RelaysConfig::default(),
+        shutdown.child_token(),
+    )
+    .await
+    .unwrap();
+
+    let (relay, _) = testing::create_relay(&core).await;
+    tokio::spawn({
+        let (relays, shutdown) = (relays.clone(), shutdown.clone());
+        async move { relays.watch(shutdown).await }
+    });
+
+    let served = tokio::time::timeout(Duration::from_secs(5), async {
+        while relays.resolve(&relay.canonical_host()).is_none() {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await;
+    shutdown.cancel();
+    assert!(served.is_ok(), "the new relay was never served");
+}
+
+#[tokio::test]
 async fn a_limit_of_zero_serves_nothing_stored_but_listens() {
     let server = Server::start().await;
     let (relay, owner) = server.relay().await;
@@ -574,7 +650,7 @@ async fn a_deactivated_relay_closes_its_connections_and_stops_answering() {
         .unwrap();
     server.relays.reload(&relay.id).await.unwrap();
 
-    assert!(client.recv().await.is_err(), "the connection is closed");
+    assert!(client.is_dropped().await, "the connection is closed");
     assert!(server.relays.resolve(&host).is_none());
 }
 
@@ -585,7 +661,7 @@ async fn a_verified_custom_domain_and_the_canonical_host_both_serve_the_relay() 
     server
         .update(&relay, json!({"custom_domain": "chat.example.com"}))
         .await;
-    caravel_core::relays::set_custom_domain_verified(
+    caravel_core::commands::relays::set_custom_domain_verified(
         server.core.db.pool(),
         &relay.id,
         "chat.example.com",
@@ -615,6 +691,81 @@ async fn a_verified_custom_domain_and_the_canonical_host_both_serve_the_relay() 
     client.auth(&owner, server.now()).await;
     let mut custom_client = server.connect("chat.example.com").await;
     custom_client.auth(&owner, server.now()).await;
+}
+
+#[tokio::test]
+async fn a_custom_domain_stays_with_the_relay_that_verified_it() {
+    let server = Server::start().await;
+    let domain = "shared.example.com";
+    let (first, _) = server.relay().await;
+    let (second, _) = server.relay().await;
+    let first = server
+        .update(&first, json!({"custom_domain": domain}))
+        .await;
+    let second = server
+        .update(&second, json!({"custom_domain": domain}))
+        .await;
+
+    let verify = async |relay: &caravel_core::models::relays::Relay| {
+        caravel_core::commands::relays::set_custom_domain_verified(
+            server.core.db.pool(),
+            &relay.id,
+            domain,
+            true,
+        )
+        .await
+        .unwrap()
+    };
+    assert!(verify(&first).await);
+    // Verifying another relay for it neither takes the domain nor fails.
+    assert!(!verify(&second).await);
+    server.relays.reload(&first.id).await.unwrap();
+    let route = server
+        .relays
+        .resolve(domain)
+        .expect("custom domain not served");
+    assert_eq!(route.instance.relay_id(), first.id);
+
+    // The second keeps its claim through other changes, and nobody can make a new one.
+    server
+        .update(&second, json!({"info_name": "pending"}))
+        .await;
+    let (third, _) = server.relay().await;
+    let settings = serde_json::from_value(json!({"custom_domain": domain})).unwrap();
+    let taken = caravel_core::hosting::update_relay(&server.core, third, settings).await;
+    assert!(matches!(
+        taken,
+        Err(caravel_core::Error::Invalid {
+            code: "domain-exists",
+            ..
+        })
+    ));
+}
+
+#[tokio::test]
+async fn renaming_a_relay_withdraws_its_custom_domains_verification() {
+    let server = Server::start().await;
+    let domain = "renamed.example.com";
+    let (relay, _) = server.relay().await;
+    let relay = server
+        .update(&relay, json!({"custom_domain": domain}))
+        .await;
+    caravel_core::commands::relays::set_custom_domain_verified(
+        server.core.db.pool(),
+        &relay.id,
+        domain,
+        true,
+    )
+    .await
+    .unwrap();
+    server.relays.reload(&relay.id).await.unwrap();
+    assert!(server.relays.resolve(domain).is_some());
+
+    let subdomain = caravel_core::testing::subdomain();
+    let renamed = server.update(&relay, json!({"subdomain": subdomain})).await;
+    assert!(!renamed.custom_domain_verified);
+    assert!(server.relays.resolve(domain).is_none());
+    assert!(server.relays.resolve(&renamed.canonical_host()).is_some());
 }
 
 #[tokio::test]

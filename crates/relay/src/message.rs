@@ -4,7 +4,7 @@
 
 use std::fmt;
 
-use caravel_core::relay_policy::Refusal;
+use caravel_core::models::policy::Refusal;
 use coracle_lib::events::{Event, EventId};
 use coracle_lib::filters::Filter;
 use serde::de::{self, IgnoredAny, SeqAccess, Visitor};

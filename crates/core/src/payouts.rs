@@ -1,19 +1,11 @@
-//! Payouts: the Stripe Connect account a tenant's members pay into, less the
-//! platform's fee.
-
-use serde::{Deserialize, Serialize};
+//! Payouts: onboarding a tenant to the Stripe Connect account their members pay
+//! into, and keeping track of whether it can take payments.
 
 use crate::Core;
+use crate::commands;
 use crate::error::{Error, Result};
-use crate::tenants::{self, Tenant};
-
-/// Whether a tenant can be paid, and what the platform keeps of each payment.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct PayoutStatus {
-    pub account_id: Option<String>,
-    pub ready: bool,
-    pub fee_percent: f64,
-}
+use crate::models::payouts::PayoutStatus;
+use crate::models::tenants::Tenant;
 
 /// A Stripe onboarding link for a tenant, creating their Connect account the
 /// first time. Stripe sends them back to `return_url`, also when the link goes
@@ -23,8 +15,13 @@ pub async fn onboard(core: &Core, tenant: &Tenant, return_url: &str) -> Result<S
         Some(account_id) => account_id.clone(),
         None => {
             let account_id = core.stripe.create_connect_account(&tenant.pubkey).await?;
-            tenants::set_tenant_stripe_account(core.db.pool(), &tenant.pubkey, &account_id, false)
-                .await?;
+            commands::tenants::set_tenant_stripe_account(
+                core.db.pool(),
+                &tenant.pubkey,
+                &account_id,
+                false,
+            )
+            .await?;
             account_id
         }
     };
@@ -47,7 +44,8 @@ pub async fn refresh_status(core: &Core, tenant: &Tenant) -> Result<PayoutStatus
     };
 
     let ready = core.stripe.is_connect_account_ready(account_id).await?;
-    tenants::set_tenant_stripe_account(core.db.pool(), &tenant.pubkey, account_id, ready).await?;
+    commands::tenants::set_tenant_stripe_account(core.db.pool(), &tenant.pubkey, account_id, ready)
+        .await?;
 
     Ok(PayoutStatus {
         account_id: Some(account_id.clone()),

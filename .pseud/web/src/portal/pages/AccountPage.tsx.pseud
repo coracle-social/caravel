@@ -1,0 +1,13 @@
+% source=web/src/portal/pages/AccountPage.tsx lang=typescript lines=99 sha=06fe5a95e0a7
+
+module @/portal/pages/AccountPage  !net !db !global
+  -- The signed-in member's memberships across every relay.
+
+  const STATUS_LABELS  -- shown with the period end, except while pending  @13-18
+    pending "Awaiting payment", active "Renews", canceled "Ends", lapsed "Ended"
+  pub fn AccountPage()  !net !db !global                                @21-99
+    -- Signed out, SignIn; signed in, each membership linking to its relay's host with its
+    -- status and date, then the member's npub and Sign out.
+    fetch the account only while there is a session                     @22
+    sign out when the account fetch is refused with 401                 @27-29
+    any other failure shows an error notice                             @47-49

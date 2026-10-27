@@ -1,0 +1,23 @@
+% source=web/src/tenant/components/relay/MemberList.tsx lang=typescript lines=190 sha=5a912b5775c2
+
+module @/tenant/components/relay/MemberList  !net !db !time
+  -- A relay's NIP-43 members and the relay roles they hold, changed over NIP-86.
+
+  const SOURCE_LABELS  -- how each member got in: Owner, Added, Invite code, Joined, Paid, Migrated  @15-22
+  data MemberListProps { relayId, members, roles, onChanged }  -- onChanged refetches the list  @24-29
+  pub fn MemberList(props: MemberListProps)  !net !db !time             @32-131
+    -- Each member with their roles and source; Add member, and per member Edit roles and Remove.
+    prime the members' profiles in one batch
+    Edit roles shows only when the relay defines roles; Remove never for the owner  @76-89
+    add -> PubkeyDialog, then NIP-86 allowpubkey with the pubkey and onChanged; errors stay inline  @97-106
+      the relay admits them as Manual and lifts any ban                 @crates/core/src/commands/members.rs:102-112
+    fn remove()  !net !db !time                                         @40-55
+      -- After a confirmation: NIP-86 unallowpubkey, toasting; on success close and onChanged.
+      the relay refuses the owner and drops their method grants         @crates/core/src/commands/members.rs:59-99
+  fn MemberRolesDialog(props: { relayId, member?, roles, onClose, onChanged })  !net !db !time  @134-190
+    -- Checkboxes for the relay's roles, starting from the member's each time it opens.
+    fn save()  !net !db !time                                           @149-164
+      diff the checked roles against the member's
+      NIP-86 assignrole for each added, then unassignrole for each removed, one call at a time
+      a failure stops the rest, keeping the calls already made, and toasts
+      onChanged either way; close only on success

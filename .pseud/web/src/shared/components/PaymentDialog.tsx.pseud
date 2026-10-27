@@ -1,0 +1,18 @@
+% source=web/src/shared/components/PaymentDialog.tsx lang=typescript lines=226 sha=94203b3eb6f9
+
+module @/shared/components/PaymentDialog  !net !db !time
+  -- The dialog for paying one invoice by Lightning or by card.
+
+  ~ PayStatus, PayMethod, and PaymentInvoice: an invoice's id and amount, its period optional  @17-21
+  type PaymentDialogProps = { invoice: PaymentInvoice, open, onClose, offerSetup? }  @23-29
+  pub fn PaymentDialog(props: PaymentDialogProps)  !net !db !time       @31-226
+    -- The invoice's amount, period and items, paid by Lightning or on Stripe Checkout.
+    while open, fetch the invoice's items; items that fail to load show as none  @37-40
+    each opening ensures the invoice has a bolt11 and shows it as a QR code to copy  @50-65
+      a failure shows its error with a retry
+    Lightning: Complete Payment, once the bolt11 is ready, reconciles the invoice  @72-86
+      paid_at set -> success; otherwise, or on failure, toast and let the tenant try again
+    Card: redirect to Stripe Checkout, which returns to this page; a failure toasts  @144-151
+    after a success, a tenant without autopay is offered PaymentSetup, unless offerSetup is off  @165-173
+      closing it once a method is saved closes this dialog too          @213-223
+    closing resets the status, method, bolt11 and checkout error, then calls onClose  @88-94

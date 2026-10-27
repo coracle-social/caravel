@@ -1,5 +1,6 @@
 //! HTTP requests to urls other people chose, such as push callbacks and media to
-//! mirror, which must never reach the platform's own network.
+//! mirror, and connections to relays they chose, which must never reach the
+//! platform's own network.
 
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
@@ -8,6 +9,7 @@ use std::time::Duration;
 use anyhow::{Result, anyhow, bail};
 use reqwest::dns::{Addrs, Name, Resolve, Resolving};
 use reqwest::redirect;
+use tokio::net::TcpStream;
 
 /// A client that refuses loopback, private, link-local, unspecified and multicast
 /// addresses. It resolves names itself and connects only to the addresses that
@@ -103,6 +105,25 @@ impl Resolve for PublicResolver {
             Ok(Box::new(resolved.into_iter()) as Addrs)
         })
     }
+}
+
+/// A TCP connection to a url's host, for protocols beside HTTP such as websockets,
+/// made only to the addresses [`PublicResolver`] passes however the host is named.
+pub(crate) async fn connect(url: &url::Url, allow_private: bool) -> Result<TcpStream> {
+    let host = url
+        .host_str()
+        .ok_or_else(|| anyhow!("the url has no host"))?;
+    let port = url
+        .port_or_known_default()
+        .ok_or_else(|| anyhow!("the url has no port"))?;
+    let resolved = PublicResolver { allow_private }
+        .resolve(host.parse()?)
+        .await
+        .map_err(|error| anyhow!("{error}"))?;
+    let addrs: Vec<SocketAddr> = resolved
+        .map(|addr| SocketAddr::new(addr.ip(), port))
+        .collect();
+    Ok(TcpStream::connect(addrs.as_slice()).await?)
 }
 
 /// Requests to urls other people chose, through a guarded [`client`].

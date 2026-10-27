@@ -110,7 +110,7 @@ Every test in zooid's suite, and the caravel test that covers the same behavior 
 - `TestInstance_BanEventInvalidatesCaches` — `crates/core/tests/access.rs` banning_an_event_deletes_it_until_it_is_allowed
 - `TestInstance_OnEvent_CreatedAtUpperLimit` — `crates/core/tests/relay_policy.rs` events_dated_too_far_ahead_are_refused
 - `TestMakeInstance_CreatedAtUpperLimit` — `crates/relay/tests/protocol.rs` the_information_document_describes_the_relay
-- `TestInstance_JoinIsLoggedAgainstItsClaim` — `crates/relay/tests/access.rs` a_claim_lets_a_stranger_join_and_read
+- `TestInstance_JoinIsLoggedAgainstItsClaim` — Obsolete: claims keep no log.
 
 ## lib_test.go
 
@@ -159,18 +159,18 @@ Every test in zooid's suite, and the caravel test that covers the same behavior 
 - `TestManagementStore_DeleteRole_BroadcastsDeletion` — `crates/core/tests/access.rs` deleting_a_role_takes_it_from_its_holders_and_publishes_a_deletion
 - `TestManagementStore_PubkeyIsBanned_NotBanned` — `crates/core/tests/relay_policy.rs` banned_authors_and_events_are_blocked
 - `TestManagementStore_EventIsBanned_NotBanned` — `crates/core/tests/relay_policy.rs` banned_authors_and_events_are_blocked
-- `TestManagementStore_CreateClaim` — `crates/core/tests/access.rs` claims_are_created_listed_revoked_and_logged
-- `TestManagementStore_CreateClaim_Idempotent` — `crates/core/tests/access.rs` claims_are_created_listed_revoked_and_logged
-- `TestManagementStore_CreateClaim_Empty` — `crates/core/tests/access.rs` claims_are_created_listed_revoked_and_logged
-- `TestManagementStore_GetClaims_ReturnsAll` — `crates/core/tests/access.rs` claims_are_created_listed_revoked_and_logged
-- `TestManagementStore_DeleteClaim` — `crates/core/tests/access.rs` claims_are_created_listed_revoked_and_logged
+- `TestManagementStore_CreateClaim` — `crates/core/tests/access.rs` claims_are_created_listed_and_revoked
+- `TestManagementStore_CreateClaim_Idempotent` — `crates/core/tests/access.rs` claims_are_created_listed_and_revoked
+- `TestManagementStore_CreateClaim_Empty` — `crates/core/tests/access.rs` claims_are_created_listed_and_revoked
+- `TestManagementStore_GetClaims_ReturnsAll` — `crates/core/tests/access.rs` claims_are_created_listed_and_revoked
+- `TestManagementStore_DeleteClaim` — `crates/core/tests/access.rs` claims_are_created_listed_and_revoked
 - `TestManagementStore_DeleteClaim_RemovesAllMatching` — Obsolete: a claim is one row, so there is never more than one to remove.
 - `TestManagementStore_CreateClaim_ValidatesJoinRequest` — `crates/relay/tests/access.rs` a_claim_lets_a_stranger_join_and_read
 - `TestManagementStore_Enable_WiresListBannedEvents` — `crates/core/tests/access.rs` banning_an_event_deletes_it_until_it_is_allowed
 - `TestManagementStore_Enable_PerMethodAuthorization` — `crates/relay/tests/access.rs` management_calls_are_authorized_per_method
 - `TestManagementStore_Enable_SupportedMethodsPerPubkey` — `crates/relay/tests/access.rs` management_calls_are_authorized_per_method
-- `TestManagementStore_ClaimLog` — `crates/core/tests/access.rs` claims_are_created_listed_revoked_and_logged
-- `TestManagementStore_ClaimLog_PredatesLogging` — Obsolete: every claim has had a log since it was created.
+- `TestManagementStore_ClaimLog` — Obsolete: the log let a service selling invites tell who used one, which binding the invite's membership at join now records.
+- `TestManagementStore_ClaimLog_PredatesLogging` — Obsolete: claims keep no log.
 
 ## migrations_test.go
 

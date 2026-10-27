@@ -1,0 +1,8 @@
+% source=web/src/shared/components/ResourceState.tsx lang=typescript lines=23 sha=d395d1f30ec3
+
+module @/shared/components/ResourceState
+  -- The loading and error lines for a resource a page reads.
+
+  type ResourceStateProps = { loading, error, loadingText, errorText, class? }  @4-10
+  pub fn ResourceState(props: ResourceStateProps)                       @12-23
+    -- A spinner with loadingText while loading, else errorText when there is an error.

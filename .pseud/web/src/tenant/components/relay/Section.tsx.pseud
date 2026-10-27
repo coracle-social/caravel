@@ -1,0 +1,6 @@
+% source=web/src/tenant/components/relay/Section.tsx lang=typescript lines=19 sha=b84320a7cd90
+
+module @/tenant/components/relay/Section
+  -- The card the relay pages are built from.
+
+  pub fn Section(props)  -- a titled card with an optional description and an action beside it  @4-19

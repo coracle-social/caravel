@@ -6,6 +6,8 @@ use crate::crypto::PlatformKey;
 pub struct Config {
     /// The API's public base url, which NIP-98 `u` tags are checked against.
     pub api_url: String,
+    /// The dashboards' public url. Without one, this process serves no dashboard.
+    pub platform_url: Option<String>,
     pub admin_pubkeys: Vec<String>,
     /// Domains relay subdomains live under. A relay's canonical host is
     /// `<subdomain>.<domain>` for one of these.

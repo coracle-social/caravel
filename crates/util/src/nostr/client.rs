@@ -1,11 +1,7 @@
 //! A client for other people's Nostr relays: publishing events to them, reading
-//! events from them, and asking a question an event answers, as NIP-47 wallets
-//! are asked. Each call opens its own connections and closes them when it is
-//! done, and a connection answers a relay's NIP-42 challenge with its key.
-//!
-//! It also carries [`Key`], the workspace's general-purpose Nostr key: the
-//! platform's identity, a relay's, and the key the platform encrypts its stored
-//! secrets to itself with.
+//! events from them, and asking a question an event answers, as NIP-47 wallets are
+//! asked. Each call opens its own connections and closes them when it is done, and
+//! a connection answers a relay's NIP-42 challenge with its key.
 
 use std::collections::BTreeMap;
 use std::future::Future;
@@ -15,8 +11,8 @@ use std::time::Duration;
 use anyhow::{Result, anyhow, bail};
 use coracle_lib::events::{Event, EventContent};
 use coracle_lib::filters::Filter;
-use coracle_lib::keys::{PublicKey, SecretKey};
-use coracle_lib::tags::{Tag, Tags};
+use coracle_lib::keys::SecretKey;
+use coracle_lib::tags::Tags;
 use futures_util::future::{join_all, select_ok};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
@@ -29,71 +25,6 @@ use crate::outbound;
 
 /// The kind a client answers a relay's challenge with.
 const CLIENT_AUTH: u16 = 22242;
-
-/// A Nostr key: the platform's identity, a relay's, or anyone's. It encrypts to
-/// itself with NIP-44 and signs the events its holder publishes.
-#[derive(Clone)]
-pub struct Key {
-    secret: SecretKey,
-    pubkey: PublicKey,
-}
-
-impl std::fmt::Debug for Key {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Key")
-            .field("pubkey", &self.pubkey.to_hex())
-            .finish()
-    }
-}
-
-impl Key {
-    pub fn from_hex(secret: &str) -> Result<Self> {
-        let secret = SecretKey::from_hex(secret).map_err(|e| anyhow!("invalid secret key: {e}"))?;
-        let pubkey = secret.public_key();
-        Ok(Self { secret, pubkey })
-    }
-
-    pub fn pubkey(&self) -> String {
-        self.pubkey.to_hex()
-    }
-
-    pub fn secret_hex(&self) -> String {
-        self.secret.to_hex()
-    }
-
-    /// NIP-44 encrypt `plaintext` to this key's holder.
-    pub fn encrypt(&self, plaintext: &str) -> Result<String> {
-        self.secret
-            .nip44_encrypt(&self.pubkey, plaintext)
-            .map_err(|e| anyhow!("encryption failed: {e}"))
-    }
-
-    pub fn decrypt(&self, ciphertext: &str) -> Result<String> {
-        self.secret
-            .nip44_decrypt(&self.pubkey, ciphertext)
-            .map_err(|e| anyhow!("decryption failed: {e}"))
-    }
-
-    /// A signed event from this key.
-    pub fn sign(&self, kind: u16, tags: Vec<Vec<String>>, content: &str, created_at: i64) -> Event {
-        let tags: Tags = tags.into_iter().map(Tag).collect();
-        let hashed = EventContent::new()
-            .with_content(content)
-            .with_tags(tags)
-            .with_kind(kind)
-            .with_created_at(created_at)
-            .with_pubkey(self.secret.public_key())
-            .with_id();
-        let sig = self.secret.sign(hashed.id.as_bytes());
-        hashed.with_sig(sig)
-    }
-}
-
-/// A fresh keypair as hex `(pubkey, secret)`.
-pub fn generate_keypair() -> (String, String) {
-    let secret = SecretKey::generate();
-    (secret.public_key().to_hex(), secret.to_hex())
-}
 
 /// A key to talk to relays as, refusing relays on local or internal addresses.
 #[derive(Clone)]
@@ -627,68 +558,5 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(answered, answer);
-    }
-}
-
-/// Event kinds with a meaning on these relays, and the NIP-29 room kinds.
-pub mod kinds {
-    pub const DELETION: u16 = 5;
-
-    pub const REPOST: u16 = 6;
-
-    pub const GENERIC_REPOST: u16 = 16;
-
-    pub const VANISH: u16 = 62;
-
-    pub const GIFT_WRAP: u16 = 1059;
-
-    pub const RELAY_ADD_MEMBER: u16 = 8000;
-
-    pub const RELAY_REMOVE_MEMBER: u16 = 8001;
-
-    pub const ZAP_RECEIPT: u16 = 9735;
-
-    pub const RELAY_LIST: u16 = 10002;
-
-    pub const ROOM_LIST: u16 = 10009;
-
-    pub const RELAY_MEMBERS: u16 = 13534;
-
-    pub const CLIENT_AUTH: u16 = 22242;
-
-    pub const BLOSSOM_AUTH: u16 = 24242;
-
-    pub const HTTP_AUTH: u16 = 27235;
-
-    pub const RELAY_JOIN: u16 = 28934;
-
-    pub const RELAY_INVITE: u16 = 28935;
-
-    pub const RELAY_LEAVE: u16 = 28936;
-
-    pub const PUSH_SUBSCRIPTION: u16 = 30390;
-
-    pub const RELAY_ROLE: u16 = 33534;
-
-    /// The NIP-29 room kinds.
-    pub mod rooms {
-        pub const PUT_USER: u16 = 9000;
-        pub const REMOVE_USER: u16 = 9001;
-        pub const EDIT_METADATA: u16 = 9002;
-        pub const DELETE_EVENT: u16 = 9005;
-        pub const CREATE_GROUP: u16 = 9007;
-        pub const DELETE_GROUP: u16 = 9008;
-        pub const CREATE_INVITE: u16 = 9009;
-        pub const PUT_PINS: u16 = 9010;
-        pub const ASSIGN_PERMISSION: u16 = 9011;
-        pub const UNASSIGN_PERMISSION: u16 = 9012;
-        pub const JOIN_REQUEST: u16 = 9021;
-        pub const LEAVE_REQUEST: u16 = 9022;
-        pub const METADATA: u16 = 39000;
-        pub const ADMINS: u16 = 39001;
-        pub const MEMBERS: u16 = 39002;
-        pub const ROLES: u16 = 39003;
-        pub const LIVEKIT_PARTICIPANTS: u16 = 39004;
-        pub const PINS: u16 = 39005;
     }
 }

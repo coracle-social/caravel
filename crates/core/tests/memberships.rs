@@ -5,7 +5,7 @@
 mod common;
 
 use anyhow::Result;
-use caravel_billing::relays::{Membership, MembershipStatus};
+use caravel_billing::relays::{Membership, MembershipStatus, PLAN_BASIC, PLAN_FREE};
 use caravel_billing::relays::{Relay, RelaySettings};
 use caravel_core::testing::sign_event;
 use caravel_core::{Core, hosting, management, memberships, sessions};
@@ -714,6 +714,36 @@ async fn a_member_price_must_be_chargeable_and_need_a_claim() -> Result<()> {
         anonymous,
         Err(Error::Invalid {
             code: "anonymous-read-needs-public-read",
+            ..
+        })
+    ));
+    Ok(())
+}
+
+/// A plan change may not leave more members on the relay than the new plan allows.
+#[tokio::test]
+async fn a_plan_with_fewer_seats_than_the_relay_has_members_is_refused() -> Result<()> {
+    let core = core().await;
+    let tenant = create_tenant(&core).await?;
+    let relay = create_relay(&core, &tenant, PLAN_BASIC).await?;
+
+    // Basic allows a hundred, so the owner plus eleven fits; free allows ten.
+    for _ in 0..11 {
+        let member = SecretKey::generate();
+        management::add_member(&core, &relay, &member.public_key().to_hex()).await?;
+    }
+
+    let smaller = RelaySettings {
+        plan_id: Some(PLAN_FREE.into()),
+        blossom_enabled: Some(caravel_util::flag::Flag(false)),
+        livekit_enabled: Some(caravel_util::flag::Flag(false)),
+        ..Default::default()
+    };
+    let refused = hosting::update_relay(&core, relay, smaller).await;
+    assert!(matches!(
+        refused,
+        Err(Error::Invalid {
+            code: "member-limit-exceeded",
             ..
         })
     ));

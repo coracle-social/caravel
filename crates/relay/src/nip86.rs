@@ -69,7 +69,7 @@ async fn call(route: &Route, headers: &HeaderMap, body: &[u8]) -> Result<Value, 
     }
 
     let call = Call::decode(&request.method, &request.params).map_err(|error| error.to_string())?;
-    let outcome = management::call(core, &state.relay, call)
+    let outcome = management::run_call(core, &state.relay, call)
         .await
         .map_err(|error| error.to_string())?;
 

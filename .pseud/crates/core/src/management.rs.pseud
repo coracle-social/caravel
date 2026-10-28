@@ -1,10 +1,13 @@
-% source=crates/core/src/management.rs lang=rust lines=259 sha=d852c199a5e6
+% source=crates/core/src/management.rs lang=rust lines=283 sha=0171dfcdf5d2
 
 module caravel_core::management  !db !time
   -- Running a relay's members, NIP-86 calls and room moderation from the dashboards.
 
-  pub async fn call(core, relay, call: Call) -> Outcome fails  !db !time  @19-108
-    -- Carry out a NIP-86 call; the caller reloads the relay and delivers an AccessChanged outcome.
+  pub async fn call(core, relay, call: Call) -> Value fails  !db !time  @20-30
+    -- Carry out a NIP-86 call through run_call and answer; AccessChanged goes out on the bus.
+  pub async fn run_call(core, relay, call: Call) -> Outcome fails  !db !time  @34-123
+    -- Carry out a NIP-86 call for the relay runtime, which reloads the relay and delivers an
+    -- AccessChanged outcome itself before answering.
     match call
       the List calls -> Answer with the bans, members ("relay member"), banned events or claims
       ListMethodAssignees -> the tenant and relay key with every MANAGED_METHODS, then each grantee
@@ -13,16 +16,16 @@ module caravel_core::management  !db !time
       UnbanPubkey, AllowEvent, CreateClaim, DeleteClaim -> one write on the pool
         AccessChanged with nothing published
       every other call -> write in one transaction, AccessChanged with what it published
-  pub async fn moderate_room(core, relay, kind: u16, tags) fails  !db !time  @113-148
+  pub async fn moderate_room(core, relay, kind: u16, tags) fails  !db !time  @128-163
     -- Publish a NIP-29 moderation event as the relay itself and apply it to its room.
     fail if the relay is purged, or invalid "invalid-kind" unless kind is a moderation kind
     sign the event with the relay's key, now
     check it against the room rules on a policy snapshot; a refusal fails invalid "refused"
     in one transaction: save the event, then commands::rooms::apply_event
     publish AccessChanged with the event first, then what applying it published
-  fn change_info(core, relay_id, name?, description?, icon?) -> Outcome fails  !db  @151-163
+  fn change_info(core, relay_id, name?, description?, icon?) -> Outcome fails  !db  @166-178
     -- Set the relay's info on the pool, then RelayChanged so it reloads; answers true.
-  fn write(conn, key, relay, call, now) -> [Event] fails  !db !-panic  -- only call reaches it  @166-220
+  fn write(conn, key, relay, call, now) -> [Event] fails  !db !-panic  -- only run_call reaches it  @181-235
     -- Run a call that changes what the relay publishes, on the caller's transaction.
     match call
       BanPubkey -> commands::bans::ban_pubkey
@@ -31,10 +34,10 @@ module caravel_core::management  !db !time
       BanEvent -> commands::bans::ban_event, publishing nothing
       CreateRole, EditRole, DeleteRole, AssignRole, UnassignRole -> the commands::roles of each
       AssignMethod -> grant_method; UnassignMethod -> revoke_method, publishing nothing
-      any other call is unreachable, since call routes only these here
-  pub async fn add_member(core, relay, pubkey) fails  !db !time         @223-239
-    -- Admit pubkey as a Manual member in one transaction, then publish AccessChanged.
-    -- Fails on a purged relay.
-  pub async fn remove_member(core, relay, pubkey) fails  !db !time      @242-259
+      any other call is unreachable, since run_call routes only these here
+  pub async fn add_member(core, relay, pubkey) fails  !db !time         @238-263
+    -- Admit pubkey, lowercased, as a Manual member in one transaction, then publish AccessChanged.
+    -- Fails on a purged relay, or invalid "invalid-pubkey" unless pubkey is 64 hex.
+  pub async fn remove_member(core, relay, pubkey) fails  !db !time      @266-283
     -- Remove a member, never the owner, in one transaction, then publish AccessChanged.
     -- Fails on a purged relay.

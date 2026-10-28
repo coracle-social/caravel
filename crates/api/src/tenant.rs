@@ -6,10 +6,9 @@ use axum::body::{Body, HttpBody};
 use axum::extract::{Path, Query, State};
 use axum::http::{StatusCode, header};
 use axum::response::IntoResponse;
-use caravel_core::crypto::is_hex64;
 use caravel_core::models::relays::RelaySettings;
 use caravel_core::models::tenants::Tenant;
-use caravel_core::{Core, Error, billing, hosting, management, payouts, queries, transfer};
+use caravel_core::{Core, billing, hosting, management, payouts, queries, transfer};
 use http_body_util::Limited;
 use serde::{Deserialize, Serialize};
 
@@ -273,7 +272,6 @@ pub async fn add_relay_member(
 ) -> ApiResult {
     let relay = queries::relays::require_relay(core.db.pool(), &id).await?;
     actor.require_pubkey_or_admin(&relay.tenant_pubkey)?;
-    validate_pubkey(&pubkey)?;
     management::add_member(&core, &relay, &pubkey).await?;
     ok(())
 }
@@ -288,17 +286,6 @@ pub async fn remove_relay_member(
     actor.require_pubkey_or_admin(&relay.tenant_pubkey)?;
     management::remove_member(&core, &relay, &pubkey).await?;
     ok(())
-}
-
-fn validate_pubkey(pubkey: &str) -> Result<(), Error> {
-    if is_hex64(pubkey) {
-        Ok(())
-    } else {
-        Err(Error::invalid(
-            "invalid-pubkey",
-            "pubkey must be 64 hex characters",
-        ))
-    }
 }
 
 pub async fn list_relay_activity(
@@ -436,11 +423,6 @@ pub async fn reconcile_invoice(
 ) -> ApiResult {
     let invoice = queries::ledger::require_invoice(core.db.pool(), &id).await?;
     actor.require_pubkey_or_admin(&invoice.tenant_pubkey)?;
-
-    if !invoice.is_open() {
-        return ok(invoice);
-    }
-
     let tenant = queries::tenants::require_tenant(core.db.pool(), &invoice.tenant_pubkey).await?;
     billing::collect_invoice(&core, &tenant, &invoice).await?;
 

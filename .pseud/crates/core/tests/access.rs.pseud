@@ -1,42 +1,42 @@
-% source=crates/core/tests/access.rs lang=rust lines=567 sha=e9b610d8839b
+% source=crates/core/tests/access.rs lang=rust lines=565 sha=7f31939d870c
 
 module caravel_core::tests::access
   -- Relay access (from zooid): members, bans, roles, method grants, claims, and what they publish.
 
-  tests  !panic !db !time                                               @20-567
+  tests  !panic !db !time                                               @20-565
     data Fixture { core, relay, key: RelayKey, owner }                  @20-25
     async fn fixture() -> Fixture  !panic  -- a fresh core and relay, with the relay's key and owner  @27-37
     fn pubkey() -> str  -- a fresh random pubkey                        @39-41
-    impl Fixture  !panic !db !time                                      @43-90
-      async fn call(self, call: Call) -> json fails  -- management::call, as its JSON result  @44-48
-      async fn members(self) -> [str] fails  !db  -- the relay's member pubkeys  @50-58
-      async fn published(self, kind) -> Event? fails  !panic !db !time  -- the relay's latest event of kind  @61-76
-      async fn member_tags(self) -> [[str]] fails  !panic !db !time  -- member tags of the latest member list  @79-89
-    test the_owner_is_a_member_from_the_start  -- listed and tagged, with source Owner  @93-106
-    test membership_changes_are_idempotent_and_published                @109-148
+    impl Fixture  !panic !db !time                                      @43-88
+      async fn call(self, call: Call) -> json fails  -- management::call's answer  @44-46
+      async fn members(self) -> [str] fails  !db  -- the relay's member pubkeys  @48-56
+      async fn published(self, kind) -> Event? fails  !panic !db !time  -- the relay's latest event of kind  @59-74
+      async fn member_tags(self) -> [[str]] fails  !panic !db !time  -- member tags of the latest member list  @77-87
+    test the_owner_is_a_member_from_the_start  -- listed and tagged, with source Owner  @91-104
+    test membership_changes_are_idempotent_and_published                @107-146
       -- admit publishes a signed, "-"-tagged 8000 and 13534; admitting again publishes nothing;
       -- removing twice is fine and publishes a remove-member event.
-    test the_owner_can_be_neither_removed_nor_banned                    @151-159
-    test banning_a_pubkey_removes_it_and_everything_it_wrote            @162-198
+    test the_owner_can_be_neither_removed_nor_banned                    @149-157
+    test banning_a_pubkey_removes_it_and_everything_it_wrote            @160-196
       -- The ban is listed with its reason; allowing the pubkey again readmits it and lifts it.
-    test a_ban_keeps_the_pubkeys_deletions_and_requests_to_vanish       @203-240
+    test a_ban_keeps_the_pubkeys_deletions_and_requests_to_vanish       @201-238
       -- Both stay through a ban and an unban, and still refuse what they removed.
-    test unbanning_lifts_the_ban_without_admitting                      @244-254
-    test banning_an_event_deletes_it_until_it_is_allowed                @257-282
-    test members_are_listed_as_allowed_pubkeys  -- each with reason "relay member"  @285-307
-    test the_relays_name_description_and_icon_are_managed               @310-336
+    test unbanning_lifts_the_ban_without_admitting                      @242-252
+    test banning_an_event_deletes_it_until_it_is_allowed                @255-280
+    test members_are_listed_as_allowed_pubkeys  -- each with reason "relay member"  @283-305
+    test the_relays_name_description_and_icon_are_managed               @308-334
       -- Each change is stored and publishes a RelayChanged on the bus.
-    test roles_are_defined_published_and_assigned                       @339-407
+    test roles_are_defined_published_and_assigned                       @337-405
       -- A role event omits empty and zero fields; duplicates Conflict; a hue of 400 is refused;
       -- edits republish; assigning makes a member tagged with the role; unknown roles refused.
-    test deleting_a_role_takes_it_from_its_holders_and_publishes_a_deletion  @410-445
+    test deleting_a_role_takes_it_from_its_holders_and_publishes_a_deletion  @408-443
       -- A kind 5 names the role's address; holders keep membership; the id is reusable at once.
-    test methods_are_granted_individually_and_to_members_of_inviting_relays  @448-486
+    test methods_are_granted_individually_and_to_members_of_inviting_relays  @446-484
       -- A grant makes a member; members also hold createclaim and listclaims; anyone may call
       -- supportedmethods; the owner holds every managed method; unassigning revokes.
-    test method_grants_are_checked  -- unknown methods, the owner and the relay's own key refused  @489-507
-    test removing_a_member_takes_their_methods                          @510-523
-    test claims_are_created_listed_and_revoked                          @526-541
+    test method_grants_are_checked  -- unknown methods, the owner and the relay's own key refused  @487-505
+    test removing_a_member_takes_their_methods                          @508-521
+    test claims_are_created_listed_and_revoked                          @524-539
       -- Empty claims are refused, duplicates are harmless, and a revoked claim leaves the list.
-    test calls_decode_from_their_wire_params                            @544-567
+    test calls_decode_from_their_wire_params                            @542-565
       -- Wrong arity and unsupported methods fail to decode.

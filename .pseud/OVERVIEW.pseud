@@ -26,7 +26,7 @@ module overview
   ~ client REQ: `on_req` -> `admit_req` -> subscribe first, then stored events that pass
     `can_any_receive` -> EOSE; later events reach it through `fanout` and `can_deliver`
   ~ NIP-43 join or leave: `ingest::join` / `ingest::leave` -> member list republished by the relay
-  ~ NIP-86 call: `nip86::handle` checks a NIP-98 signature over the body -> `management::call`
+  ~ NIP-86 call: `nip86::handle` checks a NIP-98 signature over the body -> `management::run_call`
     -> `apply_access_change` on the instance
   ~ dashboard change: API handler loads the resource, authorizes the actor, calls a subsystem
     (`hosting`, `management`, `memberships`) -> commit -> `Bus::publish` -> `Relays::watch`

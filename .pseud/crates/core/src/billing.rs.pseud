@@ -1,4 +1,4 @@
-% source=crates/core/src/billing.rs lang=rust lines=950 sha=259a4bb4bd03
+% source=crates/core/src/billing.rs lang=rust lines=953 sha=4d209e7bb9c6
 
 module caravel_core::billing  !net !db !time !rand
   -- Subscription billing: line items from activity, renewal, overage, invoices, collection, churn.
@@ -145,13 +145,14 @@ module caravel_core::billing  !net !db !time !rand
   pub async fn reconcile_tenant(core, tenant) fails  !net !db !time !rand  @865-869
     -- At the tenant's request: sync_stripe_customer, re-read them, reconcile with Settle.
     -- A card that brought them back has its restorations priced by that reconcile.
-  pub async fn collect_invoice(core, tenant, invoice) fails  !net !db !time !rand  @873-876
-    -- At the tenant's request: ensure a Lightning invoice, then reconcile_payments with Charge.
-  pub async fn open_billing_portal(core, tenant, return_url?) -> url fails  !net  @879-888
+  pub async fn collect_invoice(core, tenant, invoice) fails  !net !db !time !rand  @873-879
+    -- At the tenant's request, if the invoice is still open: ensure a Lightning invoice, then
+    -- reconcile_payments with Charge.
+  pub async fn open_billing_portal(core, tenant, return_url?) -> url fails  !net  @882-891
     -- A Stripe billing portal session where the tenant manages their saved cards.
-  fn sync_stripe_customer(core, tenant) -> payment_method_id?  !net !db  @893-921
+  fn sync_stripe_customer(core, tenant) -> payment_method_id?  !net !db  @896-924
     -- The tenant's saved card from Stripe, stored if it changed; the cached one if anything fails.
     -- A new card saved by a churned tenant first reactivate_tenant, so a failure retries next sync.
-  pub async fn get_draft_invoice(core, tenant) -> Invoice? fails  !db !time  @925-950
+  pub async fn get_draft_invoice(core, tenant) -> Invoice? fails  !db !time  @928-953
     -- An unsaved "draft" invoice summing the outstanding items over the current period.
     -- None without a billing period or outstanding items; the sum may be a credit.

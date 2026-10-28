@@ -1,4 +1,4 @@
-% source=crates/relay/src/nip86.rs lang=rust lines=90 sha=96aeea97f059
+% source=crates/relay/src/nip86.rs lang=rust lines=90 sha=c84df92d077d
 
 module caravel_relay::nip86  !db !lock !time
   -- NIP-86: managing a relay over HTTP, each call NIP-98-signed over its own body.
@@ -8,12 +8,12 @@ module caravel_relay::nip86  !db !lock !time
     -- POST / on a relay's host: 404 unless management is on, else call's {"result"} or {"error"}.
     -- answered as application/nostr+json+rpc, with status 200 either way
   async fn call(route, headers, body) -> Value fails str  !db !lock !time  @50-81
-    -- Authenticate, check the method against the snapshot, and run it through management::call.
+    -- Authenticate, check the method against the snapshot, and run it through management::run_call.
     authenticate the NIP-98 header against the route's host and the exact body
     parse {method, params}, else "invalid json body"
     fail blocked unless snapshot.may_call(pubkey, method); supportedmethods gets its own wording
     supportedmethods -> the signer's methods_for, from the snapshot alone
-    decode the Call and run management::call
+    decode the Call and run management::run_call
     on AccessChanged, apply_access_change before answering, reloading and fanning out
     return the outcome's result
   fn authenticate(headers, body, host, now) -> pubkey fails str         @83-90

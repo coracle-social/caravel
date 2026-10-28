@@ -3,10 +3,9 @@
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
-use caravel_core::bus::Change;
 use caravel_core::models::auth::Actor;
 use caravel_core::models::events::EventPage;
-use caravel_core::models::management::{Call, Outcome};
+use caravel_core::models::management::Call;
 use caravel_core::models::methods::MANAGED_METHODS;
 use caravel_core::models::relays::Relay;
 use caravel_core::models::rooms::{Room, RoomMember};
@@ -48,15 +47,7 @@ pub async fn call_method(
         return ok(MANAGED_METHODS);
     }
 
-    let outcome =
-        management::call(&core, &relay, Call::decode(&call.method, &call.params)?).await?;
-    if let Outcome::AccessChanged(published) = &outcome {
-        core.bus.publish(Change::AccessChanged {
-            relay_id: relay.id.clone(),
-            published: published.clone(),
-        });
-    }
-    ok(outcome.result())
+    ok(management::call(&core, &relay, Call::decode(&call.method, &call.params)?).await?)
 }
 
 /// The relay's members (NIP-43), with their roles and how each got in, and the

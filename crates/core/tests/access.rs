@@ -42,9 +42,7 @@ fn pubkey() -> String {
 
 impl Fixture {
     async fn call(&self, call: Call) -> Result<serde_json::Value> {
-        Ok(management::call(&self.core, &self.relay, call)
-            .await?
-            .result())
+        Ok(management::call(&self.core, &self.relay, call).await?)
     }
 
     async fn members(&self) -> Result<Vec<String>> {
@@ -419,7 +417,7 @@ async fn deleting_a_role_takes_it_from_its_holders_and_publishes_a_deletion() ->
         .await?;
 
     let Outcome::AccessChanged(published) =
-        management::call(&f.core, &f.relay, Call::DeleteRole("temp".into())).await?
+        management::run_call(&f.core, &f.relay, Call::DeleteRole("temp".into())).await?
     else {
         panic!("deleting a role changes access");
     };

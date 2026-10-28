@@ -2,12 +2,12 @@
 //! moderation from the dashboards.
 
 use coracle_lib::events::Event;
-use serde_json::json;
+use serde_json::{Value, json};
 use sqlx::PgConnection;
 
 use crate::Core;
 use crate::bus::Change;
-use crate::crypto::RelayKey;
+use crate::crypto::{RelayKey, is_hex64};
 use crate::error::{Error, Result};
 use crate::models::management::{Call, Outcome};
 use crate::models::members::MemberSource;
@@ -15,8 +15,23 @@ use crate::models::methods::MANAGED_METHODS;
 use crate::models::relays::Relay;
 use crate::{commands, domain, queries};
 
-/// Carry out a NIP-86 call on a relay, whose caller may make it.
-pub async fn call(core: &Core, relay: &Relay, call: Call) -> Result<Outcome> {
+/// Carry out a NIP-86 call on a relay, whose caller may make it, and return its
+/// answer. A change to the relay's access lists or rooms goes out on the bus.
+pub async fn call(core: &Core, relay: &Relay, call: Call) -> Result<Value> {
+    let outcome = run_call(core, relay, call).await?;
+    let result = outcome.result();
+    if let Outcome::AccessChanged(published) = outcome {
+        core.bus.publish(Change::AccessChanged {
+            relay_id: relay.id.clone(),
+            published,
+        });
+    }
+    Ok(result)
+}
+
+/// Carry out a NIP-86 call on a relay, whose caller may make it, for the relay
+/// runtime, which applies an AccessChanged outcome itself before answering.
+pub async fn run_call(core: &Core, relay: &Relay, call: Call) -> Result<Outcome> {
     let pool = core.db.pool();
     let relay_id = relay.id.as_str();
     let tenant_pubkey = relay.tenant_pubkey.as_str();
@@ -222,12 +237,21 @@ async fn write(
 /// Make a pubkey a member of a relay by hand.
 pub async fn add_member(core: &Core, relay: &Relay, pubkey: &str) -> Result<()> {
     relay.require_unpurged()?;
+    if !is_hex64(pubkey) {
+        return Err(Error::invalid(
+            "invalid-pubkey",
+            "pubkey must be 64 hex characters",
+        ));
+    }
+
+    let pubkey = pubkey.to_lowercase();
     let key = core.relay_key(relay)?;
     let now = core.clock.now();
     let published = core
         .db
         .with_tx(async |conn| {
-            commands::members::admit(conn, &key, &relay.id, pubkey, MemberSource::Manual, now).await
+            commands::members::admit(conn, &key, &relay.id, &pubkey, MemberSource::Manual, now)
+                .await
         })
         .await?;
 

@@ -50,7 +50,7 @@ A unique constraint a caller can violate (a taken subdomain) is named in the mig
 
 ## The change bus
 
-After a write commits, the subsystem that made it publishes a change on an in-process bus: a relay's row changed, its access or rooms changed along with the events it published about them, or a pubkey's notification on a relay was replaced. Subscribers treat a change as a hint to re-read the database; one that falls behind re-reads everything it watches. The relay runtime is the bus's subscriber, reloading relays and delivering what they published. The runtime's own writes go through ingest, which returns what the relay published instead, since the runtime applies the change itself before answering the client.
+After a write commits, the subsystem that made it publishes a change on an in-process bus: a relay's row changed, its access or rooms changed along with the events it published about them, or a pubkey's notification on a relay was replaced. Subscribers treat a change as a hint to re-read the database; one that falls behind re-reads everything it watches. The relay runtime is the bus's subscriber, reloading relays and delivering what they published. The runtime's own writes go through ingest, and its NIP-86 calls through a management entry point of their own; both return what the relay published instead, since the runtime applies the change itself before answering the client.
 
 ## Authentication and authorization
 

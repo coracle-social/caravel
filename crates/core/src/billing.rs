@@ -868,9 +868,12 @@ pub async fn reconcile_tenant(core: &Core, tenant: &Tenant) -> Result<()> {
     reconcile_subscription(core, &tenant, Collection::Settle).await
 }
 
-/// Collect an open invoice at the tenant's request: make it payable by Lightning,
-/// then settle or charge it, without a reminder.
+/// Collect an invoice at the tenant's request if it is still open: make it payable
+/// by Lightning, then settle or charge it, without a reminder.
 pub async fn collect_invoice(core: &Core, tenant: &Tenant, invoice: &Invoice) -> Result<()> {
+    if !invoice.is_open() {
+        return Ok(());
+    }
     ensure_bolt11_for_invoice(core, invoice).await?;
     reconcile_payments(core, tenant, invoice, Collection::Charge).await
 }

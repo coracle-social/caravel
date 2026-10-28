@@ -1,0 +1,13 @@
+//! Paid memberships: members paying a relay's tenant, through Stripe Connect, for
+//! access to the relay. A membership drives the relay's access list in the
+//! transaction that changes it. Paying admits its member, or registers its invite
+//! as a claim for whoever joins with it; lapsing removes a member who got in by
+//! paying, and tells them why.
+
+pub mod checkout;
+pub mod reads;
+pub mod sweep;
+
+pub use checkout::*;
+pub use reads::*;
+pub use sweep::*;

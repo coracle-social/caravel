@@ -1,145 +1,12 @@
-//! Hosting: the operations tenants and admins perform on tenants and relays, each
-//! of which spans the relay row, its activity, billing and the relay's hosts.
-//! Callers authorize before calling.
+//! Relays: creating, configuring, pausing and restoring the rows tenants own.
 
-use crate::Core;
-use crate::billing;
-use caravel_billing::relays::{Activity, ActivityType};
-use caravel_billing::relays::{Relay, RelaySettings, RelayStatus};
-use caravel_billing::tenants::Tenant;
+use caravel_billing::relays::{Activity, ActivityType, Relay, RelaySettings, RelayStatus};
 use caravel_relays::access::MemberSource;
 use caravel_util::bus::Change;
 use caravel_util::error::{Error, Result};
 use caravel_util::nostr::generate_keypair;
 
-// --- Tenants ---
-
-/// Every tenant on the platform.
-pub async fn list_tenants(core: &Core) -> Result<Vec<Tenant>> {
-    caravel_billing::tenants::queries::list_tenants(core.db.pool()).await
-}
-
-/// The tenant for `pubkey`, or a 404.
-pub async fn require_tenant(core: &Core, pubkey: &str) -> Result<Tenant> {
-    caravel_billing::tenants::queries::require_tenant(core.db.pool(), pubkey).await
-}
-
-/// The tenant for `pubkey`, created with a Stripe customer if it doesn't exist.
-/// An existing tenant keeps the `return_url` it was created with.
-pub async fn ensure_tenant(core: &Core, pubkey: &str, return_url: &str) -> Result<Tenant> {
-    let return_url = return_url.trim().trim_end_matches('/');
-    if return_url.is_empty() {
-        return Err(Error::invalid(
-            "return-url-required",
-            "return_url is required",
-        ));
-    }
-
-    if let Some(tenant) =
-        caravel_billing::tenants::queries::get_tenant(core.db.pool(), pubkey).await?
-    {
-        return Ok(tenant);
-    }
-
-    let name = core
-        .robot
-        .fetch_nostr_name(pubkey, core.clock.now())
-        .await
-        .unwrap_or_else(|| pubkey.chars().take(8).collect());
-    let stripe_customer_id = core.stripe.create_customer(pubkey, &name).await?;
-
-    let tenant = Tenant {
-        pubkey: pubkey.to_string(),
-        return_url: return_url.to_string(),
-        created_at: core.clock.now(),
-        stripe_customer_id,
-        ..Default::default()
-    };
-    caravel_billing::tenants::commands::insert_tenant(core.db.pool(), &tenant).await?;
-
-    caravel_billing::tenants::queries::get_tenant(core.db.pool(), pubkey)
-        .await?
-        .ok_or_else(|| Error::internal("tenant missing after insert"))
-}
-
-/// Replace the tenant's NWC url, stored encrypted. Empty removes it. Saving one
-/// brings a churned tenant back, as new activity does; the next reconcile prices
-/// their restored relays.
-pub async fn set_tenant_nwc_url(core: &Core, pubkey: &str, nwc_url: &str) -> Result<()> {
-    let encrypted = if nwc_url.is_empty() {
-        None
-    } else {
-        Some(core.config.platform_key.encrypt(nwc_url)?)
-    };
-
-    caravel_billing::tenants::commands::set_tenant_nwc_url(
-        core.db.pool(),
-        pubkey,
-        encrypted.as_deref(),
-    )
-    .await?;
-    if encrypted.is_some() {
-        billing::reactivate_tenant(core, pubkey).await?;
-    }
-    Ok(())
-}
-
-/// Ban a tenant: block relay creation, then forgive what they owe and purge their
-/// relays as deleting them does.
-pub async fn ban_tenant(core: &Core, pubkey: &str) -> Result<()> {
-    let now = core.clock.now();
-    let purged = core
-        .db
-        .with_tx(async |conn| {
-            let tenant = caravel_billing::tenants::queries::lock_tenant(conn, pubkey).await?;
-            if tenant.banned_at.is_some() {
-                return Err(Error::conflict(
-                    "tenant-is-banned",
-                    "tenant is already banned",
-                ));
-            }
-
-            caravel_billing::tenants::commands::set_tenant_banned_at(&mut *conn, pubkey, Some(now))
-                .await?;
-            caravel_billing::tenants::commands::forgive_and_purge_in_tx(conn, pubkey, now).await
-        })
-        .await?;
-
-    for relay_id in purged {
-        core.bus.publish(Change::RelayChanged { relay_id });
-    }
-    Ok(())
-}
-
-/// Delete a tenant without banning them: forgive what they owe and purge their
-/// relays. They may sign in and create relays again, under the same subdomains.
-pub async fn delete_tenant(core: &Core, pubkey: &str) -> Result<()> {
-    let now = core.clock.now();
-    let purged = core
-        .db
-        .with_tx(async |conn| {
-            caravel_billing::tenants::queries::lock_tenant(conn, pubkey).await?;
-            caravel_billing::tenants::commands::forgive_and_purge_in_tx(conn, pubkey, now).await
-        })
-        .await?;
-
-    for relay_id in purged {
-        core.bus.publish(Change::RelayChanged { relay_id });
-    }
-    Ok(())
-}
-
-/// Lift a tenant's ban. Purged relays stay purged and forgiven charges forgiven.
-pub async fn unban_tenant(core: &Core, pubkey: &str) -> Result<()> {
-    let tenant = caravel_billing::tenants::queries::require_tenant(core.db.pool(), pubkey).await?;
-    if tenant.banned_at.is_none() {
-        return Err(Error::conflict("tenant-not-banned", "tenant is not banned"));
-    }
-
-    caravel_billing::tenants::commands::set_tenant_banned_at(core.db.pool(), pubkey, None).await
-}
-
-// --- Relays ---
+use crate::Core;
 
 /// Every relay on the platform.
 pub async fn list_relays(core: &Core) -> Result<Vec<Relay>> {
@@ -174,8 +41,6 @@ pub async fn selling_relay(core: &Core, id: &str) -> Result<Relay> {
         .filter(Relay::charges_members)
         .ok_or(Error::NotFound("relay not found"))
 }
-
-// --- Relays ---
 
 /// Create a relay for a tenant, with a keypair of its own. A custom domain another
 /// relay has verified is refused.
@@ -394,51 +259,6 @@ pub async fn purge_relay(core: &Core, relay: &Relay) -> Result<()> {
     Ok(())
 }
 
-/// Erase what a relay holds, keeping its settings: its events, media, rooms, roles,
-/// method grants, bans, claims, notifications and members. Its owner stays, as do
-/// the members and invites someone has paid for, and the relay republishes its
-/// member list.
-pub async fn erase_relay(core: &Core, relay: &Relay) -> Result<()> {
-    relay.require_unpurged()?;
-
-    let key = core.relay_key(relay)?;
-    let now = core.clock.now();
-    let (published, blobs) = core
-        .db
-        .with_tx(async |conn| {
-            // Joins bind paid invites under this lock.
-            caravel_billing::relays::queries::lock_relay(conn, &relay.id).await?;
-
-            let blobs =
-                caravel_billing::relays::commands::erase_relay_data(&mut *conn, &relay.id).await?;
-            let published =
-                caravel_billing::relays::commands::rebuild_derived(conn, &key, &relay.id, now)
-                    .await?;
-            Ok::<_, Error>((published, blobs))
-        })
-        .await?;
-
-    core.bus.publish(Change::AccessChanged {
-        relay_id: relay.id.clone(),
-        published,
-    });
-
-    // Bytes left behind go when the relay is purged.
-    for sha256 in blobs {
-        let key = caravel_relays::media::blob_key(&relay.id, &sha256);
-        // A same-blob upload since the commit keeps its bytes; uploads hold this lock.
-        let _lock = core.blobs.lock(&key).await;
-        let gone = matches!(
-            caravel_relays::media::queries::get_blob(core.db.pool(), &relay.id, &sha256).await,
-            Ok(None)
-        );
-        if gone && let Err(error) = core.blobs.delete(&key).await {
-            tracing::warn!(relay = %relay.id, error = %error, "failed to delete a blob's bytes");
-        }
-    }
-    Ok(())
-}
-
 /// Move a relay between active and inactive, refusing a purged or delinquent relay
 /// or one already there. Judged on its locked row, so concurrent requests record
 /// the change, and bill it, once.
@@ -483,25 +303,5 @@ async fn change_relay_status(
     core.bus.publish(Change::RelayChanged {
         relay_id: relay.id.clone(),
     });
-    Ok(())
-}
-
-/// Erase what purged relays held: their events, access lists, rooms, claims,
-/// notifications and media. Billing's records of them stay.
-pub async fn erase_purged_relays(core: &Core) -> Result<()> {
-    for relay in caravel_billing::relays::queries::list_unerased_relays(core.db.pool()).await? {
-        core.blobs.delete_prefix(&relay.id).await?;
-
-        let now = core.clock.now();
-        core.db
-            .with_tx(async |conn| {
-                caravel_billing::relays::commands::erase_purged_relay_data(&mut *conn, &relay.id)
-                    .await?;
-                caravel_billing::relays::commands::set_relay_erased_at(conn, &relay.id, now).await
-            })
-            .await?;
-
-        tracing::info!(relay = %relay.id, "erased a purged relay");
-    }
     Ok(())
 }

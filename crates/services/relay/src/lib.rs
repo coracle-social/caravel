@@ -366,11 +366,12 @@ async fn root(
 
     if wants_relay_info(headers) {
         let state = route.instance.state();
-        return nip11::response(nip11::document(
-            &state,
-            &relays.inner.config.limits,
-            &relays.inner.config.transport,
-        ));
+        let limits = caravel_relays::profiles::Limits {
+            max_limit: relays.inner.config.limits.max_limit,
+            max_subscriptions: relays.inner.config.limits.max_subscriptions,
+            max_message_size: relays.inner.config.transport.max_message_size,
+        };
+        return nip11::response(nip11::document(&state.relay.info(), &limits));
     }
 
     if !is_upgrade(headers) {

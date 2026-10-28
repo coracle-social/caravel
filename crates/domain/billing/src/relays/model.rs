@@ -196,6 +196,27 @@ impl Relay {
         }
     }
 
+    /// What the relay states about itself in its NIP-11 document.
+    pub fn info(&self) -> caravel_relays::profiles::RelayInfo {
+        caravel_relays::profiles::RelayInfo {
+            name: self.info_name.clone(),
+            description: self.info_description.clone(),
+            icon: self.info_icon.clone(),
+            tenant_pubkey: self.tenant_pubkey.clone(),
+            pubkey: self.pubkey.clone(),
+            anonymous_read: self.policy_anonymous_read,
+            public_write: self.policy_public_write,
+            groups_enabled: self.groups_enabled,
+            management_enabled: self.management_enabled,
+            push_enabled: self.push_enabled,
+            blossom_enabled: self.blossom_enabled,
+            membership: self
+                .charges_members()
+                .then(|| (self.member_price, self.member_interval.seconds())),
+            payments_url: self.charges_members().then(|| self.portal_url("/")),
+        }
+    }
+
     /// What this relay's own row decides of its rules, before its access lists and
     /// rooms are loaded.
     pub fn snapshot(&self) -> caravel_relays::policy::RelaySnapshot {

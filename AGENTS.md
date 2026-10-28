@@ -8,7 +8,7 @@ There is one right place to document any given information:
 
 - Functions should have a doc comment explaining the purpose of the function, not its implementation.
 - Only very strange behavior should be documented using non-doc comments.
-- Models and their fields are documented where the model is defined, in `crates/domain` (e.g. `Relay` in `crates/domain/src/relays/model.rs`), not in migrations, implementations, or anywhere in the web apps.
+- Models and their fields are documented where the model is defined, in `crates/domain` (e.g. `Relay` in `crates/domain/billing/src/relays/model.rs`), not in migrations, implementations, or anywhere in the web apps.
 - Database indexes are documented in migrations.
 
 ## Data Modeling
@@ -41,7 +41,7 @@ Don't add re-export shims to preserve old import paths. When something moves, im
 
 ## Architecture
 
-The backend is one Cargo workspace under `crates/`, layered so each crate depends only on the ones below it: `util` at the bottom (the clock, bus, serde helpers, Postgres plumbing, and the clients for systems outside the database), then `domain` (one pod per concern, each with its models and the pure rules over them), then `db` (the queries that read and the commands that write, and nothing else), then `core` (the `Core` handle and the subsystems that run the rules), then `relay` and `api`, then `app`, which builds the `caravel` binary. `crates/app/tests/layers.rs` enforces the layering. Outside the core, state changes only through subsystems. `crates/core/tests/layers.rs` enforces that, that the database stays in `db`, and that the domain stays pure. The `architecture` skill describes each layer and where new code goes.
+The backend is one Cargo workspace under `crates/`, layered so each crate depends only on the ones below it: `util` at the bottom (the clock and bus, the errors, configuration, Postgres plumbing, and the clients for systems outside the database), then the domain crates in `crates/domain` (`relays`, `billing`, `operations`, each a group of modules holding its models, the pure rules over them, its queries and its commands), then `core` (the `Core` handle and the subsystems that adapt service calls to the domain), then the services in `crates/services` (`api`, `relay`, `worker`), then `app`, which builds the `caravel` binary. `crates/app/tests/layers.rs` enforces the layering, and `crates/core/tests/layers.rs` that models stay pure, that only queries and commands touch the database, and that services reach it only through the core. `DOMAIN.md` is the vocabulary the code is organized around.
 
 Read configuration from the environment only in `crates/app/src/config.rs`, and the time only through `caravel_util::clock::Clock`; clippy enforces both.
 

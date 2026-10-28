@@ -31,8 +31,8 @@ A **member** is a member of a tenant's relay.
 ## Services
 
 - **API** (`crates/services/api`) — serves tenant, admin and member use cases.
-- **Worker** (`crates/services/worker`) — operates in the background to manage async tasks.
 - **Relay** (`crates/services/relay`) — an instance of a relay, actively managing websocket traffic.
+- **Worker** (`crates/services/worker`) — operates in the background to manage async tasks.
 
 ## Domain modules
 
@@ -43,9 +43,11 @@ Billing (`crates/domain/billing`) is concerned with tenants and relays as billab
 - **Tenants** — invoices, plans, usage, payouts.
 - **Relays** — relay settings, relay activity, member billing, custom domains.
 
+The tenant and relay rows live here, so billing owns the model of a relay. What the relay itself does with one belongs to Relays.
+
 ### Relays
 
-Relays (`crates/domain/relays`) is the relay itself. It knows nothing about the layers above it; its concern is correctly implementing a nostr relay that fits our use case.
+Relays (`crates/domain/relays`) is the relay itself. It knows nothing about billing or the layers above it; its concern is correctly implementing a nostr relay that fits our use case.
 
 - **Profiles** — NIP-11 documents.
 - **Access** — bans, members, roles, claims.
@@ -55,8 +57,10 @@ Relays (`crates/domain/relays`) is the relay itself. It knows nothing about the 
 - **Events** — nostr event storage.
 - **Calls** — LiveKit calls.
 - **Transfer** — imports and exports.
-- **Policy** — the complex read/write controls, kept in a module of their own.
 - **Notify** — messages the relay sends members over their connections.
+- **Policy** — the complex read/write controls, kept in a module of their own.
+
+Where the relay needs something only its billable row knows, the row states it: `Relay::snapshot` gives the policy snapshot, `Relay::info` the NIP-11 document.
 
 ### Operations
 
@@ -67,4 +71,4 @@ Operations (`crates/domain/operations`) is what the platform's operators need to
 
 ## Dependencies
 
-The domain crates depend only on the bottom layer, and billing and operations may depend on relays. The core depends on the domain; services depend on the core; the app wires it all together.
+The domain crates depend only on the bottom layer. Billing may depend on Relays, and Operations on both. The core depends on the domain, services depend on the core, and only the app wires them together.

@@ -7,7 +7,7 @@ use sqlx::{PgConnection, PgExecutor, Postgres, QueryBuilder};
 
 use crate::queries;
 use caravel_domain as domain;
-use caravel_domain::error::Result;
+use caravel_util::error::Result;
 use caravel_domain::events::{Saved, StoredEvent};
 use caravel_util::nostr::Key;
 use caravel_util::nostr::kinds::{DELETION, VANISH};

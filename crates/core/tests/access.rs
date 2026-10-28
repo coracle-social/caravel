@@ -5,7 +5,7 @@ use anyhow::Result;
 use caravel_core::testing::{create_relay, sign_event};
 use caravel_core::{Core, management, testing};
 use caravel_db::{commands, queries};
-use caravel_domain::Error;
+use caravel_util::error::Error;
 use caravel_domain::events::Saved;
 use caravel_domain::management::MANAGED_METHODS;
 use caravel_domain::management::{Call, Outcome};

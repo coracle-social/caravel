@@ -735,7 +735,7 @@ async fn a_custom_domain_stays_with_the_relay_that_verified_it() {
     let taken = caravel_core::hosting::update_relay(&server.core, third, settings).await;
     assert!(matches!(
         taken,
-        Err(caravel_domain::Error::Invalid {
+        Err(caravel_util::error::Error::Invalid {
             code: "domain-exists",
             ..
         })

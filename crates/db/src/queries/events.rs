@@ -6,7 +6,7 @@ use sqlx::postgres::PgRow;
 use sqlx::{PgConnection, PgExecutor, Postgres, QueryBuilder, Row};
 
 use caravel_domain as domain;
-use caravel_domain::error::{Error, Result};
+use caravel_util::error::{Error, Result};
 use caravel_domain::events::{EventGroup, EventHead, EventPage, StoredEvent};
 use caravel_domain::relays::Relay;
 use caravel_util::nostr::kinds;

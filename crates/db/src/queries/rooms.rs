@@ -3,7 +3,7 @@
 use coracle_lib::events::Event;
 use sqlx::{PgConnection, PgExecutor};
 
-use caravel_domain::error::Result;
+use caravel_util::error::Result;
 use caravel_domain::rooms::{Room, RoomMember};
 
 pub async fn list_rooms(db: impl PgExecutor<'_>, relay_id: &str) -> Result<Vec<Room>> {

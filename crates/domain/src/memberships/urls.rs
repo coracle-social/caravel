@@ -1,7 +1,7 @@
 //! The pages a membership is bought, renewed and accepted on.
 
-use crate::config::Config;
-use crate::error::{Error, Result};
+use caravel_util::config::Config;
+use caravel_util::error::{Error, Result};
 use crate::relays::Relay;
 
 /// `page`, carrying the `return_url` a client asked to be sent back to. The portal

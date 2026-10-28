@@ -4,7 +4,7 @@
 use axum::Json;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use caravel_domain::Error;
+use caravel_util::error::Error;
 use serde::Serialize;
 
 pub type ApiResult = Result<Response, ApiError>;

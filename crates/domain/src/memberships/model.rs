@@ -3,7 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::error::{Error, Result};
+use caravel_util::error::{Error, Result};
 use crate::relays::{MemberInterval, RelayProfile};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]

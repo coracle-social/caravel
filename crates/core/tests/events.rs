@@ -8,7 +8,7 @@ use caravel_core::testing::{create_relay, sign_event};
 use caravel_core::{Core, testing};
 use caravel_db::{commands, queries};
 use caravel_domain as domain;
-use caravel_domain::Error;
+use caravel_util::error::Error;
 use caravel_domain::events::{EventGroup, Saved, StoredEvent};
 use caravel_util::nostr::kinds;
 use coracle_lib::events::Event;

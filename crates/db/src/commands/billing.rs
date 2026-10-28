@@ -5,7 +5,7 @@ use sqlx::{PgConnection, PgExecutor};
 use crate::queries;
 use caravel_domain::billing::BillingPeriod;
 use caravel_domain::billing::{Bolt11, Checkout, Intent, Invoice, InvoiceItem, InvoiceMethod};
-use caravel_domain::error::Result;
+use caravel_util::error::Result;
 
 /// Claim a tenant's outstanding items onto a new invoice, if they come to more
 /// than the minimum an invoice is cut for. A comped invoice is issued paid.

@@ -1,6 +1,6 @@
 //! NIP-42: the challenge each connection is issued, and checking a client's answer.
 
-use caravel_domain::relays::url_host;
+use caravel_util::urls::url_host;
 use caravel_util::nostr::kinds::CLIENT_AUTH;
 use coracle_lib::events::Event;
 

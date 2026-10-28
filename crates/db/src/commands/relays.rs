@@ -7,7 +7,7 @@ use sqlx::{PgConnection, PgExecutor};
 use crate::commands;
 use crate::queries;
 use caravel_domain::activity::ActivityType;
-use caravel_domain::error::{Error, Result};
+use caravel_util::error::{Error, Result};
 use caravel_domain::relays::{Relay, RelayStatus};
 use caravel_util::nostr::Key;
 

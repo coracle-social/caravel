@@ -2,7 +2,7 @@
 
 use sqlx::PgExecutor;
 
-use caravel_domain::error::Result;
+use caravel_util::error::Result;
 use caravel_domain::usage::RelayUsageTotals;
 
 /// Every metered relay's usage across `[start, end)` for a tenant. Call time is

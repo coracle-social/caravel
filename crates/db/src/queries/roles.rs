@@ -2,7 +2,7 @@
 
 use sqlx::{PgConnection, PgExecutor};
 
-use caravel_domain::error::{Error, Result};
+use caravel_util::error::{Error, Result};
 use caravel_domain::roles::Role;
 
 pub async fn list_roles(db: impl PgExecutor<'_>, relay_id: &str) -> Result<Vec<Role>> {

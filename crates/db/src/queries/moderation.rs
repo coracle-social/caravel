@@ -8,7 +8,7 @@ use sqlx::{PgPool, Row};
 
 use crate::queries;
 use caravel_domain as domain;
-use caravel_domain::error::Result;
+use caravel_util::error::Result;
 use caravel_domain::media::Upload;
 use caravel_domain::moderation::{ModerationItem, ModerationPage, Subject};
 use caravel_util::nostr::kinds;

@@ -3,7 +3,7 @@
 use sqlx::PgExecutor;
 
 use caravel_domain::activity::Activity;
-use caravel_domain::error::Result;
+use caravel_util::error::Result;
 
 /// A tenant's billable activity that billing hasn't reconciled, oldest first so
 /// line items and proration apply in the order things happened. Marking a relay

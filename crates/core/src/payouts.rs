@@ -4,7 +4,7 @@
 use crate::Core;
 use caravel_db::commands;
 use caravel_domain::billing::PayoutStatus;
-use caravel_domain::error::{Error, Result};
+use caravel_util::error::{Error, Result};
 use caravel_domain::tenants::Tenant;
 
 /// A Stripe onboarding link for a tenant, creating their Connect account the

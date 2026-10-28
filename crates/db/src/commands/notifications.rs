@@ -2,7 +2,7 @@
 
 use sqlx::PgExecutor;
 
-use caravel_domain::error::Result;
+use caravel_util::error::Result;
 
 /// Drop a pubkey's message. Connections already sent it aren't told.
 pub async fn clear(db: impl PgExecutor<'_>, relay_id: &str, pubkey: &str) -> Result<()> {

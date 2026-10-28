@@ -5,7 +5,7 @@ use std::future::Future;
 use std::time::Duration;
 
 use caravel_core::{Core, billing, domains, events, hosting, memberships, sessions};
-use caravel_domain::Result;
+use caravel_util::error::Result;
 use tokio::time::{Instant, interval_at};
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;

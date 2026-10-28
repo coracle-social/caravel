@@ -4,7 +4,7 @@ use super::plans::{self, Plan};
 use crate::activity::Activity;
 use crate::billing::BillingPeriod;
 use crate::billing::InvoiceItem;
-use crate::error::{Error, Result};
+use caravel_util::error::{Error, Result};
 use crate::tenants::Tenant;
 
 /// A prorated charge with id `id`, or a credit with `sign` -1, for the plan on the

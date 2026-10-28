@@ -4,7 +4,7 @@
 
 use crate::Core;
 use caravel_db::commands;
-use caravel_domain::error::{Error, Result};
+use caravel_util::error::{Error, Result};
 use caravel_util::bus::Change;
 
 /// Replace a pubkey's message on a relay, and send it to them now if they are

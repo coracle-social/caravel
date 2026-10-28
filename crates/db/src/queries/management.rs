@@ -2,7 +2,7 @@
 
 use sqlx::PgExecutor;
 
-use caravel_domain::error::Result;
+use caravel_util::error::Result;
 
 /// Every pubkey with methods granted individually, and its methods.
 pub async fn list_method_grants(

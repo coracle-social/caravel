@@ -4,7 +4,7 @@ use coracle_lib::events::Event;
 use sqlx::{PgConnection, PgExecutor};
 
 use crate::commands;
-use caravel_domain::error::{Error, Result};
+use caravel_util::error::{Error, Result};
 use caravel_domain::management::MANAGED_METHODS;
 use caravel_domain::memberships::MemberSource;
 use caravel_util::nostr::Key;

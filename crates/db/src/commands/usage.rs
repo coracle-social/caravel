@@ -2,7 +2,7 @@
 
 use sqlx::PgExecutor;
 
-use caravel_domain::error::Result;
+use caravel_util::error::Result;
 use caravel_domain::usage::UsageSample;
 
 pub async fn insert_usage_sample(db: impl PgExecutor<'_>, sample: &UsageSample) -> Result<()> {

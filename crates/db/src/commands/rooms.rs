@@ -8,7 +8,7 @@ use sqlx::types::Json;
 use crate::commands;
 use crate::queries;
 use caravel_domain as domain;
-use caravel_domain::error::Result;
+use caravel_util::error::Result;
 use caravel_domain::rooms::MODERATION_KINDS;
 use caravel_util::nostr::Key;
 use caravel_util::nostr::kinds::rooms as kinds;

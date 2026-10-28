@@ -2,7 +2,7 @@
 
 use sqlx::PgExecutor;
 
-use caravel_domain::error::{Error, Result};
+use caravel_util::error::{Error, Result};
 
 /// Register a claim, or bring a revoked one back. Creating a live claim again
 /// does nothing.

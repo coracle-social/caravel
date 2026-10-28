@@ -10,7 +10,7 @@ use crate::Core;
 use crate::notifications;
 use caravel_db::{commands, queries};
 use caravel_domain as domain;
-use caravel_domain::error::{Error, Result};
+use caravel_util::error::{Error, Result};
 use caravel_domain::memberships::MemberSource;
 use caravel_domain::memberships::{InviteView, Membership, MembershipStatus, Offer};
 use caravel_domain::relays::Relay;

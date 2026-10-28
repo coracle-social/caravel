@@ -4,7 +4,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::billing::plans;
-use crate::error::{Error, Result};
+use caravel_util::error::{Error, Result};
 use caravel_util::flag::{self, Flag};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]

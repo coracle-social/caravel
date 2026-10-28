@@ -7,8 +7,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use caravel_core::{Core, domains, sessions};
-use caravel_domain as domain;
-use caravel_domain::Error;
+use caravel_util::error::Error;
 use caravel_domain::billing;
 use serde::Serialize;
 
@@ -53,7 +52,7 @@ struct SessionResponse {
 pub async fn create_session(State(core): State<Core>, headers: HeaderMap) -> ApiResult {
     let now = core.clock.now();
     let url = format!("{}/session", core.config.api_url.trim_end_matches('/'));
-    let pubkey = domain::auth::verify_request_auth(authorization(&headers)?, &url, "POST", now)?;
+    let pubkey = caravel_util::auth::verify_request_auth(authorization(&headers)?, &url, "POST", now)?;
     let (token, session) = sessions::start(&core, &pubkey).await?;
 
     created(SessionResponse {

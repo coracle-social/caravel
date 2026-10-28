@@ -5,7 +5,7 @@ use coracle_lib::events::Event;
 
 use crate::Core;
 use caravel_db::commands;
-use caravel_domain::error::Result;
+use caravel_util::error::Result;
 use caravel_util::nostr::Key;
 use caravel_util::nostr::kinds::rooms::LIVEKIT_PARTICIPANTS;
 

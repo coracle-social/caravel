@@ -7,7 +7,7 @@ use sqlx::PgConnection;
 use crate::commands;
 use crate::queries;
 use caravel_domain as domain;
-use caravel_domain::error::{Error, Result};
+use caravel_util::error::{Error, Result};
 use caravel_domain::memberships::MemberSource;
 use caravel_domain::roles::Role;
 use caravel_util::nostr::Key;

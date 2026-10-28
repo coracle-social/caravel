@@ -2,7 +2,7 @@
 
 use sqlx::PgExecutor;
 
-use caravel_domain::error::Result;
+use caravel_util::error::Result;
 
 /// The relay's claims that haven't been revoked.
 pub async fn list_claims(db: impl PgExecutor<'_>, relay_id: &str) -> Result<Vec<String>> {

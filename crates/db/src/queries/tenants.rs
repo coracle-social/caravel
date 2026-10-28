@@ -2,7 +2,7 @@
 
 use sqlx::{PgConnection, PgExecutor};
 
-use caravel_domain::error::{Error, Result};
+use caravel_util::error::{Error, Result};
 use caravel_domain::tenants::Tenant;
 
 pub async fn list_tenants(db: impl PgExecutor<'_>) -> Result<Vec<Tenant>> {

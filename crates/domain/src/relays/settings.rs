@@ -5,8 +5,8 @@ use std::sync::LazyLock;
 use regex::Regex;
 
 use crate::billing::plans;
-use crate::config::Config;
-use crate::error::{Error, Result};
+use caravel_util::config::Config;
+use caravel_util::error::{Error, Result};
 use crate::relays::{Relay, RelaySettings};
 use caravel_util::flag::Flag;
 

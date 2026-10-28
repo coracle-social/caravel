@@ -12,7 +12,7 @@ use anyhow::Result;
 use caravel_core::billing::Collection;
 use caravel_core::{billing, hosting, testing};
 use caravel_db::{commands, queries};
-use caravel_domain::Error;
+use caravel_util::error::Error;
 use caravel_domain::billing::InvoiceMethod;
 use caravel_domain::billing::{PLAN_BASIC, PLAN_GROWTH};
 use caravel_domain::relays::RelayStatus;

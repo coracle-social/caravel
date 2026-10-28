@@ -6,7 +6,7 @@ use caravel_core::testing::create_relay;
 use caravel_core::{Core, notifications, testing};
 use caravel_db::commands;
 use caravel_db::queries::notifications::get_notification;
-use caravel_domain::Error;
+use caravel_util::error::Error;
 use caravel_util::bus::Change;
 use coracle_lib::keys::SecretKey;
 

@@ -5,7 +5,7 @@ use sqlx::{PgConnection, PgExecutor};
 
 use crate::commands;
 use caravel_domain::activity::{Activity, ActivityType, Snapshot};
-use caravel_domain::error::Result;
+use caravel_util::error::Result;
 use caravel_domain::relays::{Relay, RelayStatus};
 
 /// Record an activity on a relay, with a snapshot of its plan and `status`.

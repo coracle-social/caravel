@@ -1,7 +1,7 @@
 //! Checking a role, and the event that defines it.
 
 use crate as domain;
-use crate::error::{Error, Result};
+use caravel_util::error::{Error, Result};
 use crate::roles::Role;
 
 impl Role {

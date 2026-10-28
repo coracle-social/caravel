@@ -8,7 +8,7 @@ use anyhow::Result;
 use caravel_core::testing::sign_event;
 use caravel_core::{Core, hosting, management, memberships, sessions};
 use caravel_db::{commands, queries};
-use caravel_domain::Error;
+use caravel_util::error::Error;
 use caravel_domain::memberships::MemberSource;
 use caravel_domain::memberships::{Membership, MembershipStatus};
 use caravel_domain::policy::Join;

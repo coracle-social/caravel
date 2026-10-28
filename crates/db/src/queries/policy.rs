@@ -3,7 +3,7 @@
 use sqlx::PgExecutor;
 
 use crate::queries;
-use caravel_domain::error::Result;
+use caravel_util::error::Result;
 use caravel_domain::policy::{RelaySnapshot, RoomSnapshot};
 use caravel_domain::relays::Relay;
 

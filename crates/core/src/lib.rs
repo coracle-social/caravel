@@ -24,7 +24,7 @@ pub mod testing;
 
 use std::sync::Arc;
 
-use caravel_domain::config::Config;
+use caravel_util::config::Config;
 use caravel_util::blobs::Blobs;
 use caravel_util::bus::Bus;
 use caravel_util::clock::Clock;
@@ -34,7 +34,7 @@ use caravel_util::nostr::Key;
 use caravel_util::outbound::Outbound;
 use caravel_util::{robot::Robot, stripe::Stripe, wallet::Wallet};
 
-pub use caravel_domain::{Error, Result};
+pub use caravel_util::error::{Error, Result};
 
 /// The database, configuration and adapters every operation runs against.
 #[derive(Clone)]

@@ -6,7 +6,7 @@ use bytes::Bytes;
 use crate::Core;
 use caravel_db::commands;
 use caravel_domain as domain;
-use caravel_domain::error::Result;
+use caravel_util::error::Result;
 use caravel_domain::media::{Blob, Deleted};
 
 /// Keep an upload: store its bytes, then record the blob, if it is new to the

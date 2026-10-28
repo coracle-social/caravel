@@ -5,7 +5,7 @@ use sqlx::{PgConnection, PgExecutor};
 
 use crate::commands;
 use caravel_domain as domain;
-use caravel_domain::error::{Error, Result};
+use caravel_util::error::{Error, Result};
 use caravel_util::nostr::Key;
 
 /// Ban a pubkey: remove it as a member, record the ban, and delete everything it

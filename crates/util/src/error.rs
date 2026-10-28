@@ -1,7 +1,7 @@
 //! The core's error type, which says what went wrong in terms the API can map to
 //! a response without knowing the operation that failed.
 
-use caravel_util::db::Retryable;
+use crate::db::Retryable;
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 

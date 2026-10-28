@@ -68,7 +68,7 @@ impl Subscription {
 pub async fn load_subscriptions(
     core: &Core,
     relay_id: &str,
-) -> caravel_domain::Result<Vec<Subscription>> {
+) -> caravel_util::error::Result<Vec<Subscription>> {
     let filter = Filter {
         kinds: Some([kinds::PUSH_SUBSCRIPTION].into()),
         ..Default::default()

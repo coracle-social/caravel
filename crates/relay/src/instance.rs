@@ -8,7 +8,7 @@ use std::sync::{Arc, RwLock};
 use caravel_core::{Core, ingest};
 use caravel_db::queries;
 use caravel_domain as domain;
-use caravel_domain::Error;
+use caravel_util::error::Error;
 use caravel_domain::events::{Saved, StoredEvent};
 use caravel_domain::policy::{EventFacts, Refusal, RelaySnapshot};
 use caravel_domain::relays::Relay;
@@ -45,7 +45,7 @@ pub struct InstanceState {
 }
 
 impl InstanceState {
-    pub async fn load(core: &Core, relay: Relay) -> caravel_domain::Result<Self> {
+    pub async fn load(core: &Core, relay: Relay) -> caravel_util::error::Result<Self> {
         let push = if relay.push_enabled {
             push::load_subscriptions(core, &relay.id).await?
         } else {
@@ -109,7 +109,7 @@ impl RelayInstance {
     }
 
     /// Reload the relay's state from its row, keeping its connections open.
-    pub async fn reload(&self, relay: Relay) -> caravel_domain::Result<()> {
+    pub async fn reload(&self, relay: Relay) -> caravel_util::error::Result<()> {
         let _reloading = self.reloading.lock().await;
         self.install(relay).await
     }
@@ -124,7 +124,7 @@ impl RelayInstance {
     }
 
     /// Build the relay's state from `relay` and serve it, with the reload lock held.
-    async fn install(&self, relay: Relay) -> caravel_domain::Result<()> {
+    async fn install(&self, relay: Relay) -> caravel_util::error::Result<()> {
         let state = InstanceState::load(&self.core, relay).await?;
         self.pusher.retain(&state.relay.id, &state.push);
         *self
@@ -294,7 +294,7 @@ impl RelayInstance {
     fn is_addressed(&self, relay: &Relay, event: &Event) -> bool {
         let hosts = relay.hosts();
         event.tags.find_all("relay").any(|tag| {
-            tag.value() == "ALL_RELAYS" || hosts.contains(&domain::relays::url_host(tag.value()))
+            tag.value() == "ALL_RELAYS" || hosts.contains(&caravel_util::urls::url_host(tag.value()))
         })
     }
 

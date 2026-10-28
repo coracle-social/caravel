@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 use crate::Core;
 use caravel_db::{commands, queries};
 use caravel_domain as domain;
-use caravel_domain::error::{Error, Result};
+use caravel_util::error::{Error, Result};
 use caravel_domain::management::MANAGED_METHODS;
 use caravel_domain::management::{Call, Outcome};
 use caravel_domain::memberships::MemberSource;

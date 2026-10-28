@@ -3,7 +3,7 @@
 use sqlx::PgExecutor;
 
 use caravel_domain::billing::{Bolt11, Checkout, Invoice, InvoiceItem};
-use caravel_domain::error::{Error, Result};
+use caravel_util::error::{Error, Result};
 
 pub async fn get_invoice(db: impl PgExecutor<'_>, id: &str) -> Result<Option<Invoice>> {
     Ok(

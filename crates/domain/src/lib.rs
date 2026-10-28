@@ -2,12 +2,9 @@
 //! rules over them, as one pod per concern.
 
 pub mod activity;
-pub mod auth;
 pub mod bans;
 pub mod billing;
 pub mod calls;
-pub mod config;
-pub mod error;
 pub mod events;
 pub mod management;
 pub mod media;
@@ -23,4 +20,4 @@ pub mod tenants;
 pub mod transfer;
 pub mod usage;
 
-pub use error::{Error, Result};
+pub use caravel_util::error::{Error, Result};

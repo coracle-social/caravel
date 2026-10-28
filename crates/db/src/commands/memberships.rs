@@ -6,7 +6,7 @@ use sqlx::{PgConnection, PgExecutor};
 use crate::commands;
 use crate::queries;
 use caravel_domain as domain;
-use caravel_domain::error::{Error, Result};
+use caravel_util::error::{Error, Result};
 use caravel_domain::memberships::{MemberSource, Membership, MembershipStatus, RelayMember};
 use caravel_domain::policy::Join;
 use caravel_domain::relays::Relay;

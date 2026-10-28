@@ -21,7 +21,7 @@ async fn save(core: &Core, relay_id: &str, events: &[Event]) -> Result<()> {
             for event in events {
                 commands::events::save_event(&mut *conn, relay_id, event, now).await?;
             }
-            Ok::<_, caravel_domain::Error>(())
+            Ok::<_, caravel_util::error::Error>(())
         })
         .await?;
     Ok(())

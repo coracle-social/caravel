@@ -2,7 +2,7 @@
 
 use sqlx::PgExecutor;
 
-use caravel_domain::error::Result;
+use caravel_util::error::Result;
 use caravel_domain::sessions::{SESSION_TTL, Session};
 use caravel_util::encoding::{random_token, sha256_hex};
 

@@ -14,7 +14,7 @@ use caravel_domain::activity::{Activity, ActivityType, Snapshot};
 use caravel_domain::billing::BillingPeriod;
 use caravel_domain::billing::{Bolt11, Checkout, Invoice, InvoiceItem, InvoiceMethod};
 use caravel_domain::billing::{GB, Plan, SECONDS_PER_HOUR};
-use caravel_domain::error::{Error, Result};
+use caravel_util::error::{Error, Result};
 use caravel_domain::relays::RelayStatus;
 use caravel_domain::tenants::Tenant;
 use caravel_util::bus::Change;

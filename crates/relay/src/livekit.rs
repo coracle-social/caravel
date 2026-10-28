@@ -48,14 +48,14 @@ pub async fn token(
         .and_then(|value| value.to_str().ok())
         .unwrap_or_default();
     let path = format!("{}/.well-known/nip29/livekit/{room_id}", route.host);
-    let pubkey = match domain::auth::verify_request_auth(
+    let pubkey = match caravel_util::auth::verify_request_auth(
         authorization,
         &format!("https://{path}"),
         "GET",
         now,
     )
     .or_else(|_| {
-        domain::auth::verify_request_auth(authorization, &format!("http://{path}"), "GET", now)
+        caravel_util::auth::verify_request_auth(authorization, &format!("http://{path}"), "GET", now)
     }) {
         Ok(pubkey) => pubkey,
         Err(error) => return refuse(StatusCode::UNAUTHORIZED, error.to_string()),

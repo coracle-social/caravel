@@ -3,7 +3,7 @@
 use sqlx::PgExecutor;
 
 use caravel_domain::bans::Ban;
-use caravel_domain::error::Result;
+use caravel_util::error::Result;
 
 pub async fn list_banned_pubkeys(db: impl PgExecutor<'_>, relay_id: &str) -> Result<Vec<Ban>> {
     Ok(sqlx::query_as::<_, Ban>(

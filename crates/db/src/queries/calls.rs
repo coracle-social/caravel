@@ -2,7 +2,7 @@
 
 use sqlx::PgExecutor;
 
-use caravel_domain::error::Result;
+use caravel_util::error::Result;
 
 /// A relay's lifetime call clock: every participant's time in every room. It only
 /// climbs, so billing a period takes how far it moved.

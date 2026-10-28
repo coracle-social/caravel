@@ -4,7 +4,7 @@ use sqlx::PgExecutor;
 
 use crate::commands;
 use crate::queries;
-use caravel_domain::error::Result;
+use caravel_util::error::Result;
 use caravel_domain::tenants::Tenant;
 
 /// Insert a tenant, or do nothing if one with its pubkey exists.

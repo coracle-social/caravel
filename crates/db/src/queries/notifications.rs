@@ -2,7 +2,7 @@
 
 use sqlx::PgExecutor;
 
-use caravel_domain::error::Result;
+use caravel_util::error::Result;
 use caravel_domain::notifications::Notification;
 
 /// A pubkey's unexpired message on a relay.

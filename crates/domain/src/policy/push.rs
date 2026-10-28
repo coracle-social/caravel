@@ -2,7 +2,6 @@
 
 use coracle_lib::events::Event;
 
-use crate as domain;
 use crate::policy::Refusal;
 
 pub const MAX_PUSH_SUBSCRIPTIONS: usize = 10;
@@ -20,7 +19,7 @@ pub fn check_push_subscription(
         .tags
         .value("relay")
         .ok_or_else(|| Refusal::invalid("missing relay tag"))?;
-    if !hosts.contains(&domain::relays::url_host(relay)) {
+    if !hosts.contains(&caravel_util::urls::url_host(relay)) {
         return Err(Refusal::invalid(
             "relay tag does not match this relay's URL",
         ));

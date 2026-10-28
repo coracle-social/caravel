@@ -143,7 +143,7 @@ fn authorize(
         .get(header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
         .ok_or_else(|| unauthorized("an Authorization: Nostr header is required"))?;
-    let event = domain::auth::decode_authorization(header)
+    let event = caravel_util::auth::decode_authorization(header)
         .map_err(|error| unauthorized(&error.to_string()))?;
     let now = route.instance.core().clock.now();
 

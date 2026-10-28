@@ -2,7 +2,7 @@
 
 use serde_json::Value;
 
-use crate::error::{Error, Result};
+use caravel_util::error::{Error, Result};
 use crate::management::Call;
 use crate::roles::Role;
 use caravel_util::encoding::is_hex64;

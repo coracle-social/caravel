@@ -3,7 +3,7 @@
 use sqlx::PgConnection;
 
 use crate::queries;
-use caravel_domain::error::Result;
+use caravel_util::error::Result;
 use caravel_domain::media::{Blob, Deleted};
 
 /// Record an upload: the blob, if it is new to the relay, and its uploader as an
@@ -42,7 +42,7 @@ pub async fn record_upload(
 
     queries::media::get_blob(conn, relay_id, sha256)
         .await?
-        .ok_or_else(|| caravel_domain::Error::internal("blob missing after upload"))
+        .ok_or_else(|| caravel_util::error::Error::internal("blob missing after upload"))
 }
 
 /// Take a pubkey's ownership of a blob away, removing the blob with its last owner.

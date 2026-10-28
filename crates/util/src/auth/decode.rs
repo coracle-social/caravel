@@ -4,7 +4,7 @@ use base64::Engine;
 use coracle_lib::events::Event;
 
 use crate::error::{Error, Result};
-use caravel_util::nostr::kinds;
+use crate::nostr::kinds;
 
 pub fn decode_authorization(header: &str) -> Result<Event> {
     let encoded = header

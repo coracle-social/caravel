@@ -28,7 +28,7 @@ use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{get, post, put};
 use caravel_core::Core;
 use caravel_db::queries;
-use caravel_domain::Result;
+use caravel_util::error::Result;
 use caravel_domain::relays::Relay;
 use caravel_util::bus::Change;
 use tokio::sync::broadcast;

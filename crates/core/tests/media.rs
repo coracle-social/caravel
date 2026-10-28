@@ -450,7 +450,7 @@ async fn a_purged_relays_subdomain_can_be_taken_again() -> Result<()> {
     let taken = hosting::create_relay(&core, &owner, settings()).await;
     assert!(matches!(
         taken,
-        Err(caravel_domain::Error::Invalid {
+        Err(caravel_util::error::Error::Invalid {
             code: "subdomain-exists",
             ..
         })

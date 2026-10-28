@@ -12,7 +12,7 @@ use futures_util::{Stream, StreamExt};
 use crate::Core;
 use caravel_db::{commands, queries};
 use caravel_domain as domain;
-use caravel_domain::error::{Error, Result};
+use caravel_util::error::{Error, Result};
 use caravel_domain::events::{Saved, StoredEvent};
 use caravel_domain::relays::Relay;
 use caravel_domain::transfer::{HistoryEntry, ImportProblem, ImportResult, Line};

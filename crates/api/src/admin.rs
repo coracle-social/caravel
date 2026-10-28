@@ -7,7 +7,7 @@ use axum::response::IntoResponse;
 use caravel_core::{Core, hosting, sessions};
 use caravel_db::queries;
 use caravel_domain as domain;
-use caravel_domain::Error;
+use caravel_util::error::Error;
 use caravel_util::encoding::is_hex64;
 use serde::Deserialize;
 

@@ -3,7 +3,7 @@
 use crate::Core;
 use caravel_db::{commands, queries};
 use caravel_domain::billing;
-use caravel_domain::error::Result;
+use caravel_util::error::Result;
 use caravel_domain::usage::UsageSample;
 
 /// Take a usage reading of every active relay on a paid plan with a metered

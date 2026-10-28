@@ -9,7 +9,7 @@ use caravel_util::outbound::Outbound;
 use caravel_util::{robot::Robot, robot::RobotProfile, stripe::Stripe, wallet::Wallet};
 
 use crate::Core;
-use caravel_domain::config::Config;
+use caravel_util::config::Config;
 use caravel_util::clock::Clock;
 use caravel_util::nostr::{Key, generate_keypair};
 

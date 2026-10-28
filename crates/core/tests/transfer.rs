@@ -8,7 +8,7 @@ use caravel_core::testing::{create_relay, sign_event};
 use caravel_core::{Core, testing, transfer};
 use caravel_db::queries;
 use caravel_domain as domain;
-use caravel_domain::Error;
+use caravel_util::error::Error;
 use caravel_domain::events::StoredEvent;
 use caravel_domain::relays::Relay;
 use caravel_domain::transfer::ImportResult;

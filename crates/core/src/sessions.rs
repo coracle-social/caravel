@@ -2,7 +2,7 @@
 
 use crate::Core;
 use caravel_db::{commands, queries};
-use caravel_domain::error::Result;
+use caravel_util::error::Result;
 use caravel_domain::sessions::Session;
 
 /// How stale a session's `last_used_at` may get before a request refreshes it.

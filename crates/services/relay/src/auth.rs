@@ -1,7 +1,7 @@
 //! NIP-42: the challenge each connection is issued, and checking a client's answer.
 
-use caravel_util::urls::url_host;
 use caravel_util::nostr::kinds::CLIENT_AUTH;
+use caravel_util::urls::url_host;
 use coracle_lib::events::Event;
 
 /// How far an answer's timestamp may be from the relay's clock.

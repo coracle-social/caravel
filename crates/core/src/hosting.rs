@@ -7,11 +7,11 @@ use crate::billing;
 use caravel_db::{commands, queries};
 use caravel_domain as domain;
 use caravel_domain::activity::ActivityType;
-use caravel_util::error::{Error, Result};
 use caravel_domain::memberships::MemberSource;
 use caravel_domain::relays::{Relay, RelaySettings, RelayStatus};
 use caravel_domain::tenants::Tenant;
 use caravel_util::bus::Change;
+use caravel_util::error::{Error, Result};
 use caravel_util::nostr::generate_keypair;
 
 // --- Tenants ---

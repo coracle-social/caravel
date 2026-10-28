@@ -5,8 +5,8 @@ use caravel_util::dns;
 
 use crate::Core;
 use caravel_db::{commands, queries};
-use caravel_util::error::Result;
 use caravel_util::bus::Change;
+use caravel_util::error::Result;
 
 /// Whether the platform serves `host`, which on-demand TLS asks before issuing a
 /// certificate for it.

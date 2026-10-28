@@ -5,9 +5,9 @@ use axum::Json;
 use axum::extract::{Path, State};
 use caravel_core::{Core, memberships};
 use caravel_db::queries;
-use caravel_util::error::Error;
 use caravel_domain::memberships::{Membership, MembershipStatus};
 use caravel_domain::relays::Relay;
+use caravel_util::error::Error;
 use serde::{Deserialize, Serialize};
 
 use crate::ReturnTo;

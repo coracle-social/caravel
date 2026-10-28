@@ -9,6 +9,7 @@ license.workspace = true
 anyhow.workspace = true
 caravel-relays.workspace = true
 caravel-util.workspace = true
+coracle-lib.workspace = true
 chrono.workspace = true
 regex.workspace = true
 serde.workspace = true

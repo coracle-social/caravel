@@ -276,6 +276,7 @@ dependencies = [
  "caravel-relays",
  "caravel-util",
  "chrono",
+ "coracle-lib",
  "regex",
  "serde",
  "serde_json",
@@ -346,6 +347,7 @@ name = "caravel-operations"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "caravel-billing",
  "caravel-relays",
  "caravel-util",
  "serde",

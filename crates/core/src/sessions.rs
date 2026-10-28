@@ -2,8 +2,8 @@
 
 use crate::Core;
 use caravel_db::{commands, queries};
-use caravel_util::error::Result;
 use caravel_domain::sessions::Session;
+use caravel_util::error::Result;
 
 /// How stale a session's `last_used_at` may get before a request refreshes it.
 const TOUCH_INTERVAL: i64 = 60 * 60;

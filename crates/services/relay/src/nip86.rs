@@ -86,5 +86,6 @@ fn authenticate(headers: &HeaderMap, body: &[u8], host: &str, now: i64) -> Resul
         .get(AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
         .ok_or("blocked: please authenticate in order to manage this relay")?;
-    caravel_util::auth::verify_payload_auth(header, host, body, now).map_err(|error| error.to_string())
+    caravel_util::auth::verify_payload_auth(header, host, body, now)
+        .map_err(|error| error.to_string())
 }

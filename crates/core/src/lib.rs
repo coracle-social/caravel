@@ -24,10 +24,10 @@ pub mod testing;
 
 use std::sync::Arc;
 
-use caravel_util::config::Config;
 use caravel_util::blobs::Blobs;
 use caravel_util::bus::Bus;
 use caravel_util::clock::Clock;
+use caravel_util::config::Config;
 use caravel_util::db::Db;
 use caravel_util::livekit::Livekit;
 use caravel_util::nostr::Key;

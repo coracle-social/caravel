@@ -14,10 +14,10 @@ use caravel_domain::activity::{Activity, ActivityType, Snapshot};
 use caravel_domain::billing::BillingPeriod;
 use caravel_domain::billing::{Bolt11, Checkout, Invoice, InvoiceItem, InvoiceMethod};
 use caravel_domain::billing::{GB, Plan, SECONDS_PER_HOUR};
-use caravel_util::error::{Error, Result};
 use caravel_domain::relays::RelayStatus;
 use caravel_domain::tenants::Tenant;
 use caravel_util::bus::Change;
+use caravel_util::error::{Error, Result};
 
 const GRACE_PERIOD_SECS: i64 = 7 * 24 * 60 * 60;
 

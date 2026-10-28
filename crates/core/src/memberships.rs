@@ -10,12 +10,12 @@ use crate::Core;
 use crate::notifications;
 use caravel_db::{commands, queries};
 use caravel_domain as domain;
-use caravel_util::error::{Error, Result};
 use caravel_domain::memberships::MemberSource;
 use caravel_domain::memberships::{InviteView, Membership, MembershipStatus, Offer};
 use caravel_domain::relays::Relay;
 use caravel_domain::sessions::SESSION_TTL;
 use caravel_util::bus::Change;
+use caravel_util::error::{Error, Result};
 
 /// A checkout not completed in this long never will be: Stripe expires Checkout
 /// sessions after a day. One reopened since is waited out.

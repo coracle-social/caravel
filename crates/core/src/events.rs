@@ -3,8 +3,8 @@
 
 use crate::Core;
 use caravel_db::commands;
-use caravel_util::error::Result;
 use caravel_util::bus::Change;
+use caravel_util::error::Result;
 
 /// Delete every relay's events whose NIP-40 expiration passed, a batch at a time
 /// so other writers get between them.

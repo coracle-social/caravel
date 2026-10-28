@@ -1,9 +1,9 @@
 //! Reading and checking the environment, the only place configuration comes from.
 
 use anyhow::{Context, Result, bail};
-use caravel_util::config::Config;
 use caravel_relay::RelaysConfig;
 use caravel_util::blobs::S3Config;
+use caravel_util::config::Config;
 use caravel_util::nostr::Key;
 use caravel_util::robot::RobotProfile;
 

@@ -8,10 +8,10 @@ use coracle_lib::events::Event;
 use crate::Core;
 use caravel_db::commands;
 use caravel_domain as domain;
-use caravel_util::error::{Error, Result};
 use caravel_domain::events::Saved;
 use caravel_domain::policy::Join;
 use caravel_domain::relays::Relay;
+use caravel_util::error::{Error, Result};
 use caravel_util::nostr::Key;
 use caravel_util::nostr::kinds::{DELETION, VANISH};
 

@@ -8,10 +8,10 @@ use std::sync::{Arc, RwLock};
 use caravel_core::{Core, ingest};
 use caravel_db::queries;
 use caravel_domain as domain;
-use caravel_util::error::Error;
 use caravel_domain::events::{Saved, StoredEvent};
 use caravel_domain::policy::{EventFacts, Refusal, RelaySnapshot};
 use caravel_domain::relays::Relay;
+use caravel_util::error::Error;
 use caravel_util::nostr::Key;
 use caravel_util::nostr::kinds;
 use caravel_util::nostr::kinds::{DELETION, VANISH};
@@ -294,7 +294,8 @@ impl RelayInstance {
     fn is_addressed(&self, relay: &Relay, event: &Event) -> bool {
         let hosts = relay.hosts();
         event.tags.find_all("relay").any(|tag| {
-            tag.value() == "ALL_RELAYS" || hosts.contains(&caravel_util::urls::url_host(tag.value()))
+            tag.value() == "ALL_RELAYS"
+                || hosts.contains(&caravel_util::urls::url_host(tag.value()))
         })
     }
 

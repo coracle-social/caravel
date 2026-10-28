@@ -5,13 +5,13 @@ use axum::Json;
 use axum::extract::{Path, Query, State};
 use caravel_core::{Core, management};
 use caravel_db::queries;
-use caravel_util::error::Error;
-use caravel_util::auth::Actor;
 use caravel_domain::events::EventPage;
 use caravel_domain::management::Call;
 use caravel_domain::management::MANAGED_METHODS;
 use caravel_domain::relays::Relay;
 use caravel_domain::rooms::{Room, RoomMember};
+use caravel_util::auth::Actor;
+use caravel_util::error::Error;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 

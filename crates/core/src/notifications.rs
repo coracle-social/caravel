@@ -4,8 +4,8 @@
 
 use crate::Core;
 use caravel_db::commands;
-use caravel_util::error::{Error, Result};
 use caravel_util::bus::Change;
+use caravel_util::error::{Error, Result};
 
 /// Replace a pubkey's message on a relay, and send it to them now if they are
 /// connected and it hasn't expired.

@@ -4,8 +4,8 @@
 use crate::Core;
 use caravel_db::commands;
 use caravel_domain::billing::PayoutStatus;
-use caravel_util::error::{Error, Result};
 use caravel_domain::tenants::Tenant;
+use caravel_util::error::{Error, Result};
 
 /// A Stripe onboarding link for a tenant, creating their Connect account the
 /// first time. Stripe sends them back to `return_url`, also when the link goes

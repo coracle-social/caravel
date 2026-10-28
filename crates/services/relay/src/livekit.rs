@@ -55,7 +55,12 @@ pub async fn token(
         now,
     )
     .or_else(|_| {
-        caravel_util::auth::verify_request_auth(authorization, &format!("http://{path}"), "GET", now)
+        caravel_util::auth::verify_request_auth(
+            authorization,
+            &format!("http://{path}"),
+            "GET",
+            now,
+        )
     }) {
         Ok(pubkey) => pubkey,
         Err(error) => return refuse(StatusCode::UNAUTHORIZED, error.to_string()),

@@ -6,9 +6,9 @@ use caravel_domain as domain;
 use caravel_domain::events::EventGroup;
 use caravel_domain::policy::CREATED_AT_UPPER_LIMIT;
 use caravel_domain::policy::{EventFacts, Refusal, RelaySnapshot, RoomSnapshot};
-use caravel_util::urls::url_host;
 use caravel_util::nostr::kinds;
 use caravel_util::nostr::kinds::rooms as room_kinds;
+use caravel_util::urls::url_host;
 use coracle_lib::keys::SecretKey;
 
 const NOW: i64 = 1_800_000_000;

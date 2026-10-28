@@ -221,12 +221,25 @@ fn a_module_stays_below_the_modules_above_it() {
     }
 }
 
+/// Every Rust file under `dir`, following its subdirectories.
+fn rust_files(dir: &Path) -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    for entry in fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            found.extend(rust_files(&path));
+        } else if path.extension().is_some_and(|extension| extension == "rs") {
+            found.push(path);
+        }
+    }
+    found
+}
+
 #[test]
 fn services_reach_the_database_only_through_the_core() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
     for dir in ["services/api", "services/relay", "services/worker"] {
-        for entry in fs::read_dir(root.join(dir).join("src")).unwrap() {
-            let path = entry.unwrap().path();
+        for path in rust_files(&root.join(dir).join("src")) {
             let text = fs::read_to_string(&path).unwrap();
             let words: BTreeSet<&str> = text
                 .lines()

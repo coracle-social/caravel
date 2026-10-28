@@ -157,6 +157,20 @@ fn protocol_clients_stay_in_their_layer() {
     }
 }
 
+/// Every Rust file under `dir`, following its subdirectories.
+fn sources(dir: &Path) -> Vec<std::path::PathBuf> {
+    let mut found = Vec::new();
+    for entry in fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            found.extend(sources(&path));
+        } else if path.extension().is_some_and(|extension| extension == "rs") {
+            found.push(path);
+        }
+    }
+    found
+}
+
 /// The crates above the core may read through its queries, but change state only
 /// through its subsystems, which own their transactions and tell the bus: their
 /// code never names the core's commands or a way to open a transaction.
@@ -164,8 +178,7 @@ fn protocol_clients_stay_in_their_layer() {
 fn only_core_subsystems_change_state() {
     let crates = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
     for name in ["services/relay", "services/api", "app"] {
-        for entry in fs::read_dir(crates.join(name).join("src")).unwrap() {
-            let path = entry.unwrap().path();
+        for path in sources(&crates.join(name).join("src")) {
             let text = fs::read_to_string(&path).unwrap();
             let words: BTreeSet<&str> = text
                 .lines()

@@ -11,7 +11,8 @@ use caravel_relays::media::Upload;
 #[derive(Clone, Debug, Serialize)]
 pub struct ModerationItem {
     pub relay_id: String,
-    /// When the relay first stored it, which a replaced version keeps.
+    /// When the relay first stored this event, so the version that replaced a
+    /// replaceable one is seen when it arrived.
     pub seen_at: i64,
     #[serde(flatten)]
     pub subject: Subject,

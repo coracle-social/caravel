@@ -99,22 +99,36 @@ async fn the_feed_holds_moderated_events_and_uploads_newest_first() -> Result<()
     Ok(())
 }
 
+/// Seen once per event id: republishing an event keeps its first time, while the
+/// newer version that replaces it is seen when that version arrived.
 #[tokio::test]
-async fn a_replaced_event_keeps_when_the_relay_first_stored_it() -> Result<()> {
+async fn an_event_is_seen_once_and_a_replacement_is_seen_as_it_arrives() -> Result<()> {
     let core = core().await;
     let start = day(2031, 6, 1);
     let author = SecretKey::generate();
     let tenant = create_tenant(&core).await?;
     let relay = create_relay(&core, &tenant, "free").await?;
 
-    // A profile, which is replaceable, edited an hour later in place.
+    // A profile, which is replaceable, published and then published again.
     travel(&core, start);
-    save(
-        &core,
-        &relay.id,
-        &[sign_event(&author, 0, "before", &[], start)],
+    let first = sign_event(&author, 0, "before", &[], start);
+    save(&core, &relay.id, std::slice::from_ref(&first)).await?;
+    travel(&core, start + 60);
+    save(&core, &relay.id, std::slice::from_ref(&first)).await?;
+
+    let seen = |page: &caravel_operations::moderation::ModerationPage| -> Vec<i64> {
+        page.items.iter().map(|item| item.seen_at).collect()
+    };
+    let page = caravel_operations::moderation::queries::list_moderation(
+        core.db.pool(),
+        &core.config.admin_pubkeys,
+        Some(start),
+        Some(start + 60),
     )
     .await?;
+    assert_eq!(seen(&page), vec![start]);
+
+    // The version that replaces it is a new event, seen when it arrived.
     travel(&core, start + 3600);
     save(
         &core,
@@ -122,16 +136,18 @@ async fn a_replaced_event_keeps_when_the_relay_first_stored_it() -> Result<()> {
         &[sign_event(&author, 0, "after", &[], start + 3600)],
     )
     .await?;
-
     let page = caravel_operations::moderation::queries::list_moderation(
         core.db.pool(),
         &core.config.admin_pubkeys,
-        Some(start),
+        Some(start + 3600),
         Some(start + 3600),
     )
     .await?;
-    let stored: Vec<i64> = page.items.iter().map(|item| item.seen_at).collect();
-    assert_eq!(stored, vec![start]);
+    assert_eq!(seen(&page), vec![start + 3600]);
+    let Subject::Event(event) = &page.items[0].subject else {
+        panic!("expected an event");
+    };
+    assert_eq!(event["content"], "after");
     Ok(())
 }
 

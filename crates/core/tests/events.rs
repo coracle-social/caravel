@@ -6,9 +6,7 @@ use std::collections::BTreeSet;
 use anyhow::Result;
 use caravel_core::testing::{create_relay, sign_event};
 use caravel_core::{Core, testing};
-use caravel_db::{commands, queries};
-use caravel_domain as domain;
-use caravel_domain::events::{EventGroup, Saved, StoredEvent};
+use caravel_relays::events::{EventGroup, Saved, StoredEvent};
 use caravel_util::error::Error;
 use caravel_util::nostr::kinds;
 use coracle_lib::events::Event;
@@ -28,14 +26,17 @@ async fn save(core: &Core, relay_id: &str, event: &Event) -> Result<Saved> {
     let saved = core
         .db
         .with_tx(async |conn| {
-            let saved = commands::events::save_event(&mut *conn, relay_id, event, NOW).await?;
+            let saved =
+                caravel_relays::events::commands::save_event(&mut *conn, relay_id, event, NOW)
+                    .await?;
             if saved == Saved::New {
                 match event.kind {
                     kinds::DELETION => {
-                        commands::events::apply_deletion(conn, relay_id, event).await?;
+                        caravel_relays::events::commands::apply_deletion(conn, relay_id, event)
+                            .await?;
                     }
                     kinds::VANISH => {
-                        commands::events::apply_vanish(
+                        caravel_relays::events::commands::apply_vanish(
                             conn,
                             relay_id,
                             &event.pubkey.as_bytes(),
@@ -55,11 +56,11 @@ async fn save(core: &Core, relay_id: &str, event: &Event) -> Result<Saved> {
 /// A relay's events matching a filter, leaving out the ones the relay signed about
 /// its own members.
 async fn query(core: &Core, relay_id: &str, filter: Filter) -> Result<Vec<StoredEvent>> {
-    let relay = caravel_db::queries::relays::get_relay(core.db.pool(), relay_id)
+    let relay = caravel_billing::relays::queries::get_relay(core.db.pool(), relay_id)
         .await?
         .expect("no relay");
     Ok(
-        queries::events::query_events(core.db.pool(), relay_id, &filter, 1000, NOW)
+        caravel_relays::events::queries::query_events(core.db.pool(), relay_id, &filter, 1000, NOW)
             .await?
             .into_iter()
             .filter(|event| event.head.pubkey_hex() != relay.pubkey)
@@ -257,10 +258,16 @@ async fn limits_cap_results_and_ties_break_on_id() -> Result<()> {
     );
 
     // The relay's cap applies whether or not the filter names a limit.
-    let capped =
-        queries::events::query_events(core.db.pool(), &relay.id, &Filter::new(), 3, NOW).await?;
+    let capped = caravel_relays::events::queries::query_events(
+        core.db.pool(),
+        &relay.id,
+        &Filter::new(),
+        3,
+        NOW,
+    )
+    .await?;
     assert_eq!(capped.len(), 3);
-    let capped = queries::events::query_events(
+    let capped = caravel_relays::events::queries::query_events(
         core.db.pool(),
         &relay.id,
         &Filter::new().add_limit(100),
@@ -538,12 +545,17 @@ async fn expired_events_are_hidden_then_swept() -> Result<()> {
 
     assert_eq!(ids(&core, &relay.id, Filter::new()).await?.len(), 1);
 
-    let later =
-        queries::events::query_events(core.db.pool(), &relay.id, &kinds(&[1]), 1000, NOW + 60)
-            .await?;
+    let later = caravel_relays::events::queries::query_events(
+        core.db.pool(),
+        &relay.id,
+        &kinds(&[1]),
+        1000,
+        NOW + 60,
+    )
+    .await?;
     assert!(later.is_empty());
 
-    commands::events::delete_expired_events(core.db.pool(), NOW + 60, 1000).await?;
+    caravel_relays::events::commands::delete_expired_events(core.db.pool(), NOW + 60, 1000).await?;
     assert!(ids(&core, &relay.id, Filter::new()).await?.is_empty());
     Ok(())
 }
@@ -567,9 +579,13 @@ async fn counts_group_matching_events_by_kind_author_and_room_tags() -> Result<(
     save(&core, &other.id, &plain).await?;
 
     let count = async |filters: &[Filter]| {
-        let mut groups =
-            queries::events::count_event_groups(core.db.pool(), &relay.id, filters, NOW + 60)
-                .await?;
+        let mut groups = caravel_relays::events::queries::count_event_groups(
+            core.db.pool(),
+            &relay.id,
+            filters,
+            NOW + 60,
+        )
+        .await?;
         groups.sort_by_key(|group| (group.kind, group.h.clone()));
         Ok::<_, anyhow::Error>(groups)
     };
@@ -610,21 +626,21 @@ async fn counts_group_matching_events_by_kind_author_and_room_tags() -> Result<(
 #[tokio::test]
 async fn events_with_a_nul_character_are_not_storable() {
     let author = SecretKey::generate();
-    assert!(!domain::events::is_storable(&sign_event(
+    assert!(!caravel_relays::events::is_storable(&sign_event(
         &author,
         1,
         "a\0b",
         &[],
         NOW
     )));
-    assert!(!domain::events::is_storable(&sign_event(
+    assert!(!caravel_relays::events::is_storable(&sign_event(
         &author,
         1,
         "ok",
         &[&["t", "a\0"]],
         NOW
     )));
-    assert!(domain::events::is_storable(&sign_event(
+    assert!(caravel_relays::events::is_storable(&sign_event(
         &author,
         1,
         "ok",
@@ -664,11 +680,23 @@ async fn negentropy_heads_refuse_sets_over_the_cap() -> Result<()> {
         .await?;
     }
 
-    let heads =
-        queries::events::query_event_heads(core.db.pool(), &relay.id, &kinds(&[1]), 3, NOW).await?;
+    let heads = caravel_relays::events::queries::query_event_heads(
+        core.db.pool(),
+        &relay.id,
+        &kinds(&[1]),
+        3,
+        NOW,
+    )
+    .await?;
     assert_eq!(heads.map(|heads| heads.len()), Some(3));
-    let over =
-        queries::events::query_event_heads(core.db.pool(), &relay.id, &kinds(&[1]), 2, NOW).await?;
+    let over = caravel_relays::events::queries::query_event_heads(
+        core.db.pool(),
+        &relay.id,
+        &kinds(&[1]),
+        2,
+        NOW,
+    )
+    .await?;
     assert!(over.is_none());
     Ok(())
 }

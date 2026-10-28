@@ -7,7 +7,7 @@ use axum::http::header::AUTHORIZATION;
 use axum::http::{HeaderMap, HeaderValue, header};
 use axum::response::{IntoResponse, Response};
 use caravel_core::management;
-use caravel_domain::management::{Call, Outcome};
+use caravel_relays::management::{Call, Outcome};
 use serde::Deserialize;
 use serde_json::{Value, json};
 

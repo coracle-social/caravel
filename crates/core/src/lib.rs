@@ -13,6 +13,7 @@ pub mod ingest;
 pub mod management;
 pub mod media;
 pub mod memberships;
+pub mod moderation;
 pub mod notifications;
 pub mod payouts;
 pub mod sessions;
@@ -62,7 +63,7 @@ impl Core {
     }
 
     /// A relay's own key, decrypted with the platform key.
-    pub fn relay_key(&self, relay: &caravel_domain::relays::Relay) -> Result<Key> {
+    pub fn relay_key(&self, relay: &caravel_billing::relays::Relay) -> Result<Key> {
         Ok(Key::from_hex(
             &self.config.platform_key.decrypt(&relay.secret)?,
         )?)

@@ -4,7 +4,6 @@
 use coracle_lib::events::Event;
 
 use crate::Core;
-use caravel_db::commands;
 use caravel_util::error::Result;
 use caravel_util::nostr::Key;
 use caravel_util::nostr::kinds::rooms::LIVEKIT_PARTICIPANTS;
@@ -34,8 +33,15 @@ pub async fn publish_participants(
     let now = core.clock.now();
     core.db
         .with_tx(async |conn| {
-            commands::events::publish(conn, key, relay_id, LIVEKIT_PARTICIPANTS, tags.clone(), now)
-                .await
+            caravel_relays::events::commands::publish(
+                conn,
+                key,
+                relay_id,
+                LIVEKIT_PARTICIPANTS,
+                tags.clone(),
+                now,
+            )
+            .await
         })
         .await
 }
@@ -50,6 +56,13 @@ pub async fn record_departure(
     joined_at: i64,
     left_at: i64,
 ) -> Result<()> {
-    commands::calls::record_departure(core.db.pool(), relay_id, room_id, sid, joined_at, left_at)
-        .await
+    caravel_relays::calls::commands::record_departure(
+        core.db.pool(),
+        relay_id,
+        room_id,
+        sid,
+        joined_at,
+        left_at,
+    )
+    .await
 }

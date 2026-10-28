@@ -9,12 +9,11 @@
 mod common;
 
 use anyhow::Result;
+use caravel_billing::relays::RelayStatus;
+use caravel_billing::relays::{PLAN_BASIC, PLAN_GROWTH};
+use caravel_billing::tenants::InvoiceMethod;
 use caravel_core::billing::Collection;
 use caravel_core::{billing, hosting, testing};
-use caravel_db::{commands, queries};
-use caravel_domain::billing::InvoiceMethod;
-use caravel_domain::billing::{PLAN_BASIC, PLAN_GROWTH};
-use caravel_domain::relays::RelayStatus;
 use caravel_util::error::Error;
 use common::stripe::FakeStripe;
 use common::*;
@@ -686,9 +685,15 @@ async fn a_lightning_invoice_that_may_have_been_paid_isnt_replaced() -> Result<(
 
     // The test wallet can't be reached, so the expired one can't be judged unpaid.
     let now = core.clock.now();
-    let expired =
-        commands::billing::insert_bolt11(core.db.pool(), &open.id, "lnbc-expired", 0, now, now)
-            .await?;
+    let expired = caravel_billing::tenants::commands::billing::insert_bolt11(
+        core.db.pool(),
+        &open.id,
+        "lnbc-expired",
+        0,
+        now,
+        now,
+    )
+    .await?;
     travel(&core, now + 1);
     let error = billing::ensure_bolt11_for_invoice(&core, &open)
         .await
@@ -697,7 +702,11 @@ async fn a_lightning_invoice_that_may_have_been_paid_isnt_replaced() -> Result<(
 
     // A caller still holding the invoice open is given the settled one back.
     pay_invoices(&core, &tenant).await?;
-    let paid = queries::billing::get_bolt11_for_invoice(core.db.pool(), &open.id).await?;
+    let paid = caravel_billing::tenants::queries::billing::get_bolt11_for_invoice(
+        core.db.pool(),
+        &open.id,
+    )
+    .await?;
     let paid = paid.expect("the invoice has a Lightning invoice");
     assert_ne!(paid.id, expired.id);
     assert_eq!(

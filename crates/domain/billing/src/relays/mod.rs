@@ -4,7 +4,7 @@
 mod activity;
 mod memberships;
 mod model;
-pub(crate) mod plans;
+pub mod plans;
 mod settings;
 mod urls;
 mod usage;

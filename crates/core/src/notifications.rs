@@ -3,7 +3,6 @@
 //! authenticates again, until the message is replaced, cleared or expires.
 
 use crate::Core;
-use caravel_db::commands;
 use caravel_util::bus::Change;
 use caravel_util::error::{Error, Result};
 
@@ -21,7 +20,7 @@ pub async fn notify(
     }
 
     let now = core.clock.now();
-    commands::notifications::set_notification(
+    caravel_relays::notify::commands::set_notification(
         core.db.pool(),
         relay_id,
         pubkey,

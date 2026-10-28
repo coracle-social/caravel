@@ -5,15 +5,13 @@
 use std::collections::BTreeMap;
 
 use anyhow::Result;
+use caravel_billing::relays::Relay;
 use caravel_core::testing::{create_relay, sign_event};
 use caravel_core::{Core, management, testing};
-use caravel_db::{commands, queries};
-use caravel_domain as domain;
-use caravel_domain::events::Saved;
-use caravel_domain::management::Call;
-use caravel_domain::policy::{Refusal, RelaySnapshot};
-use caravel_domain::relays::Relay;
-use caravel_domain::rooms;
+use caravel_relays::events::Saved;
+use caravel_relays::management::Call;
+use caravel_relays::policy::{Refusal, RelaySnapshot};
+use caravel_relays::rooms;
 use caravel_util::nostr::Key;
 use caravel_util::nostr::kinds::rooms as kinds;
 use coracle_lib::events::Event;
@@ -45,7 +43,7 @@ impl Fixture {
     }
 
     async fn snapshot(&self) -> RelaySnapshot {
-        queries::policy::load_snapshot(self.core.db.pool(), &self.relay)
+        caravel_relays::policy::queries::load_snapshot(self.core.db.pool(), self.relay.snapshot())
             .await
             .unwrap()
     }
@@ -66,10 +64,22 @@ impl Fixture {
             .core
             .db
             .with_tx(async |conn| {
-                let saved =
-                    commands::events::save_event(&mut *conn, &self.relay.id, &event, now).await?;
+                let saved = caravel_relays::events::commands::save_event(
+                    &mut *conn,
+                    &self.relay.id,
+                    &event,
+                    now,
+                )
+                .await?;
                 assert_eq!(saved, Saved::New);
-                commands::rooms::apply_event(conn, &self.key, &self.relay.id, &event, now).await
+                caravel_relays::rooms::commands::apply_event(
+                    conn,
+                    &self.key,
+                    &self.relay.id,
+                    &event,
+                    now,
+                )
+                .await
             })
             .await
             .unwrap();
@@ -81,17 +91,21 @@ impl Fixture {
         self.core
             .db
             .with_tx(async |conn| {
-                commands::events::save_event(conn, &self.relay.id, event, now).await
+                caravel_relays::events::commands::save_event(conn, &self.relay.id, event, now).await
             })
             .await
             .unwrap()
     }
 
     async fn exists(&self, event: &Event) -> bool {
-        !queries::events::get_events(self.core.db.pool(), &self.relay.id, &[event.id.to_bytes()])
-            .await
-            .unwrap()
-            .is_empty()
+        !caravel_relays::events::queries::get_events(
+            self.core.db.pool(),
+            &self.relay.id,
+            &[event.id.to_bytes()],
+        )
+        .await
+        .unwrap()
+        .is_empty()
     }
 
     /// The relay's published events of a kind about a room.
@@ -100,7 +114,7 @@ impl Fixture {
             Filter::new()
                 .add_kind(kind)
                 .add_tag(coracle_lib::filters::TagMatch::Any, "d", room);
-        let found = queries::events::query_events(
+        let found = caravel_relays::events::queries::query_events(
             self.core.db.pool(),
             &self.relay.id,
             &filter,
@@ -123,16 +137,16 @@ fn values(event: &Event, name: &str) -> Vec<String> {
 fn an_event_names_its_room_by_d_for_room_state_and_h_otherwise() {
     let author = SecretKey::generate();
     let message = sign_event(&author, 9, "hi", &[&["h", "room"]], 0);
-    assert_eq!(domain::rooms::room_id(&message), Some("room"));
+    assert_eq!(caravel_relays::rooms::room_id(&message), Some("room"));
 
     let pins = sign_event(&author, kinds::PINS, "", &[&["d", "room"]], 0);
-    assert_eq!(domain::rooms::room_id(&pins), Some("room"));
+    assert_eq!(caravel_relays::rooms::room_id(&pins), Some("room"));
 
     let put_pins = sign_event(&author, kinds::PUT_PINS, "", &[&["h", "room"]], 0);
-    assert_eq!(domain::rooms::room_id(&put_pins), Some("room"));
+    assert_eq!(caravel_relays::rooms::room_id(&put_pins), Some("room"));
 
     let elsewhere = sign_event(&author, 1, "hi", &[&["p", "x"]], 0);
-    assert_eq!(domain::rooms::room_id(&elsewhere), None);
+    assert_eq!(caravel_relays::rooms::room_id(&elsewhere), None);
 }
 
 #[tokio::test]
@@ -666,7 +680,7 @@ async fn deleting_a_room_removes_it_and_everything_in_it() -> Result<()> {
     assert!(!f.exists(&message).await);
 
     // Only the deletion is left, and the room can be created again from nothing.
-    let left = queries::events::query_events(
+    let left = caravel_relays::events::queries::query_events(
         f.core.db.pool(),
         &f.relay.id,
         &Filter::new().add_tag(coracle_lib::filters::TagMatch::Any, "h", "room"),
@@ -717,7 +731,7 @@ async fn rebuilding_the_published_state_reproduces_it() -> Result<()> {
     management::call(
         &f.core,
         &f.relay,
-        Call::CreateRole(caravel_domain::roles::Role {
+        Call::CreateRole(caravel_relays::access::Role {
             id: "mod".into(),
             label: "Mod".into(),
             ..Default::default()
@@ -777,7 +791,7 @@ async fn rebuilding_the_published_state_reproduces_it() -> Result<()> {
         .core
         .db
         .with_tx(async |conn| {
-            commands::relays::rebuild_derived(conn, &f.key, &f.relay.id, now).await
+            caravel_billing::relays::commands::rebuild_derived(conn, &f.key, &f.relay.id, now).await
         })
         .await?;
 
@@ -802,21 +816,27 @@ async fn published_state(f: &Fixture) -> BTreeMap<(u16, String), Vec<Vec<String>
     let filter = Filter::new()
         .add_author(f.key.pubkey().parse().unwrap())
         .add_kinds([13534, 33534, 39000, 39001, 39002, 39005]);
-    queries::events::query_events(f.core.db.pool(), &f.relay.id, &filter, 1000, f.now())
-        .await
-        .unwrap()
-        .iter()
-        .map(|stored| {
-            let event: Event = serde_json::from_str(&stored.to_json(false)).unwrap();
+    caravel_relays::events::queries::query_events(
+        f.core.db.pool(),
+        &f.relay.id,
+        &filter,
+        1000,
+        f.now(),
+    )
+    .await
+    .unwrap()
+    .iter()
+    .map(|stored| {
+        let event: Event = serde_json::from_str(&stored.to_json(false)).unwrap();
+        (
             (
-                (
-                    event.kind,
-                    event.tags.value("d").unwrap_or_default().to_string(),
-                ),
-                tags(&event),
-            )
-        })
-        .collect()
+                event.kind,
+                event.tags.value("d").unwrap_or_default().to_string(),
+            ),
+            tags(&event),
+        )
+    })
+    .collect()
 }
 
 fn tags(event: &Event) -> Vec<Vec<String>> {

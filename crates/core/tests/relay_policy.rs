@@ -2,10 +2,9 @@
 //! subscribe, who may see which event, and who gets signatures.
 
 use caravel_core::testing::sign_event;
-use caravel_domain as domain;
-use caravel_domain::events::EventGroup;
-use caravel_domain::policy::CREATED_AT_UPPER_LIMIT;
-use caravel_domain::policy::{EventFacts, Refusal, RelaySnapshot, RoomSnapshot};
+use caravel_relays::events::EventGroup;
+use caravel_relays::policy::CREATED_AT_UPPER_LIMIT;
+use caravel_relays::policy::{EventFacts, Refusal, RelaySnapshot, RoomSnapshot};
 use caravel_util::nostr::kinds;
 use caravel_util::nostr::kinds::rooms as room_kinds;
 use caravel_util::urls::url_host;
@@ -567,9 +566,9 @@ fn stripping_spares_whoever_manages_the_relay() {
 
 #[test]
 fn ephemeral_kinds_are_not_stored() {
-    assert!(!domain::policy::is_stored(20001));
-    assert!(domain::policy::is_stored(1));
-    assert!(domain::policy::is_stored(30023));
+    assert!(!caravel_relays::policy::is_stored(20001));
+    assert!(caravel_relays::policy::is_stored(1));
+    assert!(caravel_relays::policy::is_stored(30023));
 }
 
 #[test]
@@ -626,14 +625,18 @@ fn a_push_subscription_may_name_any_of_the_relays_hosts() {
         "old.example",
     ] {
         assert_eq!(
-            domain::policy::check_push_subscription(&subscription(relay), &hosts, 0),
+            caravel_relays::policy::check_push_subscription(&subscription(relay), &hosts, 0),
             Ok(()),
             "{relay}"
         );
     }
     assert!(
-        domain::policy::check_push_subscription(&subscription("wss://other.example"), &hosts, 0)
-            .is_err()
+        caravel_relays::policy::check_push_subscription(
+            &subscription("wss://other.example"),
+            &hosts,
+            0
+        )
+        .is_err()
     );
 }
 
@@ -646,7 +649,7 @@ fn a_push_subscription_says_what_is_wrong_with_it() {
     let callback = ["callback", "https://push.example/"];
     let check = |tags: &[&[&str]]| {
         let event = sign_event(&author, kinds::PUSH_SUBSCRIPTION, "", tags, NOW);
-        domain::policy::check_push_subscription(&event, &hosts, 0)
+        caravel_relays::policy::check_push_subscription(&event, &hosts, 0)
             .map_err(|refusal| refusal.message())
     };
 

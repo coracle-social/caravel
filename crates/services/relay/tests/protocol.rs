@@ -661,7 +661,7 @@ async fn a_verified_custom_domain_and_the_canonical_host_both_serve_the_relay() 
     server
         .update(&relay, json!({"custom_domain": "chat.example.com"}))
         .await;
-    caravel_db::commands::relays::set_custom_domain_verified(
+    caravel_billing::relays::commands::set_custom_domain_verified(
         server.core.db.pool(),
         &relay.id,
         "chat.example.com",
@@ -706,8 +706,8 @@ async fn a_custom_domain_stays_with_the_relay_that_verified_it() {
         .update(&second, json!({"custom_domain": domain}))
         .await;
 
-    let verify = async |relay: &caravel_domain::relays::Relay| {
-        caravel_db::commands::relays::set_custom_domain_verified(
+    let verify = async |relay: &caravel_billing::relays::Relay| {
+        caravel_billing::relays::commands::set_custom_domain_verified(
             server.core.db.pool(),
             &relay.id,
             domain,
@@ -754,11 +754,11 @@ async fn an_old_domain_keeps_redirecting_when_another_relay_names_it() {
 
     let first = server.update(&first, json!({"custom_domain": old})).await;
     assert!(
-        caravel_db::commands::relays::set_custom_domain_verified(pool, &first.id, old, true)
+        caravel_billing::relays::commands::set_custom_domain_verified(pool, &first.id, old, true)
             .await
             .unwrap()
     );
-    let first = caravel_db::queries::relays::require_relay(pool, &first.id)
+    let first = caravel_billing::relays::queries::require_relay(pool, &first.id)
         .await
         .unwrap();
     let first = server
@@ -767,7 +767,7 @@ async fn an_old_domain_keeps_redirecting_when_another_relay_names_it() {
     assert_eq!(first.redirect_from, [old]);
 
     server.update(&second, json!({"custom_domain": old})).await;
-    let first = caravel_db::queries::relays::require_relay(pool, &first.id)
+    let first = caravel_billing::relays::queries::require_relay(pool, &first.id)
         .await
         .unwrap();
     assert_eq!(first.redirect_from, [old]);
@@ -784,7 +784,7 @@ async fn renaming_a_relay_withdraws_its_custom_domains_verification() {
     let relay = server
         .update(&relay, json!({"custom_domain": domain}))
         .await;
-    caravel_db::commands::relays::set_custom_domain_verified(
+    caravel_billing::relays::commands::set_custom_domain_verified(
         server.core.db.pool(),
         &relay.id,
         domain,

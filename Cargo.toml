@@ -2,11 +2,9 @@
 resolver = "3"
 members = [
     "crates/util",
-    "crates/domain",
     "crates/domain/billing",
     "crates/domain/relays",
     "crates/domain/operations",
-    "crates/db",
     "crates/core",
     "crates/services/api",
     "crates/services/worker",
@@ -22,12 +20,10 @@ license = "MIT"
 
 [workspace.dependencies]
 caravel-util = { path = "crates/util" }
-caravel-domain = { path = "crates/domain" }
 caravel-billing = { path = "crates/domain/billing" }
 caravel-relays = { path = "crates/domain/relays" }
 caravel-operations = { path = "crates/domain/operations" }
 caravel-core = { path = "crates/core" }
-caravel-db = { path = "crates/db" }
 caravel-api = { path = "crates/services/api" }
 caravel-worker = { path = "crates/services/worker" }
 caravel-relay = { path = "crates/services/relay" }

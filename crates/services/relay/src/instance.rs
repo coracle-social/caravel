@@ -5,12 +5,10 @@
 use std::collections::HashSet;
 use std::sync::{Arc, RwLock};
 
+use caravel_billing::relays::Relay;
 use caravel_core::{Core, ingest};
-use caravel_db::queries;
-use caravel_domain as domain;
-use caravel_domain::events::{Saved, StoredEvent};
-use caravel_domain::policy::{EventFacts, Refusal, RelaySnapshot};
-use caravel_domain::relays::Relay;
+use caravel_relays::events::{Saved, StoredEvent};
+use caravel_relays::policy::{EventFacts, Refusal, RelaySnapshot};
 use caravel_util::error::Error;
 use caravel_util::nostr::Key;
 use caravel_util::nostr::kinds;
@@ -54,7 +52,7 @@ impl InstanceState {
 
         Ok(Self {
             key: core.relay_key(&relay)?,
-            snapshot: queries::policy::load_snapshot(core.db.pool(), &relay).await?,
+            snapshot: caravel_core::events::load_snapshot(core, &relay).await?,
             push,
             relay,
         })
@@ -155,7 +153,7 @@ impl RelayInstance {
 
     /// The checks that settle an event before its signature is verified.
     pub fn screen(&self, event: &Event) -> Result<(), Refusal> {
-        domain::policy::screen(event, self.core.clock.now())
+        caravel_relays::policy::screen(event, self.core.clock.now())
     }
 
     /// Challenge every connection as it opens, so a reader can prove itself before
@@ -195,12 +193,12 @@ impl RelayInstance {
 
         state.snapshot.admit_write(event, &authed, now)?;
 
-        if !domain::events::is_storable(event) {
+        if !caravel_relays::events::is_storable(event) {
             return Err(Refusal::invalid("event contains a NUL character"));
         }
 
         if event.kind == kinds::PUSH_SUBSCRIPTION {
-            domain::policy::check_push_subscription(
+            caravel_relays::policy::check_push_subscription(
                 event,
                 &state.relay.hosts(),
                 push::held_by(&state.push, event),
@@ -217,13 +215,16 @@ impl RelayInstance {
         let published = match event.kind {
             kinds::RELAY_JOIN => self.join(&state, event).await?,
             kinds::RELAY_LEAVE => self.leave(&state, event).await?,
-            kind if !domain::policy::is_stored(kind) => Vec::new(),
+            kind if !caravel_relays::policy::is_stored(kind) => Vec::new(),
             _ => self.store(&state, event).await?,
         };
 
         let changes_push = state.relay.push_enabled
             && matches!(event.kind, kinds::PUSH_SUBSCRIPTION | DELETION | VANISH);
-        if !published.is_empty() || domain::rooms::is_moderation_kind(event.kind) || changes_push {
+        if !published.is_empty()
+            || caravel_relays::rooms::is_moderation_kind(event.kind)
+            || changes_push
+        {
             self.refresh().await;
         }
 
@@ -404,8 +405,8 @@ impl RelayInstance {
         let mut sent = HashSet::new();
 
         for filter in &filters {
-            let found = queries::events::query_events(
-                self.core.db.pool(),
+            let found = caravel_core::events::query_events(
+                &self.core,
                 &state.relay.id,
                 filter,
                 self.limits.max_limit,
@@ -487,8 +488,8 @@ impl RelayInstance {
             )));
         }
 
-        let groups = queries::events::count_event_groups(
-            self.core.db.pool(),
+        let groups = caravel_core::events::count_event_groups(
+            &self.core,
             &state.relay.id,
             filters,
             self.core.clock.now(),
@@ -542,8 +543,8 @@ impl RelayInstance {
 
         // A message written while the pubkey was away reaches it as it returns.
         let relay_id = self.relay_id();
-        match queries::notifications::get_notification(
-            self.core.db.pool(),
+        match caravel_core::events::get_notification(
+            &self.core,
             &relay_id,
             &pubkey,
             self.core.clock.now(),
@@ -633,8 +634,8 @@ impl RelayInstance {
 
         state.snapshot.admit_req(&authed)?;
 
-        let heads = queries::events::query_event_heads(
-            self.core.db.pool(),
+        let heads = caravel_core::events::query_event_heads(
+            &self.core,
             &state.relay.id,
             &filter,
             self.limits.max_sync,

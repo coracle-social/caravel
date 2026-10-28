@@ -12,8 +12,6 @@ use axum::http::StatusCode;
 use bytes::Bytes;
 use caravel_core::hosting;
 use caravel_core::testing::{create_relay, sign_event};
-use caravel_db::{commands, queries};
-use caravel_domain as domain;
 use common::*;
 use coracle_lib::filters::Filter;
 use coracle_lib::keys::SecretKey;
@@ -37,7 +35,9 @@ async fn an_owner_exports_one_relay_and_imports_into_another() {
     let now = api.core.clock.now();
     api.core
         .db
-        .with_tx(async |conn| commands::events::save_event(conn, &source.id, &note, now).await)
+        .with_tx(async |conn| {
+            caravel_relays::events::commands::save_event(conn, &source.id, &note, now).await
+        })
         .await
         .unwrap();
 
@@ -151,7 +151,9 @@ async fn an_owner_or_an_admin_erases_a_relay() {
     let now = api.core.clock.now();
     api.core
         .db
-        .with_tx(async |conn| commands::events::save_event(conn, &relay.id, &note, now).await)
+        .with_tx(async |conn| {
+            caravel_relays::events::commands::save_event(conn, &relay.id, &note, now).await
+        })
         .await
         .unwrap();
 
@@ -168,10 +170,16 @@ async fn an_owner_or_an_admin_erases_a_relay() {
         ..Filter::new()
     };
     assert!(
-        queries::events::query_events(api.core.db.pool(), &relay.id, &filter, 10, now)
-            .await
-            .unwrap()
-            .is_empty()
+        caravel_relays::events::queries::query_events(
+            api.core.db.pool(),
+            &relay.id,
+            &filter,
+            10,
+            now
+        )
+        .await
+        .unwrap()
+        .is_empty()
     );
 }
 
@@ -193,7 +201,7 @@ async fn an_admin_deletes_a_tenant_without_banning_them() {
     assert_eq!(deleted.status, StatusCode::OK);
     assert_eq!(deleted.body["data"]["banned_at"], serde_json::Value::Null);
 
-    let relay = caravel_db::queries::relays::require_relay(api.core.db.pool(), &relay.id)
+    let relay = caravel_billing::relays::queries::require_relay(api.core.db.pool(), &relay.id)
         .await
         .unwrap();
     assert!(relay.is_purged());
@@ -211,7 +219,7 @@ async fn admins_review_the_feed_and_its_blobs() {
         .core
         .db
         .with_tx(async |conn| {
-            commands::media::record_upload(
+            caravel_relays::media::commands::record_upload(
                 conn,
                 &relay.id,
                 &"a".repeat(64),
@@ -227,7 +235,7 @@ async fn admins_review_the_feed_and_its_blobs() {
     api.core
         .blobs
         .put(
-            &domain::media::blob_key(&relay.id, &blob.sha256),
+            &caravel_relays::media::blob_key(&relay.id, &blob.sha256),
             Bytes::from_static(b"bytes"),
         )
         .await

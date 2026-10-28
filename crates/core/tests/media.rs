@@ -3,13 +3,11 @@
 
 use anyhow::Result;
 use bytes::Bytes;
+use caravel_billing::relays;
 use caravel_core::testing::{create_relay, sign_event};
 use caravel_core::{Core, calls, hosting, management, media, testing};
-use caravel_db::{commands, queries};
-use caravel_domain as domain;
-use caravel_domain::media::{Blob, Deleted};
-use caravel_domain::relays;
-use caravel_domain::roles::Role;
+use caravel_relays::access::Role;
+use caravel_relays::media::{Blob, Deleted};
 use caravel_util::blobs::Blobs;
 use caravel_util::bus::Change;
 use caravel_util::nostr::kinds;
@@ -38,7 +36,7 @@ async fn upload(core: &Core, relay_id: &str, blob: &Blob, pubkey: &str) -> Resul
     Ok(core
         .db
         .with_tx(async |conn| {
-            commands::media::record_upload(
+            caravel_relays::media::commands::record_upload(
                 conn,
                 relay_id,
                 &blob.sha256,
@@ -55,7 +53,9 @@ async fn upload(core: &Core, relay_id: &str, blob: &Blob, pubkey: &str) -> Resul
 async fn delete(core: &Core, relay_id: &str, sha256: &str, pubkey: &str) -> Result<Deleted> {
     Ok(core
         .db
-        .with_tx(async |conn| commands::media::delete_upload(conn, relay_id, sha256, pubkey).await)
+        .with_tx(async |conn| {
+            caravel_relays::media::commands::delete_upload(conn, relay_id, sha256, pubkey).await
+        })
         .await?)
 }
 
@@ -72,11 +72,11 @@ async fn storage_counts_each_blob_once() -> Result<()> {
     upload(&core, &other.id, &blob("a", 100), "carol").await?;
 
     assert_eq!(
-        queries::media::storage_bytes(core.db.pool(), &relay.id).await?,
+        caravel_relays::media::queries::storage_bytes(core.db.pool(), &relay.id).await?,
         150
     );
     assert_eq!(
-        queries::media::storage_bytes(core.db.pool(), &other.id).await?,
+        caravel_relays::media::queries::storage_bytes(core.db.pool(), &other.id).await?,
         100
     );
     Ok(())
@@ -99,13 +99,13 @@ async fn a_blob_goes_with_its_last_owner() -> Result<()> {
         Deleted::Shared
     );
     assert!(
-        queries::media::get_blob(core.db.pool(), &relay.id, "a")
+        caravel_relays::media::queries::get_blob(core.db.pool(), &relay.id, "a")
             .await?
             .is_some()
     );
     assert_eq!(delete(&core, &relay.id, "a", "bob").await?, Deleted::Last);
     assert!(
-        queries::media::get_blob(core.db.pool(), &relay.id, "a")
+        caravel_relays::media::queries::get_blob(core.db.pool(), &relay.id, "a")
             .await?
             .is_none()
     );
@@ -138,9 +138,11 @@ async fn an_upload_racing_the_last_owners_deletion_keeps_its_bytes() -> Result<(
         kept?;
         assert_ne!(deleted?, Deleted::NotOwned);
 
-        let owned = queries::media::list_blobs_for_pubkey(core.db.pool(), &relay.id, "bob").await?;
+        let owned =
+            caravel_relays::media::queries::list_blobs_for_pubkey(core.db.pool(), &relay.id, "bob")
+                .await?;
         assert!(owned.iter().any(|blob| blob.sha256 == sha256), "{sha256}");
-        let key = domain::media::blob_key(&relay.id, &sha256);
+        let key = caravel_relays::media::blob_key(&relay.id, &sha256);
         assert!(core.blobs.size(&key).await?.is_some(), "{sha256}");
     }
     Ok(())
@@ -157,7 +159,7 @@ async fn a_list_holds_one_uploaders_blobs_newest_first() -> Result<()> {
     upload(&core, &relay.id, &blob("theirs", 3), "bob").await?;
 
     let listed: Vec<String> =
-        queries::media::list_blobs_for_pubkey(core.db.pool(), &relay.id, "alice")
+        caravel_relays::media::queries::list_blobs_for_pubkey(core.db.pool(), &relay.id, "alice")
             .await?
             .into_iter()
             .map(|blob| blob.sha256)
@@ -175,16 +177,48 @@ async fn the_call_clock_sums_each_session_once() -> Result<()> {
     let (other, _) = create_relay(&core).await;
 
     assert_eq!(
-        queries::calls::participant_seconds(core.db.pool(), &relay.id).await?,
+        caravel_relays::calls::queries::participant_seconds(core.db.pool(), &relay.id).await?,
         0
     );
-    commands::calls::record_session(core.db.pool(), &relay.id, "PA_1", "room", 60, NOW).await?;
-    commands::calls::record_session(core.db.pool(), &relay.id, "PA_1", "room", 60, NOW).await?;
-    commands::calls::record_session(core.db.pool(), &relay.id, "PA_2", "room", 30, NOW).await?;
-    commands::calls::record_session(core.db.pool(), &other.id, "PA_3", "room", 1000, NOW).await?;
+    caravel_relays::calls::commands::record_session(
+        core.db.pool(),
+        &relay.id,
+        "PA_1",
+        "room",
+        60,
+        NOW,
+    )
+    .await?;
+    caravel_relays::calls::commands::record_session(
+        core.db.pool(),
+        &relay.id,
+        "PA_1",
+        "room",
+        60,
+        NOW,
+    )
+    .await?;
+    caravel_relays::calls::commands::record_session(
+        core.db.pool(),
+        &relay.id,
+        "PA_2",
+        "room",
+        30,
+        NOW,
+    )
+    .await?;
+    caravel_relays::calls::commands::record_session(
+        core.db.pool(),
+        &other.id,
+        "PA_3",
+        "room",
+        1000,
+        NOW,
+    )
+    .await?;
 
     assert_eq!(
-        queries::calls::participant_seconds(core.db.pool(), &relay.id).await?,
+        caravel_relays::calls::queries::participant_seconds(core.db.pool(), &relay.id).await?,
         90
     );
     Ok(())
@@ -192,9 +226,9 @@ async fn the_call_clock_sums_each_session_once() -> Result<()> {
 
 #[tokio::test]
 async fn livekit_rooms_lead_with_their_relay() {
-    let name = domain::calls::livekit_room("relay1", "room:with:colons");
+    let name = caravel_relays::calls::livekit_room("relay1", "room:with:colons");
     assert_eq!(
-        domain::calls::split_livekit_room(&name),
+        caravel_relays::calls::split_livekit_room(&name),
         Some(("relay1", "room:with:colons"))
     );
 }
@@ -208,7 +242,7 @@ fn participants_are_named_once_by_pubkey() {
         "garbage".to_string(),
     ];
     assert_eq!(
-        domain::calls::participant_pubkeys(&identities),
+        caravel_relays::calls::participant_pubkeys(&identities),
         vec![pubkey]
     );
 }
@@ -223,12 +257,14 @@ async fn erasing_a_purged_relay_removes_what_it_held() -> Result<()> {
     for relay_id in [&relay.id, &kept.id] {
         let event = sign_event(&author, 1, "hello", &[], NOW);
         core.db
-            .with_tx(async |conn| commands::events::save_event(conn, relay_id, &event, NOW).await)
+            .with_tx(async |conn| {
+                caravel_relays::events::commands::save_event(conn, relay_id, &event, NOW).await
+            })
             .await?;
         upload(&core, relay_id, &blob("a", 100), "alice").await?;
         core.blobs
             .put(
-                &domain::media::blob_key(relay_id, "a"),
+                &caravel_relays::media::blob_key(relay_id, "a"),
                 Bytes::from_static(b"bytes"),
             )
             .await?;
@@ -239,34 +275,34 @@ async fn erasing_a_purged_relay_removes_what_it_held() -> Result<()> {
 
     let filter = Filter::new();
     assert!(
-        queries::events::query_events(core.db.pool(), &relay.id, &filter, 10, NOW)
+        caravel_relays::events::queries::query_events(core.db.pool(), &relay.id, &filter, 10, NOW)
             .await?
             .is_empty()
     );
     assert!(
-        queries::media::get_blob(core.db.pool(), &relay.id, "a")
+        caravel_relays::media::queries::get_blob(core.db.pool(), &relay.id, "a")
             .await?
             .is_none()
     );
     assert!(
         core.blobs
-            .get(&domain::media::blob_key(&relay.id, "a"), None)
+            .get(&caravel_relays::media::blob_key(&relay.id, "a"), None)
             .await?
             .is_none()
     );
-    let erased = queries::relays::get_relay(core.db.pool(), &relay.id)
+    let erased = caravel_billing::relays::queries::get_relay(core.db.pool(), &relay.id)
         .await?
         .unwrap();
     assert_eq!(erased.erased_at, Some(NOW));
 
     assert!(
-        !queries::events::query_events(core.db.pool(), &kept.id, &filter, 10, NOW)
+        !caravel_relays::events::queries::query_events(core.db.pool(), &kept.id, &filter, 10, NOW)
             .await?
             .is_empty()
     );
     assert!(
         core.blobs
-            .get(&domain::media::blob_key(&kept.id, "a"), None)
+            .get(&caravel_relays::media::blob_key(&kept.id, "a"), None)
             .await?
             .is_some()
     );
@@ -300,10 +336,12 @@ async fn erasing_a_relay_keeps_only_its_settings_and_owner() -> Result<()> {
     };
     core.db
         .with_tx(async |conn| {
-            commands::events::save_event(&mut *conn, &relay.id, &note, NOW).await?;
-            commands::rooms::apply_event(&mut *conn, &key, &relay.id, &room, NOW).await?;
-            commands::roles::create_role(&mut *conn, &key, &relay.id, &role, NOW).await?;
-            commands::bans::ban_pubkey(
+            caravel_relays::events::commands::save_event(&mut *conn, &relay.id, &note, NOW).await?;
+            caravel_relays::rooms::commands::apply_event(&mut *conn, &key, &relay.id, &room, NOW)
+                .await?;
+            caravel_relays::access::commands::create_role(&mut *conn, &key, &relay.id, &role, NOW)
+                .await?;
+            caravel_relays::access::commands::ban_pubkey(
                 &mut *conn,
                 &key,
                 &relay.id,
@@ -313,14 +351,15 @@ async fn erasing_a_relay_keeps_only_its_settings_and_owner() -> Result<()> {
                 NOW,
             )
             .await?;
-            commands::claims::create_claim(&mut *conn, &relay.id, "sesame", NOW).await
+            caravel_relays::access::commands::create_claim(&mut *conn, &relay.id, "sesame", NOW)
+                .await
         })
         .await?;
     for relay_id in [&relay.id, &kept.id] {
         upload(&core, relay_id, &blob("a", 100), &member).await?;
         core.blobs
             .put(
-                &domain::media::blob_key(relay_id, "a"),
+                &caravel_relays::media::blob_key(relay_id, "a"),
                 Bytes::from_static(b"bytes"),
             )
             .await?;
@@ -330,13 +369,15 @@ async fn erasing_a_relay_keeps_only_its_settings_and_owner() -> Result<()> {
 
     // Only the member list the relay signed again is left.
     let pool = core.db.pool();
-    let left = queries::events::query_events(pool, &relay.id, &Filter::new(), 10, NOW).await?;
+    let left =
+        caravel_relays::events::queries::query_events(pool, &relay.id, &Filter::new(), 10, NOW)
+            .await?;
     assert_eq!(
         left.iter().map(|event| event.head.kind).collect::<Vec<_>>(),
         [kinds::RELAY_MEMBERS]
     );
     assert_eq!(
-        queries::memberships::list_members(pool, &relay.id)
+        caravel_relays::access::queries::list_members(pool, &relay.id)
             .await?
             .into_iter()
             .map(|member| member.pubkey)
@@ -344,51 +385,51 @@ async fn erasing_a_relay_keeps_only_its_settings_and_owner() -> Result<()> {
         std::slice::from_ref(&relay.tenant_pubkey)
     );
     assert!(
-        queries::rooms::list_rooms(pool, &relay.id)
+        caravel_relays::rooms::queries::list_rooms(pool, &relay.id)
             .await?
             .is_empty()
     );
     assert!(
-        queries::roles::list_roles(pool, &relay.id)
+        caravel_relays::access::queries::list_roles(pool, &relay.id)
             .await?
             .is_empty()
     );
     assert!(
-        queries::bans::list_banned_pubkeys(pool, &relay.id)
+        caravel_relays::access::queries::list_banned_pubkeys(pool, &relay.id)
             .await?
             .is_empty()
     );
     assert!(
-        queries::claims::list_claims(pool, &relay.id)
+        caravel_relays::access::queries::list_claims(pool, &relay.id)
             .await?
             .is_empty()
     );
     assert!(
-        queries::media::get_blob(pool, &relay.id, "a")
+        caravel_relays::media::queries::get_blob(pool, &relay.id, "a")
             .await?
             .is_none()
     );
     assert!(
         core.blobs
-            .get(&domain::media::blob_key(&relay.id, "a"), None)
+            .get(&caravel_relays::media::blob_key(&relay.id, "a"), None)
             .await?
             .is_none()
     );
 
-    let erased = queries::relays::require_relay(pool, &relay.id).await?;
+    let erased = caravel_billing::relays::queries::require_relay(pool, &relay.id).await?;
     assert_eq!(
         serde_json::to_value(&erased)?,
         serde_json::to_value(&relay)?
     );
 
     assert!(
-        queries::media::get_blob(pool, &kept.id, "a")
+        caravel_relays::media::queries::get_blob(pool, &kept.id, "a")
             .await?
             .is_some()
     );
     assert!(
         core.blobs
-            .get(&domain::media::blob_key(&kept.id, "a"), None)
+            .get(&caravel_relays::media::blob_key(&kept.id, "a"), None)
             .await?
             .is_some()
     );
@@ -409,12 +450,12 @@ async fn erasing_a_relay_outlasts_bytes_that_wont_delete() -> Result<()> {
     }
     core.blobs
         .put(
-            &domain::media::blob_key(&relay.id, "b"),
+            &caravel_relays::media::blob_key(&relay.id, "b"),
             Bytes::from_static(b"bytes"),
         )
         .await?;
     // A directory where a's bytes belong can't be deleted as a file.
-    std::fs::create_dir_all(dir.join(domain::media::blob_key(&relay.id, "a")))?;
+    std::fs::create_dir_all(dir.join(caravel_relays::media::blob_key(&relay.id, "a")))?;
 
     let mut changes = core.bus.subscribe();
     hosting::erase_relay(&core, &relay).await?;
@@ -425,7 +466,7 @@ async fn erasing_a_relay_outlasts_bytes_that_wont_delete() -> Result<()> {
     ));
     assert!(
         core.blobs
-            .get(&domain::media::blob_key(&relay.id, "b"), None)
+            .get(&caravel_relays::media::blob_key(&relay.id, "b"), None)
             .await?
             .is_none()
     );

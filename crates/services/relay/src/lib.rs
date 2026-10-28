@@ -26,9 +26,8 @@ use axum::extract::{ConnectInfo, Extension, FromRequestParts, Request, State, We
 use axum::http::{HeaderMap, HeaderName, Method, StatusCode, header};
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{get, post, put};
+use caravel_billing::relays::Relay;
 use caravel_core::Core;
-use caravel_db::queries;
-use caravel_domain::relays::Relay;
 use caravel_util::bus::Change;
 use caravel_util::error::Result;
 use tokio::sync::broadcast;
@@ -236,7 +235,7 @@ impl Relays {
     /// Bring one relay up to date with its row: serve it if it is live, and stop
     /// serving it otherwise.
     pub async fn reload(&self, relay_id: &str) -> Result<()> {
-        match queries::relays::get_relay(self.inner.core.db.pool(), relay_id).await? {
+        match caravel_core::hosting::get_relay(&self.inner.core, relay_id).await? {
             Some(relay) if relay.is_served() => self.install(relay).await?,
             _ => self.remove(relay_id),
         }
@@ -254,7 +253,7 @@ impl Relays {
     }
 
     async fn reload_all(&self) -> Result<()> {
-        let live: Vec<Relay> = queries::relays::list_relays(self.inner.core.db.pool())
+        let live: Vec<Relay> = caravel_core::hosting::list_relays(&self.inner.core)
             .await?
             .into_iter()
             .filter(Relay::is_served)

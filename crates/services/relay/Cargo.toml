@@ -8,8 +8,9 @@ license.workspace = true
 [dependencies]
 axum.workspace = true
 caravel-core.workspace = true
-caravel-db.workspace = true
-caravel-domain.workspace = true
+caravel-billing.workspace = true
+caravel-operations.workspace = true
+caravel-relays.workspace = true
 caravel-util.workspace = true
 coracle-lib.workspace = true
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }

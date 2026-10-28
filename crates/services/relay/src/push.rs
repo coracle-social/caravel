@@ -7,9 +7,8 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use caravel_core::{Core, events};
-use caravel_db::queries;
-use caravel_domain::events::StoredEvent;
-use caravel_domain::policy::{EventFacts, RelaySnapshot};
+use caravel_relays::events::StoredEvent;
+use caravel_relays::policy::{EventFacts, RelaySnapshot};
 use caravel_util::nostr::kinds;
 use coracle_lib::events::{Event, EventId};
 use coracle_lib::filters::{Filter, matches_any};
@@ -73,8 +72,8 @@ pub async fn load_subscriptions(
         kinds: Some([kinds::PUSH_SUBSCRIPTION].into()),
         ..Default::default()
     };
-    let stored = queries::events::query_events(
-        core.db.pool(),
+    let stored = caravel_core::events::query_events(
+        core,
         relay_id,
         &filter,
         MAX_SUBSCRIPTIONS,

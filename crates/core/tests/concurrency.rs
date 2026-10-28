@@ -5,12 +5,11 @@
 mod common;
 
 use anyhow::Result;
+use caravel_billing::relays::ActivityType;
+use caravel_billing::relays::PLAN_BASIC;
+use caravel_billing::relays::RelayStatus;
 use caravel_core::billing;
 use caravel_core::billing::Collection;
-use caravel_db::queries;
-use caravel_domain::activity::ActivityType;
-use caravel_domain::billing::PLAN_BASIC;
-use caravel_domain::relays::RelayStatus;
 use common::*;
 use futures_util::future::try_join_all;
 
@@ -111,11 +110,14 @@ async fn racing_passes_churn_once() -> Result<()> {
         get_relay(&core, &relay.id).await?.status,
         RelayStatus::Delinquent
     );
-    let paused = queries::activity::list_activity_for_relay(core.db.pool(), &relay.id)
-        .await?
-        .into_iter()
-        .filter(|activity| activity.activity_type == ActivityType::MarkRelayDelinquent)
-        .count();
+    let paused = caravel_billing::relays::queries::activity::list_activity_for_relay(
+        core.db.pool(),
+        &relay.id,
+    )
+    .await?
+    .into_iter()
+    .filter(|activity| activity.activity_type == ActivityType::MarkRelayDelinquent)
+    .count();
     assert_eq!(paused, 1);
     assert!(invoices(&core, &tenant).await?[0].voided_at.is_some());
 

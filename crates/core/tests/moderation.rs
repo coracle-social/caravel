@@ -7,8 +7,7 @@ mod common;
 use anyhow::Result;
 use caravel_core::testing::sign_event;
 use caravel_core::{Core, testing};
-use caravel_db::{commands, queries};
-use caravel_domain::moderation::Subject;
+use caravel_operations::moderation::Subject;
 use caravel_util::nostr::kinds;
 use common::*;
 use coracle_lib::events::Event;
@@ -19,7 +18,8 @@ async fn save(core: &Core, relay_id: &str, events: &[Event]) -> Result<()> {
     core.db
         .with_tx(async |conn| {
             for event in events {
-                commands::events::save_event(&mut *conn, relay_id, event, now).await?;
+                caravel_relays::events::commands::save_event(&mut *conn, relay_id, event, now)
+                    .await?;
             }
             Ok::<_, caravel_util::error::Error>(())
         })
@@ -31,8 +31,16 @@ async fn upload(core: &Core, relay_id: &str, sha256: &str, pubkey: &str) -> Resu
     let now = core.clock.now();
     core.db
         .with_tx(async |conn| {
-            commands::media::record_upload(conn, relay_id, sha256, "image/png", 10, pubkey, now)
-                .await
+            caravel_relays::media::commands::record_upload(
+                conn,
+                relay_id,
+                sha256,
+                "image/png",
+                10,
+                pubkey,
+                now,
+            )
+            .await
         })
         .await?;
     Ok(())
@@ -64,7 +72,7 @@ async fn the_feed_holds_moderated_events_and_uploads_newest_first() -> Result<()
     upload(&core, &relay.id, "abc", &author.public_key().to_hex()).await?;
     upload(&core, &unmoderated.id, "def", &author.public_key().to_hex()).await?;
 
-    let page = queries::moderation::list_moderation(
+    let page = caravel_operations::moderation::queries::list_moderation(
         core.db.pool(),
         &core.config.admin_pubkeys,
         Some(start),
@@ -109,7 +117,7 @@ async fn the_feed_window_is_inclusive_at_both_ends() -> Result<()> {
         .await?;
     }
 
-    let page = queries::moderation::list_moderation(
+    let page = caravel_operations::moderation::queries::list_moderation(
         core.db.pool(),
         &core.config.admin_pubkeys,
         Some(start + 1),
@@ -135,7 +143,7 @@ async fn a_full_page_says_it_was_truncated() -> Result<()> {
         .collect();
     save(&core, &relay.id, &notes).await?;
 
-    let page = queries::moderation::list_moderation(
+    let page = caravel_operations::moderation::queries::list_moderation(
         core.db.pool(),
         &core.config.admin_pubkeys,
         Some(start),
@@ -179,7 +187,7 @@ async fn the_feed_leaves_out_what_runs_the_relay() -> Result<()> {
     )
     .await?;
 
-    let page = queries::moderation::list_moderation(
+    let page = caravel_operations::moderation::queries::list_moderation(
         core.db.pool(),
         &core.config.admin_pubkeys,
         Some(start),

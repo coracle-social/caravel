@@ -9,7 +9,7 @@ use std::sync::Arc;
 use axum::body::Body;
 use axum::http::{HeaderValue, Method, Request, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use caravel_domain::relays::RelayProfile;
+use caravel_billing::relays::RelayProfile;
 use caravel_relay::blossom;
 use caravel_util::config::Config;
 use serde::Serialize;

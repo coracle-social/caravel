@@ -280,7 +280,6 @@ pub async fn rebuild_derived(
     conn: &mut PgConnection,
     key: &Key,
     relay_id: &str,
-    owner: &str,
     now: i64,
 ) -> Result<Vec<Event>> {
     let mut published = vec![
@@ -304,7 +303,7 @@ pub async fn rebuild_derived(
         );
         published.push(
             caravel_relays::rooms::commands::publish_admins(
-                &mut *conn, key, relay_id, &room.id, owner, now,
+                &mut *conn, key, relay_id, &room.id, now,
             )
             .await?,
         );

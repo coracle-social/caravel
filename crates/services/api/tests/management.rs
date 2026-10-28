@@ -6,7 +6,6 @@ mod common;
 use axum::http::StatusCode;
 use caravel_core::hosting;
 use caravel_core::testing::{create_relay, sign_event};
-use caravel_db::commands;
 use common::*;
 use coracle_lib::keys::SecretKey;
 use serde_json::{Value, json};
@@ -222,7 +221,9 @@ async fn a_relays_events_are_paged_by_kind_and_id() {
     for event in [&note, &report] {
         api.core
             .db
-            .with_tx(async |conn| commands::events::save_event(conn, &relay.id, event, now).await)
+            .with_tx(async |conn| {
+                caravel_relays::events::commands::save_event(conn, &relay.id, event, now).await
+            })
             .await
             .unwrap();
     }
@@ -268,7 +269,9 @@ async fn a_relays_events_page_past_a_shared_second_and_leave_out_its_own() {
     for event in notes.iter().chain([&own]) {
         api.core
             .db
-            .with_tx(async |conn| commands::events::save_event(conn, &relay.id, event, now).await)
+            .with_tx(async |conn| {
+                caravel_relays::events::commands::save_event(conn, &relay.id, event, now).await
+            })
             .await
             .unwrap();
     }

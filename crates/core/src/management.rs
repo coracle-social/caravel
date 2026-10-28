@@ -6,16 +6,50 @@ use coracle_lib::events::Event;
 use serde_json::{Value, json};
 
 use crate::Core;
-use caravel_db::{commands, queries};
-use caravel_domain as domain;
-use caravel_domain::management::MANAGED_METHODS;
-use caravel_domain::management::{Call, Outcome};
-use caravel_domain::memberships::MemberSource;
-use caravel_domain::relays::Relay;
+use caravel_billing::relays::Relay;
+use caravel_relays::access::{MemberSource, RelayMember, Role};
+use caravel_relays::events::{EventPage, StoredEvent};
+use caravel_relays::management::MANAGED_METHODS;
+use caravel_relays::management::{Call, Outcome};
+use caravel_relays::rooms::{Room, RoomMember};
 use caravel_util::bus::Change;
 use caravel_util::encoding::is_hex64;
 use caravel_util::error::{Error, Result};
 use caravel_util::nostr::Key;
+
+// --- Reads ---
+
+/// A relay's members and the roles it defines.
+pub async fn access_lists(core: &Core, relay_id: &str) -> Result<(Vec<RelayMember>, Vec<Role>)> {
+    let members = caravel_relays::access::queries::list_members(core.db.pool(), relay_id).await?;
+    let roles = caravel_relays::access::queries::list_roles(core.db.pool(), relay_id).await?;
+    Ok((members, roles))
+}
+
+/// A relay's rooms, its rooms' members, and the invite codes of each room.
+pub async fn rooms(
+    core: &Core,
+    relay_id: &str,
+) -> Result<(Vec<Room>, Vec<RoomMember>, Vec<(String, String)>)> {
+    let rooms = caravel_relays::rooms::queries::list_rooms(core.db.pool(), relay_id).await?;
+    let members =
+        caravel_relays::rooms::queries::list_room_members(core.db.pool(), relay_id).await?;
+    let invites =
+        caravel_relays::rooms::queries::list_room_invites(core.db.pool(), relay_id).await?;
+    Ok((rooms, members, invites))
+}
+
+/// A page of a relay's unexpired events, newest first.
+pub async fn page_events(core: &Core, relay: &Relay, page: &EventPage) -> Result<Vec<StoredEvent>> {
+    caravel_relays::events::queries::page_events(
+        core.db.pool(),
+        &relay.id,
+        &relay.pubkey,
+        page,
+        core.clock.now(),
+    )
+    .await
+}
 
 /// Carry out a NIP-86 call on a relay, whose caller may make it, and return its
 /// answer. A change to the relay's access lists or rooms goes out on the bus.
@@ -41,7 +75,7 @@ pub async fn run_call(core: &Core, relay: &Relay, call: Call) -> Result<Outcome>
 
     match &call {
         Call::ListBannedPubkeys => {
-            let bans = queries::bans::list_banned_pubkeys(pool, relay_id).await?;
+            let bans = caravel_relays::access::queries::list_banned_pubkeys(pool, relay_id).await?;
             Ok(Outcome::Answer(json!(
                 bans.into_iter()
                     .map(|ban| json!({"pubkey": ban.subject, "reason": ban.reason}))
@@ -49,7 +83,7 @@ pub async fn run_call(core: &Core, relay: &Relay, call: Call) -> Result<Outcome>
             )))
         }
         Call::ListAllowedPubkeys => {
-            let members = queries::memberships::list_members(pool, relay_id).await?;
+            let members = caravel_relays::access::queries::list_members(pool, relay_id).await?;
             Ok(Outcome::Answer(json!(
                 members
                     .into_iter()
@@ -58,7 +92,7 @@ pub async fn run_call(core: &Core, relay: &Relay, call: Call) -> Result<Outcome>
             )))
         }
         Call::ListBannedEvents => {
-            let bans = queries::bans::list_banned_events(pool, relay_id).await?;
+            let bans = caravel_relays::access::queries::list_banned_events(pool, relay_id).await?;
             Ok(Outcome::Answer(json!(
                 bans.into_iter()
                     .map(|ban| json!({"id": ban.subject, "reason": ban.reason}))
@@ -71,7 +105,8 @@ pub async fn run_call(core: &Core, relay: &Relay, call: Call) -> Result<Outcome>
                 json!({"pubkey": tenant_pubkey, "methods": all}),
                 json!({"pubkey": relay.pubkey, "methods": all}),
             ];
-            for (pubkey, methods) in queries::management::list_method_grants(pool, relay_id).await?
+            for (pubkey, methods) in
+                caravel_relays::management::queries::list_method_grants(pool, relay_id).await?
             {
                 if pubkey != tenant_pubkey && pubkey != relay.pubkey {
                     assignees.push(json!({"pubkey": pubkey, "methods": methods}));
@@ -81,7 +116,7 @@ pub async fn run_call(core: &Core, relay: &Relay, call: Call) -> Result<Outcome>
             Ok(Outcome::Answer(json!(assignees)))
         }
         Call::ListClaims => Ok(Outcome::Answer(json!(
-            queries::claims::list_claims(pool, relay_id).await?
+            caravel_relays::access::queries::list_claims(pool, relay_id).await?
         ))),
         Call::ChangeRelayName(name) => change_info(core, relay_id, Some(name), None, None).await,
         Call::ChangeRelayDescription(description) => {
@@ -89,19 +124,19 @@ pub async fn run_call(core: &Core, relay: &Relay, call: Call) -> Result<Outcome>
         }
         Call::ChangeRelayIcon(icon) => change_info(core, relay_id, None, None, Some(icon)).await,
         Call::UnbanPubkey(pubkey) => {
-            commands::bans::unban_pubkey(pool, relay_id, pubkey).await?;
+            caravel_relays::access::commands::unban_pubkey(pool, relay_id, pubkey).await?;
             Ok(Outcome::AccessChanged(Vec::new()))
         }
         Call::AllowEvent(id) => {
-            commands::bans::allow_event(pool, relay_id, id).await?;
+            caravel_relays::access::commands::allow_event(pool, relay_id, id).await?;
             Ok(Outcome::AccessChanged(Vec::new()))
         }
         Call::CreateClaim(code) => {
-            commands::claims::create_claim(pool, relay_id, code, now).await?;
+            caravel_relays::access::commands::create_claim(pool, relay_id, code, now).await?;
             Ok(Outcome::AccessChanged(Vec::new()))
         }
         Call::DeleteClaim(code) => {
-            commands::claims::revoke_claim(pool, relay_id, code, now).await?;
+            caravel_relays::access::commands::revoke_claim(pool, relay_id, code, now).await?;
             Ok(Outcome::AccessChanged(Vec::new()))
         }
         Call::BanPubkey(..)
@@ -135,7 +170,7 @@ pub async fn moderate_room(
     tags: Vec<Vec<String>>,
 ) -> Result<()> {
     relay.require_unpurged()?;
-    if !domain::rooms::is_moderation_kind(kind) {
+    if !caravel_relays::rooms::is_moderation_kind(kind) {
         return Err(Error::invalid(
             "invalid-kind",
             format!("{kind} is not a group management kind"),
@@ -145,7 +180,8 @@ pub async fn moderate_room(
     let key = core.relay_key(relay)?;
     let now = core.clock.now();
     let event = key.sign(kind, tags, "", now);
-    let snapshot = queries::policy::load_snapshot(core.db.pool(), relay).await?;
+    let snapshot =
+        caravel_relays::policy::queries::load_snapshot(core.db.pool(), relay.snapshot()).await?;
     snapshot
         .check_room_write(&event)
         .map_err(|refusal| Error::invalid("refused", refusal.message()))?;
@@ -153,8 +189,9 @@ pub async fn moderate_room(
     let mut published = core
         .db
         .with_tx(async |conn| {
-            commands::events::save_event(&mut *conn, &relay.id, &event, now).await?;
-            commands::rooms::apply_event(conn, &key, &relay.id, &event, now).await
+            caravel_relays::events::commands::save_event(&mut *conn, &relay.id, &event, now)
+                .await?;
+            caravel_relays::rooms::commands::apply_event(conn, &key, &relay.id, &event, now).await
         })
         .await?;
     published.insert(0, event);
@@ -174,7 +211,14 @@ async fn change_info(
     description: Option<&str>,
     icon: Option<&str>,
 ) -> Result<Outcome> {
-    commands::relays::set_relay_info(core.db.pool(), relay_id, name, description, icon).await?;
+    caravel_billing::relays::commands::set_relay_info(
+        core.db.pool(),
+        relay_id,
+        name,
+        description,
+        icon,
+    )
+    .await?;
     core.bus.publish(Change::RelayChanged {
         relay_id: relay_id.to_string(),
     });
@@ -194,32 +238,56 @@ async fn write(
 
     match call {
         Call::BanPubkey(pubkey, reason) => {
-            commands::bans::ban_pubkey(conn, key, relay_id, tenant_pubkey, pubkey, reason, now)
-                .await
+            caravel_relays::access::commands::ban_pubkey(
+                conn,
+                key,
+                relay_id,
+                tenant_pubkey,
+                pubkey,
+                reason,
+                now,
+            )
+            .await
         }
         Call::AllowPubkey(pubkey) => {
-            commands::memberships::allow_pubkey(conn, key, relay_id, pubkey, now).await
+            caravel_relays::access::commands::allow_pubkey(conn, key, relay_id, pubkey, now).await
         }
         Call::UnallowPubkey(pubkey) => {
-            commands::memberships::remove(conn, key, relay_id, tenant_pubkey, pubkey, now).await
+            caravel_relays::access::commands::remove(
+                conn,
+                key,
+                relay_id,
+                tenant_pubkey,
+                pubkey,
+                now,
+            )
+            .await
         }
         Call::BanEvent(id, reason) => {
-            commands::bans::ban_event(conn, relay_id, id, reason, now).await?;
+            caravel_relays::access::commands::ban_event(conn, relay_id, id, reason, now).await?;
             Ok(Vec::new())
         }
         Call::CreateRole(role) => {
-            commands::roles::create_role(conn, key, relay_id, role, now).await
+            caravel_relays::access::commands::create_role(conn, key, relay_id, role, now).await
         }
-        Call::EditRole(role) => commands::roles::edit_role(conn, key, relay_id, role, now).await,
-        Call::DeleteRole(id) => commands::roles::delete_role(conn, key, relay_id, id, now).await,
+        Call::EditRole(role) => {
+            caravel_relays::access::commands::edit_role(conn, key, relay_id, role, now).await
+        }
+        Call::DeleteRole(id) => {
+            caravel_relays::access::commands::delete_role(conn, key, relay_id, id, now).await
+        }
         Call::AssignRole(pubkey, role_id) => {
-            commands::roles::assign_role(conn, key, relay_id, pubkey, role_id, now).await
+            caravel_relays::access::commands::assign_role(conn, key, relay_id, pubkey, role_id, now)
+                .await
         }
         Call::UnassignRole(pubkey, role_id) => {
-            commands::roles::unassign_role(conn, key, relay_id, pubkey, role_id, now).await
+            caravel_relays::access::commands::unassign_role(
+                conn, key, relay_id, pubkey, role_id, now,
+            )
+            .await
         }
         Call::AssignMethod(pubkey, method) => {
-            commands::management::grant_method(
+            caravel_relays::management::commands::grant_method(
                 conn,
                 key,
                 relay_id,
@@ -231,7 +299,7 @@ async fn write(
             .await
         }
         Call::UnassignMethod(pubkey, method) => {
-            commands::management::revoke_method(
+            caravel_relays::management::commands::revoke_method(
                 conn,
                 relay_id,
                 tenant_pubkey,
@@ -262,8 +330,15 @@ pub async fn add_member(core: &Core, relay: &Relay, pubkey: &str) -> Result<()> 
     let published = core
         .db
         .with_tx(async |conn| {
-            commands::memberships::admit(conn, &key, &relay.id, &pubkey, MemberSource::Manual, now)
-                .await
+            caravel_relays::access::commands::admit(
+                conn,
+                &key,
+                &relay.id,
+                &pubkey,
+                MemberSource::Manual,
+                now,
+            )
+            .await
         })
         .await?;
 
@@ -282,8 +357,15 @@ pub async fn remove_member(core: &Core, relay: &Relay, pubkey: &str) -> Result<(
     let published = core
         .db
         .with_tx(async |conn| {
-            commands::memberships::remove(conn, &key, &relay.id, &relay.tenant_pubkey, pubkey, now)
-                .await
+            caravel_relays::access::commands::remove(
+                conn,
+                &key,
+                &relay.id,
+                &relay.tenant_pubkey,
+                pubkey,
+                now,
+            )
+            .await
         })
         .await?;
 

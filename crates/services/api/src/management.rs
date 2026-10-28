@@ -3,13 +3,12 @@
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
-use caravel_core::{Core, management};
-use caravel_db::queries;
-use caravel_domain::events::EventPage;
-use caravel_domain::management::Call;
-use caravel_domain::management::MANAGED_METHODS;
-use caravel_domain::relays::Relay;
-use caravel_domain::rooms::{Room, RoomMember};
+use caravel_billing::relays::Relay;
+use caravel_core::{Core, hosting, management};
+use caravel_relays::events::EventPage;
+use caravel_relays::management::Call;
+use caravel_relays::management::MANAGED_METHODS;
+use caravel_relays::rooms::{Room, RoomMember};
 use caravel_util::auth::Actor;
 use caravel_util::error::Error;
 use serde::{Deserialize, Serialize};
@@ -23,7 +22,7 @@ const MAX_EVENTS: usize = 100;
 
 /// A live relay its caller may manage.
 async fn managed_relay(core: &Core, actor: &Actor, id: &str) -> Result<Relay, Error> {
-    let relay = queries::relays::require_relay(core.db.pool(), id).await?;
+    let relay = hosting::require_relay(core, id).await?;
     actor.require_pubkey_or_admin(&relay.tenant_pubkey)?;
     relay.require_unpurged()?;
     Ok(relay)
@@ -60,9 +59,10 @@ pub async fn list_members(
     Path(id): Path<String>,
 ) -> ApiResult {
     let relay = managed_relay(&core, &actor, &id).await?;
+    let (members, roles) = management::access_lists(&core, &relay.id).await?;
     ok(serde_json::json!({
-        "members": queries::memberships::list_members(core.db.pool(), &relay.id).await?,
-        "roles": queries::roles::list_roles(core.db.pool(), &relay.id).await?,
+        "members": members,
+        "roles": roles,
     }))
 }
 
@@ -82,12 +82,9 @@ pub async fn list_rooms(
     Path(id): Path<String>,
 ) -> ApiResult {
     let relay = managed_relay(&core, &actor, &id).await?;
-    let pool = core.db.pool();
-    let members = queries::rooms::list_room_members(pool, &relay.id).await?;
-    let invites = queries::rooms::list_room_invites(pool, &relay.id).await?;
+    let (rooms, members, invites) = management::rooms(&core, &relay.id).await?;
 
-    let views: Vec<RoomView> = queries::rooms::list_rooms(pool, &relay.id)
-        .await?
+    let views: Vec<RoomView> = rooms
         .into_iter()
         .map(|room| RoomView {
             members: members
@@ -169,8 +166,7 @@ pub async fn list_events(
         limit: query.limit.unwrap_or(MAX_EVENTS).min(MAX_EVENTS),
     };
 
-    let stored =
-        queries::events::page_events(core.db.pool(), &relay, &page, core.clock.now()).await?;
+    let stored = management::page_events(&core, &relay, &page).await?;
     let events = stored
         .iter()
         .map(|event| serde_json::from_str::<Value>(&event.to_json(false)))

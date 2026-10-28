@@ -1,6 +1,6 @@
-//! The backend's inner layering, read from source: the shared models and the pure
-//! rules beside them, then the database queries and commands, then the subsystems
-//! that run those against a `Core`. Each layer uses only the ones before it.
+//! The backend's inner layering, read from source: each domain module's models and
+//! the pure rules beside them, then the queries that read and the commands that
+//! write, then the core that adapts them to the services above.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -8,72 +8,89 @@ use std::path::{Path, PathBuf};
 
 use regex::Regex;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Kind {
+    Model,
+    Query,
+    Command,
+    Core,
+}
+
 struct Source {
     path: PathBuf,
-    /// `models::relays`, `models::domain::policy`, `db::queries`, or `core::billing`.
+    /// The crate and module the file belongs to, e.g. `relays::access`.
     module: String,
+    kind: Kind,
     text: String,
 }
 
 fn sources() -> Vec<Source> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
     let mut sources = Vec::new();
-    for (crate_name, dir) in [("domain", "domain"), ("db", "db"), ("core", "core")] {
+    for (dir, crate_name) in [
+        ("domain/relays", "relays"),
+        ("domain/billing", "billing"),
+        ("domain/operations", "operations"),
+    ] {
         collect(&root.join(dir).join("src"), crate_name, &mut sources);
     }
+    collect_core(&root.join("core").join("src"), &mut sources);
     sources
 }
 
 fn collect(dir: &Path, module: &str, sources: &mut Vec<Source>) {
-    collect_with(dir, module, false, sources);
-}
-
-/// `flatten` names every file in a layer directory by the directory, as queries
-/// and commands are, rather than by its own name.
-fn collect_with(dir: &Path, module: &str, flatten: bool, sources: &mut Vec<Source>) {
     for entry in fs::read_dir(dir).unwrap() {
         let path = entry.unwrap().path();
         let name = path.file_stem().unwrap().to_str().unwrap().to_string();
         if path.is_dir() {
-            let flatten = matches!(name.as_str(), "queries" | "commands");
-            collect_with(&path, &format!("{module}::{name}"), flatten, sources);
-        } else if name != "lib" && name != "mod" && name != "testing" {
+            collect(&path, &format!("{module}::{name}"), sources);
+        } else if !matches!(name.as_str(), "lib" | "mod") {
+            let mut parts: Vec<&str> = module.split("::").collect();
+            parts.push(&name);
             sources.push(Source {
                 text: fs::read_to_string(&path).unwrap(),
                 path,
-                module: if flatten {
-                    module.to_string()
-                } else {
-                    format!("{module}::{name}")
+                kind: match parts.contains(&"queries") {
+                    true => Kind::Query,
+                    false if parts.contains(&"commands") => Kind::Command,
+                    false => Kind::Model,
                 },
+                module: module.to_string(),
             });
         }
     }
 }
 
-fn namespace(module: &str) -> &str {
-    module.split_once("::").unwrap().0
+/// The core's files, each a subsystem of the adapter layer.
+fn collect_core(dir: &Path, sources: &mut Vec<Source>) {
+    for entry in fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        let name = path.file_stem().unwrap().to_str().unwrap().to_string();
+        if path.is_dir() {
+            collect_core(&path, sources);
+        } else if !matches!(name.as_str(), "lib" | "mod") {
+            sources.push(Source {
+                text: fs::read_to_string(&path).unwrap(),
+                path,
+                kind: Kind::Core,
+                module: format!("core::{name}"),
+            });
+        }
+    }
 }
 
-/// The modules a file names through `crate::` or a `caravel_` crate, as
-/// `<namespace>::<first segment>`, grouped imports included.
+/// The workspace crates a file names through a `caravel_` crate, or `own` for
+/// `crate::`, grouped imports included.
 fn uses(text: &str, own: &str) -> BTreeSet<String> {
     let mut names = BTreeSet::new();
-    for prefix in [
-        "crate::",
-        "caravel_domain::",
-        "caravel_db::",
-        "caravel_core::",
-        "caravel_util::",
+    for (prefix, namespace) in [
+        ("crate::", own),
+        ("caravel_relays::", "relays"),
+        ("caravel_billing::", "billing"),
+        ("caravel_operations::", "operations"),
+        ("caravel_core::", "core"),
+        ("caravel_util::", "util"),
     ] {
-        let namespace = match prefix {
-            "crate::" => own,
-            "caravel_domain::" => "domain",
-            "caravel_db::" => "db",
-            "caravel_core::" => "core",
-            "caravel_util::" => "util",
-            _ => unreachable!(),
-        };
         for (at, _) in text.match_indices(prefix) {
             for name in first_segments(&text[at + prefix.len()..]) {
                 names.insert(format!("{namespace}::{name}"));
@@ -117,102 +134,54 @@ fn first_segments(tree: &str) -> Vec<String> {
 }
 
 #[test]
-fn domain_uses_only_itself_and_foundations() {
+fn models_are_pure() {
     for source in sources() {
-        if namespace(&source.module) != "domain" {
-            continue;
-        }
-        for used in uses(&source.text, "domain") {
-            let allowed = used.starts_with("domain::") || used.starts_with("util::");
-            assert!(
-                allowed,
-                "{} ({}) may not use {used}",
-                source.path.display(),
-                source.module
-            );
-        }
-    }
-}
-
-#[test]
-fn queries_use_only_the_domain() {
-    for source in sources() {
-        if source.module != "db::queries" {
-            continue;
-        }
-        for used in uses(&source.text, "db") {
-            let allowed = used == "db::queries"
-                || used.starts_with("domain::")
-                || used.starts_with("util::")
-                || used == "util::nostr";
-            assert!(
-                allowed,
-                "{} (queries) may not use {used}",
-                source.path.display()
-            );
-        }
-    }
-}
-
-#[test]
-fn commands_use_only_queries_and_the_domain() {
-    for source in sources() {
-        if source.module != "db::commands" {
-            continue;
-        }
-        for used in uses(&source.text, "db") {
-            let allowed = used == "db::queries"
-                || used == "db::commands"
-                || used.starts_with("domain::")
-                || used.starts_with("util::")
-                || used == "util::nostr";
-            assert!(
-                allowed,
-                "{} (commands) may not use {used}",
-                source.path.display()
-            );
-        }
-    }
-}
-
-#[test]
-fn core_uses_db_only_through_queries_and_commands() {
-    for source in sources() {
-        if namespace(&source.module) != "core" {
-            continue;
-        }
-        for used in uses(&source.text, "core") {
-            if let Some(used) = used.strip_prefix("db::") {
-                assert!(
-                    matches!(used, "queries" | "commands"),
-                    "{} may not use db::{used}",
-                    source.path.display()
-                );
-            }
-        }
-    }
-}
-
-#[test]
-fn domain_is_pure() {
-    for source in sources() {
-        if namespace(&source.module) != "domain" {
+        if source.kind != Kind::Model {
             continue;
         }
         let name = source.path.display();
         assert!(!source.text.contains("async fn"), "{name} has async code");
         assert!(
-            !source.text.contains("PgExecutor") && !source.text.contains("sqlx::query"),
+            !source.text.contains("PgExecutor")
+                && !source.text.contains("PgConnection")
+                && !source.text.contains("sqlx::query"),
             "{name} reads the database"
         );
     }
 }
 
 #[test]
-fn only_queries_and_commands_query_and_only_subsystems_open_transactions() {
+fn queries_only_read() {
+    let write = Regex::new(r"INSERT INTO|DELETE FROM|UPDATE \w+ SET").unwrap();
+    for source in sources() {
+        if source.kind == Kind::Query {
+            assert!(
+                !write.is_match(&source.text),
+                "{} writes",
+                source.path.display()
+            );
+        }
+    }
+}
+
+#[test]
+fn commands_do_not_open_transactions() {
+    for source in sources() {
+        if source.kind == Kind::Command {
+            assert!(
+                !source.text.contains(".with_tx(") && !source.text.contains(".begin()"),
+                "{} opens a transaction",
+                source.path.display()
+            );
+        }
+    }
+}
+
+#[test]
+fn only_queries_and_commands_touch_the_database() {
     let sql = Regex::new(r"sqlx::query|QueryBuilder").unwrap();
     for source in sources() {
-        if matches!(source.module.as_str(), "db::queries" | "db::commands") {
+        if matches!(source.kind, Kind::Query | Kind::Command) {
             continue;
         }
         if let Some(found) = sql.find(&source.text) {
@@ -222,26 +191,55 @@ fn only_queries_and_commands_query_and_only_subsystems_open_transactions() {
                 found.as_str()
             );
         }
-        assert!(
-            !source.text.contains(".with_tx(") || namespace(&source.module) == "core",
-            "{} opens a transaction outside a subsystem",
-            source.path.display()
-        );
     }
 }
 
 #[test]
-fn queries_only_read_and_commands_do_not_open_transactions() {
-    let write = Regex::new(r"INSERT INTO|DELETE FROM|UPDATE \w+ SET").unwrap();
+fn a_module_stays_below_the_modules_above_it() {
+    // Within a crate the modules may depend on each other in any direction, but
+    // never upward: relays knows nothing of billing or operations.
+    let upward: [(&str, &[&str]); 4] = [
+        ("relays", &["billing", "operations", "core"]),
+        ("billing", &["operations", "core"]),
+        ("operations", &["core"]),
+        ("core", &[]),
+    ];
     for source in sources() {
-        let name = source.path.display();
-        match source.module.as_str() {
-            "db::queries" => assert!(!write.is_match(&source.text), "{name} writes"),
-            "db::commands" => assert!(
-                !source.text.contains(".with_tx("),
-                "{name} opens a transaction"
-            ),
-            _ => {}
+        let own = source.module.split("::").next().unwrap();
+        for used in uses(&source.text, own) {
+            let namespace = used.split("::").next().unwrap();
+            if let Some((_, forbidden)) = upward.iter().find(|(crate_name, _)| *crate_name == own)
+                && forbidden.contains(&namespace)
+            {
+                panic!(
+                    "{} ({}) may not use {used}",
+                    source.path.display(),
+                    source.module
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn services_reach_the_database_only_through_the_core() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    for dir in ["services/api", "services/relay", "services/worker"] {
+        for entry in fs::read_dir(root.join(dir).join("src")).unwrap() {
+            let path = entry.unwrap().path();
+            let text = fs::read_to_string(&path).unwrap();
+            let words: BTreeSet<&str> = text
+                .lines()
+                .filter(|line| !line.trim_start().starts_with("//"))
+                .flat_map(|line| line.split(|c: char| !c.is_alphanumeric() && c != '_'))
+                .collect();
+            for word in ["commands", "with_tx", "begin", "sqlx", "queries"] {
+                assert!(
+                    !words.contains(word),
+                    "{} reaches past the core: {word}",
+                    path.display()
+                );
+            }
         }
     }
 }
@@ -251,7 +249,7 @@ fn subsystems_depend_on_each_other_without_cycles() {
     let sources = sources();
     let subsystems: BTreeSet<String> = sources
         .iter()
-        .filter(|source| source.module.starts_with("core::"))
+        .filter(|source| source.kind == Kind::Core)
         .map(|source| source.module.clone())
         .collect();
     // A subsystem split across a directory depends on what any of its files uses.
@@ -262,6 +260,7 @@ fn subsystems_depend_on_each_other_without_cycles() {
     {
         let deps = uses(&source.text, "core")
             .into_iter()
+            .map(|used| format!("core::{used}"))
             .filter(|used| subsystems.contains(used) && *used != source.module);
         graph.entry(source.module.clone()).or_default().extend(deps);
     }

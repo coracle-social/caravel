@@ -7,7 +7,7 @@ use axum::body::Body;
 use axum::http::Request;
 use caravel_core::management;
 use caravel_core::testing::sign_event;
-use caravel_domain::management::Call;
+use caravel_relays::management::Call;
 use caravel_util::nostr::kinds;
 use common::*;
 use coracle_lib::keys::SecretKey;

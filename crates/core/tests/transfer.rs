@@ -4,13 +4,11 @@
 
 use anyhow::Result;
 use bytes::Bytes;
+use caravel_billing::relays::Relay;
 use caravel_core::testing::{create_relay, sign_event};
 use caravel_core::{Core, testing, transfer};
-use caravel_db::queries;
-use caravel_domain as domain;
-use caravel_domain::events::StoredEvent;
-use caravel_domain::relays::Relay;
-use caravel_domain::transfer::ImportResult;
+use caravel_relays::events::StoredEvent;
+use caravel_relays::transfer::ImportResult;
 use caravel_util::error::Error;
 use caravel_util::nostr::kinds::rooms as kinds;
 use coracle_lib::events::Event;
@@ -51,7 +49,7 @@ async fn export(core: &Core, relay: &Relay) -> Result<String> {
 }
 
 async fn stored(core: &Core, relay: &Relay, kind: u16, room_id: &str) -> Result<Vec<StoredEvent>> {
-    let tag = if domain::rooms::is_metadata_kind(kind) {
+    let tag = if caravel_relays::rooms::is_metadata_kind(kind) {
         "d"
     } else {
         "h"
@@ -61,28 +59,41 @@ async fn stored(core: &Core, relay: &Relay, kind: u16, room_id: &str) -> Result<
         ..Filter::new()
     }
     .add_tag(TagMatch::Any, tag, room_id);
-    Ok(queries::events::query_events(core.db.pool(), &relay.id, &filter, 1000, NOW).await?)
+    Ok(
+        caravel_relays::events::queries::query_events(
+            core.db.pool(),
+            &relay.id,
+            &filter,
+            1000,
+            NOW,
+        )
+        .await?,
+    )
 }
 
 async fn is_room_member(core: &Core, relay: &Relay, room_id: &str, pubkey: &str) -> Result<bool> {
-    Ok(queries::rooms::list_room_members(core.db.pool(), &relay.id)
-        .await?
-        .iter()
-        .any(|member| member.room_id == room_id && member.pubkey == pubkey))
+    Ok(
+        caravel_relays::rooms::queries::list_room_members(core.db.pool(), &relay.id)
+            .await?
+            .iter()
+            .any(|member| member.room_id == room_id && member.pubkey == pubkey),
+    )
 }
 
 async fn room_name(core: &Core, relay: &Relay, room_id: &str) -> Result<Option<String>> {
-    Ok(queries::rooms::list_rooms(core.db.pool(), &relay.id)
-        .await?
-        .into_iter()
-        .find(|room| room.id == room_id)
-        .map(|room| {
-            room.tags
-                .iter()
-                .find(|tag| tag.first().map(String::as_str) == Some("name"))
-                .and_then(|tag| tag.get(1).cloned())
-                .unwrap_or_default()
-        }))
+    Ok(
+        caravel_relays::rooms::queries::list_rooms(core.db.pool(), &relay.id)
+            .await?
+            .into_iter()
+            .find(|room| room.id == room_id)
+            .map(|room| {
+                room.tags
+                    .iter()
+                    .find(|tag| tag.first().map(String::as_str) == Some("name"))
+                    .and_then(|tag| tag.get(1).cloned())
+                    .unwrap_or_default()
+            }),
+    )
 }
 
 #[tokio::test]
@@ -115,7 +126,7 @@ async fn an_export_imports_into_another_relay() -> Result<()> {
     assert_eq!(result.invalid, 0, "{result:?}");
     assert!(result.skipped > 0, "{result:?}");
 
-    let ids: Vec<[u8; 32]> = queries::events::get_events(
+    let ids: Vec<[u8; 32]> = caravel_relays::events::queries::get_events(
         core.db.pool(),
         &target.id,
         &[first.id.to_bytes(), second.id.to_bytes()],
@@ -636,7 +647,7 @@ async fn an_import_refuses_group_events_naming_no_group() -> Result<()> {
             .collect::<Vec<_>>(),
         [Some(1), Some(2), Some(3)]
     );
-    let ids: Vec<String> = queries::rooms::list_rooms(core.db.pool(), &relay.id)
+    let ids: Vec<String> = caravel_relays::rooms::queries::list_rooms(core.db.pool(), &relay.id)
         .await?
         .into_iter()
         .map(|room| room.id)

@@ -8,16 +8,53 @@ use caravel_util::{bitcoin, wallet::Wallet};
 
 use crate::Core;
 use crate::usage;
-use caravel_db::{commands, queries};
-use caravel_domain as domain;
-use caravel_domain::activity::{Activity, ActivityType, Snapshot};
-use caravel_domain::billing::BillingPeriod;
-use caravel_domain::billing::{Bolt11, Checkout, Invoice, InvoiceItem, InvoiceMethod};
-use caravel_domain::billing::{GB, Plan, SECONDS_PER_HOUR};
-use caravel_domain::relays::RelayStatus;
-use caravel_domain::tenants::Tenant;
+use caravel_billing::relays::RelayStatus;
+use caravel_billing::relays::{Activity, ActivityType, Snapshot};
+use caravel_billing::relays::{GB, Plan, SECONDS_PER_HOUR};
+use caravel_billing::tenants::BillingPeriod;
+use caravel_billing::tenants::Tenant;
+use caravel_billing::tenants::{Bolt11, Checkout, Invoice, InvoiceItem, InvoiceMethod};
 use caravel_util::bus::Change;
 use caravel_util::error::{Error, Result};
+
+// --- Invoices ---
+
+/// The invoice with `id`, or a 404.
+pub async fn require_invoice(core: &Core, id: &str) -> Result<Invoice> {
+    caravel_billing::tenants::queries::billing::require_invoice(core.db.pool(), id).await
+}
+
+/// Every invoice on the platform, newest first.
+pub async fn list_invoices(core: &Core) -> Result<Vec<Invoice>> {
+    caravel_billing::tenants::queries::billing::list_invoices(core.db.pool()).await
+}
+
+/// A tenant's invoices, newest first.
+pub async fn list_invoices_for_tenant(core: &Core, tenant_pubkey: &str) -> Result<Vec<Invoice>> {
+    caravel_billing::tenants::queries::billing::list_invoices_for_tenant(
+        core.db.pool(),
+        tenant_pubkey,
+    )
+    .await
+}
+
+/// The line items of an invoice.
+pub async fn list_invoice_items(core: &Core, invoice_id: &str) -> Result<Vec<InvoiceItem>> {
+    caravel_billing::tenants::queries::billing::list_invoice_items_for_invoice(
+        core.db.pool(),
+        invoice_id,
+    )
+    .await
+}
+
+/// The line items a tenant owes for that no invoice has claimed.
+pub async fn list_outstanding_items(core: &Core, tenant_pubkey: &str) -> Result<Vec<InvoiceItem>> {
+    caravel_billing::tenants::queries::billing::list_outstanding_invoice_items_for_tenant(
+        core.db.pool(),
+        tenant_pubkey,
+    )
+    .await
+}
 
 const GRACE_PERIOD_SECS: i64 = 7 * 24 * 60 * 60;
 
@@ -49,7 +86,7 @@ pub async fn reconcile_subscriptions(core: &Core) -> Result<()> {
         tracing::error!(error = %error, "failed to sample usage");
     }
 
-    let tenants = queries::tenants::list_tenants(core.db.pool()).await?;
+    let tenants = caravel_billing::tenants::queries::list_tenants(core.db.pool()).await?;
     tracing::info!(
         tenant_count = tenants.len(),
         "reconciling all subscriptions"
@@ -82,8 +119,11 @@ pub async fn reconcile_subscription(
 
     let mut tenant = tenant.clone();
     let mut activities =
-        queries::activity::list_billable_activity_for_tenant(core.db.pool(), &tenant.pubkey)
-            .await?;
+        caravel_billing::relays::queries::activity::list_billable_activity_for_tenant(
+            core.db.pool(),
+            &tenant.pubkey,
+        )
+        .await?;
 
     // A churned tenant with new activity is back, and restoring their relays is priced now.
     if tenant.churned_at.is_some() && !activities.is_empty() {
@@ -93,7 +133,7 @@ pub async fn reconcile_subscription(
 
     for activity in activities {
         if tenant.billing_anchor.is_none() {
-            let anchor = commands::tenants::ensure_tenant_billing_anchor(
+            let anchor = caravel_billing::tenants::commands::ensure_tenant_billing_anchor(
                 core.db.pool(),
                 &tenant.pubkey,
                 activity.created_at,
@@ -115,8 +155,8 @@ pub async fn reconcile_subscription(
         let comped = core.config.is_admin(&tenant.pubkey);
         core.db
             .with_tx(async |conn| {
-                queries::tenants::lock_tenant(conn, &tenant.pubkey).await?;
-                commands::billing::insert_invoice_for_outstanding_items(
+                caravel_billing::tenants::queries::lock_tenant(conn, &tenant.pubkey).await?;
+                caravel_billing::tenants::commands::billing::insert_invoice_for_outstanding_items(
                     conn,
                     &tenant.pubkey,
                     &period,
@@ -128,8 +168,11 @@ pub async fn reconcile_subscription(
             .await?;
     }
 
-    let invoices =
-        queries::billing::list_open_invoices_for_tenant(core.db.pool(), &tenant.pubkey).await?;
+    let invoices = caravel_billing::tenants::queries::billing::list_open_invoices_for_tenant(
+        core.db.pool(),
+        &tenant.pubkey,
+    )
+    .await?;
 
     if maybe_churn_tenant(core, &tenant, &invoices).await? {
         return Ok(());
@@ -154,17 +197,17 @@ async fn reconcile_activity(core: &Core, tenant: &Tenant, activity: &Activity) -
 
     let item = match activity.activity_type {
         ActivityType::CreateRelay => {
-            domain::billing::prorated_item(id, tenant, activity, 1, "New relay created")?
+            caravel_billing::tenants::prorated_item(id, tenant, activity, 1, "New relay created")?
         }
         ActivityType::ActivateRelay | ActivityType::UnmarkRelayDelinquent => {
-            domain::billing::prorated_item(id, tenant, activity, 1, "Relay reactivated")?
+            caravel_billing::tenants::prorated_item(id, tenant, activity, 1, "Relay reactivated")?
         }
         ActivityType::DeactivateRelay => {
-            domain::billing::prorated_item(id, tenant, activity, -1, "Relay deactivated")?
+            caravel_billing::tenants::prorated_item(id, tenant, activity, -1, "Relay deactivated")?
         }
         // Only an active relay's purge is credited; an inactive or delinquent one wasn't billed.
         ActivityType::PurgeRelay if *status == RelayStatus::Active => {
-            domain::billing::prorated_item(id, tenant, activity, -1, "Relay purged")?
+            caravel_billing::tenants::prorated_item(id, tenant, activity, -1, "Relay purged")?
         }
         ActivityType::UpdateRelay => plan_change_item(core, tenant, activity).await?,
         ActivityType::PurgeRelay | ActivityType::MarkRelayDelinquent => None,
@@ -173,10 +216,16 @@ async fn reconcile_activity(core: &Core, tenant: &Tenant, activity: &Activity) -
     let now = core.clock.now();
     core.db
         .with_tx(async |conn| {
-            if commands::activity::mark_activity_billed(&mut *conn, &activity.id, now).await?
+            if caravel_billing::relays::commands::activity::mark_activity_billed(
+                &mut *conn,
+                &activity.id,
+                now,
+            )
+            .await?
                 && let Some(item) = &item
             {
-                commands::billing::insert_invoice_item(&mut *conn, item).await?;
+                caravel_billing::tenants::commands::billing::insert_invoice_item(&mut *conn, item)
+                    .await?;
             }
             Ok::<_, Error>(())
         })
@@ -198,9 +247,12 @@ async fn plan_change_item(
     }
 
     let new_plan_id = &activity.snapshot.plan_id;
-    let previous = queries::activity::get_previous_relay_activity(core.db.pool(), activity)
-        .await?
-        .ok_or_else(|| Error::internal("no previous plan found for relay update activity"))?;
+    let previous = caravel_billing::relays::queries::activity::get_previous_relay_activity(
+        core.db.pool(),
+        activity,
+    )
+    .await?
+    .ok_or_else(|| Error::internal("no previous plan found for relay update activity"))?;
     let old_plan_id = &previous.snapshot.plan_id;
 
     if old_plan_id == new_plan_id {
@@ -241,16 +293,20 @@ async fn reconcile_renewal(core: &Core, tenant: &Tenant, period: &BillingPeriod)
     }
 
     let mut items = Vec::new();
-    for relay in queries::relays::list_relays_for_tenant(core.db.pool(), &tenant.pubkey).await? {
+    for relay in
+        caravel_billing::relays::queries::list_relays_for_tenant(core.db.pool(), &tenant.pubkey)
+            .await?
+    {
         if relay.is_purged() {
             continue;
         }
-        let Some(activity) = queries::activity::get_latest_relay_activity_before(
-            core.db.pool(),
-            &relay.id,
-            period.start,
-        )
-        .await?
+        let Some(activity) =
+            caravel_billing::relays::queries::activity::get_latest_relay_activity_before(
+                core.db.pool(),
+                &relay.id,
+                period.start,
+            )
+            .await?
         else {
             continue;
         };
@@ -258,7 +314,8 @@ async fn reconcile_renewal(core: &Core, tenant: &Tenant, period: &BillingPeriod)
         if *status != RelayStatus::Active {
             continue;
         }
-        let Some(plan) = domain::billing::get_plan(plan_id).filter(Plan::is_paid) else {
+        let Some(plan) = caravel_billing::relays::plans::get_plan(plan_id).filter(Plan::is_paid)
+        else {
             continue;
         };
 
@@ -283,14 +340,21 @@ async fn reconcile_renewal(core: &Core, tenant: &Tenant, period: &BillingPeriod)
 
     core.db
         .with_tx(async |conn| {
-            let locked = queries::tenants::lock_tenant(conn, &tenant.pubkey).await?;
+            let locked =
+                caravel_billing::tenants::queries::lock_tenant(conn, &tenant.pubkey).await?;
             if locked.renewed_at.is_some_and(|at| at >= period.start) {
                 return Ok(());
             }
             for item in &items {
-                commands::billing::insert_invoice_item(&mut *conn, item).await?;
+                caravel_billing::tenants::commands::billing::insert_invoice_item(&mut *conn, item)
+                    .await?;
             }
-            commands::tenants::set_tenant_renewed_at(&mut *conn, &tenant.pubkey, period.start).await
+            caravel_billing::tenants::commands::set_tenant_renewed_at(
+                &mut *conn,
+                &tenant.pubkey,
+                period.start,
+            )
+            .await
         })
         .await
 }
@@ -314,7 +378,7 @@ async fn reconcile_overage(core: &Core, tenant: &Tenant, period: &BillingPeriod)
         return Ok(());
     }
 
-    let totals = queries::usage::get_usage_totals_for_tenant(
+    let totals = caravel_billing::relays::queries::usage::get_usage_totals_for_tenant(
         core.db.pool(),
         &tenant.pubkey,
         previous.start,
@@ -324,17 +388,19 @@ async fn reconcile_overage(core: &Core, tenant: &Tenant, period: &BillingPeriod)
 
     let mut items = Vec::new();
     for total in totals {
-        let Some(activity) = queries::activity::get_latest_relay_activity_before(
-            core.db.pool(),
-            &total.relay_id,
-            previous.end,
-        )
-        .await?
+        let Some(activity) =
+            caravel_billing::relays::queries::activity::get_latest_relay_activity_before(
+                core.db.pool(),
+                &total.relay_id,
+                previous.end,
+            )
+            .await?
         else {
             continue;
         };
         let plan_id = &activity.snapshot.plan_id;
-        let Some(plan) = domain::billing::get_plan(plan_id).filter(Plan::is_paid) else {
+        let Some(plan) = caravel_billing::relays::plans::get_plan(plan_id).filter(Plan::is_paid)
+        else {
             continue;
         };
 
@@ -386,7 +452,8 @@ async fn reconcile_overage(core: &Core, tenant: &Tenant, period: &BillingPeriod)
 
     core.db
         .with_tx(async |conn| {
-            let locked = queries::tenants::lock_tenant(conn, &tenant.pubkey).await?;
+            let locked =
+                caravel_billing::tenants::queries::lock_tenant(conn, &tenant.pubkey).await?;
             if locked
                 .overage_billed_at
                 .is_some_and(|at| at >= previous.start)
@@ -394,9 +461,10 @@ async fn reconcile_overage(core: &Core, tenant: &Tenant, period: &BillingPeriod)
                 return Ok(());
             }
             for item in &items {
-                commands::billing::insert_invoice_item(&mut *conn, item).await?;
+                caravel_billing::tenants::commands::billing::insert_invoice_item(&mut *conn, item)
+                    .await?;
             }
-            commands::tenants::set_tenant_overage_billed_at(
+            caravel_billing::tenants::commands::set_tenant_overage_billed_at(
                 &mut *conn,
                 &tenant.pubkey,
                 previous.start,
@@ -439,16 +507,25 @@ async fn churn_tenant(core: &Core, tenant_pubkey: &str) -> Result<bool> {
     let changed = core
         .db
         .with_tx(async |conn| {
-            let locked = queries::tenants::lock_tenant(conn, tenant_pubkey).await?;
+            let locked =
+                caravel_billing::tenants::queries::lock_tenant(conn, tenant_pubkey).await?;
             if locked.churned_at.is_some() {
                 return Ok(None);
             }
-            commands::tenants::set_tenant_churned_at(&mut *conn, tenant_pubkey, Some(now)).await?;
+            caravel_billing::tenants::commands::set_tenant_churned_at(
+                &mut *conn,
+                tenant_pubkey,
+                Some(now),
+            )
+            .await?;
 
             let mut changed = Vec::new();
-            for relay in queries::relays::list_relays_for_tenant(&mut *conn, tenant_pubkey).await? {
+            for relay in
+                caravel_billing::relays::queries::list_relays_for_tenant(&mut *conn, tenant_pubkey)
+                    .await?
+            {
                 if relay.is_served() {
-                    commands::activity::record_status_change(
+                    caravel_billing::relays::commands::activity::record_status_change(
                         conn,
                         &relay,
                         RelayStatus::Delinquent,
@@ -460,7 +537,12 @@ async fn churn_tenant(core: &Core, tenant_pubkey: &str) -> Result<bool> {
                 }
             }
 
-            commands::billing::void_open_invoices_for_tenant(conn, tenant_pubkey, now).await?;
+            caravel_billing::tenants::commands::billing::void_open_invoices_for_tenant(
+                conn,
+                tenant_pubkey,
+                now,
+            )
+            .await?;
             Ok::<_, Error>(Some(changed))
         })
         .await?;
@@ -483,28 +565,43 @@ pub(crate) async fn reactivate_tenant(core: &Core, tenant_pubkey: &str) -> Resul
     let activities = core
         .db
         .with_tx(async |conn| {
-            let locked = queries::tenants::lock_tenant(conn, tenant_pubkey).await?;
+            let locked =
+                caravel_billing::tenants::queries::lock_tenant(conn, tenant_pubkey).await?;
             if locked.churned_at.is_none() {
                 return Ok(Vec::new());
             }
-            commands::tenants::set_tenant_churned_at(&mut *conn, tenant_pubkey, None).await?;
+            caravel_billing::tenants::commands::set_tenant_churned_at(
+                &mut *conn,
+                tenant_pubkey,
+                None,
+            )
+            .await?;
 
             let mut activities = Vec::new();
-            for relay in queries::relays::list_relays_for_tenant(&mut *conn, tenant_pubkey).await? {
+            for relay in
+                caravel_billing::relays::queries::list_relays_for_tenant(&mut *conn, tenant_pubkey)
+                    .await?
+            {
                 if relay.status == RelayStatus::Delinquent && !relay.is_purged() {
-                    let activity = commands::activity::record_status_change(
-                        conn,
-                        &relay,
-                        RelayStatus::Active,
-                        ActivityType::UnmarkRelayDelinquent,
-                        now,
-                    )
-                    .await?;
+                    let activity =
+                        caravel_billing::relays::commands::activity::record_status_change(
+                            conn,
+                            &relay,
+                            RelayStatus::Active,
+                            ActivityType::UnmarkRelayDelinquent,
+                            now,
+                        )
+                        .await?;
                     activities.push(activity);
                 }
             }
 
-            commands::billing::void_open_invoices_for_tenant(conn, tenant_pubkey, now).await?;
+            caravel_billing::tenants::commands::billing::void_open_invoices_for_tenant(
+                conn,
+                tenant_pubkey,
+                now,
+            )
+            .await?;
             Ok::<_, Error>(activities)
         })
         .await?;
@@ -531,8 +628,11 @@ async fn reconcile_payments(
 ) -> Result<()> {
     let now = core.clock.now();
 
-    if let Some(bolt11) =
-        queries::billing::get_bolt11_for_invoice(core.db.pool(), &invoice.id).await?
+    if let Some(bolt11) = caravel_billing::tenants::queries::billing::get_bolt11_for_invoice(
+        core.db.pool(),
+        &invoice.id,
+    )
+    .await?
         && bolt11.settled_at.is_none()
         && core
             .wallet
@@ -542,8 +642,11 @@ async fn reconcile_payments(
     {
         core.db
             .with_tx(async |conn| {
-                commands::billing::mark_bolt11_settled(&mut *conn, &bolt11.id, now).await?;
-                commands::billing::mark_invoice_paid(
+                caravel_billing::tenants::commands::billing::mark_bolt11_settled(
+                    &mut *conn, &bolt11.id, now,
+                )
+                .await?;
+                caravel_billing::tenants::commands::billing::mark_invoice_paid(
                     &mut *conn,
                     &invoice.id,
                     InvoiceMethod::Oob,
@@ -555,8 +658,11 @@ async fn reconcile_payments(
         return cleanup_pending_payments(core, invoice).await;
     }
 
-    if let Some(checkout) =
-        queries::billing::get_checkout_for_invoice(core.db.pool(), &invoice.id).await?
+    if let Some(checkout) = caravel_billing::tenants::queries::billing::get_checkout_for_invoice(
+        core.db.pool(),
+        &invoice.id,
+    )
+    .await?
         && checkout.settled_at.is_none()
         && core
             .stripe
@@ -566,10 +672,19 @@ async fn reconcile_payments(
     {
         core.db
             .with_tx(async |conn| {
-                commands::tenants::set_tenant_stripe_error(&mut *conn, &tenant.pubkey, None)
-                    .await?;
-                commands::billing::mark_checkout_settled(&mut *conn, &checkout.id, now).await?;
-                commands::billing::mark_invoice_paid(
+                caravel_billing::tenants::commands::set_tenant_stripe_error(
+                    &mut *conn,
+                    &tenant.pubkey,
+                    None,
+                )
+                .await?;
+                caravel_billing::tenants::commands::billing::mark_checkout_settled(
+                    &mut *conn,
+                    &checkout.id,
+                    now,
+                )
+                .await?;
+                caravel_billing::tenants::commands::billing::mark_invoice_paid(
                     &mut *conn,
                     &invoice.id,
                     InvoiceMethod::Stripe,
@@ -624,23 +739,23 @@ async fn pay_with_nwc(
         // A payment that errors but landed anyway, or an invoice paid meanwhile, is fine.
         if let Err(error) = tenant_wallet.pay_invoice(&bolt11.lnbc, now).await
             && !core.wallet.is_settled(&bolt11.lnbc, now).await.unwrap_or(false)
-            && !matches!(queries::billing::get_invoice(core.db.pool(), &invoice.id).await, Ok(Some(paid)) if paid.paid_at.is_some())
+            && !matches!(caravel_billing::tenants::queries::billing::get_invoice(core.db.pool(), &invoice.id).await, Ok(Some(paid)) if paid.paid_at.is_some())
         {
             return Err(error.into());
         }
 
         core.db
             .with_tx(async |conn| {
-                commands::tenants::set_tenant_nwc_error(&mut *conn, &tenant.pubkey, None).await?;
-                commands::billing::mark_bolt11_settled(&mut *conn, &bolt11.id, now).await?;
-                commands::billing::mark_invoice_paid(&mut *conn, &invoice.id, InvoiceMethod::Nwc, now).await
+                caravel_billing::tenants::commands::set_tenant_nwc_error(&mut *conn, &tenant.pubkey, None).await?;
+                caravel_billing::tenants::commands::billing::mark_bolt11_settled(&mut *conn, &bolt11.id, now).await?;
+                caravel_billing::tenants::commands::billing::mark_invoice_paid(&mut *conn, &invoice.id, InvoiceMethod::Nwc, now).await
             })
             .await
     }
     .await;
 
     if let Err(error) = &result {
-        commands::tenants::set_tenant_nwc_error(
+        caravel_billing::tenants::commands::set_tenant_nwc_error(
             core.db.pool(),
             &tenant.pubkey,
             Some(&error.to_string()),
@@ -657,7 +772,7 @@ async fn pay_with_card(
     invoice: &Invoice,
     payment_method_id: &str,
 ) -> Result<()> {
-    let intent = commands::billing::ensure_pending_intent(
+    let intent = caravel_billing::tenants::commands::billing::ensure_pending_intent(
         core.db.pool(),
         &invoice.id,
         payment_method_id,
@@ -679,8 +794,9 @@ async fn pay_with_card(
         Ok(Charge::Succeeded(id)) => id,
         // Nothing was charged, so the next pass makes a new attempt on the tenant's current card.
         Ok(Charge::Refused(reason)) => {
-            commands::billing::delete_intent(core.db.pool(), &intent.id).await?;
-            commands::tenants::set_tenant_stripe_error(
+            caravel_billing::tenants::commands::billing::delete_intent(core.db.pool(), &intent.id)
+                .await?;
+            caravel_billing::tenants::commands::set_tenant_stripe_error(
                 core.db.pool(),
                 &tenant.pubkey,
                 Some(&reason),
@@ -690,7 +806,7 @@ async fn pay_with_card(
         }
         // It may have gone through, so the attempt stays for the next pass to replay.
         Err(error) => {
-            commands::tenants::set_tenant_stripe_error(
+            caravel_billing::tenants::commands::set_tenant_stripe_error(
                 core.db.pool(),
                 &tenant.pubkey,
                 Some(&error.to_string()),
@@ -703,10 +819,20 @@ async fn pay_with_card(
     let now = core.clock.now();
     core.db
         .with_tx(async |conn| {
-            commands::tenants::set_tenant_stripe_error(&mut *conn, &tenant.pubkey, None).await?;
-            commands::billing::mark_intent_settled(&mut *conn, &intent.id, &payment_intent_id, now)
-                .await?;
-            commands::billing::mark_invoice_paid(
+            caravel_billing::tenants::commands::set_tenant_stripe_error(
+                &mut *conn,
+                &tenant.pubkey,
+                None,
+            )
+            .await?;
+            caravel_billing::tenants::commands::billing::mark_intent_settled(
+                &mut *conn,
+                &intent.id,
+                &payment_intent_id,
+                now,
+            )
+            .await?;
+            caravel_billing::tenants::commands::billing::mark_invoice_paid(
                 &mut *conn,
                 &invoice.id,
                 InvoiceMethod::Stripe,
@@ -737,14 +863,22 @@ async fn send_payment_reminder(core: &Core, tenant: &Tenant, invoice: &Invoice) 
     let message = format!("{MANUAL_PAYMENT_DM}\n\n{payment_url}");
     core.robot.send_dm(&tenant.pubkey, &message, now).await?;
 
-    commands::billing::mark_invoice_notified(core.db.pool(), &invoice.id, now).await
+    caravel_billing::tenants::commands::billing::mark_invoice_notified(
+        core.db.pool(),
+        &invoice.id,
+        now,
+    )
+    .await
 }
 
 /// Expire an invoice's pending Checkout sessions once it is paid, so the tenant
 /// can't pay twice. Lightning invoices can't be withdrawn.
 async fn cleanup_pending_payments(core: &Core, invoice: &Invoice) -> Result<()> {
-    for checkout in
-        queries::billing::list_pending_checkouts_for_invoice(core.db.pool(), &invoice.id).await?
+    for checkout in caravel_billing::tenants::queries::billing::list_pending_checkouts_for_invoice(
+        core.db.pool(),
+        &invoice.id,
+    )
+    .await?
     {
         if let Err(error) = core
             .stripe
@@ -764,7 +898,11 @@ async fn cleanup_pending_payments(core: &Core, invoice: &Invoice) -> Result<()> 
 /// it went unpaid; if it was paid, the invoice is settled and it is returned.
 pub async fn ensure_bolt11_for_invoice(core: &Core, invoice: &Invoice) -> Result<Bolt11> {
     let now = core.clock.now();
-    let existing = queries::billing::get_bolt11_for_invoice(core.db.pool(), &invoice.id).await?;
+    let existing = caravel_billing::tenants::queries::billing::get_bolt11_for_invoice(
+        core.db.pool(),
+        &invoice.id,
+    )
+    .await?;
 
     if !invoice.is_open() {
         return existing.ok_or_else(|| Error::conflict("invoice-not-open", "invoice is not open"));
@@ -780,8 +918,13 @@ pub async fn ensure_bolt11_for_invoice(core: &Core, invoice: &Invoice) -> Result
         if core.wallet.is_settled(&existing.lnbc, now).await? {
             core.db
                 .with_tx(async |conn| {
-                    commands::billing::mark_bolt11_settled(&mut *conn, &existing.id, now).await?;
-                    commands::billing::mark_invoice_paid(
+                    caravel_billing::tenants::commands::billing::mark_bolt11_settled(
+                        &mut *conn,
+                        &existing.id,
+                        now,
+                    )
+                    .await?;
+                    caravel_billing::tenants::commands::billing::mark_invoice_paid(
                         &mut *conn,
                         &invoice.id,
                         InvoiceMethod::Oob,
@@ -805,7 +948,7 @@ pub async fn ensure_bolt11_for_invoice(core: &Core, invoice: &Invoice) -> Result
         .make_invoice(msats, "Relay subscription payment", expiry as u64, now)
         .await?;
 
-    commands::billing::insert_bolt11(
+    caravel_billing::tenants::commands::billing::insert_bolt11(
         core.db.pool(),
         &invoice.id,
         &lnbc,
@@ -831,8 +974,11 @@ pub async fn ensure_checkout_for_invoice(
         return Err(Error::conflict("invoice-not-open", "invoice is not open"));
     }
 
-    if let Some(existing) =
-        queries::billing::get_checkout_for_invoice(core.db.pool(), &invoice.id).await?
+    if let Some(existing) = caravel_billing::tenants::queries::billing::get_checkout_for_invoice(
+        core.db.pool(),
+        &invoice.id,
+    )
+    .await?
         && now < existing.expires_at
     {
         if existing.settled_at.is_some() {
@@ -855,7 +1001,7 @@ pub async fn ensure_checkout_for_invoice(
         )
         .await?;
 
-    commands::billing::insert_checkout(
+    caravel_billing::tenants::commands::billing::insert_checkout(
         core.db.pool(),
         &invoice.id,
         &session.id,
@@ -871,7 +1017,8 @@ pub async fn ensure_checkout_for_invoice(
 /// tenant.
 pub async fn reconcile_tenant(core: &Core, tenant: &Tenant) -> Result<()> {
     sync_stripe_customer(core, tenant).await;
-    let tenant = queries::tenants::require_tenant(core.db.pool(), &tenant.pubkey).await?;
+    let tenant =
+        caravel_billing::tenants::queries::require_tenant(core.db.pool(), &tenant.pubkey).await?;
     reconcile_subscription(core, &tenant, Collection::Settle).await
 }
 
@@ -912,7 +1059,7 @@ async fn sync_stripe_customer(core: &Core, tenant: &Tenant) -> Option<String> {
             if tenant.churned_at.is_some() && payment_method_id.is_some() {
                 reactivate_tenant(core, &tenant.pubkey).await?;
             }
-            commands::tenants::set_tenant_stripe_payment_method(
+            caravel_billing::tenants::commands::set_tenant_stripe_payment_method(
                 core.db.pool(),
                 &tenant.pubkey,
                 payment_method_id.as_deref(),
@@ -939,8 +1086,11 @@ pub async fn get_draft_invoice(core: &Core, tenant: &Tenant) -> Result<Option<In
     };
 
     let items =
-        queries::billing::list_outstanding_invoice_items_for_tenant(core.db.pool(), &tenant.pubkey)
-            .await?;
+        caravel_billing::tenants::queries::billing::list_outstanding_invoice_items_for_tenant(
+            core.db.pool(),
+            &tenant.pubkey,
+        )
+        .await?;
     if items.is_empty() {
         return Ok(None);
     }

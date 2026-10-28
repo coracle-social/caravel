@@ -225,9 +225,10 @@ dependencies = [
  "anyhow",
  "axum",
  "bytes",
+ "caravel-billing",
  "caravel-core",
- "caravel-db",
- "caravel-domain",
+ "caravel-operations",
+ "caravel-relays",
  "caravel-util",
  "coracle-lib",
  "http-body",
@@ -246,10 +247,11 @@ dependencies = [
  "anyhow",
  "axum",
  "caravel-api",
+ "caravel-billing",
  "caravel-core",
- "caravel-db",
- "caravel-domain",
+ "caravel-operations",
  "caravel-relay",
+ "caravel-relays",
  "caravel-util",
  "caravel-worker",
  "coracle-lib",
@@ -293,9 +295,10 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "bytes",
+ "caravel-billing",
  "caravel-core",
- "caravel-db",
- "caravel-domain",
+ "caravel-operations",
+ "caravel-relays",
  "caravel-util",
  "chrono",
  "coracle-lib",
@@ -308,38 +311,6 @@ dependencies = [
  "tracing",
  "url",
  "uuid",
-]
-
-[[package]]
-name = "caravel-db"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "caravel-domain",
- "caravel-util",
- "coracle-lib",
- "hex",
- "serde_json",
- "sqlx",
- "uuid",
-]
-
-[[package]]
-name = "caravel-domain"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "base64 0.22.1",
- "caravel-util",
- "chrono",
- "coracle-lib",
- "hex",
- "regex",
- "serde",
- "serde_json",
- "sqlx",
- "thiserror",
- "url",
 ]
 
 [[package]]
@@ -362,9 +333,10 @@ dependencies = [
  "anyhow",
  "axum",
  "base64 0.22.1",
+ "caravel-billing",
  "caravel-core",
- "caravel-db",
- "caravel-domain",
+ "caravel-operations",
+ "caravel-relays",
  "caravel-util",
  "coracle-kinds",
  "coracle-lib",

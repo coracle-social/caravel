@@ -2,15 +2,14 @@
 //! method grants and claims, and the events the relay publishes about them.
 
 use anyhow::Result;
+use caravel_billing::relays::Relay;
 use caravel_core::testing::{create_relay, sign_event};
 use caravel_core::{Core, management, testing};
-use caravel_db::{commands, queries};
-use caravel_domain::events::Saved;
-use caravel_domain::management::MANAGED_METHODS;
-use caravel_domain::management::{Call, Outcome};
-use caravel_domain::memberships::MemberSource;
-use caravel_domain::relays::Relay;
-use caravel_domain::roles::Role;
+use caravel_relays::access::MemberSource;
+use caravel_relays::access::Role;
+use caravel_relays::events::Saved;
+use caravel_relays::management::MANAGED_METHODS;
+use caravel_relays::management::{Call, Outcome};
 use caravel_util::error::Error;
 use caravel_util::nostr::Key;
 use caravel_util::nostr::kinds;
@@ -49,7 +48,7 @@ impl Fixture {
 
     async fn members(&self) -> Result<Vec<String>> {
         Ok(
-            queries::memberships::list_members(self.core.db.pool(), &self.relay.id)
+            caravel_relays::access::queries::list_members(self.core.db.pool(), &self.relay.id)
                 .await?
                 .into_iter()
                 .map(|member| member.pubkey)
@@ -62,7 +61,7 @@ impl Fixture {
         let filter = Filter::new()
             .add_kind(kind)
             .add_author(self.key.pubkey().parse()?);
-        let found = queries::events::query_events(
+        let found = caravel_relays::events::queries::query_events(
             self.core.db.pool(),
             &self.relay.id,
             &filter,
@@ -98,9 +97,10 @@ async fn the_owner_is_a_member_from_the_start() -> Result<()> {
         vec![vec!["member".to_string(), f.owner.clone()]]
     );
 
-    let member = queries::memberships::get_member(f.core.db.pool(), &f.relay.id, &f.owner)
-        .await?
-        .unwrap();
+    let member =
+        caravel_relays::access::queries::get_member(f.core.db.pool(), &f.relay.id, &f.owner)
+            .await?
+            .unwrap();
     assert_eq!(member.source, MemberSource::Owner);
     Ok(())
 }
@@ -115,7 +115,7 @@ async fn membership_changes_are_idempotent_and_published() -> Result<()> {
         .core
         .db
         .with_tx(async |conn| {
-            commands::memberships::admit(
+            caravel_relays::access::commands::admit(
                 conn,
                 &f.key,
                 &f.relay.id,
@@ -140,7 +140,7 @@ async fn membership_changes_are_idempotent_and_published() -> Result<()> {
         .core
         .db
         .with_tx(async |conn| {
-            commands::memberships::admit(
+            caravel_relays::access::commands::admit(
                 conn,
                 &f.key,
                 &f.relay.id,
@@ -183,7 +183,9 @@ async fn banning_a_pubkey_removes_it_and_everything_it_wrote() -> Result<()> {
     let spam = sign_event(&spammer, 1, "spam", &[], now);
     f.core
         .db
-        .with_tx(async |conn| commands::events::save_event(conn, &f.relay.id, &spam, now).await)
+        .with_tx(async |conn| {
+            caravel_relays::events::commands::save_event(conn, &f.relay.id, &spam, now).await
+        })
         .await?;
 
     f.call(Call::BanPubkey(spammer_hex.clone(), "spam".into()))
@@ -194,7 +196,7 @@ async fn banning_a_pubkey_removes_it_and_everything_it_wrote() -> Result<()> {
         f.call(Call::ListBannedPubkeys).await?,
         json!([{"pubkey": spammer_hex, "reason": "spam"}])
     );
-    let written = queries::events::query_events(
+    let written = caravel_relays::events::queries::query_events(
         f.core.db.pool(),
         &f.relay.id,
         &Filter::new().add_author(spammer.public_key()),
@@ -237,7 +239,7 @@ async fn a_ban_keeps_the_pubkeys_deletions_and_requests_to_vanish() -> Result<()
         .await?;
     f.call(Call::UnbanPubkey(author_hex)).await?;
 
-    let kept: Vec<[u8; 32]> = queries::events::query_events(
+    let kept: Vec<[u8; 32]> = caravel_relays::events::queries::query_events(
         f.core.db.pool(),
         &f.relay.id,
         &Filter::new().add_author(author.public_key()),
@@ -275,7 +277,9 @@ async fn banning_an_event_deletes_it_until_it_is_allowed() -> Result<()> {
     let event = sign_event(&author, 1, "bad", &[], now);
     f.core
         .db
-        .with_tx(async |conn| commands::events::save_event(conn, &f.relay.id, &event, now).await)
+        .with_tx(async |conn| {
+            caravel_relays::events::commands::save_event(conn, &f.relay.id, &event, now).await
+        })
         .await?;
 
     let id = event.id.to_hex();
@@ -285,9 +289,13 @@ async fn banning_an_event_deletes_it_until_it_is_allowed() -> Result<()> {
         json!([{"id": id, "reason": "bad"}])
     );
     assert!(
-        queries::events::get_events(f.core.db.pool(), &f.relay.id, &[event.id.to_bytes()])
-            .await?
-            .is_empty()
+        caravel_relays::events::queries::get_events(
+            f.core.db.pool(),
+            &f.relay.id,
+            &[event.id.to_bytes()]
+        )
+        .await?
+        .is_empty()
     );
 
     f.call(Call::AllowEvent(id)).await?;
@@ -334,7 +342,8 @@ async fn the_relays_name_description_and_icon_are_managed() -> Result<()> {
     f.call(Call::ChangeRelayIcon("https://example.com/icon.png".into()))
         .await?;
 
-    let relay = caravel_db::queries::relays::require_relay(f.core.db.pool(), &f.relay.id).await?;
+    let relay =
+        caravel_billing::relays::queries::require_relay(f.core.db.pool(), &f.relay.id).await?;
     assert_eq!(relay.info_name, "Renamed");
     assert_eq!(relay.info_description, "About us");
     assert_eq!(relay.info_icon, "https://example.com/icon.png");
@@ -470,7 +479,9 @@ async fn methods_are_granted_individually_and_to_members_of_inviting_relays() ->
         "a method makes its holder a member"
     );
 
-    let snapshot = queries::policy::load_snapshot(f.core.db.pool(), &f.relay).await?;
+    let snapshot =
+        caravel_relays::policy::queries::load_snapshot(f.core.db.pool(), f.relay.snapshot())
+            .await?;
     let mut methods = snapshot.methods_for(&alice);
     methods.sort();
     // Members of a relay whose members may invite also hold the invite methods.
@@ -490,7 +501,9 @@ async fn methods_are_granted_individually_and_to_members_of_inviting_relays() ->
 
     f.call(Call::UnassignMethod(alice.clone(), "banpubkey".into()))
         .await?;
-    let snapshot = queries::policy::load_snapshot(f.core.db.pool(), &f.relay).await?;
+    let snapshot =
+        caravel_relays::policy::queries::load_snapshot(f.core.db.pool(), f.relay.snapshot())
+            .await?;
     assert!(
         !snapshot
             .methods_for(&alice)
@@ -529,7 +542,7 @@ async fn removing_a_member_takes_their_methods() -> Result<()> {
     f.call(Call::UnallowPubkey(alice.clone())).await?;
 
     assert!(
-        queries::management::list_method_grants(f.core.db.pool(), &f.relay.id)
+        caravel_relays::management::queries::list_method_grants(f.core.db.pool(), &f.relay.id)
             .await?
             .is_empty()
     );
@@ -546,11 +559,11 @@ async fn claims_are_created_listed_and_revoked() -> Result<()> {
     f.call(Call::CreateClaim("alpha".into())).await?;
     f.call(Call::CreateClaim("beta".into())).await?;
     assert_eq!(f.call(Call::ListClaims).await?, json!(["alpha", "beta"]));
-    assert!(queries::claims::is_live_claim(pool, &f.relay.id, "alpha").await?);
+    assert!(caravel_relays::access::queries::is_live_claim(pool, &f.relay.id, "alpha").await?);
 
     f.call(Call::DeleteClaim("alpha".into())).await?;
     assert_eq!(f.call(Call::ListClaims).await?, json!(["beta"]));
-    assert!(!queries::claims::is_live_claim(pool, &f.relay.id, "alpha").await?);
+    assert!(!caravel_relays::access::queries::is_live_claim(pool, &f.relay.id, "alpha").await?);
     Ok(())
 }
 

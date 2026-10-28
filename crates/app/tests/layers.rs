@@ -10,48 +10,70 @@ use std::process::Command;
 use serde_json::Value;
 
 /// Each workspace crate and the workspace crates it may depend on.
-const LAYERS: [(&str, &[&str]); 7] = [
+const LAYERS: [(&str, &[&str]); 9] = [
     ("caravel-util", &[]),
-    ("caravel-domain", &["caravel-util"]),
-    ("caravel-db", &["caravel-util", "caravel-domain"]),
+    ("caravel-relays", &["caravel-util"]),
+    ("caravel-billing", &["caravel-util", "caravel-relays"]),
     (
-        "caravel-core",
-        &["caravel-util", "caravel-domain", "caravel-db"],
+        "caravel-operations",
+        &["caravel-util", "caravel-relays", "caravel-billing"],
     ),
     (
-        "caravel-relay",
+        "caravel-core",
         &[
             "caravel-util",
-            "caravel-domain",
-            "caravel-db",
-            "caravel-core",
+            "caravel-relays",
+            "caravel-billing",
+            "caravel-operations",
         ],
     ),
     (
         "caravel-api",
         &[
             "caravel-util",
-            "caravel-domain",
-            "caravel-db",
+            "caravel-relays",
+            "caravel-billing",
+            "caravel-operations",
             "caravel-core",
         ],
     ),
     (
+        "caravel-relay",
+        &[
+            "caravel-util",
+            "caravel-relays",
+            "caravel-billing",
+            "caravel-operations",
+            "caravel-core",
+        ],
+    ),
+    ("caravel-worker", &["caravel-util", "caravel-core"]),
+    (
         "caravel-app",
         &[
             "caravel-util",
-            "caravel-domain",
-            "caravel-db",
+            "caravel-relays",
+            "caravel-billing",
+            "caravel-operations",
             "caravel-core",
             "caravel-relay",
             "caravel-api",
+            "caravel-worker",
         ],
     ),
 ];
 
 /// Third-party crates and the only workspace crates that may depend on them.
 const CONFINED: [(&str, &[&str]); 7] = [
-    ("sqlx", &["caravel-util", "caravel-domain", "caravel-db"]),
+    (
+        "sqlx",
+        &[
+            "caravel-util",
+            "caravel-relays",
+            "caravel-billing",
+            "caravel-operations",
+        ],
+    ),
     ("reqwest", &["caravel-util"]),
     ("tokio-tungstenite", &["caravel-util"]),
     ("coracle-kinds", &["caravel-util"]),
@@ -61,10 +83,12 @@ const CONFINED: [(&str, &[&str]); 7] = [
         "coracle-lib",
         &[
             "caravel-util",
-            "caravel-domain",
-            "caravel-db",
+            "caravel-relays",
+            "caravel-billing",
+            "caravel-operations",
             "caravel-core",
             "caravel-relay",
+            "caravel-api",
         ],
     ),
 ];
@@ -139,7 +163,7 @@ fn protocol_clients_stay_in_their_layer() {
 #[test]
 fn only_core_subsystems_change_state() {
     let crates = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
-    for name in ["relay", "api", "app"] {
+    for name in ["services/relay", "services/api", "app"] {
         for entry in fs::read_dir(crates.join(name).join("src")).unwrap() {
             let path = entry.unwrap().path();
             let text = fs::read_to_string(&path).unwrap();

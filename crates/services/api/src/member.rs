@@ -3,10 +3,8 @@
 
 use axum::Json;
 use axum::extract::{Path, State};
-use caravel_core::{Core, memberships};
-use caravel_db::queries;
-use caravel_domain::memberships::{Membership, MembershipStatus};
-use caravel_domain::relays::Relay;
+use caravel_billing::relays::{Membership, MembershipStatus};
+use caravel_core::{Core, hosting, memberships};
 use caravel_util::error::Error;
 use serde::{Deserialize, Serialize};
 
@@ -30,14 +28,6 @@ impl From<&Membership> for MembershipView {
     }
 }
 
-/// A relay that sells memberships, or a 404.
-async fn load_selling_relay(core: &Core, id: &str) -> Result<Relay, Error> {
-    queries::relays::get_relay(core.db.pool(), id)
-        .await?
-        .filter(Relay::charges_members)
-        .ok_or(Error::NotFound("relay not found"))
-}
-
 /// The Stripe Checkout session a payer came back from.
 #[derive(Deserialize)]
 pub struct ReconcileRequest {
@@ -47,13 +37,8 @@ pub struct ReconcileRequest {
 /// Every live membership the caller holds, with what each relay offers.
 pub async fn get_account(State(core): State<Core>, Authed(actor): Authed) -> ApiResult {
     let mut entries = Vec::new();
-    for membership in
-        queries::memberships::list_live_memberships_for_pubkey(core.db.pool(), &actor.pubkey)
-            .await?
-    {
-        if let Some(relay) =
-            queries::relays::get_relay(core.db.pool(), &membership.relay_id).await?
-        {
+    for membership in memberships::memberships_for_pubkey(&core, &actor.pubkey).await? {
+        if let Some(relay) = hosting::get_relay(&core, &membership.relay_id).await? {
             entries.push(serde_json::json!({
                 "offer": memberships::get_offer(&core, &relay).await?,
                 "membership": MembershipView::from(&membership),
@@ -65,7 +50,7 @@ pub async fn get_account(State(core): State<Core>, Authed(actor): Authed) -> Api
 
 /// What a relay sells memberships for. Anyone may ask.
 pub async fn get_offer(State(core): State<Core>, Path(id): Path<String>) -> ApiResult {
-    let relay = load_selling_relay(&core, &id).await?;
+    let relay = hosting::selling_relay(&core, &id).await?;
     ok(memberships::get_offer(&core, &relay).await?)
 }
 
@@ -75,9 +60,8 @@ pub async fn get_membership(
     Authed(actor): Authed,
     Path(id): Path<String>,
 ) -> ApiResult {
-    let relay = load_selling_relay(&core, &id).await?;
-    let membership =
-        queries::memberships::get_live_membership(core.db.pool(), &relay.id, &actor.pubkey).await?;
+    let relay = hosting::selling_relay(&core, &id).await?;
+    let membership = memberships::live_membership(&core, &relay.id, &actor.pubkey).await?;
     ok(serde_json::json!({ "membership": membership.as_ref().map(MembershipView::from) }))
 }
 
@@ -88,7 +72,7 @@ pub async fn create_checkout(
     Path(id): Path<String>,
     Json(request): Json<ReturnTo>,
 ) -> ApiResult {
-    let relay = load_selling_relay(&core, &id).await?;
+    let relay = hosting::selling_relay(&core, &id).await?;
     let url =
         memberships::open_checkout(&core, &relay, &actor.pubkey, request.return_url.as_deref())
             .await?;
@@ -102,11 +86,10 @@ pub async fn reconcile_checkout(
     Path(id): Path<String>,
     Json(request): Json<ReconcileRequest>,
 ) -> ApiResult {
-    let relay = load_selling_relay(&core, &id).await?;
-    let membership =
-        queries::memberships::get_live_membership(core.db.pool(), &relay.id, &actor.pubkey)
-            .await?
-            .ok_or(Error::NotFound("membership not found"))?;
+    let relay = hosting::selling_relay(&core, &id).await?;
+    let membership = memberships::live_membership(&core, &relay.id, &actor.pubkey)
+        .await?
+        .ok_or(Error::NotFound("membership not found"))?;
     let paid = memberships::reconcile_checkout(&core, &membership, &request.checkout).await?;
     ok(serde_json::json!({ "paid": paid }))
 }
@@ -117,7 +100,7 @@ pub async fn cancel_renewal(
     Authed(actor): Authed,
     Path(id): Path<String>,
 ) -> ApiResult {
-    let relay = load_selling_relay(&core, &id).await?;
+    let relay = hosting::selling_relay(&core, &id).await?;
     let membership = memberships::cancel_renewal(&core, &relay, &actor.pubkey).await?;
     ok(MembershipView::from(&membership))
 }
@@ -128,7 +111,7 @@ pub async fn create_invite(
     Path(id): Path<String>,
     Json(request): Json<ReturnTo>,
 ) -> ApiResult {
-    let relay = load_selling_relay(&core, &id).await?;
+    let relay = hosting::selling_relay(&core, &id).await?;
     let url =
         memberships::open_invite_checkout(&core, &relay, request.return_url.as_deref()).await?;
     ok(serde_json::json!({ "url": url }))
@@ -146,7 +129,7 @@ pub async fn reconcile_invite(
     Path(code): Path<String>,
     Json(request): Json<ReconcileRequest>,
 ) -> ApiResult {
-    let membership = queries::memberships::get_membership_by_invite(core.db.pool(), &code)
+    let membership = memberships::membership_by_invite(&core, &code)
         .await?
         .ok_or(Error::NotFound("invite not found"))?;
     let paid = memberships::reconcile_checkout(&core, &membership, &request.checkout).await?;

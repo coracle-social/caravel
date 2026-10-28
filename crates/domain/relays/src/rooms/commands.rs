@@ -18,7 +18,6 @@ pub async fn apply_event(
     conn: &mut PgConnection,
     key: &Key,
     relay_id: &str,
-    owner: &str,
     event: &Event,
     now: i64,
 ) -> Result<Vec<Event>> {
@@ -47,7 +46,7 @@ pub async fn apply_event(
 
             Ok(vec![
                 publish_metadata(&mut *conn, key, relay_id, room_id, now).await?,
-                publish_admins(conn, key, relay_id, room_id, owner, now).await?,
+                publish_admins(conn, key, relay_id, room_id, now).await?,
             ])
         }
         kinds::PUT_USER => {
@@ -65,7 +64,7 @@ pub async fn apply_event(
                 .execute(&mut *conn)
                 .await?;
             }
-            publish_membership(conn, key, relay_id, room_id, owner, now).await
+            publish_membership(conn, key, relay_id, room_id, now).await
         }
         kinds::ASSIGN_PERMISSION => {
             // Someone granted a permission becomes a member, to see what they moderate.
@@ -89,7 +88,7 @@ pub async fn apply_event(
                 .execute(&mut *conn)
                 .await?;
             }
-            publish_membership(conn, key, relay_id, room_id, owner, now).await
+            publish_membership(conn, key, relay_id, room_id, now).await
         }
         kinds::UNASSIGN_PERMISSION => {
             for grant in event.tags.find_all("p") {
@@ -111,7 +110,7 @@ pub async fn apply_event(
                 .await?;
             }
             Ok(vec![
-                publish_admins(conn, key, relay_id, room_id, owner, now).await?,
+                publish_admins(conn, key, relay_id, room_id, now).await?,
             ])
         }
         kinds::REMOVE_USER => {
@@ -124,7 +123,7 @@ pub async fn apply_event(
             .bind(pubkeys)
             .execute(&mut *conn)
             .await?;
-            publish_membership(conn, key, relay_id, room_id, owner, now).await
+            publish_membership(conn, key, relay_id, room_id, now).await
         }
         kinds::JOIN_REQUEST => {
             let room = queries::get_room(&mut *conn, relay_id, room_id).await?;
@@ -148,17 +147,7 @@ pub async fn apply_event(
             if added == 0 {
                 return Ok(Vec::new());
             }
-            publish_member_change(
-                conn,
-                key,
-                relay_id,
-                room_id,
-                &pubkey,
-                kinds::PUT_USER,
-                owner,
-                now,
-            )
-            .await
+            publish_member_change(conn, key, relay_id, room_id, &pubkey, kinds::PUT_USER, now).await
         }
         kinds::LEAVE_REQUEST => {
             let pubkey = event.pubkey.to_hex();
@@ -181,7 +170,6 @@ pub async fn apply_event(
                 room_id,
                 &pubkey,
                 kinds::REMOVE_USER,
-                owner,
                 now,
             )
             .await
@@ -271,7 +259,6 @@ async fn publish_member_change(
     room_id: &str,
     pubkey: &str,
     kind: u16,
-    owner: &str,
     now: i64,
 ) -> Result<Vec<Event>> {
     let event = crate::events::commands::publish(
@@ -288,7 +275,7 @@ async fn publish_member_change(
     .await?;
 
     let mut published = vec![event];
-    published.extend(publish_membership(conn, key, relay_id, room_id, owner, now).await?);
+    published.extend(publish_membership(conn, key, relay_id, room_id, now).await?);
     Ok(published)
 }
 
@@ -298,12 +285,11 @@ async fn publish_membership(
     key: &Key,
     relay_id: &str,
     room_id: &str,
-    owner: &str,
     now: i64,
 ) -> Result<Vec<Event>> {
     Ok(vec![
         publish_members(&mut *conn, key, relay_id, room_id, now).await?,
-        publish_admins(conn, key, relay_id, room_id, owner, now).await?,
+        publish_admins(conn, key, relay_id, room_id, now).await?,
     ])
 }
 
@@ -330,9 +316,9 @@ pub async fn publish_admins(
     key: &Key,
     relay_id: &str,
     room_id: &str,
-    owner: &str,
     now: i64,
 ) -> Result<Event> {
+    let owner = crate::access::queries::owner_pubkey(&mut *conn, relay_id).await?;
     let members = queries::list_members_of_room(&mut *conn, relay_id, room_id).await?;
     let tags = crate::rooms::admins_tags(room_id, &owner, &members);
 

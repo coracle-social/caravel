@@ -10,9 +10,7 @@ use axum::extract::{Extension, Path, Request};
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use caravel_core::media;
-use caravel_db::queries;
-use caravel_domain as domain;
-use caravel_domain::media::{Blob, Deleted, MAX_BLOB_SIZE};
+use caravel_relays::media::{Blob, Deleted, MAX_BLOB_SIZE};
 use caravel_util::encoding::{is_hex64, sha256_hex};
 use caravel_util::nostr::kinds::BLOSSOM_AUTH;
 use futures_util::StreamExt;
@@ -202,7 +200,7 @@ pub async fn download(
     }
 
     let core = route.instance.core();
-    let blob = queries::media::get_blob(core.db.pool(), &state.relay.id, &sha256)
+    let blob = caravel_core::media::get_blob(core, &state.relay.id, &sha256)
         .await
         .map_err(|error| Refused::failed("the blob could not be read", error))?
         .ok_or_else(|| Refused::new(StatusCode::NOT_FOUND, "no such blob"))?;
@@ -215,7 +213,7 @@ pub async fn download(
     let read = core
         .blobs
         .get(
-            &domain::media::blob_key(&state.relay.id, &sha256),
+            &caravel_relays::media::blob_key(&state.relay.id, &sha256),
             range.clone(),
         )
         .await
@@ -442,8 +440,8 @@ pub async fn list(
         return Err(Refused::new(StatusCode::BAD_REQUEST, "not a hex pubkey"));
     }
 
-    let blobs = queries::media::list_blobs_for_pubkey(
-        route.instance.core().db.pool(),
+    let blobs = caravel_core::media::list_blobs_for_pubkey(
+        route.instance.core(),
         &route.instance.relay_id(),
         &pubkey,
     )

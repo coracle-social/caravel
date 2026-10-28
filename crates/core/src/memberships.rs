@@ -8,12 +8,10 @@ use caravel_util::stripe::{MembershipCheckoutParams, Standing, Subscription};
 
 use crate::Core;
 use crate::notifications;
-use caravel_db::{commands, queries};
-use caravel_domain as domain;
-use caravel_domain::memberships::MemberSource;
-use caravel_domain::memberships::{InviteView, Membership, MembershipStatus, Offer};
-use caravel_domain::relays::Relay;
-use caravel_domain::sessions::SESSION_TTL;
+use caravel_billing::relays::Relay;
+use caravel_billing::relays::{InviteView, Membership, MembershipStatus, Offer};
+use caravel_operations::sessions::SESSION_TTL;
+use caravel_relays::access::MemberSource;
 use caravel_util::bus::Change;
 use caravel_util::error::{Error, Result};
 
@@ -25,11 +23,52 @@ const PENDING_TTL: i64 = 2 * 24 * 60 * 60;
 /// collects its renewal.
 const RENEWAL_GRACE: i64 = 14 * 24 * 60 * 60;
 
+// --- Reads ---
+
+/// The caller's live membership of a relay, if they hold one.
+pub async fn live_membership(
+    core: &Core,
+    relay_id: &str,
+    pubkey: &str,
+) -> Result<Option<Membership>> {
+    caravel_billing::relays::queries::membership::get_live_membership(
+        core.db.pool(),
+        relay_id,
+        pubkey,
+    )
+    .await
+}
+
+/// Every live membership a pubkey holds, newest first.
+pub async fn memberships_for_pubkey(core: &Core, pubkey: &str) -> Result<Vec<Membership>> {
+    caravel_billing::relays::queries::membership::list_live_memberships_for_pubkey(
+        core.db.pool(),
+        pubkey,
+    )
+    .await
+}
+
+/// A relay's memberships, newest first.
+pub async fn memberships_for_relay(core: &Core, relay_id: &str) -> Result<Vec<Membership>> {
+    caravel_billing::relays::queries::membership::list_memberships_for_relay(
+        core.db.pool(),
+        relay_id,
+    )
+    .await
+}
+
+/// The membership an invite code belongs to, if any.
+pub async fn membership_by_invite(core: &Core, code: &str) -> Result<Option<Membership>> {
+    caravel_billing::relays::queries::membership::get_membership_by_invite(core.db.pool(), code)
+        .await
+}
+
 /// What a relay sells memberships for, and whether it can take payment now.
 pub async fn get_offer(core: &Core, relay: &Relay) -> Result<Offer> {
-    let accepting_payment = queries::tenants::get_tenant(core.db.pool(), &relay.tenant_pubkey)
-        .await?
-        .is_some_and(|tenant| tenant.payout_account().is_some());
+    let accepting_payment =
+        caravel_billing::tenants::queries::get_tenant(core.db.pool(), &relay.tenant_pubkey)
+            .await?
+            .is_some_and(|tenant| tenant.payout_account().is_some());
 
     Ok(Offer {
         relay: relay.profile(),
@@ -41,10 +80,13 @@ pub async fn get_offer(core: &Core, relay: &Relay) -> Result<Offer> {
 
 /// An invite as its buyer sees it.
 pub async fn get_invite(core: &Core, code: &str) -> Result<InviteView> {
-    let membership = queries::memberships::get_membership_by_invite(core.db.pool(), code)
-        .await?
-        .ok_or(Error::NotFound("invite not found"))?;
-    let relay = queries::relays::get_relay(core.db.pool(), &membership.relay_id)
+    let membership = caravel_billing::relays::queries::membership::get_membership_by_invite(
+        core.db.pool(),
+        code,
+    )
+    .await?
+    .ok_or(Error::NotFound("invite not found"))?;
+    let relay = caravel_billing::relays::queries::get_relay(core.db.pool(), &membership.relay_id)
         .await?
         .ok_or(Error::NotFound("invite not found"))?;
     let offer = get_offer(core, &relay).await?;
@@ -68,7 +110,7 @@ pub async fn get_invite(core: &Core, code: &str) -> Result<InviteView> {
 
 /// The tenant's Connect account, if it can take payments.
 async fn payout_account(core: &Core, relay: &Relay) -> Result<String> {
-    queries::tenants::get_tenant(core.db.pool(), &relay.tenant_pubkey)
+    caravel_billing::tenants::queries::get_tenant(core.db.pool(), &relay.tenant_pubkey)
         .await?
         .and_then(|tenant| tenant.payout_account().map(str::to_string))
         .ok_or_else(|| Error::conflict("payouts-not-ready", "this relay can't take payments yet"))
@@ -89,8 +131,10 @@ pub async fn open_checkout(
     let membership = core
         .db
         .with_tx(async |conn| {
-            let live =
-                queries::memberships::get_live_membership(&mut *conn, &relay.id, pubkey).await?;
+            let live = caravel_billing::relays::queries::membership::get_live_membership(
+                &mut *conn, &relay.id, pubkey,
+            )
+            .await?;
             if live
                 .as_ref()
                 .is_some_and(|m| m.status == MembershipStatus::Active)
@@ -101,7 +145,13 @@ pub async fn open_checkout(
                 ));
             }
             // A seat that can't be granted mustn't be sold.
-            if !queries::memberships::has_seat(&mut *conn, relay, Some(pubkey)).await? {
+            if !caravel_billing::relays::queries::membership::has_seat(
+                &mut *conn,
+                relay,
+                Some(pubkey),
+            )
+            .await?
+            {
                 return Err(Error::conflict("member-limit", "this relay is full"));
             }
             if let Some(live) = live {
@@ -109,18 +159,19 @@ pub async fn open_checkout(
             }
 
             let membership = new_membership(&relay.id, Some(pubkey), None, now);
-            commands::memberships::insert_membership(conn, &membership).await?;
+            caravel_billing::relays::commands::membership::insert_membership(conn, &membership)
+                .await?;
             Ok(membership)
         })
         .await?;
 
-    let page = domain::memberships::with_return(&relay.portal_url("/"), return_url)?;
+    let page = caravel_billing::relays::with_return(&relay.portal_url("/"), return_url)?;
     checkout(
         core,
         relay,
         &account,
         &membership,
-        &domain::memberships::checkout_success_url(&page),
+        &caravel_billing::relays::checkout_success_url(&page),
         &page,
     )
     .await
@@ -140,26 +191,29 @@ pub async fn open_invite_checkout(
     let membership = core
         .db
         .with_tx(async |conn| {
-            if !queries::memberships::has_seat(&mut *conn, relay, None).await? {
+            if !caravel_billing::relays::queries::membership::has_seat(&mut *conn, relay, None)
+                .await?
+            {
                 return Err(Error::conflict("member-limit", "this relay is full"));
             }
             let membership = new_membership(&relay.id, None, Some(&code), now);
-            commands::memberships::insert_membership(conn, &membership).await?;
+            caravel_billing::relays::commands::membership::insert_membership(conn, &membership)
+                .await?;
             Ok(membership)
         })
         .await?;
 
-    let success = domain::memberships::with_return(
+    let success = caravel_billing::relays::with_return(
         &relay.portal_url(&format!("/invites/{code}")),
         return_url,
     )?;
-    let cancel = domain::memberships::with_return(&relay.portal_url("/"), return_url)?;
+    let cancel = caravel_billing::relays::with_return(&relay.portal_url("/"), return_url)?;
     checkout(
         core,
         relay,
         &account,
         &membership,
-        &domain::memberships::checkout_success_url(&success),
+        &caravel_billing::relays::checkout_success_url(&success),
         &cancel,
     )
     .await
@@ -200,8 +254,12 @@ async fn checkout(
                 .stripe
                 .create_member_customer(&membership.id, &relay.id)
                 .await?;
-            commands::memberships::set_customer(core.db.pool(), &membership.id, &customer_id)
-                .await?;
+            caravel_billing::relays::commands::membership::set_customer(
+                core.db.pool(),
+                &membership.id,
+                &customer_id,
+            )
+            .await?;
             customer_id
         }
     };
@@ -281,14 +339,16 @@ pub async fn activate(
     };
     let status = status_of(&subscription);
 
-    let relay = queries::relays::require_relay(core.db.pool(), &membership.relay_id).await?;
+    let relay =
+        caravel_billing::relays::queries::require_relay(core.db.pool(), &membership.relay_id)
+            .await?;
     let key = core.relay_key(&relay)?;
     let published = core
         .db
         .with_tx(async |conn| {
             // Joins bind invites under this lock.
-            queries::relays::lock_relay(&mut *conn, &relay.id).await?;
-            commands::memberships::set_paid(
+            caravel_billing::relays::queries::lock_relay(&mut *conn, &relay.id).await?;
+            caravel_billing::relays::commands::membership::set_paid(
                 &mut *conn,
                 &membership.id,
                 status,
@@ -300,8 +360,8 @@ pub async fn activate(
 
             match (&membership.pubkey, &membership.invite_code) {
                 (Some(pubkey), _) => {
-                    commands::notifications::clear(&mut *conn, &relay.id, pubkey).await?;
-                    commands::memberships::admit(
+                    caravel_relays::notify::commands::clear(&mut *conn, &relay.id, pubkey).await?;
+                    caravel_relays::access::commands::admit(
                         conn,
                         &key,
                         &relay.id,
@@ -313,11 +373,15 @@ pub async fn activate(
                 }
                 (None, Some(code)) => {
                     // The caller's copy may predate the join that spent the invite.
-                    let unused = queries::memberships::get_membership_by_invite(&mut *conn, code)
+                    let unused =
+                        caravel_billing::relays::queries::membership::get_membership_by_invite(
+                            &mut *conn, code,
+                        )
                         .await?
                         .is_some_and(|invite| invite.pubkey.is_none());
                     if unused {
-                        commands::claims::create_claim(conn, &relay.id, code, now).await?;
+                        caravel_relays::access::commands::create_claim(conn, &relay.id, code, now)
+                            .await?;
                     }
                     Ok(Vec::new())
                 }
@@ -336,16 +400,20 @@ pub async fn activate(
 /// Stop a member's membership of a relay from renewing. It keeps its access until
 /// its paid period ends.
 pub async fn cancel_renewal(core: &Core, relay: &Relay, pubkey: &str) -> Result<Membership> {
-    let membership = queries::memberships::get_live_membership(core.db.pool(), &relay.id, pubkey)
-        .await?
-        .filter(|m| m.status == MembershipStatus::Active)
-        .ok_or(Error::NotFound("membership not found"))?;
+    let membership = caravel_billing::relays::queries::membership::get_live_membership(
+        core.db.pool(),
+        &relay.id,
+        pubkey,
+    )
+    .await?
+    .filter(|m| m.status == MembershipStatus::Active)
+    .ok_or(Error::NotFound("membership not found"))?;
 
     let (_, subscription_id) = membership.subscription()?;
     core.stripe
         .cancel_subscription_at_period_end(subscription_id)
         .await?;
-    commands::memberships::set_status(
+    caravel_billing::relays::commands::membership::set_status(
         core.db.pool(),
         &membership.id,
         MembershipStatus::Canceled,
@@ -369,7 +437,7 @@ async fn lapse(core: &Core, membership: &Membership, relay: &Relay) -> Result<()
     let published = core
         .db
         .with_tx(async |conn| {
-            commands::memberships::set_status(
+            caravel_billing::relays::commands::membership::set_status(
                 &mut *conn,
                 &membership.id,
                 MembershipStatus::Lapsed,
@@ -378,11 +446,12 @@ async fn lapse(core: &Core, membership: &Membership, relay: &Relay) -> Result<()
             .await?;
             match (&membership.pubkey, &membership.invite_code) {
                 (Some(pubkey), _) => {
-                    let paid = queries::memberships::get_member(&mut *conn, &relay.id, pubkey)
-                        .await?
-                        .is_some_and(|member| member.source == MemberSource::Payment);
+                    let paid =
+                        caravel_relays::access::queries::get_member(&mut *conn, &relay.id, pubkey)
+                            .await?
+                            .is_some_and(|member| member.source == MemberSource::Payment);
                     if paid {
-                        commands::memberships::remove(
+                        caravel_relays::access::commands::remove(
                             conn,
                             &key,
                             &relay.id,
@@ -396,7 +465,8 @@ async fn lapse(core: &Core, membership: &Membership, relay: &Relay) -> Result<()
                     }
                 }
                 (None, Some(code)) => {
-                    commands::claims::revoke_claim(conn, &relay.id, code, now).await?;
+                    caravel_relays::access::commands::revoke_claim(conn, &relay.id, code, now)
+                        .await?;
                     Ok(Vec::new())
                 }
                 (None, None) => Ok(Vec::new()),
@@ -409,7 +479,9 @@ async fn lapse(core: &Core, membership: &Membership, relay: &Relay) -> Result<()
     });
 
     if let Some(pubkey) = &membership.pubkey {
-        let (token, _) = commands::sessions::create_session(core.db.pool(), pubkey, now).await?;
+        let (token, _) =
+            caravel_operations::sessions::commands::create_session(core.db.pool(), pubkey, now)
+                .await?;
         let mut renew = url::Url::parse(&relay.portal_url("/")).map_err(Error::internal)?;
         renew.query_pairs_mut().append_pair("token", &token);
         let message = format!(
@@ -438,7 +510,7 @@ async fn release(core: &Core, membership: &Membership) -> Result<()> {
     let now = core.clock.now();
     core.db
         .with_tx(async |conn| {
-            commands::memberships::set_status(
+            caravel_billing::relays::commands::membership::set_status(
                 &mut *conn,
                 &membership.id,
                 MembershipStatus::Lapsed,
@@ -448,7 +520,13 @@ async fn release(core: &Core, membership: &Membership) -> Result<()> {
             if membership.pubkey.is_none()
                 && let Some(code) = &membership.invite_code
             {
-                commands::claims::revoke_claim(conn, &membership.relay_id, code, now).await?;
+                caravel_relays::access::commands::revoke_claim(
+                    conn,
+                    &membership.relay_id,
+                    code,
+                    now,
+                )
+                .await?;
             }
             Ok::<_, Error>(())
         })
@@ -462,14 +540,18 @@ async fn release(core: &Core, membership: &Membership) -> Result<()> {
 /// paid period has run out. A paying membership is read from Stripe once per
 /// period, after it ends, so no webhook is needed and none can be missed.
 pub async fn sweep(core: &Core) -> Result<()> {
-    for membership in queries::memberships::list_memberships_needing_release(core.db.pool()).await?
+    for membership in
+        caravel_billing::relays::queries::membership::list_memberships_needing_release(
+            core.db.pool(),
+        )
+        .await?
     {
         if let Err(error) = release(core, &membership).await {
             tracing::warn!(membership = %membership.id, error = %error, "failed to release a membership");
         }
     }
 
-    for membership in queries::memberships::list_memberships_with_status(
+    for membership in caravel_billing::relays::queries::membership::list_memberships_with_status(
         core.db.pool(),
         MembershipStatus::Pending,
     )
@@ -480,8 +562,11 @@ pub async fn sweep(core: &Core) -> Result<()> {
         }
     }
 
-    for membership in
-        queries::memberships::list_memberships_past_period(core.db.pool(), core.clock.now()).await?
+    for membership in caravel_billing::relays::queries::membership::list_memberships_past_period(
+        core.db.pool(),
+        core.clock.now(),
+    )
+    .await?
     {
         if let Err(error) = renew_or_lapse(core, &membership).await {
             tracing::warn!(membership = %membership.id, error = %error, "failed to settle a membership");
@@ -518,7 +603,7 @@ async fn settle_pending(core: &Core, membership: &Membership) -> Result<()> {
     }
 
     if expired {
-        commands::memberships::set_status(
+        caravel_billing::relays::commands::membership::set_status(
             core.db.pool(),
             &membership.id,
             MembershipStatus::Lapsed,
@@ -534,7 +619,9 @@ async fn settle_pending(core: &Core, membership: &Membership) -> Result<()> {
 /// runs out, a renewal paid in a newer checkout takes over, and anything else
 /// lapses it.
 async fn renew_or_lapse(core: &Core, membership: &Membership) -> Result<()> {
-    let relay = queries::relays::require_relay(core.db.pool(), &membership.relay_id).await?;
+    let relay =
+        caravel_billing::relays::queries::require_relay(core.db.pool(), &membership.relay_id)
+            .await?;
     let (customer_id, subscription_id) = membership.subscription()?;
     let now = core.clock.now();
 
@@ -544,7 +631,7 @@ async fn renew_or_lapse(core: &Core, membership: &Membership) -> Result<()> {
         .filter(|_| subscription.standing == Standing::Good && subscription.latest_invoice_paid)
     {
         let status = status_of(&subscription);
-        return commands::memberships::set_status(
+        return caravel_billing::relays::commands::membership::set_status(
             core.db.pool(),
             &membership.id,
             status,

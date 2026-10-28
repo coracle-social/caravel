@@ -196,6 +196,28 @@ impl Relay {
         }
     }
 
+    /// What this relay's own row decides of its rules, before its access lists and
+    /// rooms are loaded.
+    pub fn snapshot(&self) -> caravel_relays::policy::RelaySnapshot {
+        caravel_relays::policy::RelaySnapshot {
+            relay_id: self.id.clone(),
+            relay_pubkey: self.pubkey.clone(),
+            tenant_pubkey: self.tenant_pubkey.clone(),
+            public_read: self.policy_public_read,
+            anonymous_read: self.policy_anonymous_read,
+            public_write: self.policy_public_write,
+            public_join: self.policy_public_join,
+            strip_signatures: self.policy_strip_signatures,
+            groups_enabled: self.groups_enabled,
+            members_can_invite: self.members_can_invite,
+            charges_members: self.charges_members(),
+            member_limit: self
+                .member_limit()
+                .and_then(|limit| usize::try_from(limit).ok()),
+            ..Default::default()
+        }
+    }
+
     pub fn profile(&self) -> RelayProfile {
         RelayProfile {
             relay_id: self.id.clone(),

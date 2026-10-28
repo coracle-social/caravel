@@ -127,9 +127,9 @@ pub fn http_auth(
 
 /// Make a pubkey a tenant, without reaching Stripe.
 pub async fn insert_tenant(core: &Core, pubkey: &str) {
-    caravel_db::commands::tenants::insert_tenant(
+    caravel_billing::tenants::commands::insert_tenant(
         core.db.pool(),
-        &caravel_domain::tenants::Tenant {
+        &caravel_billing::tenants::Tenant {
             pubkey: pubkey.to_string(),
             return_url: "http://localhost/account".to_string(),
             created_at: core.clock.now(),
@@ -150,7 +150,7 @@ pub fn subdomain() -> String {
 /// Returns the relay and the tenant's secret key.
 pub async fn create_relay(
     core: &Core,
-) -> (caravel_domain::relays::Relay, coracle_lib::keys::SecretKey) {
+) -> (caravel_billing::relays::Relay, coracle_lib::keys::SecretKey) {
     let secret = coracle_lib::keys::SecretKey::generate();
     let pubkey = secret.public_key().to_hex();
     insert_tenant(core, &pubkey).await;
@@ -158,7 +158,7 @@ pub async fn create_relay(
     let relay = crate::hosting::create_relay(
         core,
         &pubkey,
-        caravel_domain::relays::RelaySettings {
+        caravel_billing::relays::RelaySettings {
             subdomain: Some(subdomain()),
             domain: Some(RELAY_DOMAIN.to_string()),
             plan_id: Some("free".to_string()),

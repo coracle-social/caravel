@@ -5,13 +5,12 @@
 mod common;
 
 use anyhow::Result;
+use caravel_billing::relays::{Membership, MembershipStatus};
+use caravel_billing::relays::{Relay, RelaySettings};
 use caravel_core::testing::sign_event;
 use caravel_core::{Core, hosting, management, memberships, sessions};
-use caravel_db::{commands, queries};
-use caravel_domain::memberships::MemberSource;
-use caravel_domain::memberships::{Membership, MembershipStatus};
-use caravel_domain::policy::Join;
-use caravel_domain::relays::{Relay, RelaySettings};
+use caravel_relays::access::MemberSource;
+use caravel_relays::policy::Join;
 use caravel_util::error::Error;
 use caravel_util::nostr::kinds;
 use common::stripe::FakeStripe;
@@ -40,8 +39,13 @@ async fn fixture() -> Result<Fixture> {
     travel(&core, day(2030, 3, 1));
 
     let tenant = create_tenant(&core).await?;
-    commands::tenants::set_tenant_stripe_account(core.db.pool(), &tenant, "acct_ready", true)
-        .await?;
+    caravel_billing::tenants::commands::set_tenant_stripe_account(
+        core.db.pool(),
+        &tenant,
+        "acct_ready",
+        true,
+    )
+    .await?;
     let relay = create_relay(&core, &tenant, "free").await?;
     let relay = price(&core, relay, 500).await?;
     Ok(Fixture {
@@ -65,12 +69,19 @@ fn pubkey() -> String {
 }
 
 async fn live(f: &Fixture, pubkey: &str) -> Result<Option<Membership>> {
-    Ok(queries::memberships::get_live_membership(f.core.db.pool(), &f.relay.id, pubkey).await?)
+    Ok(
+        caravel_billing::relays::queries::membership::get_live_membership(
+            f.core.db.pool(),
+            &f.relay.id,
+            pubkey,
+        )
+        .await?,
+    )
 }
 
 async fn member_source(f: &Fixture, pubkey: &str) -> Result<Option<MemberSource>> {
     Ok(
-        queries::memberships::get_member(f.core.db.pool(), &f.relay.id, pubkey)
+        caravel_relays::access::queries::get_member(f.core.db.pool(), &f.relay.id, pubkey)
             .await?
             .map(|member| member.source),
     )
@@ -93,12 +104,14 @@ async fn buy_invite(f: &Fixture) -> Result<String> {
     let session = f.stripe.last_session();
     f.stripe
         .complete(&session.id, f.core.clock.now() + 30 * DAY);
-    let membership =
-        queries::memberships::list_memberships_for_relay(f.core.db.pool(), &f.relay.id)
-            .await?
-            .into_iter()
-            .find(|membership| membership.id == session.membership_id)
-            .expect("no invite");
+    let membership = caravel_billing::relays::queries::membership::list_memberships_for_relay(
+        f.core.db.pool(),
+        &f.relay.id,
+    )
+    .await?
+    .into_iter()
+    .find(|membership| membership.id == session.membership_id)
+    .expect("no invite");
     assert!(memberships::reconcile_checkout(&f.core, &membership, &session.id).await?);
     Ok(membership.invite_code.expect("no invite code"))
 }
@@ -117,7 +130,10 @@ async fn join(core: &Core, relay: &Relay, joiner: &SecretKey, code: &str) -> Res
     let now = core.clock.now();
     core.db
         .with_tx(async |conn| {
-            commands::memberships::admit_join(conn, &key, relay, &event, &join, now).await
+            caravel_billing::relays::commands::membership::admit_join(
+                conn, &key, relay, &event, &join, now,
+            )
+            .await
         })
         .await
         .map(drop)
@@ -195,7 +211,7 @@ async fn a_checkout_is_refused_when_it_cant_be_granted() -> Result<()> {
         })
     ));
 
-    commands::tenants::set_tenant_stripe_account(
+    caravel_billing::tenants::commands::set_tenant_stripe_account(
         f.core.db.pool(),
         &f.relay.tenant_pubkey,
         "acct_ready",
@@ -295,17 +311,23 @@ async fn settling_an_invite_from_a_stale_copy_leaves_it_spent() -> Result<()> {
     let subscription_id = f
         .stripe
         .complete(&session.id, f.core.clock.now() + 30 * DAY);
-    let stale = queries::memberships::list_memberships_for_relay(f.core.db.pool(), &f.relay.id)
-        .await?
-        .into_iter()
-        .find(|membership| membership.id == session.membership_id)
-        .expect("no invite");
+    let stale = caravel_billing::relays::queries::membership::list_memberships_for_relay(
+        f.core.db.pool(),
+        &f.relay.id,
+    )
+    .await?
+    .into_iter()
+    .find(|membership| membership.id == session.membership_id)
+    .expect("no invite");
     let code = stale.invite_code.clone().expect("no invite code");
     assert!(memberships::reconcile_checkout(&f.core, &stale, &session.id).await?);
     join(&f.core, &f.relay, &SecretKey::generate(), &code).await?;
 
     assert!(memberships::activate(&f.core, &stale, &session.customer, &subscription_id).await?);
-    assert!(!queries::claims::is_live_claim(f.core.db.pool(), &f.relay.id, &code).await?);
+    assert!(
+        !caravel_relays::access::queries::is_live_claim(f.core.db.pool(), &f.relay.id, &code)
+            .await?
+    );
     Ok(())
 }
 
@@ -323,11 +345,14 @@ async fn racing_joins_bind_a_paid_invite_once() -> Result<()> {
     assert_eq!([a.is_ok(), b.is_ok()].iter().filter(|ok| **ok).count(), 1);
 
     let bound: Vec<Membership> =
-        queries::memberships::list_memberships_for_relay(f.core.db.pool(), &f.relay.id)
-            .await?
-            .into_iter()
-            .filter(|membership| membership.pubkey.is_some())
-            .collect();
+        caravel_billing::relays::queries::membership::list_memberships_for_relay(
+            f.core.db.pool(),
+            &f.relay.id,
+        )
+        .await?
+        .into_iter()
+        .filter(|membership| membership.pubkey.is_some())
+        .collect();
     assert_eq!(bound.len(), 1);
     let winner = bound[0].pubkey.clone().unwrap();
     assert_eq!(
@@ -343,13 +368,21 @@ async fn an_unused_paid_invite_holds_a_seat() -> Result<()> {
     let f = fixture().await?;
     let code = buy_invite(&f).await?;
     assert_eq!(
-        queries::memberships::count_reserved_seats(f.core.db.pool(), &f.relay.id).await?,
+        caravel_billing::relays::queries::membership::count_reserved_seats(
+            f.core.db.pool(),
+            &f.relay.id
+        )
+        .await?,
         1
     );
 
     join(&f.core, &f.relay, &SecretKey::generate(), &code).await?;
     assert_eq!(
-        queries::memberships::count_reserved_seats(f.core.db.pool(), &f.relay.id).await?,
+        caravel_billing::relays::queries::membership::count_reserved_seats(
+            f.core.db.pool(),
+            &f.relay.id
+        )
+        .await?,
         0
     );
     Ok(())
@@ -449,10 +482,14 @@ async fn a_lapse_removes_access_and_tells_the_member_how_to_renew() -> Result<()
     assert_eq!(member_source(&f, &member).await?, None);
 
     let now = f.core.clock.now();
-    let notice =
-        queries::notifications::get_notification(f.core.db.pool(), &f.relay.id, &member, now)
-            .await?
-            .expect("no notice");
+    let notice = caravel_relays::notify::queries::get_notification(
+        f.core.db.pool(),
+        &f.relay.id,
+        &member,
+        now,
+    )
+    .await?
+    .expect("no notice");
     assert!(
         notice.message.starts_with("Your membership of"),
         "{}",
@@ -478,9 +515,14 @@ async fn a_lapse_removes_access_and_tells_the_member_how_to_renew() -> Result<()
     // Paying again clears the notice and opens a new membership.
     pay(&f, &member).await?;
     assert!(
-        queries::notifications::get_notification(f.core.db.pool(), &f.relay.id, &member, now)
-            .await?
-            .is_none()
+        caravel_relays::notify::queries::get_notification(
+            f.core.db.pool(),
+            &f.relay.id,
+            &member,
+            now
+        )
+        .await?
+        .is_none()
     );
     Ok(())
 }
@@ -552,7 +594,10 @@ async fn memberships_are_released_when_their_relay_stops_charging() -> Result<()
         member_source(&f, &member).await?,
         Some(MemberSource::Payment)
     );
-    assert!(!queries::claims::is_live_claim(f.core.db.pool(), &f.relay.id, &code).await?);
+    assert!(
+        !caravel_relays::access::queries::is_live_claim(f.core.db.pool(), &f.relay.id, &code)
+            .await?
+    );
     Ok(())
 }
 
@@ -668,7 +713,7 @@ async fn an_offer_says_whether_payment_is_taken() -> Result<()> {
     let offer = memberships::get_offer(&f.core, &f.relay).await?;
     assert_eq!((offer.price, offer.accepting_payment), (500, true));
 
-    commands::tenants::set_tenant_stripe_account(
+    caravel_billing::tenants::commands::set_tenant_stripe_account(
         f.core.db.pool(),
         &f.relay.tenant_pubkey,
         "acct_ready",

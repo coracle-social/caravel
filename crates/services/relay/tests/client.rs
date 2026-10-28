@@ -6,9 +6,8 @@ mod common;
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
+use caravel_billing::relays::Relay;
 use caravel_core::testing::sign_event;
-use caravel_db::commands;
-use caravel_domain::relays::Relay;
 use caravel_util::nostr;
 use caravel_util::robot::{Robot, RobotProfile};
 use common::*;
@@ -26,9 +25,14 @@ async fn relay_at(server: &Server, host: &str) -> (Relay, SecretKey, String) {
     let relay = server
         .update(&relay, json!({"policy_public_read": 1}))
         .await;
-    commands::relays::add_host_redirect(server.core.db.pool(), host, &relay.id, server.now())
-        .await
-        .unwrap();
+    caravel_billing::relays::commands::add_host_redirect(
+        server.core.db.pool(),
+        host,
+        &relay.id,
+        server.now(),
+    )
+    .await
+    .unwrap();
     server.relays.reload(&relay.id).await.unwrap();
     let url = format!("ws://{host}:{}/", server.addr.port());
     (relay, owner, url)

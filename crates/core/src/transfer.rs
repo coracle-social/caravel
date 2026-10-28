@@ -10,11 +10,9 @@ use coracle_lib::events::Event;
 use futures_util::{Stream, StreamExt};
 
 use crate::Core;
-use caravel_db::{commands, queries};
-use caravel_domain as domain;
-use caravel_domain::events::{Saved, StoredEvent};
-use caravel_domain::relays::Relay;
-use caravel_domain::transfer::{HistoryEntry, ImportProblem, ImportResult, Line};
+use caravel_billing::relays::Relay;
+use caravel_relays::events::{Saved, StoredEvent};
+use caravel_relays::transfer::{HistoryEntry, ImportProblem, ImportResult, Line};
 use caravel_util::bus::Change;
 use caravel_util::error::{Error, Result};
 use caravel_util::nostr::kinds;
@@ -42,9 +40,14 @@ pub fn export_events(
                 return Ok(None);
             };
 
-            let page =
-                queries::events::list_events_after(&pool, &relay_id, created_at, &id, EXPORT_PAGE)
-                    .await?;
+            let page = caravel_relays::events::queries::list_events_after(
+                &pool,
+                &relay_id,
+                created_at,
+                &id,
+                EXPORT_PAGE,
+            )
+            .await?;
             let text: String = page
                 .iter()
                 .map(|stored| format!("{}\n", stored.to_json(false)))
@@ -108,12 +111,14 @@ where
                 Line::SourceState => result.skipped += 1,
                 Line::Event(event) => {
                     if relay.groups_enabled
-                        && domain::rooms::is_room_event(
+                        && caravel_relays::rooms::is_room_event(
                             event.kind,
-                            event.tags.value(domain::rooms::room_tag(event.kind)),
+                            event
+                                .tags
+                                .value(caravel_relays::rooms::room_tag(event.kind)),
                         )
                     {
-                        let Some(room_id) = domain::rooms::room_id(&event) else {
+                        let Some(room_id) = caravel_relays::rooms::room_id(&event) else {
                             result.fail(ImportProblem {
                                 line: Some(line),
                                 event_id: Some(event.id.to_hex()),
@@ -122,7 +127,7 @@ where
                             continue;
                         };
                         let history = rooms_touched.entry(room_id.to_string()).or_default();
-                        if domain::rooms::is_moderation_kind(event.kind)
+                        if caravel_relays::rooms::is_moderation_kind(event.kind)
                             || matches!(
                                 event.kind,
                                 kinds::rooms::JOIN_REQUEST | kinds::rooms::LEAVE_REQUEST
@@ -179,9 +184,12 @@ async fn store_batch(
         .with_tx(async |conn| {
             let mut saved = Vec::with_capacity(batch.len());
             for (_, event) in &batch {
-                if domain::events::is_storable(event) {
+                if caravel_relays::events::is_storable(event) {
                     saved.push(Some(
-                        commands::events::save_event(&mut *conn, &relay.id, event, now).await?,
+                        caravel_relays::events::commands::save_event(
+                            &mut *conn, &relay.id, event, now,
+                        )
+                        .await?,
                     ));
                 } else {
                     saved.push(None);
@@ -225,7 +233,7 @@ async fn rebuild_rooms(
     }
 
     let key = core.relay_key(relay)?;
-    let known: Vec<String> = queries::rooms::list_rooms(core.db.pool(), &relay.id)
+    let known: Vec<String> = caravel_relays::rooms::queries::list_rooms(core.db.pool(), &relay.id)
         .await?
         .into_iter()
         .map(|room| room.id)
@@ -259,7 +267,7 @@ async fn rebuild_rooms(
                 for page in history.chunks(IMPORT_BATCH) {
                     let ids: Vec<[u8; 32]> = page.iter().map(|entry| entry.id).collect();
                     let mut stored: BTreeMap<[u8; 32], StoredEvent> =
-                        queries::events::get_events(&mut *conn, &relay.id, &ids)
+                        caravel_relays::events::queries::get_events(&mut *conn, &relay.id, &ids)
                             .await?
                             .into_iter()
                             .map(|stored| (stored.head.id, stored))
@@ -270,8 +278,10 @@ async fn rebuild_rooms(
                             continue;
                         };
                         let event = stored.to_event().map_err(anyhow::Error::from)?;
-                        commands::rooms::apply_event(&mut *conn, &key, &relay.id, &event, now)
-                            .await?;
+                        caravel_relays::rooms::commands::apply_event(
+                            &mut *conn, &key, &relay.id, &event, now,
+                        )
+                        .await?;
                     }
                 }
                 Ok::<_, Error>(())
@@ -286,7 +296,9 @@ async fn rebuild_rooms(
 
     let published = core
         .db
-        .with_tx(async |conn| commands::relays::rebuild_derived(conn, &key, &relay.id, now).await)
+        .with_tx(async |conn| {
+            caravel_billing::relays::commands::rebuild_derived(conn, &key, &relay.id, now).await
+        })
         .await?;
     core.bus.publish(Change::AccessChanged {
         relay_id: relay.id.clone(),

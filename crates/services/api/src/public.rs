@@ -6,8 +6,8 @@ use std::collections::HashMap;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
+use caravel_billing::relays::plans as billing;
 use caravel_core::{Core, domains, sessions};
-use caravel_domain::billing;
 use caravel_util::error::Error;
 use serde::Serialize;
 

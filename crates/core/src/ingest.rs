@@ -6,11 +6,9 @@
 use coracle_lib::events::Event;
 
 use crate::Core;
-use caravel_db::commands;
-use caravel_domain as domain;
-use caravel_domain::events::Saved;
-use caravel_domain::policy::Join;
-use caravel_domain::relays::Relay;
+use caravel_billing::relays::Relay;
+use caravel_relays::events::Saved;
+use caravel_relays::policy::Join;
 use caravel_util::error::{Error, Result};
 use caravel_util::nostr::Key;
 use caravel_util::nostr::kinds::{DELETION, VANISH};
@@ -29,15 +27,18 @@ pub async fn store(
     let now = core.clock.now();
     core.db
         .with_tx(async |conn| {
-            let saved = commands::events::save_event(&mut *conn, relay_id, event, now).await?;
+            let saved =
+                caravel_relays::events::commands::save_event(&mut *conn, relay_id, event, now)
+                    .await?;
             let mut published = Vec::new();
             if saved == Saved::New {
                 match event.kind {
                     DELETION => {
-                        commands::events::apply_deletion(conn, relay_id, event).await?;
+                        caravel_relays::events::commands::apply_deletion(conn, relay_id, event)
+                            .await?;
                     }
                     VANISH => {
-                        commands::events::apply_vanish(
+                        caravel_relays::events::commands::apply_vanish(
                             conn,
                             relay_id,
                             &event.pubkey.as_bytes(),
@@ -46,10 +47,15 @@ pub async fn store(
                         .await?;
                     }
                     kind if rooms_enabled
-                        && domain::rooms::is_room_event(kind, domain::rooms::room_id(event)) =>
+                        && caravel_relays::rooms::is_room_event(
+                            kind,
+                            caravel_relays::rooms::room_id(event),
+                        ) =>
                     {
-                        published =
-                            commands::rooms::apply_event(conn, key, relay_id, event, now).await?;
+                        published = caravel_relays::rooms::commands::apply_event(
+                            conn, key, relay_id, event, now,
+                        )
+                        .await?;
                     }
                     _ => {}
                 }
@@ -71,7 +77,10 @@ pub async fn join(
     let now = core.clock.now();
     core.db
         .with_tx(async |conn| {
-            commands::memberships::admit_join(conn, key, relay, event, join, now).await
+            caravel_billing::relays::commands::membership::admit_join(
+                conn, key, relay, event, join, now,
+            )
+            .await
         })
         .await
 }
@@ -82,8 +91,15 @@ pub async fn leave(core: &Core, relay: &Relay, key: &Key, pubkey: &str) -> Resul
     let now = core.clock.now();
     core.db
         .with_tx(async |conn| {
-            commands::memberships::remove(conn, key, &relay.id, &relay.tenant_pubkey, pubkey, now)
-                .await
+            caravel_relays::access::commands::remove(
+                conn,
+                key,
+                &relay.id,
+                &relay.tenant_pubkey,
+                pubkey,
+                now,
+            )
+            .await
         })
         .await
 }

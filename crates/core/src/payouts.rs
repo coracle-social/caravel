@@ -2,9 +2,8 @@
 //! into, and keeping track of whether it can take payments.
 
 use crate::Core;
-use caravel_db::commands;
-use caravel_domain::billing::PayoutStatus;
-use caravel_domain::tenants::Tenant;
+use caravel_billing::tenants::PayoutStatus;
+use caravel_billing::tenants::Tenant;
 use caravel_util::error::{Error, Result};
 
 /// A Stripe onboarding link for a tenant, creating their Connect account the
@@ -15,7 +14,7 @@ pub async fn onboard(core: &Core, tenant: &Tenant, return_url: &str) -> Result<S
         Some(account_id) => account_id.clone(),
         None => {
             let account_id = core.stripe.create_connect_account(&tenant.pubkey).await?;
-            commands::tenants::set_tenant_stripe_account(
+            caravel_billing::tenants::commands::set_tenant_stripe_account(
                 core.db.pool(),
                 &tenant.pubkey,
                 &account_id,
@@ -44,8 +43,13 @@ pub async fn refresh_status(core: &Core, tenant: &Tenant) -> Result<PayoutStatus
     };
 
     let ready = core.stripe.is_connect_account_ready(account_id).await?;
-    commands::tenants::set_tenant_stripe_account(core.db.pool(), &tenant.pubkey, account_id, ready)
-        .await?;
+    caravel_billing::tenants::commands::set_tenant_stripe_account(
+        core.db.pool(),
+        &tenant.pubkey,
+        account_id,
+        ready,
+    )
+    .await?;
 
     Ok(PayoutStatus {
         account_id: Some(account_id.clone()),

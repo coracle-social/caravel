@@ -8,9 +8,8 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use caravel_app::dispatch::{self, Hosts};
 use caravel_app::web::{PageConfig, Web};
+use caravel_billing::relays::Relay;
 use caravel_core::{Core, hosting, testing};
-use caravel_db::{commands, queries};
-use caravel_domain::relays::Relay;
 use caravel_relay::{Relays, RelaysConfig};
 use coracle_lib::keys::SecretKey;
 use http_body_util::BodyExt;
@@ -71,13 +70,23 @@ async fn fixture(api_url: &str) -> Fixture {
     let (custom, old) = (format!("club-{tag}.example"), format!("old-{tag}.example"));
     let settings = serde_json::from_value(json!({"custom_domain": custom})).unwrap();
     let relay = hosting::update_relay(&core, relay, settings).await.unwrap();
-    commands::relays::set_custom_domain_verified(core.db.pool(), &relay.id, &custom, true)
-        .await
-        .unwrap();
-    commands::relays::add_host_redirect(core.db.pool(), &old, &relay.id, core.clock.now())
-        .await
-        .unwrap();
-    let relay = queries::relays::get_relay(core.db.pool(), &relay.id)
+    caravel_billing::relays::commands::set_custom_domain_verified(
+        core.db.pool(),
+        &relay.id,
+        &custom,
+        true,
+    )
+    .await
+    .unwrap();
+    caravel_billing::relays::commands::add_host_redirect(
+        core.db.pool(),
+        &old,
+        &relay.id,
+        core.clock.now(),
+    )
+    .await
+    .unwrap();
+    let relay = caravel_billing::relays::queries::get_relay(core.db.pool(), &relay.id)
         .await
         .unwrap()
         .unwrap();
@@ -294,9 +303,14 @@ async fn a_relay_cant_take_over_the_platforms_hosts() {
         let (relay, _) = testing::create_relay(&core).await;
         let settings = serde_json::from_value(json!({"custom_domain": host})).unwrap();
         let relay = hosting::update_relay(&core, relay, settings).await.unwrap();
-        commands::relays::set_custom_domain_verified(core.db.pool(), &relay.id, host, true)
-            .await
-            .unwrap();
+        caravel_billing::relays::commands::set_custom_domain_verified(
+            core.db.pool(),
+            &relay.id,
+            host,
+            true,
+        )
+        .await
+        .unwrap();
     }
     let app = app(
         &core,

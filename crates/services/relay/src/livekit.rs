@@ -6,8 +6,7 @@ use axum::extract::{Extension, Path, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use caravel_core::calls;
-use caravel_domain as domain;
-use caravel_domain::policy::CallRefusal;
+use caravel_relays::policy::CallRefusal;
 use serde_json::json;
 
 use crate::{Relays, Route};
@@ -77,7 +76,7 @@ pub async fn token(
         };
     }
 
-    let name = domain::calls::livekit_room(&state.relay.id, &room_id);
+    let name = caravel_relays::calls::livekit_room(&state.relay.id, &room_id);
     if let Err(error) = livekit.ensure_room(&name, now).await {
         tracing::warn!(relay = %state.relay.id, error = %error, "failed to create a call");
         return refuse(StatusCode::INTERNAL_SERVER_ERROR, "failed to create room");
@@ -121,7 +120,7 @@ pub async fn webhook(State(relays): State<Relays>, headers: HeaderMap, body: Byt
     let Some(name) = event.room.as_ref().map(|room| room.name.clone()) else {
         return (StatusCode::BAD_REQUEST, "missing room").into_response();
     };
-    let Some((relay_id, room_id)) = domain::calls::split_livekit_room(&name) else {
+    let Some((relay_id, room_id)) = caravel_relays::calls::split_livekit_room(&name) else {
         return StatusCode::NOT_FOUND.into_response();
     };
 
@@ -159,7 +158,7 @@ pub async fn webhook(State(relays): State<Relays>, headers: HeaderMap, body: Byt
         "room_finished" => Vec::new(),
         "participant_joined" | "participant_left" | "participant_connection_aborted" => {
             match livekit.list_participants(&name, core.clock.now()).await {
-                Ok(identities) => domain::calls::participant_pubkeys(&identities),
+                Ok(identities) => caravel_relays::calls::participant_pubkeys(&identities),
                 Err(error) => {
                     return (
                         StatusCode::INTERNAL_SERVER_ERROR,

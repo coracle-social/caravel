@@ -4,7 +4,6 @@
 use caravel_util::dns;
 
 use crate::Core;
-use caravel_db::{commands, queries};
 use caravel_util::bus::Change;
 use caravel_util::error::Result;
 
@@ -13,14 +12,19 @@ use caravel_util::error::Result;
 pub async fn is_served_host(core: &Core, host: &str) -> Result<bool> {
     let host = host.trim().trim_end_matches('.').to_lowercase();
 
-    Ok(queries::relays::get_relay_by_host(core.db.pool(), &host)
-        .await?
-        .is_some())
+    Ok(
+        caravel_billing::relays::queries::get_relay_by_host(core.db.pool(), &host)
+            .await?
+            .is_some(),
+    )
 }
 
 /// Verify each unverified custom domain that now points at its relay.
 pub async fn verify_custom_domains(core: &Core) -> Result<()> {
-    for relay in queries::relays::list_relays_with_custom_domain(core.db.pool(), false).await? {
+    for relay in
+        caravel_billing::relays::queries::list_relays_with_custom_domain(core.db.pool(), false)
+            .await?
+    {
         let Some(domain) = relay.custom_domain.as_deref() else {
             continue;
         };
@@ -44,7 +48,10 @@ pub async fn verify_custom_domains(core: &Core) -> Result<()> {
 /// Withdraw verification from each verified custom domain that no longer points at
 /// its relay, which then answers on its canonical host again.
 pub async fn reverify_custom_domains(core: &Core) -> Result<()> {
-    for relay in queries::relays::list_relays_with_custom_domain(core.db.pool(), true).await? {
+    for relay in
+        caravel_billing::relays::queries::list_relays_with_custom_domain(core.db.pool(), true)
+            .await?
+    {
         let Some(domain) = relay.custom_domain.as_deref() else {
             continue;
         };
@@ -69,7 +76,7 @@ async fn set_verified(core: &Core, relay_id: &str, custom_domain: &str, verified
     let result: Result<(bool, Option<String>)> = core
         .db
         .with_tx(async |conn| {
-            let changed = commands::relays::set_custom_domain_verified(
+            let changed = caravel_billing::relays::commands::set_custom_domain_verified(
                 &mut *conn,
                 relay_id,
                 custom_domain,
@@ -77,7 +84,8 @@ async fn set_verified(core: &Core, relay_id: &str, custom_domain: &str, verified
             )
             .await?;
             let previous = if changed && verified {
-                commands::relays::take_host_redirect(&mut *conn, custom_domain).await?
+                caravel_billing::relays::commands::take_host_redirect(&mut *conn, custom_domain)
+                    .await?
             } else {
                 None
             };

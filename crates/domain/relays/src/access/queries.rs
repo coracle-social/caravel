@@ -107,3 +107,13 @@ pub async fn count_members(db: impl PgExecutor<'_>, relay_id: &str) -> Result<i6
             .await?,
     )
 }
+
+/// The pubkey the relay's tenant owns it with: the member admitted as its owner.
+pub async fn owner_pubkey(db: impl PgExecutor<'_>, relay_id: &str) -> Result<String> {
+    Ok(sqlx::query_scalar::<_, String>(
+        "SELECT pubkey FROM relay_member WHERE relay_id = $1 AND source = 'owner'",
+    )
+    .bind(relay_id)
+    .fetch_one(db)
+    .await?)
+}

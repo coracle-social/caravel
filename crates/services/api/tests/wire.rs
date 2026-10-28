@@ -220,7 +220,7 @@ async fn validation_failures_carry_a_code() {
         .await;
     assert_eq!(claimed.status, StatusCode::CREATED);
     let claimed_id = claimed.body["data"]["id"].as_str().unwrap();
-    caravel_db::commands::relays::set_custom_domain_verified(
+    caravel_billing::relays::commands::set_custom_domain_verified(
         api.core.db.pool(),
         claimed_id,
         "taken.example",
@@ -310,7 +310,7 @@ async fn a_tenant_and_its_invoices_read_back_in_the_shape_clients_expect() {
         .await;
     assert_eq!(draft.body["data"], json!(null));
 
-    let row = caravel_db::queries::tenants::get_tenant(api.core.db.pool(), &tenant_pubkey)
+    let row = caravel_billing::tenants::queries::get_tenant(api.core.db.pool(), &tenant_pubkey)
         .await
         .unwrap()
         .unwrap();

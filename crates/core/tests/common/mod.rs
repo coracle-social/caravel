@@ -7,14 +7,13 @@
 pub mod stripe;
 
 use anyhow::{Result, anyhow};
+use caravel_billing::relays::UsageSample;
+use caravel_billing::relays::{GB, SECONDS_PER_HOUR};
+use caravel_billing::relays::{Relay, RelaySettings};
+use caravel_billing::tenants::Tenant;
+use caravel_billing::tenants::{Invoice, InvoiceItem, InvoiceMethod};
 use caravel_core::billing::Collection;
 use caravel_core::{Core, billing, hosting, testing};
-use caravel_db::{commands, queries};
-use caravel_domain::billing::{GB, SECONDS_PER_HOUR};
-use caravel_domain::billing::{Invoice, InvoiceItem, InvoiceMethod};
-use caravel_domain::relays::{Relay, RelaySettings};
-use caravel_domain::tenants::Tenant;
-use caravel_domain::usage::UsageSample;
 use caravel_util::flag::Flag;
 use caravel_util::nostr::generate_keypair;
 use chrono::{NaiveDate, TimeZone, Utc};
@@ -94,7 +93,7 @@ pub async fn record_usage(
     storage_gb: f64,
     participant_hours: f64,
 ) -> Result<()> {
-    commands::usage::insert_usage_sample(
+    caravel_billing::relays::commands::usage::insert_usage_sample(
         core.db.pool(),
         &UsageSample {
             id: uuid::Uuid::new_v4().to_string(),
@@ -128,11 +127,14 @@ pub async fn reconcile_and_pay(core: &Core, tenant_pubkey: &str) -> Result<()> {
 /// does: a bolt11 on the invoice, settled out of band.
 pub async fn pay_invoices(core: &Core, tenant_pubkey: &str) -> Result<()> {
     let now = core.clock.now();
-    for invoice in
-        queries::billing::list_open_invoices_for_tenant(core.db.pool(), tenant_pubkey).await?
+    for invoice in caravel_billing::tenants::queries::billing::list_open_invoices_for_tenant(
+        core.db.pool(),
+        tenant_pubkey,
+    )
+    .await?
     {
         let lnbc = format!("lnbc-e2e-{}", invoice.id);
-        let bolt11 = commands::billing::insert_bolt11(
+        let bolt11 = caravel_billing::tenants::commands::billing::insert_bolt11(
             core.db.pool(),
             &invoice.id,
             &lnbc,
@@ -141,9 +143,19 @@ pub async fn pay_invoices(core: &Core, tenant_pubkey: &str) -> Result<()> {
             now,
         )
         .await?;
-        commands::billing::mark_bolt11_settled(core.db.pool(), &bolt11.id, now).await?;
-        commands::billing::mark_invoice_paid(core.db.pool(), &invoice.id, InvoiceMethod::Oob, now)
-            .await?;
+        caravel_billing::tenants::commands::billing::mark_bolt11_settled(
+            core.db.pool(),
+            &bolt11.id,
+            now,
+        )
+        .await?;
+        caravel_billing::tenants::commands::billing::mark_invoice_paid(
+            core.db.pool(),
+            &invoice.id,
+            InvoiceMethod::Oob,
+            now,
+        )
+        .await?;
     }
     Ok(())
 }
@@ -151,21 +163,24 @@ pub async fn pay_invoices(core: &Core, tenant_pubkey: &str) -> Result<()> {
 // --- Reads ---
 
 pub async fn get_tenant(core: &Core, pubkey: &str) -> Result<Tenant> {
-    queries::tenants::get_tenant(core.db.pool(), pubkey)
+    caravel_billing::tenants::queries::get_tenant(core.db.pool(), pubkey)
         .await?
         .ok_or_else(|| anyhow!("no tenant {pubkey}"))
 }
 
 pub async fn get_relay(core: &Core, relay_id: &str) -> Result<Relay> {
-    queries::relays::get_relay(core.db.pool(), relay_id)
+    caravel_billing::relays::queries::get_relay(core.db.pool(), relay_id)
         .await?
         .ok_or_else(|| anyhow!("no relay {relay_id}"))
 }
 
 /// A tenant's invoices, oldest first.
 pub async fn invoices(core: &Core, tenant_pubkey: &str) -> Result<Vec<Invoice>> {
-    let mut invoices =
-        queries::billing::list_invoices_for_tenant(core.db.pool(), tenant_pubkey).await?;
+    let mut invoices = caravel_billing::tenants::queries::billing::list_invoices_for_tenant(
+        core.db.pool(),
+        tenant_pubkey,
+    )
+    .await?;
     invoices.reverse();
     Ok(invoices)
 }
@@ -183,11 +198,14 @@ pub async fn invoice_amounts(core: &Core, tenant_pubkey: &str) -> Result<Vec<i64
 /// the same second compare deterministically.
 pub async fn line_items(core: &Core, invoice: &Invoice) -> Result<Vec<(String, i64)>> {
     let mut items: Vec<(String, i64)> =
-        queries::billing::list_invoice_items_for_invoice(core.db.pool(), &invoice.id)
-            .await?
-            .into_iter()
-            .map(|item: InvoiceItem| (item.description, item.amount))
-            .collect();
+        caravel_billing::tenants::queries::billing::list_invoice_items_for_invoice(
+            core.db.pool(),
+            &invoice.id,
+        )
+        .await?
+        .into_iter()
+        .map(|item: InvoiceItem| (item.description, item.amount))
+        .collect();
     items.sort();
     Ok(items)
 }
@@ -196,10 +214,13 @@ pub async fn line_items(core: &Core, invoice: &Invoice) -> Result<Vec<(String, i
 /// forward, or charges below the minimum an invoice is cut for.
 pub async fn outstanding(core: &Core, tenant_pubkey: &str) -> Result<i64> {
     Ok(
-        queries::billing::list_outstanding_invoice_items_for_tenant(core.db.pool(), tenant_pubkey)
-            .await?
-            .iter()
-            .map(|item| item.amount)
-            .sum(),
+        caravel_billing::tenants::queries::billing::list_outstanding_invoice_items_for_tenant(
+            core.db.pool(),
+            tenant_pubkey,
+        )
+        .await?
+        .iter()
+        .map(|item| item.amount)
+        .sum(),
     )
 }

@@ -260,7 +260,10 @@ async fn an_anonymous_relay_serves_readers_who_never_authenticate() {
     let server = Server::start().await;
     let (relay, owner) = server.relay().await;
     server
-        .update(&relay, json!({"policy_anonymous_read": 1}))
+        .update(
+            &relay,
+            json!({"policy_public_read": 1, "policy_anonymous_read": 1}),
+        )
         .await;
     let host = relay.canonical_host();
 
@@ -876,4 +879,29 @@ async fn a_browser_may_preflight_any_relay_endpoint() {
             .unwrap()
             .contains("PUT")
     );
+}
+
+#[tokio::test]
+async fn an_authenticated_outsider_reads_an_anonymous_relay_too() {
+    let server = Server::start().await;
+    let (relay, owner) = server.relay().await;
+    server
+        .update(
+            &relay,
+            json!({"policy_public_read": 1, "policy_anonymous_read": 1}),
+        )
+        .await;
+    let host = relay.canonical_host();
+
+    let mut writer = server.connect(&host).await;
+    writer.auth(&owner, server.now()).await;
+    let event = sign_event(&owner, 1, "for anyone", &[], server.now());
+    assert!(writer.publish(&event).await.0);
+
+    let stranger = SecretKey::generate();
+    let mut reader = server.connect(&host).await;
+    reader.auth(&stranger, server.now()).await;
+    let (stored, eose) = reader.req("sub", json!({"kinds": [1]})).await;
+    assert_eq!(eose[0], "EOSE");
+    assert_eq!(stored.len(), 1);
 }

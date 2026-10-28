@@ -132,6 +132,13 @@ impl Relay {
             ));
         }
 
+        if self.policy_anonymous_read && !self.policy_public_read {
+            return Err(Error::invalid(
+                "anonymous-read-needs-public-read",
+                "a relay that reads without authenticating has to be readable by anyone",
+            ));
+        }
+
         Ok(self)
     }
 }

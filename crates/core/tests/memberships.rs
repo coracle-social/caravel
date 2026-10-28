@@ -703,6 +703,20 @@ async fn a_member_price_must_be_chargeable_and_need_a_claim() -> Result<()> {
             ..
         })
     ));
+
+    // A reader who authenticates must never be worse off than one who doesn't.
+    let anonymous = RelaySettings {
+        policy_anonymous_read: Some(caravel_util::flag::Flag(true)),
+        ..Default::default()
+    };
+    let anonymous = hosting::update_relay(&f.core, f.relay.clone(), anonymous).await;
+    assert!(matches!(
+        anonymous,
+        Err(Error::Invalid {
+            code: "anonymous-read-needs-public-read",
+            ..
+        })
+    ));
     Ok(())
 }
 

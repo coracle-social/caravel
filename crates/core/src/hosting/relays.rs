@@ -86,19 +86,8 @@ pub async fn create_relay(
         created_at: now,
         ..Default::default()
     };
-    let relay = relay
-        .apply_settings(&core.config, settings)?
-        .validate(&core.config)?;
-    if let Some(custom_domain) = &relay.custom_domain
-        && caravel_billing::relays::queries::is_custom_domain_taken(
-            core.db.pool(),
-            custom_domain,
-            &relay.id,
-        )
-        .await?
-    {
-        return Err(Error::invalid("domain-exists", "custom domain is taken"));
-    }
+    let relay = with_settings(&core.config, relay, settings)?;
+    require_custom_domain_free(core, &relay).await?;
     let key = core.relay_key(&relay)?;
 
     core.db
@@ -142,36 +131,13 @@ pub async fn update_relay(core: &Core, relay: Relay, settings: RelaySettings) ->
     relay.require_unpurged()?;
 
     let previous = relay.clone();
-    let relay = relay
-        .apply_settings(&core.config, settings)?
-        .validate(&core.config)?;
+    let relay = with_settings(&core.config, relay, settings)?;
 
-    if relay.custom_domain != previous.custom_domain
-        && let Some(custom_domain) = &relay.custom_domain
-        && caravel_billing::relays::queries::is_custom_domain_taken(
-            core.db.pool(),
-            custom_domain,
-            &relay.id,
-        )
-        .await?
-    {
-        return Err(Error::invalid("domain-exists", "custom domain is taken"));
+    if relay.custom_domain != previous.custom_domain {
+        require_custom_domain_free(core, &relay).await?;
     }
-
-    if relay.plan_id != previous.plan_id
-        && let Some(limit) = relay.member_limit()
-    {
-        let members =
-            caravel_relays::access::queries::count_members(core.db.pool(), &relay.id).await?;
-        if members > limit {
-            return Err(Error::invalid(
-                "member-limit-exceeded",
-                format!(
-                    "relay has {members} members, which exceeds the {} plan limit of {limit}",
-                    relay.plan_id
-                ),
-            ));
-        }
+    if relay.plan_id != previous.plan_id {
+        require_members_fit_plan(core, &relay).await?;
     }
 
     let now = core.clock.now();
@@ -303,5 +269,50 @@ async fn change_relay_status(
     core.bus.publish(Change::RelayChanged {
         relay_id: relay.id.clone(),
     });
+    Ok(())
+}
+
+/// The relay as these settings would leave it, with the platform's configuration
+/// checked.
+fn with_settings(
+    config: &caravel_util::config::Config,
+    relay: Relay,
+    settings: RelaySettings,
+) -> Result<Relay> {
+    relay.apply_settings(config, settings)?.validate(config)
+}
+
+/// Refuse a custom domain another relay has verified.
+async fn require_custom_domain_free(core: &Core, relay: &Relay) -> Result<()> {
+    let Some(custom_domain) = &relay.custom_domain else {
+        return Ok(());
+    };
+    if caravel_billing::relays::queries::is_custom_domain_taken(
+        core.db.pool(),
+        custom_domain,
+        &relay.id,
+    )
+    .await?
+    {
+        return Err(Error::invalid("domain-exists", "custom domain is taken"));
+    }
+    Ok(())
+}
+
+/// Refuse a plan whose member limit the relay is over already.
+async fn require_members_fit_plan(core: &Core, relay: &Relay) -> Result<()> {
+    let Some(limit) = relay.member_limit() else {
+        return Ok(());
+    };
+    let members = caravel_relays::access::queries::count_members(core.db.pool(), &relay.id).await?;
+    if members > limit {
+        return Err(Error::invalid(
+            "member-limit-exceeded",
+            format!(
+                "relay has {members} members, which exceeds the {} plan limit of {limit}",
+                relay.plan_id
+            ),
+        ));
+    }
     Ok(())
 }

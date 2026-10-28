@@ -251,6 +251,7 @@ dependencies = [
  "caravel-domain",
  "caravel-relay",
  "caravel-util",
+ "caravel-worker",
  "coracle-lib",
  "dotenvy",
  "http-body-util",
@@ -265,6 +266,22 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "url",
+]
+
+[[package]]
+name = "caravel-billing"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "caravel-relays",
+ "caravel-util",
+ "chrono",
+ "regex",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "url",
+ "uuid",
 ]
 
 [[package]]
@@ -325,6 +342,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "caravel-operations"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "caravel-relays",
+ "caravel-util",
+ "serde",
+ "serde_json",
+ "sqlx",
+]
+
+[[package]]
 name = "caravel-relay"
 version = "0.1.0"
 dependencies = [
@@ -349,6 +378,23 @@ dependencies = [
  "tower",
  "tower-http",
  "tracing",
+]
+
+[[package]]
+name = "caravel-relays"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "caravel-util",
+ "chrono",
+ "coracle-lib",
+ "hex",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror",
+ "url",
 ]
 
 [[package]]
@@ -382,6 +428,17 @@ dependencies = [
  "tracing",
  "url",
  "webpki-roots 1.0.10",
+]
+
+[[package]]
+name = "caravel-worker"
+version = "0.1.0"
+dependencies = [
+ "caravel-core",
+ "caravel-util",
+ "tokio",
+ "tokio-util",
+ "tracing",
 ]
 
 [[package]]

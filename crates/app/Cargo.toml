@@ -18,6 +18,7 @@ caravel-db.workspace = true
 caravel-domain.workspace = true
 caravel-relay.workspace = true
 caravel-util.workspace = true
+caravel-worker.workspace = true
 dotenvy.workspace = true
 serde.workspace = true
 tokio.workspace = true

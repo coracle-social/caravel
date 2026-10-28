@@ -1,5 +1,5 @@
-//! Background work: when each periodic job runs and what wakes the reactive ones.
-//! The jobs themselves live in the core.
+//! The worker: when each periodic job runs and what wakes the reactive ones. The
+//! jobs themselves live in the core.
 
 use std::future::Future;
 use std::time::Duration;

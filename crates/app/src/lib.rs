@@ -1,7 +1,6 @@
-//! The `caravel` binary's pieces: configuration, host dispatch, the embedded web
-//! apps and the background workers.
+//! The `caravel` binary's pieces: configuration, host dispatch and the embedded
+//! web apps.
 
 pub mod config;
 pub mod dispatch;
 pub mod web;
-pub mod workers;

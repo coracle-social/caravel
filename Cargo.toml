@@ -1,6 +1,18 @@
 [workspace]
 resolver = "3"
-members = ["crates/*"]
+members = [
+    "crates/util",
+    "crates/domain",
+    "crates/domain/billing",
+    "crates/domain/relays",
+    "crates/domain/operations",
+    "crates/db",
+    "crates/core",
+    "crates/services/api",
+    "crates/services/worker",
+    "crates/services/relay",
+    "crates/app",
+]
 
 [workspace.package]
 version = "0.1.0"
@@ -11,10 +23,14 @@ license = "MIT"
 [workspace.dependencies]
 caravel-util = { path = "crates/util" }
 caravel-domain = { path = "crates/domain" }
+caravel-billing = { path = "crates/domain/billing" }
+caravel-relays = { path = "crates/domain/relays" }
+caravel-operations = { path = "crates/domain/operations" }
 caravel-core = { path = "crates/core" }
 caravel-db = { path = "crates/db" }
-caravel-api = { path = "crates/api" }
-caravel-relay = { path = "crates/relay" }
+caravel-api = { path = "crates/services/api" }
+caravel-worker = { path = "crates/services/worker" }
+caravel-relay = { path = "crates/services/relay" }
 
 aes = "0.8"
 anyhow = "1.0"

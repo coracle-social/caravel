@@ -1,0 +1,13 @@
+[package]
+name = "caravel-worker"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+caravel-core.workspace = true
+caravel-util.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true

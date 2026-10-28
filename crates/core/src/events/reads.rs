@@ -1,5 +1,5 @@
-//! Keeping the event store tidy: sweeping expired events, and dropping push
-//! subscriptions nobody can be reached at.
+//! Reading the event store for the relay runtime: a subscription's events, a sync's
+//! heads, what a count names and the notification waiting for a peer.
 
 use coracle_lib::filters::Filter;
 
@@ -8,7 +8,6 @@ use caravel_billing::relays::Relay;
 use caravel_relays::events::{EventGroup, EventHead, StoredEvent};
 use caravel_relays::notify::Notification;
 use caravel_relays::policy::RelaySnapshot;
-use caravel_util::bus::Change;
 use caravel_util::error::Result;
 
 /// A relay's unexpired events matching `filter`, newest first, for a client's
@@ -66,35 +65,4 @@ pub async fn get_notification(
 /// What a relay's rules read: its settings, then its access lists and rooms.
 pub async fn load_snapshot(core: &Core, relay: &Relay) -> Result<RelaySnapshot> {
     caravel_relays::policy::queries::load_snapshot(core.db.pool(), relay.snapshot()).await
-}
-
-/// Delete every relay's events whose NIP-40 expiration passed, a batch at a time
-/// so other writers get between them.
-pub async fn sweep_expired_events(core: &Core) -> Result<()> {
-    const BATCH: i64 = 1000;
-
-    loop {
-        let removed = caravel_relays::events::commands::delete_expired_events(
-            core.db.pool(),
-            core.clock.now(),
-            BATCH,
-        )
-        .await?;
-        if removed > 0 {
-            tracing::info!(removed, "swept expired events");
-        }
-        if removed < BATCH as u64 {
-            return Ok(());
-        }
-    }
-}
-
-/// Drop a push subscription whose callback can't be reached, and reload its relay.
-pub async fn drop_push_subscription(core: &Core, relay_id: &str, id: &[u8; 32]) -> Result<()> {
-    caravel_relays::events::commands::delete_event(core.db.pool(), relay_id, id).await?;
-    core.bus.publish(Change::AccessChanged {
-        relay_id: relay_id.to_string(),
-        published: Vec::new(),
-    });
-    Ok(())
 }

@@ -1,6 +1,0 @@
-% source=web/src/shared/lib/resource.ts lang=typescript lines=6 sha=bba588806bfb
-
-module @/shared/lib/resource
-  -- Reading Solid resources without throwing.
-
-  pub fn loaded<T>(resource) -> T?  -- its value, or undefined once it failed, when reading throws  @3-6

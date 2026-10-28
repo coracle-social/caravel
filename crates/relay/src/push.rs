@@ -6,10 +6,11 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
-use caravel_core::models::events::StoredEvent;
-use caravel_core::models::kinds;
-use caravel_core::models::policy::{EventFacts, RelaySnapshot};
-use caravel_core::{Core, domain, events, queries};
+use caravel_core::{Core, events};
+use caravel_db::queries;
+use caravel_domain::events::StoredEvent;
+use caravel_domain::policy::{EventFacts, RelaySnapshot};
+use caravel_util::nostr::kinds;
 use coracle_lib::events::{Event, EventId};
 use coracle_lib::filters::{Filter, matches_any};
 use serde_json::{Value, json};
@@ -67,7 +68,7 @@ impl Subscription {
 pub async fn load_subscriptions(
     core: &Core,
     relay_id: &str,
-) -> caravel_core::Result<Vec<Subscription>> {
+) -> caravel_domain::Result<Vec<Subscription>> {
     let filter = Filter {
         kinds: Some([kinds::PUSH_SUBSCRIPTION].into()),
         ..Default::default()
@@ -157,7 +158,7 @@ impl Pusher {
         for subscription in subscriptions {
             let reader = [subscription.pubkey.clone()];
             if subscription.pubkey == author
-                || !domain::policy::can_deliver(snapshot, &reader, facts)
+                || !snapshot.can_deliver(&reader, facts)
                 || !matches_any(&subscription.filters, event)
                 || matches_any(&subscription.ignore, event)
             {
@@ -169,7 +170,7 @@ impl Pusher {
                 "relay": format!("wss://{primary_host}/"),
             });
             if subscription.include_event {
-                let strip = domain::policy::strips_signature(snapshot, &reader);
+                let strip = snapshot.strips_signature(&reader);
                 payload["event"] = serde_json::from_str(&stored.to_json(strip)).unwrap_or_default();
             }
 

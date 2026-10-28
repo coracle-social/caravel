@@ -4,8 +4,11 @@ use axum::body::Body;
 use axum::extract::{Path, Query, State};
 use axum::http::header;
 use axum::response::IntoResponse;
-use caravel_core::crypto::is_hex64;
-use caravel_core::{Core, Error, domain, hosting, queries, sessions};
+use caravel_core::{Core, hosting, sessions};
+use caravel_db::queries;
+use caravel_domain as domain;
+use caravel_domain::Error;
+use caravel_util::encoding::is_hex64;
 use serde::Deserialize;
 
 use crate::auth::Admin;
@@ -71,7 +74,7 @@ pub async fn list_relays(State(core): State<Core>, _: Admin) -> ApiResult {
 }
 
 pub async fn list_invoices(State(core): State<Core>, _: Admin) -> ApiResult {
-    ok(queries::ledger::list_invoices(core.db.pool()).await?)
+    ok(queries::billing::list_invoices(core.db.pool()).await?)
 }
 
 #[derive(Deserialize)]

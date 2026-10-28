@@ -1,25 +1,9 @@
-//! The platform's domain logic and persistence, in layers: models, the pure rules
-//! over them, the queries that read them and the commands that write them, and
-//! the subsystems that run those against a [`Core`], which carries the database,
-//! the clock, the bus and the adapters.
+//! The engine: the subsystems that run the domain's rules against a [`Core`],
+//! which carries the database, the configuration, the clock, the bus and the
+//! adapters. Each subsystem reads the clock, opens transactions, calls adapters
+//! and publishes changes on the bus.
 
-// The foundations every layer builds on; only subsystems use the bus and the clock.
-pub mod blank;
-pub mod bus;
-pub mod clock;
-pub mod config;
-pub mod crypto;
-pub mod error;
-pub mod flag;
-
-// The layers: models, then domain, queries and commands, each using only those
-// before it.
-pub mod commands;
-pub mod domain;
-pub mod models;
-pub mod queries;
-
-// The subsystems, which run the layers against a `Core`.
+// The subsystems, which run the database layer against a `Core`.
 pub mod billing;
 pub mod calls;
 pub mod domains;
@@ -40,21 +24,25 @@ pub mod testing;
 
 use std::sync::Arc;
 
-use caravel_adapters::blobs::Blobs;
-use caravel_adapters::livekit::Livekit;
-use caravel_adapters::outbound::Outbound;
-use caravel_adapters::{robot::Robot, stripe::Stripe, wallet::Wallet};
-use caravel_db::Db;
+use caravel_domain::config::Config;
+use caravel_util::blobs::Blobs;
+use caravel_util::bus::Bus;
+use caravel_util::clock::Clock;
+use caravel_util::db::Db;
+use caravel_util::livekit::Livekit;
+use caravel_util::nostr::Key;
+use caravel_util::outbound::Outbound;
+use caravel_util::{robot::Robot, stripe::Stripe, wallet::Wallet};
 
-pub use error::{Error, Result};
+pub use caravel_domain::{Error, Result};
 
-/// The database, configuration and adapters every core operation runs against.
+/// The database, configuration and adapters every operation runs against.
 #[derive(Clone)]
 pub struct Core {
     pub db: Db,
-    pub config: Arc<config::Config>,
-    pub clock: clock::Clock,
-    pub bus: bus::Bus,
+    pub config: Arc<Config>,
+    pub clock: Clock,
+    pub bus: Bus,
     pub stripe: Stripe,
     pub robot: Robot,
     /// The platform's wallet, which issues the Lightning invoices tenants pay.
@@ -74,10 +62,9 @@ impl Core {
     }
 
     /// A relay's own key, decrypted with the platform key.
-    pub fn relay_key(&self, relay: &models::relays::Relay) -> Result<crypto::RelayKey> {
-        Ok(crypto::RelayKey::decrypt(
-            &self.config.platform_key,
-            &relay.secret,
+    pub fn relay_key(&self, relay: &caravel_domain::relays::Relay) -> Result<Key> {
+        Ok(Key::from_hex(
+            &self.config.platform_key.decrypt(&relay.secret)?,
         )?)
     }
 }

@@ -1,9 +1,0 @@
-% source=crates/core/src/queries/roles.rs lang=rust lines=34 sha=86b2224cf227
-
-module caravel_core::queries::roles  !db
-  -- Reading a relay's roles.
-
-  pub async fn list_roles(relay_id) -> [Role] fails  !db                @8-15
-    -- The relay's roles by position, then id.
-  pub async fn require_role(conn, relay_id, role_id) fails  !db         @17-34
-    -- fail conflict "role-missing" unless the relay defines the role.

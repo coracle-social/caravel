@@ -1,7 +1,0 @@
-% source=web/src/shared/lib/useMinLoading.ts lang=typescript lines=41 sha=842b1437d7f8
-
-module @/shared/lib/useMinLoading  !time
-  -- Keeping a loading indicator up long enough not to flicker.
-
-  pub fn useMinLoading(loading, minDurationMs = 200) -> signal bool  !time  @3-41
-    -- Shown as soon as loading starts, and hidden only once it has shown for minDurationMs.

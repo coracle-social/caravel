@@ -8,7 +8,7 @@ There is one right place to document any given information:
 
 - Functions should have a doc comment explaining the purpose of the function, not its implementation.
 - Only very strange behavior should be documented using non-doc comments.
-- Models and their fields are documented where the model is defined, in the core's models (e.g. `Relay` in `crates/core/src/models/relays.rs`), not in migrations, implementations, or anywhere in the web apps.
+- Models and their fields are documented where the model is defined, in `crates/domain` (e.g. `Relay` in `crates/domain/src/relays/model.rs`), not in migrations, implementations, or anywhere in the web apps.
 - Database indexes are documented in migrations.
 
 ## Data Modeling
@@ -41,18 +41,12 @@ Don't add re-export shims to preserve old import paths. When something moves, im
 
 ## Architecture
 
-The backend is one Cargo workspace under `crates/`, layered so each crate depends only on the ones below it: `db` and `adapters` at the bottom, then `core`, then `relay` and `api`, then `app`, which builds the `caravel` binary. `crates/app/tests/layers.rs` enforces the layering. The core is layered too: models, then pure domain rules, then queries that read and commands that write, then the subsystems that run them against a `Core`; outside the core, state changes only through subsystems. `crates/core/tests/layers.rs` enforces that. The `architecture` skill describes each layer and where new code goes.
+The backend is one Cargo workspace under `crates/`, layered so each crate depends only on the ones below it: `util` at the bottom (the clock, bus, serde helpers, Postgres plumbing, and the clients for systems outside the database), then `domain` (one pod per concern, each with its models and the pure rules over them), then `db` (the queries that read and the commands that write, and nothing else), then `core` (the `Core` handle and the subsystems that run the rules), then `relay` and `api`, then `app`, which builds the `caravel` binary. `crates/app/tests/layers.rs` enforces the layering. Outside the core, state changes only through subsystems. `crates/core/tests/layers.rs` enforces that, that the database stays in `db`, and that the domain stays pure. The `architecture` skill describes each layer and where new code goes.
 
-Read configuration from the environment only in `crates/app/src/config.rs`, and the time only through the core's `Clock`; clippy enforces both.
+Read configuration from the environment only in `crates/app/src/config.rs`, and the time only through `caravel_util::clock::Clock`; clippy enforces both.
 
 ## Verification
 
 Check justfile and web/package.json for common commands for linting/building. Tests need Postgres: `just pg` starts one with podman, and each test binary creates its own database on it.
 
 Pull requests run `.gitea/workflows/ci.yml`, which is the workspace's fmt/clippy/test against a Postgres service plus the web build. Keep it in step with the justfile.
-
-## Skills
-
-Skills should be created and maintained when updating the codebase. Before creating a skill, check to see if a relevant one already exists.
-
-Avoid including code in skills unless the purpose of the skill is to illustrate coding principles; architecture and domain should be explained in plain English and provide a high-level overview of the topic without going into implementation details.

@@ -1,7 +1,0 @@
-% source=web/src/shared/components/SearchInput.tsx lang=typescript lines=25 sha=fad940fcd44d
-
-module @/shared/components/SearchInput
-  -- A search field.
-
-  type SearchInputProps = { value, onInput(value), placeholder? }       @1-5
-  pub fn SearchInput(props: SearchInputProps)  -- a field with a search icon, "Search..." by default  @7-25

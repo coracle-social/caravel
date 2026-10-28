@@ -1,9 +1,0 @@
-% source=web/src/admin/pages/AdminRelayList.tsx lang=typescript lines=41 sha=c1a6403a20c5
-
-module @/admin/pages/AdminRelayList  !net
-  -- The admin's list of every relay.
-
-  pub fn AdminRelayList()  !net                                         @12-41
-    -- Every relay, fuzzy-searched by name, subdomain and tenant pubkey, each linking to its
-    -- admin page with its tenant shown; the tenants' profiles are fetched in one request.
-    reads the relays through loaded, so a failed fetch shows its error and no list  @17-30

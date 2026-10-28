@@ -1,4 +1,0 @@
-% source=crates/app/src/lib.rs lang=rust lines=7 sha=0f859b5471cf
-
-module caravel_app
-  -- The caravel binary's pieces: configuration, host dispatch, the embedded web apps, the workers.

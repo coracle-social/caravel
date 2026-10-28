@@ -5,8 +5,9 @@
 mod common;
 
 use anyhow::Result;
-use caravel_core::models::plans::{GB, PLAN_BASIC, SECONDS_PER_HOUR};
-use caravel_core::{Core, commands, queries, usage};
+use caravel_core::{Core, usage};
+use caravel_db::{commands, queries};
+use caravel_domain::billing::{GB, PLAN_BASIC, SECONDS_PER_HOUR};
 use common::*;
 
 async fn upload(core: &Core, relay_id: &str, sha256: &str, size: i64, pubkey: &str) -> Result<()> {

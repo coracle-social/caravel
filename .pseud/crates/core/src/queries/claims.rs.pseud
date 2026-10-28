@@ -1,9 +1,0 @@
-% source=crates/core/src/queries/claims.rs lang=rust lines=26 sha=8961d25dc4af
-
-module caravel_core::queries::claims  !db
-  -- Reading a relay's claims.
-
-  pub async fn list_claims(relay_id) -> [str] fails  !db                @8-15
-    -- Codes of the relay's unrevoked claims, oldest first.
-  pub async fn is_live_claim(relay_id, code) -> bool fails  !db         @18-26
-    -- Whether the claim exists and isn't revoked.

@@ -1,4 +1,0 @@
-% source=crates/core/src/domain/mod.rs lang=rust lines=18 sha=2a81f1347c44
-
-module caravel_core::domain
-  -- The rules: pure functions over models deciding what is allowed and what follows from it.

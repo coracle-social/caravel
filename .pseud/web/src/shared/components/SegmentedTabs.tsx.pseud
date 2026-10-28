@@ -1,8 +1,0 @@
-% source=web/src/shared/components/SegmentedTabs.tsx lang=typescript lines=27 sha=728c1ed64eca
-
-module @/shared/components/SegmentedTabs
-  -- A row of tabs, one of them selected.
-
-  pub data Tab { value: T, label, disabled? }                           @3-7
-  pub fn SegmentedTabs(props: { tabs: [Tab], selected: T, onSelect(value) })  @10-27
-    -- A button per tab, the selected one dark, each calling onSelect with its value.

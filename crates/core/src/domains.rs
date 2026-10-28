@@ -1,12 +1,12 @@
 //! Custom domains: verifying over DNS that each points at its relay before the
 //! relay answers on it.
 
-use caravel_adapters::dns;
+use caravel_util::dns;
 
 use crate::Core;
-use crate::bus::Change;
-use crate::error::Result;
-use crate::{commands, queries};
+use caravel_db::{commands, queries};
+use caravel_domain::error::Result;
+use caravel_util::bus::Change;
 
 /// Whether the platform serves `host`, which on-demand TLS asks before issuing a
 /// certificate for it.

@@ -3,13 +3,16 @@
 
 use anyhow::Result;
 use bytes::Bytes;
-use caravel_adapters::blobs::Blobs;
-use caravel_core::bus::Change;
-use caravel_core::models::media::{Blob, Deleted};
-use caravel_core::models::roles::Role;
-use caravel_core::models::{kinds, relays, rooms};
 use caravel_core::testing::{create_relay, sign_event};
-use caravel_core::{Core, calls, commands, domain, hosting, management, media, queries, testing};
+use caravel_core::{Core, calls, hosting, management, media, testing};
+use caravel_db::{commands, queries};
+use caravel_domain as domain;
+use caravel_domain::media::{Blob, Deleted};
+use caravel_domain::relays;
+use caravel_domain::roles::Role;
+use caravel_util::blobs::Blobs;
+use caravel_util::bus::Change;
+use caravel_util::nostr::kinds;
 use coracle_lib::filters::Filter;
 use coracle_lib::keys::SecretKey;
 
@@ -286,7 +289,7 @@ async fn erasing_a_relay_keeps_only_its_settings_and_owner() -> Result<()> {
     let note = sign_event(&owner, 1, "hello", &[], NOW);
     let room = sign_event(
         &owner,
-        rooms::kinds::CREATE_GROUP,
+        kinds::rooms::CREATE_GROUP,
         "",
         &[&["h", "lobby"]],
         NOW,
@@ -333,7 +336,7 @@ async fn erasing_a_relay_keeps_only_its_settings_and_owner() -> Result<()> {
         [kinds::RELAY_MEMBERS]
     );
     assert_eq!(
-        queries::members::list_members(pool, &relay.id)
+        queries::memberships::list_members(pool, &relay.id)
             .await?
             .into_iter()
             .map(|member| member.pubkey)
@@ -447,7 +450,7 @@ async fn a_purged_relays_subdomain_can_be_taken_again() -> Result<()> {
     let taken = hosting::create_relay(&core, &owner, settings()).await;
     assert!(matches!(
         taken,
-        Err(caravel_core::Error::Invalid {
+        Err(caravel_domain::Error::Invalid {
             code: "subdomain-exists",
             ..
         })

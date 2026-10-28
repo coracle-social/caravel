@@ -1,10 +1,10 @@
 //! Metering usage: hourly readings of each paid relay's storage and A/V call time.
 
 use crate::Core;
-use crate::error::Result;
-use crate::models::plans;
-use crate::models::usage::UsageSample;
-use crate::{commands, queries};
+use caravel_db::{commands, queries};
+use caravel_domain::billing;
+use caravel_domain::error::Result;
+use caravel_domain::usage::UsageSample;
 
 /// Take a usage reading of every active relay on a paid plan with a metered
 /// feature on: the blobs it holds, and its call clock.
@@ -15,7 +15,7 @@ pub async fn sample_usage(core: &Core) -> Result<()> {
         if !relay.is_served() || (!relay.blossom_enabled && !relay.livekit_enabled) {
             continue;
         }
-        if !plans::get_plan(&relay.plan_id).is_some_and(|plan| plan.is_paid()) {
+        if !billing::get_plan(&relay.plan_id).is_some_and(|plan| plan.is_paid()) {
             continue;
         }
 

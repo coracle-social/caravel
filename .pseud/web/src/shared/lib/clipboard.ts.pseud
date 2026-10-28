@@ -1,7 +1,0 @@
-% source=web/src/shared/lib/clipboard.ts lang=typescript lines=16 sha=001bdeff80d7
-
-module @/shared/lib/clipboard
-  -- Copying text for the user.
-
-  pub async fn copyToClipboard(text, opts?) -> bool                     @3-16
-    -- Copy text and toast the outcome, returning whether it copied; empty text copies nothing.

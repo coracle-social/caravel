@@ -1,9 +1,0 @@
-% source=crates/core/src/queries/members.rs lang=rust lines=39 sha=6bc98b5c43ed
-
-module caravel_core::queries::members  !db
-  -- Reading a relay's members.
-
-  pub async fn list_members(relay_id) -> [RelayMember] fails  !db       @8-16
-    -- The relay's members with source and roles, oldest first.
-  pub async fn get_member(relay_id, pubkey) -> RelayMember? fails  !db  @18-30
-  pub async fn count_members(relay_id) -> i64 fails  !db                @32-39

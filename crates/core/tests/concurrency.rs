@@ -5,11 +5,12 @@
 mod common;
 
 use anyhow::Result;
+use caravel_core::billing;
 use caravel_core::billing::Collection;
-use caravel_core::models::activity::ActivityType;
-use caravel_core::models::plans::PLAN_BASIC;
-use caravel_core::models::relays::RelayStatus;
-use caravel_core::{billing, queries};
+use caravel_db::queries;
+use caravel_domain::activity::ActivityType;
+use caravel_domain::billing::PLAN_BASIC;
+use caravel_domain::relays::RelayStatus;
 use common::*;
 use futures_util::future::try_join_all;
 

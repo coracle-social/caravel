@@ -1,9 +1,0 @@
-% source=web/src/admin/pages/AdminInvoiceList.tsx lang=typescript lines=41 sha=88315091cea4
-
-module @/admin/pages/AdminInvoiceList  !net
-  -- The admin's list of every invoice.
-
-  pub fn AdminInvoiceList()  !net                                       @12-41
-    -- Every invoice, fuzzy-searched by tenant pubkey and id, each linking to its admin page
-    -- with its tenant shown; the tenants' profiles are fetched in one request.
-    reads the invoices through loaded, so a failed fetch shows its error and no list  @17-30

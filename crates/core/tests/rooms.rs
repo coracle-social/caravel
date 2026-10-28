@@ -5,15 +5,17 @@
 use std::collections::BTreeMap;
 
 use anyhow::Result;
-use caravel_core::crypto::RelayKey;
-use caravel_core::models::events::Saved;
-use caravel_core::models::management::Call;
-use caravel_core::models::policy::{Refusal, RelaySnapshot};
-use caravel_core::models::relays::Relay;
-use caravel_core::models::rooms;
-use caravel_core::models::rooms::kinds;
 use caravel_core::testing::{create_relay, sign_event};
-use caravel_core::{Core, commands, domain, management, queries, testing};
+use caravel_core::{Core, management, testing};
+use caravel_db::{commands, queries};
+use caravel_domain as domain;
+use caravel_domain::events::Saved;
+use caravel_domain::management::Call;
+use caravel_domain::policy::{Refusal, RelaySnapshot};
+use caravel_domain::relays::Relay;
+use caravel_domain::rooms;
+use caravel_util::nostr::Key;
+use caravel_util::nostr::kinds::rooms as kinds;
 use coracle_lib::events::Event;
 use coracle_lib::filters::Filter;
 use coracle_lib::keys::SecretKey;
@@ -21,7 +23,7 @@ use coracle_lib::keys::SecretKey;
 struct Fixture {
     core: Core,
     relay: Relay,
-    key: RelayKey,
+    key: Key,
     owner: SecretKey,
 }
 
@@ -57,7 +59,7 @@ impl Fixture {
         tags: &[&[&str]],
     ) -> Result<Vec<Event>, Refusal> {
         let event = sign_event(author, kind, "", tags, self.now());
-        domain::policy::check_room_write(&self.snapshot().await, &event)?;
+        self.snapshot().await.check_room_write(&event)?;
 
         let now = self.now();
         let published = self
@@ -698,7 +700,7 @@ async fn rooms_that_are_off_take_no_room_events() -> Result<()> {
         f.now(),
     );
     assert_eq!(
-        domain::policy::check_room_write(&snapshot, &event),
+        snapshot.check_room_write(&event),
         Err(Refusal::invalid("groups are not enabled"))
     );
     Ok(())
@@ -715,7 +717,7 @@ async fn rebuilding_the_published_state_reproduces_it() -> Result<()> {
     management::call(
         &f.core,
         &f.relay,
-        Call::CreateRole(caravel_core::models::roles::Role {
+        Call::CreateRole(caravel_domain::roles::Role {
             id: "mod".into(),
             label: "Mod".into(),
             ..Default::default()

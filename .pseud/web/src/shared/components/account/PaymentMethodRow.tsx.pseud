@@ -1,8 +1,0 @@
-% source=web/src/shared/components/account/PaymentMethodRow.tsx lang=typescript lines=34 sha=dc87b0e70c40
-
-module @/shared/components/account/PaymentMethodRow
-  -- One payment method on the account page.
-
-  type PaymentMethodRowProps { title, state, onAction }                 @5-9
-  pub fn PaymentMethodRow(props)                                        @11-34
-    -- The method's title, its failure message, its status, and Set up or Update.

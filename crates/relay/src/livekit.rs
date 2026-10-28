@@ -5,8 +5,9 @@ use axum::body::Bytes;
 use axum::extract::{Extension, Path, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use caravel_core::models::policy::CallRefusal;
-use caravel_core::{calls, domain};
+use caravel_core::calls;
+use caravel_domain as domain;
+use caravel_domain::policy::CallRefusal;
 use serde_json::json;
 
 use crate::{Relays, Route};
@@ -60,7 +61,7 @@ pub async fn token(
         Err(error) => return refuse(StatusCode::UNAUTHORIZED, error.to_string()),
     };
 
-    if let Err(refusal) = domain::policy::admit_call(&state.snapshot, &pubkey, &room_id) {
+    if let Err(refusal) = state.snapshot.admit_call(&pubkey, &room_id) {
         return match refusal {
             CallRefusal::NotMember => refuse(StatusCode::FORBIDDEN, "not a member of this relay"),
             CallRefusal::NoRoom => refuse(StatusCode::NOT_FOUND, "group not found"),

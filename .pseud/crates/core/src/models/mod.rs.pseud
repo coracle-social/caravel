@@ -1,4 +1,0 @@
-% source=crates/core/src/models/mod.rs lang=rust lines=28 sha=efec814e19f2
-
-module caravel_core::models
-  -- The platform's data, with methods reading only their own fields; no database, clock or I/O.

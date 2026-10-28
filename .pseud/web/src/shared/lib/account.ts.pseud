@@ -1,6 +1,0 @@
-% source=web/src/shared/lib/account.ts lang=typescript lines=5 sha=e752ef12b0f4
-
-module @/shared/lib/account
-  -- The account signed in to the dashboards.
-
-  pub global account  -- signal of the signed-in applesauce account, if any, set with setAccount  @4-5

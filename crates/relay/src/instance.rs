@@ -5,13 +5,16 @@
 use std::collections::HashSet;
 use std::sync::{Arc, RwLock};
 
-use caravel_core::crypto::RelayKey;
-use caravel_core::models::events::{Saved, StoredEvent};
-use caravel_core::models::kinds;
-use caravel_core::models::kinds::{DELETION, VANISH};
-use caravel_core::models::policy::{EventFacts, Refusal, RelaySnapshot};
-use caravel_core::models::relays::Relay;
-use caravel_core::{Core, Error, domain, ingest, queries};
+use caravel_core::{Core, ingest};
+use caravel_db::queries;
+use caravel_domain as domain;
+use caravel_domain::Error;
+use caravel_domain::events::{Saved, StoredEvent};
+use caravel_domain::policy::{EventFacts, Refusal, RelaySnapshot};
+use caravel_domain::relays::Relay;
+use caravel_util::nostr::Key;
+use caravel_util::nostr::kinds;
+use caravel_util::nostr::kinds::{DELETION, VANISH};
 use coracle_lib::events::{Event, EventId};
 use coracle_lib::filters::Filter;
 use coracle_lib::sync::{FrameBudget, Item, Message as SyncMessage, SyncSet, reconcile_responder};
@@ -35,14 +38,14 @@ const SYNC_FRAME_BYTES: usize = 60_000;
 /// on reload.
 pub struct InstanceState {
     pub relay: Relay,
-    pub key: RelayKey,
+    pub key: Key,
     pub snapshot: RelaySnapshot,
     /// Its push subscriptions, when push is on.
     pub push: Vec<push::Subscription>,
 }
 
 impl InstanceState {
-    pub async fn load(core: &Core, relay: Relay) -> caravel_core::Result<Self> {
+    pub async fn load(core: &Core, relay: Relay) -> caravel_domain::Result<Self> {
         let push = if relay.push_enabled {
             push::load_subscriptions(core, &relay.id).await?
         } else {
@@ -106,7 +109,7 @@ impl RelayInstance {
     }
 
     /// Reload the relay's state from its row, keeping its connections open.
-    pub async fn reload(&self, relay: Relay) -> caravel_core::Result<()> {
+    pub async fn reload(&self, relay: Relay) -> caravel_domain::Result<()> {
         let _reloading = self.reloading.lock().await;
         self.install(relay).await
     }
@@ -121,7 +124,7 @@ impl RelayInstance {
     }
 
     /// Build the relay's state from `relay` and serve it, with the reload lock held.
-    async fn install(&self, relay: Relay) -> caravel_core::Result<()> {
+    async fn install(&self, relay: Relay) -> caravel_domain::Result<()> {
         let state = InstanceState::load(&self.core, relay).await?;
         self.pusher.retain(&state.relay.id, &state.push);
         *self
@@ -190,7 +193,7 @@ impl RelayInstance {
         let authed = self.connections.pubkeys(session);
         let now = self.core.clock.now();
 
-        domain::policy::admit_write(&state.snapshot, event, &authed, now)?;
+        state.snapshot.admit_write(event, &authed, now)?;
 
         if !domain::events::is_storable(event) {
             return Err(Refusal::invalid("event contains a NUL character"));
@@ -232,7 +235,7 @@ impl RelayInstance {
     /// claim also gives the joiner its membership.
     async fn join(&self, state: &InstanceState, event: &Event) -> Result<Vec<Event>, Refusal> {
         let relay_id = state.relay.id.as_str();
-        let join = domain::policy::admit_join(&state.snapshot, event)?;
+        let join = state.snapshot.admit_join(event)?;
         let result = ingest::join(&self.core, &state.relay, &state.key, event, &join).await;
 
         match result {
@@ -318,11 +321,11 @@ impl RelayInstance {
         let mut stripped: Option<RawEvent> = None;
 
         for matched in self.connections.matching(event) {
-            if !domain::policy::can_deliver(&state.snapshot, &matched.pubkeys, facts) {
+            if !state.snapshot.can_deliver(&matched.pubkeys, facts) {
                 continue;
             }
 
-            let strip = domain::policy::strips_signature(&state.snapshot, &matched.pubkeys);
+            let strip = state.snapshot.strips_signature(&matched.pubkeys);
             let rendered = if strip { &mut stripped } else { &mut signed };
             let raw = rendered
                 .get_or_insert_with(|| {
@@ -371,7 +374,7 @@ impl RelayInstance {
         let authed = self.connections.pubkeys(session);
         let now = self.core.clock.now();
 
-        domain::policy::admit_req(&state.snapshot, &authed)?;
+        state.snapshot.admit_req(&authed)?;
         if filters.len() > self.limits.max_filters {
             return Err(Refusal::blocked(format!(
                 "a request may have at most {} filters",
@@ -396,7 +399,7 @@ impl RelayInstance {
                 )
             })?;
 
-        let strip = domain::policy::strips_signature(&state.snapshot, &authed);
+        let strip = state.snapshot.strips_signature(&authed);
         let mut sent = HashSet::new();
 
         for filter in &filters {
@@ -417,11 +420,9 @@ impl RelayInstance {
             for stored in found {
                 let author = stored.head.pubkey_hex();
                 if !sent.insert(stored.head.id)
-                    || !domain::policy::can_any_receive(
-                        &state.snapshot,
-                        &authed,
-                        EventFacts::of_head(&stored.head, &author),
-                    )
+                    || !state
+                        .snapshot
+                        .can_any_receive(&authed, EventFacts::of_head(&stored.head, &author))
                 {
                     continue;
                 }
@@ -477,7 +478,7 @@ impl RelayInstance {
         let state = self.state();
         let authed = self.connections.pubkeys(session);
 
-        domain::policy::admit_req(&state.snapshot, &authed)?;
+        state.snapshot.admit_req(&authed)?;
         if filters.len() > self.limits.max_filters {
             return Err(Refusal::blocked(format!(
                 "a request may have at most {} filters",
@@ -497,11 +498,7 @@ impl RelayInstance {
             Refusal::Error("the count could not be run")
         })?;
 
-        Ok(domain::policy::count_visible(
-            &state.snapshot,
-            &authed,
-            &groups,
-        ))
+        Ok(state.snapshot.count_visible(&authed, &groups))
     }
 
     pub async fn on_auth(&self, session: &Session, event: Event) {
@@ -633,7 +630,7 @@ impl RelayInstance {
         let state = self.state();
         let authed = self.connections.pubkeys(session);
 
-        domain::policy::admit_req(&state.snapshot, &authed)?;
+        state.snapshot.admit_req(&authed)?;
 
         let heads = queries::events::query_event_heads(
             self.core.db.pool(),
@@ -658,11 +655,9 @@ impl RelayInstance {
             .into_iter()
             .filter(|head| {
                 let author = head.pubkey_hex();
-                domain::policy::can_any_receive(
-                    &state.snapshot,
-                    &authed,
-                    EventFacts::of_head(head, &author),
-                )
+                state
+                    .snapshot
+                    .can_any_receive(&authed, EventFacts::of_head(head, &author))
             })
             .map(|head| Item {
                 timestamp: head.created_at,

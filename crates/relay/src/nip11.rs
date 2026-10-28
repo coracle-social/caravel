@@ -2,8 +2,7 @@
 
 use axum::http::{HeaderValue, header};
 use axum::response::{IntoResponse, Response};
-use caravel_core::domain;
-use caravel_core::domain::policy::CREATED_AT_UPPER_LIMIT;
+use caravel_domain::policy::CREATED_AT_UPPER_LIMIT;
 use serde_json::{Value, json};
 
 use crate::RelayLimits;
@@ -15,7 +14,7 @@ const SUPPORTED_NIPS: [u16; 11] = [1, 9, 11, 40, 42, 43, 45, 50, 62, 70, 77];
 
 /// What a relay supports: every relay's NIPs, and those of the features it has on.
 /// Names that aren't numbers are given as strings.
-fn supported_nips(relay: &caravel_core::models::relays::Relay) -> Vec<Value> {
+fn supported_nips(relay: &caravel_domain::relays::Relay) -> Vec<Value> {
     let mut nips: Vec<Value> = SUPPORTED_NIPS.iter().map(|nip| json!(nip)).collect();
     if relay.groups_enabled {
         nips.push(json!(29));
@@ -62,7 +61,7 @@ pub fn document(state: &InstanceState, limits: &RelayLimits, transport: &Transpo
     });
 
     if paid {
-        document["payments_url"] = json!(domain::memberships::portal_url(relay, "/"));
+        document["payments_url"] = json!(relay.portal_url("/"));
         document["fees"] = json!({
             // A currency amount is in its minor units, as Flotilla reads it.
             "subscription": [{

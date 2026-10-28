@@ -4,10 +4,10 @@
 use bytes::Bytes;
 
 use crate::Core;
-use crate::commands;
-use crate::domain;
-use crate::error::Result;
-use crate::models::media::{Blob, Deleted};
+use caravel_db::commands;
+use caravel_domain as domain;
+use caravel_domain::error::Result;
+use caravel_domain::media::{Blob, Deleted};
 
 /// Keep an upload: store its bytes, then record the blob, if it is new to the
 /// relay, and its uploader as an owner. Returns the blob as stored.

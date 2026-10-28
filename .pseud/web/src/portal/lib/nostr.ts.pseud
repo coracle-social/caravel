@@ -1,9 +1,0 @@
-% source=web/src/portal/lib/nostr.ts lang=typescript lines=14 sha=de65710ad455
-
-module @/portal/lib/nostr  !global
-  -- The portal's Nostr Connect setup.
-
-  pub const NOSTR_CONNECT_RELAYS = [wss://relay.nsec.app, wss://bucket.coracle.social]  @6
-    -- where a remote signer and this page talk
-  give every NostrConnectSigner a relay pool of the portal's own  !global  @8
-  pub fn shortNpub(pubkey) -> str  -- the npub's first 12 and last 6 characters  @11-14

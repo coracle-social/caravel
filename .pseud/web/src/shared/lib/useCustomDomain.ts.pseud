@@ -1,9 +1,0 @@
-% source=web/src/shared/lib/useCustomDomain.ts lang=typescript lines=38 sha=e23468e55995
-
-module @/shared/lib/useCustomDomain  !net !db !time
-  -- Saving and re-checking a relay's custom domain from its page.
-
-  pub fn useCustomDomain(relayId, mutate) -> { saving, verifying, error, saveDomain, verifyDomain }  !net !db !time  @5-38
-    -- saveDomain PUTs custom_domain and puts the returned relay on the page; verifyDomain only
-    -- rereads the relay, since the server verifies domains in the background. Each tracks its own
-    -- in-flight flag and reports a failure in the shared error.

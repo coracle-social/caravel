@@ -1,7 +1,0 @@
-% source=web/src/shared/components/PaymentSetupNWC.tsx lang=typescript lines=31 sha=c8657dffdc71
-
-module @/shared/components/PaymentSetupNWC  !net !db !time
-  -- The dialog for the Lightning wallet on file.
-
-  pub fn PaymentSetupNWC(props: { open, onClose, onSaved?, isUpdate? })  !net !db !time  @5-31
-    -- Connecting a wallet by its NWC url, or with isUpdate replacing it; the stored url isn't shown.

@@ -10,8 +10,10 @@ use std::task::{Context, Poll};
 use axum::body::Body;
 use axum::http::StatusCode;
 use bytes::Bytes;
+use caravel_core::hosting;
 use caravel_core::testing::{create_relay, sign_event};
-use caravel_core::{commands, domain, hosting, queries};
+use caravel_db::{commands, queries};
+use caravel_domain as domain;
 use common::*;
 use coracle_lib::filters::Filter;
 use coracle_lib::keys::SecretKey;
@@ -191,7 +193,7 @@ async fn an_admin_deletes_a_tenant_without_banning_them() {
     assert_eq!(deleted.status, StatusCode::OK);
     assert_eq!(deleted.body["data"]["banned_at"], serde_json::Value::Null);
 
-    let relay = caravel_core::queries::relays::require_relay(api.core.db.pool(), &relay.id)
+    let relay = caravel_db::queries::relays::require_relay(api.core.db.pool(), &relay.id)
         .await
         .unwrap();
     assert!(relay.is_purged());

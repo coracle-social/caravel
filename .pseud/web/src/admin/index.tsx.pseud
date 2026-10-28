@@ -1,7 +1,0 @@
-% source=web/src/admin/index.tsx lang=typescript lines=9 sha=67577ac55598
-
-module @/admin/index
-  -- The admin dashboard's entry point.
-
-  set document.title to "<PLATFORM_NAME> admin"                         @7
-  render App into #root                                                 @9

@@ -1,8 +1,0 @@
-% source=web/src/shared/views/RelayEdit.tsx lang=typescript lines=47 sha=61578ec92035
-
-module @/shared/views/RelayEdit  !net !db !time
-  -- Editing a relay's name, subdomain, icon and description.
-
-  pub fn RelayEdit(props { basePath = "/relays", title? })  !net !db !time  @11-47
-    -- The route's relay in RelayForm without the plan picker. Submitting PUTs the subdomain and the
-    -- trimmed info_name, info_icon and info_description, then goes to <basePath>/<id>.

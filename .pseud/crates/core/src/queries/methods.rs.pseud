@@ -1,7 +1,0 @@
-% source=crates/core/src/queries/methods.rs lang=rust lines=19 sha=9fcdc5a19667
-
-module caravel_core::queries::methods  !db
-  -- Reading the NIP-86 methods granted on a relay.
-
-  pub async fn list_method_grants(relay_id) -> [(pubkey, methods)] fails  !db  @8-19
-    -- Each pubkey's method_grant rows aggregated in grant order, pubkeys sorted.

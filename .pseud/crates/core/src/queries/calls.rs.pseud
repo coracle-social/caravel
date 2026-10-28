@@ -1,7 +1,0 @@
-% source=crates/core/src/queries/calls.rs lang=rust lines=16 sha=305006fcd99f
-
-module caravel_core::queries::calls  !db
-  -- Reading the call meter.
-
-  pub async fn participant_seconds(relay_id) -> i64 fails  !db          @9-16
-    -- The relay's lifetime call clock: the sum of its livekit_session seconds, 0 when none.

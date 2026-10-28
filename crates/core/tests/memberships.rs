@@ -5,13 +5,15 @@
 mod common;
 
 use anyhow::Result;
-use caravel_core::models::kinds;
-use caravel_core::models::members::MemberSource;
-use caravel_core::models::memberships::{Membership, MembershipStatus};
-use caravel_core::models::policy::Join;
-use caravel_core::models::relays::{Relay, RelaySettings};
 use caravel_core::testing::sign_event;
-use caravel_core::{Core, Error, commands, hosting, management, memberships, queries, sessions};
+use caravel_core::{Core, hosting, management, memberships, sessions};
+use caravel_db::{commands, queries};
+use caravel_domain::Error;
+use caravel_domain::memberships::MemberSource;
+use caravel_domain::memberships::{Membership, MembershipStatus};
+use caravel_domain::policy::Join;
+use caravel_domain::relays::{Relay, RelaySettings};
+use caravel_util::nostr::kinds;
 use common::stripe::FakeStripe;
 use common::*;
 use coracle_lib::keys::SecretKey;
@@ -68,7 +70,7 @@ async fn live(f: &Fixture, pubkey: &str) -> Result<Option<Membership>> {
 
 async fn member_source(f: &Fixture, pubkey: &str) -> Result<Option<MemberSource>> {
     Ok(
-        queries::members::get_member(f.core.db.pool(), &f.relay.id, pubkey)
+        queries::memberships::get_member(f.core.db.pool(), &f.relay.id, pubkey)
             .await?
             .map(|member| member.source),
     )
@@ -469,7 +471,7 @@ async fn a_lapse_removes_access_and_tells_the_member_how_to_renew() -> Result<()
 
     let mut announced = false;
     while let Ok(change) = changes.try_recv() {
-        announced |= matches!(change, caravel_core::bus::Change::Notified { .. });
+        announced |= matches!(change, caravel_util::bus::Change::Notified { .. });
     }
     assert!(announced);
 
@@ -645,7 +647,7 @@ async fn a_member_price_must_be_chargeable_and_need_a_claim() -> Result<()> {
     ));
 
     let open = RelaySettings {
-        policy_public_join: Some(caravel_core::flag::Flag(true)),
+        policy_public_join: Some(caravel_util::flag::Flag(true)),
         ..Default::default()
     };
     let open = hosting::update_relay(&f.core, f.relay.clone(), open).await;

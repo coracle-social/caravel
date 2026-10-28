@@ -6,9 +6,10 @@ A multi-tenant platform for hosting Nostr community relays. Tenants create relay
 
 The backend is a Rust workspace whose crates are layered, each depending only on those listed before it:
 
-- `crates/db` — the Postgres pool, migrations and transactions
-- `crates/adapters` — clients for Stripe, Nostr Wallet Connect, the robot's Nostr identity, DNS, media storage, LiveKit and outbound HTTP
-- `crates/core` — the domain, in layers: models, the rules over them, the queries and commands that read and write them, and the subsystems (hosting, management, ingest, memberships, billing and the rest) that run them
+- `crates/util` — the clock, the change bus, the serde helpers, hex and hashing, the Postgres pool, migrations and transactions, and clients for Stripe, Nostr relays and keys, Nostr Wallet Connect, the robot's Nostr identity, DNS, media storage, LiveKit and outbound HTTP
+- `crates/domain` — one pod per concern, each with its models (e.g. `relays/model.rs`) and the pure rules over them (e.g. `relays/settings.rs`, `policy/write.rs`)
+- `crates/db` — the database layer: the queries that read and the commands that write, and nothing else
+- `crates/core` — the engine: the `Core` handle and the subsystems (hosting, management, ingest, memberships, billing and the rest) that run the rules against it
 - `crates/relay` — the virtual relays: websockets, NIP-11 and NIP-86, Blossom, push, LiveKit tokens and webhooks, and resolving hosts to relays
 - `crates/api` — the JSON API, documented in [crates/api/README.md](./crates/api/README.md)
 - `crates/app` — the `caravel` binary, which reads the environment, serves each request by its host and runs the background workers

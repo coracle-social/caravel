@@ -1,8 +1,0 @@
-% source=web/src/shared/lib/search.ts lang=typescript lines=10 sha=03ba3a02250a
-
-module @/shared/lib/search
-  -- Fuzzy search over lists.
-
-  const FUSE_THRESHOLD = 0.35                                           @3
-  pub fn fuzzySearch<T>(list, keys, query) -> [T]                       @5-10
-    -- Fuse's matches over keys anywhere in each field, in its ranking; the whole list for no query.

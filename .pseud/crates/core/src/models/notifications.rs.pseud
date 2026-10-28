@@ -1,9 +1,0 @@
-% source=crates/core/src/models/notifications.rs lang=rust lines=14 sha=73540d06c053
-
-module caravel_core::models::notifications
-  -- One message per pubkey per relay, sent as NOTIFY until it is replaced, cleared or expires.
-
-  pub data Notification                                                 @7-14
-    pubkey, message: str
-    created_at: i64
-    expires_at: i64?  -- when the message stops being sent, if ever

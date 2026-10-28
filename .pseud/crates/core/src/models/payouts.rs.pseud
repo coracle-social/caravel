@@ -1,7 +1,0 @@
-% source=crates/core/src/models/payouts.rs lang=rust lines=12 sha=0b12701ed040
-
-module caravel_core::models::payouts
-  -- Payouts: the Stripe Connect account a tenant's members pay into, less the platform's fee.
-
-  pub data PayoutStatus { account_id: str?, ready: bool, fee_percent: f64 }  @6-12
-    -- Whether a tenant can be paid, and what the platform keeps of each payment.

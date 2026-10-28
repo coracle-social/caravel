@@ -1,7 +1,0 @@
-% source=web/src/shared/components/ModalHeader.tsx lang=typescript lines=26 sha=184130a41e91
-
-module @/shared/components/ModalHeader
-  -- The header of a titled dialog.
-
-  pub fn ModalHeader(props: { title, onClose, closeDisabled?, children? })  @4-26
-    -- A dialog's title, with what belongs under it, and a close button.

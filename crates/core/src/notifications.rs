@@ -3,9 +3,9 @@
 //! authenticates again, until the message is replaced, cleared or expires.
 
 use crate::Core;
-use crate::bus::Change;
-use crate::commands;
-use crate::error::{Error, Result};
+use caravel_db::commands;
+use caravel_domain::error::{Error, Result};
+use caravel_util::bus::Change;
 
 /// Replace a pubkey's message on a relay, and send it to them now if they are
 /// connected and it hasn't expired.

@@ -4,16 +4,18 @@
 //! as a claim for whoever joins with it; lapsing removes a member who got in by
 //! paying, and tells them why. A sweep keeps every membership in step with Stripe.
 
-use caravel_adapters::stripe::{MembershipCheckoutParams, Standing, Subscription};
+use caravel_util::stripe::{MembershipCheckoutParams, Standing, Subscription};
 
 use crate::Core;
-use crate::bus::Change;
-use crate::error::{Error, Result};
-use crate::models::members::MemberSource;
-use crate::models::memberships::{InviteView, Membership, MembershipStatus, Offer};
-use crate::models::relays::Relay;
-use crate::models::sessions::SESSION_TTL;
-use crate::{commands, domain, notifications, queries};
+use crate::notifications;
+use caravel_db::{commands, queries};
+use caravel_domain as domain;
+use caravel_domain::error::{Error, Result};
+use caravel_domain::memberships::MemberSource;
+use caravel_domain::memberships::{InviteView, Membership, MembershipStatus, Offer};
+use caravel_domain::relays::Relay;
+use caravel_domain::sessions::SESSION_TTL;
+use caravel_util::bus::Change;
 
 /// A checkout not completed in this long never will be: Stripe expires Checkout
 /// sessions after a day. One reopened since is waited out.
@@ -49,7 +51,7 @@ pub async fn get_invite(core: &Core, code: &str) -> Result<InviteView> {
 
     let bound = membership.pubkey.is_some();
     let invite_url = if membership.status.is_paid() && !bound {
-        Some(domain::memberships::invite_url(&core.config, &relay, code)?)
+        Some(relay.invite_url(&core.config, code)?)
     } else {
         None
     };
@@ -112,8 +114,7 @@ pub async fn open_checkout(
         })
         .await?;
 
-    let page =
-        domain::memberships::with_return(&domain::memberships::portal_url(relay, "/"), return_url)?;
+    let page = domain::memberships::with_return(&relay.portal_url("/"), return_url)?;
     checkout(
         core,
         relay,
@@ -149,11 +150,10 @@ pub async fn open_invite_checkout(
         .await?;
 
     let success = domain::memberships::with_return(
-        &domain::memberships::portal_url(relay, &format!("/invites/{code}")),
+        &relay.portal_url(&format!("/invites/{code}")),
         return_url,
     )?;
-    let cancel =
-        domain::memberships::with_return(&domain::memberships::portal_url(relay, "/"), return_url)?;
+    let cancel = domain::memberships::with_return(&relay.portal_url("/"), return_url)?;
     checkout(
         core,
         relay,
@@ -301,7 +301,7 @@ pub async fn activate(
             match (&membership.pubkey, &membership.invite_code) {
                 (Some(pubkey), _) => {
                     commands::notifications::clear(&mut *conn, &relay.id, pubkey).await?;
-                    commands::members::admit(
+                    commands::memberships::admit(
                         conn,
                         &key,
                         &relay.id,
@@ -378,11 +378,11 @@ async fn lapse(core: &Core, membership: &Membership, relay: &Relay) -> Result<()
             .await?;
             match (&membership.pubkey, &membership.invite_code) {
                 (Some(pubkey), _) => {
-                    let paid = queries::members::get_member(&mut *conn, &relay.id, pubkey)
+                    let paid = queries::memberships::get_member(&mut *conn, &relay.id, pubkey)
                         .await?
                         .is_some_and(|member| member.source == MemberSource::Payment);
                     if paid {
-                        commands::members::remove(
+                        commands::memberships::remove(
                             conn,
                             &key,
                             &relay.id,
@@ -410,8 +410,7 @@ async fn lapse(core: &Core, membership: &Membership, relay: &Relay) -> Result<()
 
     if let Some(pubkey) = &membership.pubkey {
         let (token, _) = commands::sessions::create_session(core.db.pool(), pubkey, now).await?;
-        let mut renew = url::Url::parse(&domain::memberships::portal_url(relay, "/"))
-            .map_err(Error::internal)?;
+        let mut renew = url::Url::parse(&relay.portal_url("/")).map_err(Error::internal)?;
         renew.query_pairs_mut().append_pair("token", &token);
         let message = format!(
             "Your membership of {} has ended. Renew at {renew}",

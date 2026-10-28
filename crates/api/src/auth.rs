@@ -5,8 +5,9 @@ use axum::extract::FromRequestParts;
 use axum::http::HeaderMap;
 use axum::http::header::AUTHORIZATION;
 use axum::http::request::Parts;
-use caravel_core::models::auth::Actor;
-use caravel_core::{Core, Error, sessions};
+use caravel_core::{Core, sessions};
+use caravel_domain::Error;
+use caravel_domain::auth::Actor;
 
 use crate::response::ApiError;
 

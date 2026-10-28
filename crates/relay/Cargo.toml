@@ -8,6 +8,9 @@ license.workspace = true
 [dependencies]
 axum.workspace = true
 caravel-core.workspace = true
+caravel-db.workspace = true
+caravel-domain.workspace = true
+caravel-util.workspace = true
 coracle-lib.workspace = true
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 hex.workspace = true
@@ -23,7 +26,6 @@ tracing.workspace = true
 [dev-dependencies]
 anyhow.workspace = true
 base64.workspace = true
-caravel-adapters.workspace = true
 caravel-core = { workspace = true, features = ["testing"] }
 coracle-kinds.workspace = true
 sha2.workspace = true

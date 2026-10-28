@@ -4,12 +4,15 @@
 
 use anyhow::Result;
 use bytes::Bytes;
-use caravel_core::models::events::StoredEvent;
-use caravel_core::models::relays::Relay;
-use caravel_core::models::rooms::kinds;
-use caravel_core::models::transfer::ImportResult;
 use caravel_core::testing::{create_relay, sign_event};
-use caravel_core::{Core, Error, domain, queries, testing, transfer};
+use caravel_core::{Core, testing, transfer};
+use caravel_db::queries;
+use caravel_domain as domain;
+use caravel_domain::Error;
+use caravel_domain::events::StoredEvent;
+use caravel_domain::relays::Relay;
+use caravel_domain::transfer::ImportResult;
+use caravel_util::nostr::kinds::rooms as kinds;
 use coracle_lib::events::Event;
 use coracle_lib::filters::{Filter, TagMatch};
 use coracle_lib::keys::SecretKey;

@@ -1,6 +1,0 @@
-% source=web/src/portal/components/Card.tsx lang=typescript lines=5 sha=9f38810c7f30
-
-module @/portal/components/Card
-  -- The portal's white, rounded content panel.
-
-  pub fn Card(props: { children })                                      @3-5

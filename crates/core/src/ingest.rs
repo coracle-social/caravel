@@ -6,13 +6,14 @@
 use coracle_lib::events::Event;
 
 use crate::Core;
-use crate::crypto::RelayKey;
-use crate::error::{Error, Result};
-use crate::models::events::Saved;
-use crate::models::kinds::{DELETION, VANISH};
-use crate::models::policy::Join;
-use crate::models::relays::Relay;
-use crate::{commands, domain};
+use caravel_db::commands;
+use caravel_domain as domain;
+use caravel_domain::error::{Error, Result};
+use caravel_domain::events::Saved;
+use caravel_domain::policy::Join;
+use caravel_domain::relays::Relay;
+use caravel_util::nostr::Key;
+use caravel_util::nostr::kinds::{DELETION, VANISH};
 
 /// Keep an event, applying a deletion, a request to vanish, or a change to a room
 /// in the same transaction. Returns how it was saved, and what the relay
@@ -20,7 +21,7 @@ use crate::{commands, domain};
 pub async fn store(
     core: &Core,
     relay: &Relay,
-    key: &RelayKey,
+    key: &Key,
     rooms_enabled: bool,
     event: &Event,
 ) -> Result<(Saved, Vec<Event>)> {
@@ -63,7 +64,7 @@ pub async fn store(
 pub async fn join(
     core: &Core,
     relay: &Relay,
-    key: &RelayKey,
+    key: &Key,
     event: &Event,
     join: &Join,
 ) -> Result<Vec<Event>> {
@@ -77,11 +78,12 @@ pub async fn join(
 
 /// Act on a NIP-43 leave request, returning what the relay published. The owner
 /// can't leave.
-pub async fn leave(core: &Core, relay: &Relay, key: &RelayKey, pubkey: &str) -> Result<Vec<Event>> {
+pub async fn leave(core: &Core, relay: &Relay, key: &Key, pubkey: &str) -> Result<Vec<Event>> {
     let now = core.clock.now();
     core.db
         .with_tx(async |conn| {
-            commands::members::remove(conn, key, &relay.id, &relay.tenant_pubkey, pubkey, now).await
+            commands::memberships::remove(conn, key, &relay.id, &relay.tenant_pubkey, pubkey, now)
+                .await
         })
         .await
 }

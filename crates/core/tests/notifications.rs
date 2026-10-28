@@ -2,10 +2,12 @@
 //! relay, replaced, cleared or expired.
 
 use anyhow::Result;
-use caravel_core::bus::Change;
-use caravel_core::queries::notifications::get_notification;
 use caravel_core::testing::create_relay;
-use caravel_core::{Core, Error, commands, notifications, testing};
+use caravel_core::{Core, notifications, testing};
+use caravel_db::commands;
+use caravel_db::queries::notifications::get_notification;
+use caravel_domain::Error;
+use caravel_util::bus::Change;
 use coracle_lib::keys::SecretKey;
 
 const NOW: i64 = 1_800_000_000;

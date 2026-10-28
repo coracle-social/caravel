@@ -1,9 +1,9 @@
 //! Sessions: the bearer tokens a NIP-98 signature buys, good for thirty days.
 
 use crate::Core;
-use crate::error::Result;
-use crate::models::sessions::Session;
-use crate::{commands, queries};
+use caravel_db::{commands, queries};
+use caravel_domain::error::Result;
+use caravel_domain::sessions::Session;
 
 /// How stale a session's `last_used_at` may get before a request refreshes it.
 const TOUCH_INTERVAL: i64 = 60 * 60;

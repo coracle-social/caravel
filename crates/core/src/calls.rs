@@ -4,10 +4,10 @@
 use coracle_lib::events::Event;
 
 use crate::Core;
-use crate::commands;
-use crate::crypto::RelayKey;
-use crate::error::Result;
-use crate::models::rooms::kinds::LIVEKIT_PARTICIPANTS;
+use caravel_db::commands;
+use caravel_domain::error::Result;
+use caravel_util::nostr::Key;
+use caravel_util::nostr::kinds::rooms::LIVEKIT_PARTICIPANTS;
 
 /// A participant's LiveKit identity, `<pubkey>:<nonce>`, so one pubkey can be in a
 /// call from several devices.
@@ -19,7 +19,7 @@ pub fn participant_identity(pubkey: &str) -> String {
 /// kept only as this event.
 pub async fn publish_participants(
     core: &Core,
-    key: &RelayKey,
+    key: &Key,
     relay_id: &str,
     room_id: &str,
     participants: &[String],

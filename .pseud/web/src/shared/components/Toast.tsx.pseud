@@ -1,8 +1,0 @@
-% source=web/src/shared/components/Toast.tsx lang=typescript lines=71 sha=e0fdceb5dcc8
-
-module @/shared/components/Toast  !time
-  -- The global toast.
-
-  pub fn Toast()  !time                                                 @4-71
-    -- toastMessage colored by its variant; each message fades in, then after 10s fades out and,
-    -- 250ms later, is cleared. A new message restarts the timers.

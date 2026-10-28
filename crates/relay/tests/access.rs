@@ -4,9 +4,9 @@
 mod common;
 
 use caravel_core::management;
-use caravel_core::models::kinds;
-use caravel_core::models::management::Call;
 use caravel_core::testing::sign_event;
+use caravel_domain::management::Call;
+use caravel_util::nostr::kinds;
 use common::*;
 use coracle_lib::keys::SecretKey;
 use serde_json::json;
@@ -138,7 +138,7 @@ async fn management_calls_are_authorized_per_method() {
         .await;
     assert_eq!(
         methods["result"].as_array().unwrap().len(),
-        caravel_core::models::methods::MANAGED_METHODS.len()
+        caravel_domain::management::MANAGED_METHODS.len()
     );
 
     let refused = server

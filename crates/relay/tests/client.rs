@@ -6,11 +6,11 @@ mod common;
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
-use caravel_adapters::nostr;
-use caravel_adapters::robot::{Robot, RobotProfile};
-use caravel_core::commands;
-use caravel_core::models::relays::Relay;
 use caravel_core::testing::sign_event;
+use caravel_db::commands;
+use caravel_domain::relays::Relay;
+use caravel_util::nostr;
+use caravel_util::robot::{Robot, RobotProfile};
 use common::*;
 use coracle_kinds::gift_wrap::{GiftWrapReader, SealReader};
 use coracle_lib::filters::Filter;

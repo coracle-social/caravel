@@ -6,26 +6,20 @@ rust-version.workspace = true
 license.workspace = true
 
 [features]
-testing = ["caravel-db/testing"]
+testing = ["caravel-util/testing"]
 
 [dependencies]
 anyhow.workspace = true
 base64.workspace = true
 bytes.workspace = true
-caravel-adapters.workspace = true
 caravel-db.workspace = true
-chrono.workspace = true
+caravel-domain.workspace = true
+caravel-util.workspace = true
 coracle-lib.workspace = true
 futures-util.workspace = true
 hex.workspace = true
 rand.workspace = true
-regex.workspace = true
-serde.workspace = true
 serde_json.workspace = true
-sha2.workspace = true
-sqlx.workspace = true
-thiserror.workspace = true
-tokio.workspace = true
 tracing.workspace = true
 url.workspace = true
 uuid.workspace = true
@@ -33,3 +27,7 @@ uuid.workspace = true
 [dev-dependencies]
 axum.workspace = true
 caravel-core = { path = ".", features = ["testing"] }
+chrono.workspace = true
+futures-util.workspace = true
+regex.workspace = true
+tokio.workspace = true

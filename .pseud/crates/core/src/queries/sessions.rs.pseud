@@ -1,7 +1,0 @@
-% source=crates/core/src/queries/sessions.rs lang=rust lines=23 sha=4ac818d2f0ae
-
-module caravel_core::queries::sessions  !db
-  -- Reading sessions.
-
-  pub async fn get_session(token, now) -> Session? fails  !db           @10-23
-    -- The session stored under sha256_hex(token), unless it expired by now.

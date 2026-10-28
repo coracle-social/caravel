@@ -1,6 +1,0 @@
-% source=web/src/portal/pages/NotFound.tsx lang=typescript lines=10 sha=cfe40c8d846d
-
-module @/portal/pages/NotFound
-  -- The portal's page for an unknown path.
-
-  pub fn NotFound()  -- "There's nothing here."                         @4-10

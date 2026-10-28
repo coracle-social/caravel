@@ -9,9 +9,10 @@ rust-version = "1.94"
 license = "MIT"
 
 [workspace.dependencies]
-caravel-db = { path = "crates/db" }
-caravel-adapters = { path = "crates/adapters" }
+caravel-util = { path = "crates/util" }
+caravel-domain = { path = "crates/domain" }
 caravel-core = { path = "crates/core" }
+caravel-db = { path = "crates/db" }
 caravel-api = { path = "crates/api" }
 caravel-relay = { path = "crates/relay" }
 

@@ -1,19 +1,21 @@
 //! Managing a relay's access and rooms: its members, NIP-86 calls, and room
 //! moderation from the dashboards.
 
+use caravel_util::db::Connection;
 use coracle_lib::events::Event;
 use serde_json::{Value, json};
-use sqlx::PgConnection;
 
 use crate::Core;
-use crate::bus::Change;
-use crate::crypto::{RelayKey, is_hex64};
-use crate::error::{Error, Result};
-use crate::models::management::{Call, Outcome};
-use crate::models::members::MemberSource;
-use crate::models::methods::MANAGED_METHODS;
-use crate::models::relays::Relay;
-use crate::{commands, domain, queries};
+use caravel_db::{commands, queries};
+use caravel_domain as domain;
+use caravel_domain::error::{Error, Result};
+use caravel_domain::management::MANAGED_METHODS;
+use caravel_domain::management::{Call, Outcome};
+use caravel_domain::memberships::MemberSource;
+use caravel_domain::relays::Relay;
+use caravel_util::bus::Change;
+use caravel_util::encoding::is_hex64;
+use caravel_util::nostr::Key;
 
 /// Carry out a NIP-86 call on a relay, whose caller may make it, and return its
 /// answer. A change to the relay's access lists or rooms goes out on the bus.
@@ -47,7 +49,7 @@ pub async fn run_call(core: &Core, relay: &Relay, call: Call) -> Result<Outcome>
             )))
         }
         Call::ListAllowedPubkeys => {
-            let members = queries::members::list_members(pool, relay_id).await?;
+            let members = queries::memberships::list_members(pool, relay_id).await?;
             Ok(Outcome::Answer(json!(
                 members
                     .into_iter()
@@ -69,7 +71,8 @@ pub async fn run_call(core: &Core, relay: &Relay, call: Call) -> Result<Outcome>
                 json!({"pubkey": tenant_pubkey, "methods": all}),
                 json!({"pubkey": relay.pubkey, "methods": all}),
             ];
-            for (pubkey, methods) in queries::methods::list_method_grants(pool, relay_id).await? {
+            for (pubkey, methods) in queries::management::list_method_grants(pool, relay_id).await?
+            {
                 if pubkey != tenant_pubkey && pubkey != relay.pubkey {
                     assignees.push(json!({"pubkey": pubkey, "methods": methods}));
                 }
@@ -143,7 +146,8 @@ pub async fn moderate_room(
     let now = core.clock.now();
     let event = key.sign(kind, tags, "", now);
     let snapshot = queries::policy::load_snapshot(core.db.pool(), relay).await?;
-    domain::policy::check_room_write(&snapshot, &event)
+    snapshot
+        .check_room_write(&event)
         .map_err(|refusal| Error::invalid("refused", refusal.message()))?;
 
     let mut published = core
@@ -179,8 +183,8 @@ async fn change_info(
 
 /// The calls that change what the relay publishes about itself.
 async fn write(
-    conn: &mut PgConnection,
-    key: &RelayKey,
+    conn: &mut Connection,
+    key: &Key,
     relay: &Relay,
     call: &Call,
     now: i64,
@@ -194,10 +198,10 @@ async fn write(
                 .await
         }
         Call::AllowPubkey(pubkey) => {
-            commands::members::allow_pubkey(conn, key, relay_id, pubkey, now).await
+            commands::memberships::allow_pubkey(conn, key, relay_id, pubkey, now).await
         }
         Call::UnallowPubkey(pubkey) => {
-            commands::members::remove(conn, key, relay_id, tenant_pubkey, pubkey, now).await
+            commands::memberships::remove(conn, key, relay_id, tenant_pubkey, pubkey, now).await
         }
         Call::BanEvent(id, reason) => {
             commands::bans::ban_event(conn, relay_id, id, reason, now).await?;
@@ -215,11 +219,19 @@ async fn write(
             commands::roles::unassign_role(conn, key, relay_id, pubkey, role_id, now).await
         }
         Call::AssignMethod(pubkey, method) => {
-            commands::methods::grant_method(conn, key, relay_id, tenant_pubkey, pubkey, method, now)
-                .await
+            commands::management::grant_method(
+                conn,
+                key,
+                relay_id,
+                tenant_pubkey,
+                pubkey,
+                method,
+                now,
+            )
+            .await
         }
         Call::UnassignMethod(pubkey, method) => {
-            commands::methods::revoke_method(
+            commands::management::revoke_method(
                 conn,
                 relay_id,
                 tenant_pubkey,
@@ -250,7 +262,7 @@ pub async fn add_member(core: &Core, relay: &Relay, pubkey: &str) -> Result<()> 
     let published = core
         .db
         .with_tx(async |conn| {
-            commands::members::admit(conn, &key, &relay.id, &pubkey, MemberSource::Manual, now)
+            commands::memberships::admit(conn, &key, &relay.id, &pubkey, MemberSource::Manual, now)
                 .await
         })
         .await?;
@@ -270,7 +282,7 @@ pub async fn remove_member(core: &Core, relay: &Relay, pubkey: &str) -> Result<(
     let published = core
         .db
         .with_tx(async |conn| {
-            commands::members::remove(conn, &key, &relay.id, &relay.tenant_pubkey, pubkey, now)
+            commands::memberships::remove(conn, &key, &relay.id, &relay.tenant_pubkey, pubkey, now)
                 .await
         })
         .await?;

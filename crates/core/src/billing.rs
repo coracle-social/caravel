@@ -3,19 +3,21 @@
 //! (Lightning, then a card on file, then a reminder DM), churning tenants who
 //! don't pay.
 
-use caravel_adapters::stripe::Charge;
-use caravel_adapters::{bitcoin, wallet::Wallet};
+use caravel_util::stripe::Charge;
+use caravel_util::{bitcoin, wallet::Wallet};
 
 use crate::Core;
-use crate::bus::Change;
-use crate::error::{Error, Result};
-use crate::models::activity::{Activity, ActivityType, Snapshot};
-use crate::models::billing::BillingPeriod;
-use crate::models::ledger::{Bolt11, Checkout, Invoice, InvoiceItem, InvoiceMethod};
-use crate::models::plans::{self, GB, Plan, SECONDS_PER_HOUR};
-use crate::models::relays::RelayStatus;
-use crate::models::tenants::Tenant;
-use crate::{commands, domain, queries, usage};
+use crate::usage;
+use caravel_db::{commands, queries};
+use caravel_domain as domain;
+use caravel_domain::activity::{Activity, ActivityType, Snapshot};
+use caravel_domain::billing::BillingPeriod;
+use caravel_domain::billing::{Bolt11, Checkout, Invoice, InvoiceItem, InvoiceMethod};
+use caravel_domain::billing::{GB, Plan, SECONDS_PER_HOUR};
+use caravel_domain::error::{Error, Result};
+use caravel_domain::relays::RelayStatus;
+use caravel_domain::tenants::Tenant;
+use caravel_util::bus::Change;
 
 const GRACE_PERIOD_SECS: i64 = 7 * 24 * 60 * 60;
 
@@ -114,7 +116,7 @@ pub async fn reconcile_subscription(
         core.db
             .with_tx(async |conn| {
                 queries::tenants::lock_tenant(conn, &tenant.pubkey).await?;
-                commands::ledger::insert_invoice_for_outstanding_items(
+                commands::billing::insert_invoice_for_outstanding_items(
                     conn,
                     &tenant.pubkey,
                     &period,
@@ -127,7 +129,7 @@ pub async fn reconcile_subscription(
     }
 
     let invoices =
-        queries::ledger::list_open_invoices_for_tenant(core.db.pool(), &tenant.pubkey).await?;
+        queries::billing::list_open_invoices_for_tenant(core.db.pool(), &tenant.pubkey).await?;
 
     if maybe_churn_tenant(core, &tenant, &invoices).await? {
         return Ok(());
@@ -174,7 +176,7 @@ async fn reconcile_activity(core: &Core, tenant: &Tenant, activity: &Activity) -
             if commands::activity::mark_activity_billed(&mut *conn, &activity.id, now).await?
                 && let Some(item) = &item
             {
-                commands::ledger::insert_invoice_item(&mut *conn, item).await?;
+                commands::billing::insert_invoice_item(&mut *conn, item).await?;
             }
             Ok::<_, Error>(())
         })
@@ -205,10 +207,10 @@ async fn plan_change_item(
         return Ok(None);
     }
 
-    let new_plan = domain::billing::recorded_plan(new_plan_id)?;
-    let old_plan = domain::billing::recorded_plan(old_plan_id)?;
+    let new_plan = Plan::recorded(new_plan_id)?;
+    let old_plan = Plan::recorded(old_plan_id)?;
 
-    let period = domain::billing::activity_period(tenant, activity)?;
+    let period = tenant.activity_period(activity)?;
     let amount = period.prorate(new_plan.amount, activity.created_at)
         - period.prorate(old_plan.amount, activity.created_at);
     if amount == 0 {
@@ -256,7 +258,7 @@ async fn reconcile_renewal(core: &Core, tenant: &Tenant, period: &BillingPeriod)
         if *status != RelayStatus::Active {
             continue;
         }
-        let Some(plan) = plans::get_plan(plan_id).filter(Plan::is_paid) else {
+        let Some(plan) = domain::billing::get_plan(plan_id).filter(Plan::is_paid) else {
             continue;
         };
 
@@ -286,7 +288,7 @@ async fn reconcile_renewal(core: &Core, tenant: &Tenant, period: &BillingPeriod)
                 return Ok(());
             }
             for item in &items {
-                commands::ledger::insert_invoice_item(&mut *conn, item).await?;
+                commands::billing::insert_invoice_item(&mut *conn, item).await?;
             }
             commands::tenants::set_tenant_renewed_at(&mut *conn, &tenant.pubkey, period.start).await
         })
@@ -332,7 +334,7 @@ async fn reconcile_overage(core: &Core, tenant: &Tenant, period: &BillingPeriod)
             continue;
         };
         let plan_id = &activity.snapshot.plan_id;
-        let Some(plan) = plans::get_plan(plan_id).filter(Plan::is_paid) else {
+        let Some(plan) = domain::billing::get_plan(plan_id).filter(Plan::is_paid) else {
             continue;
         };
 
@@ -392,7 +394,7 @@ async fn reconcile_overage(core: &Core, tenant: &Tenant, period: &BillingPeriod)
                 return Ok(());
             }
             for item in &items {
-                commands::ledger::insert_invoice_item(&mut *conn, item).await?;
+                commands::billing::insert_invoice_item(&mut *conn, item).await?;
             }
             commands::tenants::set_tenant_overage_billed_at(
                 &mut *conn,
@@ -458,7 +460,7 @@ async fn churn_tenant(core: &Core, tenant_pubkey: &str) -> Result<bool> {
                 }
             }
 
-            commands::ledger::void_open_invoices_for_tenant(conn, tenant_pubkey, now).await?;
+            commands::billing::void_open_invoices_for_tenant(conn, tenant_pubkey, now).await?;
             Ok::<_, Error>(Some(changed))
         })
         .await?;
@@ -502,7 +504,7 @@ pub(crate) async fn reactivate_tenant(core: &Core, tenant_pubkey: &str) -> Resul
                 }
             }
 
-            commands::ledger::void_open_invoices_for_tenant(conn, tenant_pubkey, now).await?;
+            commands::billing::void_open_invoices_for_tenant(conn, tenant_pubkey, now).await?;
             Ok::<_, Error>(activities)
         })
         .await?;
@@ -530,7 +532,7 @@ async fn reconcile_payments(
     let now = core.clock.now();
 
     if let Some(bolt11) =
-        queries::ledger::get_bolt11_for_invoice(core.db.pool(), &invoice.id).await?
+        queries::billing::get_bolt11_for_invoice(core.db.pool(), &invoice.id).await?
         && bolt11.settled_at.is_none()
         && core
             .wallet
@@ -540,8 +542,8 @@ async fn reconcile_payments(
     {
         core.db
             .with_tx(async |conn| {
-                commands::ledger::mark_bolt11_settled(&mut *conn, &bolt11.id, now).await?;
-                commands::ledger::mark_invoice_paid(
+                commands::billing::mark_bolt11_settled(&mut *conn, &bolt11.id, now).await?;
+                commands::billing::mark_invoice_paid(
                     &mut *conn,
                     &invoice.id,
                     InvoiceMethod::Oob,
@@ -554,7 +556,7 @@ async fn reconcile_payments(
     }
 
     if let Some(checkout) =
-        queries::ledger::get_checkout_for_invoice(core.db.pool(), &invoice.id).await?
+        queries::billing::get_checkout_for_invoice(core.db.pool(), &invoice.id).await?
         && checkout.settled_at.is_none()
         && core
             .stripe
@@ -566,8 +568,8 @@ async fn reconcile_payments(
             .with_tx(async |conn| {
                 commands::tenants::set_tenant_stripe_error(&mut *conn, &tenant.pubkey, None)
                     .await?;
-                commands::ledger::mark_checkout_settled(&mut *conn, &checkout.id, now).await?;
-                commands::ledger::mark_invoice_paid(
+                commands::billing::mark_checkout_settled(&mut *conn, &checkout.id, now).await?;
+                commands::billing::mark_invoice_paid(
                     &mut *conn,
                     &invoice.id,
                     InvoiceMethod::Stripe,
@@ -622,7 +624,7 @@ async fn pay_with_nwc(
         // A payment that errors but landed anyway, or an invoice paid meanwhile, is fine.
         if let Err(error) = tenant_wallet.pay_invoice(&bolt11.lnbc, now).await
             && !core.wallet.is_settled(&bolt11.lnbc, now).await.unwrap_or(false)
-            && !matches!(queries::ledger::get_invoice(core.db.pool(), &invoice.id).await, Ok(Some(paid)) if paid.paid_at.is_some())
+            && !matches!(queries::billing::get_invoice(core.db.pool(), &invoice.id).await, Ok(Some(paid)) if paid.paid_at.is_some())
         {
             return Err(error.into());
         }
@@ -630,8 +632,8 @@ async fn pay_with_nwc(
         core.db
             .with_tx(async |conn| {
                 commands::tenants::set_tenant_nwc_error(&mut *conn, &tenant.pubkey, None).await?;
-                commands::ledger::mark_bolt11_settled(&mut *conn, &bolt11.id, now).await?;
-                commands::ledger::mark_invoice_paid(&mut *conn, &invoice.id, InvoiceMethod::Nwc, now).await
+                commands::billing::mark_bolt11_settled(&mut *conn, &bolt11.id, now).await?;
+                commands::billing::mark_invoice_paid(&mut *conn, &invoice.id, InvoiceMethod::Nwc, now).await
             })
             .await
     }
@@ -655,7 +657,7 @@ async fn pay_with_card(
     invoice: &Invoice,
     payment_method_id: &str,
 ) -> Result<()> {
-    let intent = commands::ledger::ensure_pending_intent(
+    let intent = commands::billing::ensure_pending_intent(
         core.db.pool(),
         &invoice.id,
         payment_method_id,
@@ -677,7 +679,7 @@ async fn pay_with_card(
         Ok(Charge::Succeeded(id)) => id,
         // Nothing was charged, so the next pass makes a new attempt on the tenant's current card.
         Ok(Charge::Refused(reason)) => {
-            commands::ledger::delete_intent(core.db.pool(), &intent.id).await?;
+            commands::billing::delete_intent(core.db.pool(), &intent.id).await?;
             commands::tenants::set_tenant_stripe_error(
                 core.db.pool(),
                 &tenant.pubkey,
@@ -702,10 +704,15 @@ async fn pay_with_card(
     core.db
         .with_tx(async |conn| {
             commands::tenants::set_tenant_stripe_error(&mut *conn, &tenant.pubkey, None).await?;
-            commands::ledger::mark_intent_settled(&mut *conn, &intent.id, &payment_intent_id, now)
+            commands::billing::mark_intent_settled(&mut *conn, &intent.id, &payment_intent_id, now)
                 .await?;
-            commands::ledger::mark_invoice_paid(&mut *conn, &invoice.id, InvoiceMethod::Stripe, now)
-                .await
+            commands::billing::mark_invoice_paid(
+                &mut *conn,
+                &invoice.id,
+                InvoiceMethod::Stripe,
+                now,
+            )
+            .await
         })
         .await
 }
@@ -730,14 +737,14 @@ async fn send_payment_reminder(core: &Core, tenant: &Tenant, invoice: &Invoice) 
     let message = format!("{MANUAL_PAYMENT_DM}\n\n{payment_url}");
     core.robot.send_dm(&tenant.pubkey, &message, now).await?;
 
-    commands::ledger::mark_invoice_notified(core.db.pool(), &invoice.id, now).await
+    commands::billing::mark_invoice_notified(core.db.pool(), &invoice.id, now).await
 }
 
 /// Expire an invoice's pending Checkout sessions once it is paid, so the tenant
 /// can't pay twice. Lightning invoices can't be withdrawn.
 async fn cleanup_pending_payments(core: &Core, invoice: &Invoice) -> Result<()> {
     for checkout in
-        queries::ledger::list_pending_checkouts_for_invoice(core.db.pool(), &invoice.id).await?
+        queries::billing::list_pending_checkouts_for_invoice(core.db.pool(), &invoice.id).await?
     {
         if let Err(error) = core
             .stripe
@@ -757,7 +764,7 @@ async fn cleanup_pending_payments(core: &Core, invoice: &Invoice) -> Result<()> 
 /// it went unpaid; if it was paid, the invoice is settled and it is returned.
 pub async fn ensure_bolt11_for_invoice(core: &Core, invoice: &Invoice) -> Result<Bolt11> {
     let now = core.clock.now();
-    let existing = queries::ledger::get_bolt11_for_invoice(core.db.pool(), &invoice.id).await?;
+    let existing = queries::billing::get_bolt11_for_invoice(core.db.pool(), &invoice.id).await?;
 
     if !invoice.is_open() {
         return existing.ok_or_else(|| Error::conflict("invoice-not-open", "invoice is not open"));
@@ -773,8 +780,8 @@ pub async fn ensure_bolt11_for_invoice(core: &Core, invoice: &Invoice) -> Result
         if core.wallet.is_settled(&existing.lnbc, now).await? {
             core.db
                 .with_tx(async |conn| {
-                    commands::ledger::mark_bolt11_settled(&mut *conn, &existing.id, now).await?;
-                    commands::ledger::mark_invoice_paid(
+                    commands::billing::mark_bolt11_settled(&mut *conn, &existing.id, now).await?;
+                    commands::billing::mark_invoice_paid(
                         &mut *conn,
                         &invoice.id,
                         InvoiceMethod::Oob,
@@ -798,7 +805,7 @@ pub async fn ensure_bolt11_for_invoice(core: &Core, invoice: &Invoice) -> Result
         .make_invoice(msats, "Relay subscription payment", expiry as u64, now)
         .await?;
 
-    commands::ledger::insert_bolt11(
+    commands::billing::insert_bolt11(
         core.db.pool(),
         &invoice.id,
         &lnbc,
@@ -825,7 +832,7 @@ pub async fn ensure_checkout_for_invoice(
     }
 
     if let Some(existing) =
-        queries::ledger::get_checkout_for_invoice(core.db.pool(), &invoice.id).await?
+        queries::billing::get_checkout_for_invoice(core.db.pool(), &invoice.id).await?
         && now < existing.expires_at
     {
         if existing.settled_at.is_some() {
@@ -848,7 +855,7 @@ pub async fn ensure_checkout_for_invoice(
         )
         .await?;
 
-    commands::ledger::insert_checkout(
+    commands::billing::insert_checkout(
         core.db.pool(),
         &invoice.id,
         &session.id,
@@ -932,7 +939,7 @@ pub async fn get_draft_invoice(core: &Core, tenant: &Tenant) -> Result<Option<In
     };
 
     let items =
-        queries::ledger::list_outstanding_invoice_items_for_tenant(core.db.pool(), &tenant.pubkey)
+        queries::billing::list_outstanding_invoice_items_for_tenant(core.db.pool(), &tenant.pubkey)
             .await?;
     if items.is_empty() {
         return Ok(None);

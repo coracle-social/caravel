@@ -3,14 +3,16 @@
 //! Callers authorize before calling.
 
 use crate::Core;
-use crate::bus::Change;
-use crate::crypto::generate_keypair;
-use crate::error::{Error, Result};
-use crate::models::activity::ActivityType;
-use crate::models::members::MemberSource;
-use crate::models::relays::{Relay, RelaySettings, RelayStatus};
-use crate::models::tenants::Tenant;
-use crate::{billing, commands, domain, queries};
+use crate::billing;
+use caravel_db::{commands, queries};
+use caravel_domain as domain;
+use caravel_domain::activity::ActivityType;
+use caravel_domain::error::{Error, Result};
+use caravel_domain::memberships::MemberSource;
+use caravel_domain::relays::{Relay, RelaySettings, RelayStatus};
+use caravel_domain::tenants::Tenant;
+use caravel_util::bus::Change;
+use caravel_util::nostr::generate_keypair;
 
 // --- Tenants ---
 
@@ -166,10 +168,9 @@ pub async fn create_relay(
         created_at: now,
         ..Default::default()
     };
-    let relay = domain::relays::validate_relay(
-        &core.config,
-        domain::relays::apply_settings(&core.config, relay, settings)?,
-    )?;
+    let relay = relay
+        .apply_settings(&core.config, settings)?
+        .validate(&core.config)?;
     if let Some(custom_domain) = &relay.custom_domain
         && queries::relays::is_custom_domain_taken(core.db.pool(), custom_domain, &relay.id).await?
     {
@@ -188,7 +189,7 @@ pub async fn create_relay(
                 now,
             )
             .await?;
-            commands::members::admit(
+            commands::memberships::admit(
                 conn,
                 &key,
                 &relay.id,
@@ -218,10 +219,9 @@ pub async fn update_relay(core: &Core, relay: Relay, settings: RelaySettings) ->
     relay.require_unpurged()?;
 
     let previous = relay.clone();
-    let relay = domain::relays::validate_relay(
-        &core.config,
-        domain::relays::apply_settings(&core.config, relay, settings)?,
-    )?;
+    let relay = relay
+        .apply_settings(&core.config, settings)?
+        .validate(&core.config)?;
 
     if relay.custom_domain != previous.custom_domain
         && let Some(custom_domain) = &relay.custom_domain
@@ -233,7 +233,7 @@ pub async fn update_relay(core: &Core, relay: Relay, settings: RelaySettings) ->
     if relay.plan_id != previous.plan_id
         && let Some(limit) = relay.member_limit()
     {
-        let members = queries::members::count_members(core.db.pool(), &relay.id).await?;
+        let members = queries::memberships::count_members(core.db.pool(), &relay.id).await?;
         if members > limit {
             return Err(Error::invalid(
                 "member-limit-exceeded",

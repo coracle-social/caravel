@@ -1,9 +1,0 @@
-% source=crates/core/src/events.rs lang=rust lines=35 sha=6d21153ecf14
-
-module caravel_core::events  !db !time
-  -- Keeping the event store tidy: sweeping expired events and dead push subscriptions.
-
-  pub async fn sweep_expired_events(core) fails  !db !time              @11-25
-    -- Delete NIP-40-expired events 1000 at a time, until a batch comes up short.
-  pub async fn drop_push_subscription(core, relay_id, id: [u8; 32]) fails  !db  @28-35
-    -- Delete the subscription's event, then publish AccessChanged with nothing published.

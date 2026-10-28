@@ -4,10 +4,13 @@
 use std::collections::BTreeSet;
 
 use anyhow::Result;
-use caravel_core::models::events::{EventGroup, Saved, StoredEvent};
-use caravel_core::models::kinds;
 use caravel_core::testing::{create_relay, sign_event};
-use caravel_core::{Core, Error, commands, domain, queries, testing};
+use caravel_core::{Core, testing};
+use caravel_db::{commands, queries};
+use caravel_domain as domain;
+use caravel_domain::Error;
+use caravel_domain::events::{EventGroup, Saved, StoredEvent};
+use caravel_util::nostr::kinds;
 use coracle_lib::events::Event;
 use coracle_lib::filters::{Filter, TagMatch};
 use coracle_lib::keys::SecretKey;
@@ -52,7 +55,7 @@ async fn save(core: &Core, relay_id: &str, event: &Event) -> Result<Saved> {
 /// A relay's events matching a filter, leaving out the ones the relay signed about
 /// its own members.
 async fn query(core: &Core, relay_id: &str, filter: Filter) -> Result<Vec<StoredEvent>> {
-    let relay = caravel_core::queries::relays::get_relay(core.db.pool(), relay_id)
+    let relay = caravel_db::queries::relays::get_relay(core.db.pool(), relay_id)
         .await?
         .expect("no relay");
     Ok(

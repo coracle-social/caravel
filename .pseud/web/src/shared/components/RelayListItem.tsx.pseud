@@ -1,9 +1,0 @@
-% source=web/src/shared/components/RelayListItem.tsx lang=typescript lines=47 sha=1d395f5cd2b0
-
-module @/shared/components/RelayListItem  !net
-  -- A relay in a list of relays.
-
-  type RelayListItemProps = { relay, href, showTenant? }                @10-14
-  pub fn RelayListItem(props: RelayListItemProps)  !net                 @17-47
-    -- A link to href with the relay's name, host, status and plan, and with showTenant its owner.
-    -- It subscribes to the owner's profile without fetching it; the list fetches its tenants'.

@@ -6,19 +6,21 @@ use std::collections::HashMap;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
-use caravel_core::models::plans;
-use caravel_core::{Core, Error, domain, domains, sessions};
+use caravel_core::{Core, domains, sessions};
+use caravel_domain as domain;
+use caravel_domain::Error;
+use caravel_domain::billing;
 use serde::Serialize;
 
 use crate::auth::{Authed, authorization};
 use crate::response::{ApiResult, created, ok};
 
 pub async fn list_plans() -> ApiResult {
-    ok(plans::list_plans())
+    ok(billing::list_plans())
 }
 
 pub async fn get_plan(Path(id): Path<String>) -> ApiResult {
-    ok(plans::get_plan(&id).ok_or(Error::NotFound("plan not found"))?)
+    ok(billing::get_plan(&id).ok_or(Error::NotFound("plan not found"))?)
 }
 
 /// On-demand TLS's ask: 200 if the platform serves `?domain=`, 404 if not.

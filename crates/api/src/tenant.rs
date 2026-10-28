@@ -6,9 +6,10 @@ use axum::body::{Body, HttpBody};
 use axum::extract::{Path, Query, State};
 use axum::http::{StatusCode, header};
 use axum::response::IntoResponse;
-use caravel_core::models::relays::RelaySettings;
-use caravel_core::models::tenants::Tenant;
-use caravel_core::{Core, billing, hosting, management, payouts, queries, transfer};
+use caravel_core::{Core, billing, hosting, management, payouts, transfer};
+use caravel_db::queries;
+use caravel_domain::relays::RelaySettings;
+use caravel_domain::tenants::Tenant;
 use http_body_util::Limited;
 use serde::{Deserialize, Serialize};
 
@@ -122,7 +123,7 @@ pub async fn list_tenant_invoices(
     Path(pubkey): Path<String>,
 ) -> ApiResult {
     actor.require_pubkey_or_admin(&pubkey)?;
-    ok(queries::ledger::list_invoices_for_tenant(core.db.pool(), &pubkey).await?)
+    ok(queries::billing::list_invoices_for_tenant(core.db.pool(), &pubkey).await?)
 }
 
 /// Bring the tenant's billing up to date without charging them, settling anything
@@ -158,7 +159,10 @@ pub async fn list_draft_invoice_items(
     Path(pubkey): Path<String>,
 ) -> ApiResult {
     actor.require_pubkey_or_admin(&pubkey)?;
-    ok(queries::ledger::list_outstanding_invoice_items_for_tenant(core.db.pool(), &pubkey).await?)
+    ok(
+        queries::billing::list_outstanding_invoice_items_for_tenant(core.db.pool(), &pubkey)
+            .await?,
+    )
 }
 
 /// A Stripe billing portal for the tenant to manage their saved cards.
@@ -400,7 +404,7 @@ pub async fn get_invoice(
     Authed(actor): Authed,
     Path(id): Path<String>,
 ) -> ApiResult {
-    let invoice = queries::ledger::require_invoice(core.db.pool(), &id).await?;
+    let invoice = queries::billing::require_invoice(core.db.pool(), &id).await?;
     actor.require_pubkey_or_admin(&invoice.tenant_pubkey)?;
     ok(invoice)
 }
@@ -410,9 +414,9 @@ pub async fn list_invoice_items(
     Authed(actor): Authed,
     Path(id): Path<String>,
 ) -> ApiResult {
-    let invoice = queries::ledger::require_invoice(core.db.pool(), &id).await?;
+    let invoice = queries::billing::require_invoice(core.db.pool(), &id).await?;
     actor.require_pubkey_or_admin(&invoice.tenant_pubkey)?;
-    ok(queries::ledger::list_invoice_items_for_invoice(core.db.pool(), &id).await?)
+    ok(queries::billing::list_invoice_items_for_invoice(core.db.pool(), &id).await?)
 }
 
 /// Collect an open invoice now, without the reminder DM a failure would send.
@@ -421,12 +425,12 @@ pub async fn reconcile_invoice(
     Authed(actor): Authed,
     Path(id): Path<String>,
 ) -> ApiResult {
-    let invoice = queries::ledger::require_invoice(core.db.pool(), &id).await?;
+    let invoice = queries::billing::require_invoice(core.db.pool(), &id).await?;
     actor.require_pubkey_or_admin(&invoice.tenant_pubkey)?;
     let tenant = queries::tenants::require_tenant(core.db.pool(), &invoice.tenant_pubkey).await?;
     billing::collect_invoice(&core, &tenant, &invoice).await?;
 
-    ok(queries::ledger::require_invoice(core.db.pool(), &id).await?)
+    ok(queries::billing::require_invoice(core.db.pool(), &id).await?)
 }
 
 /// A payable Lightning invoice for an invoice.
@@ -435,7 +439,7 @@ pub async fn ensure_invoice_bolt11(
     Authed(actor): Authed,
     Path(id): Path<String>,
 ) -> ApiResult {
-    let invoice = queries::ledger::require_invoice(core.db.pool(), &id).await?;
+    let invoice = queries::billing::require_invoice(core.db.pool(), &id).await?;
     actor.require_pubkey_or_admin(&invoice.tenant_pubkey)?;
     ok(billing::ensure_bolt11_for_invoice(&core, &invoice).await?)
 }
@@ -454,7 +458,7 @@ pub async fn ensure_invoice_checkout(
     Path(id): Path<String>,
     Query(params): Query<CheckoutParams>,
 ) -> ApiResult {
-    let invoice = queries::ledger::require_invoice(core.db.pool(), &id).await?;
+    let invoice = queries::billing::require_invoice(core.db.pool(), &id).await?;
     actor.require_pubkey_or_admin(&invoice.tenant_pubkey)?;
     let tenant = queries::tenants::require_tenant(core.db.pool(), &invoice.tenant_pubkey).await?;
     let checkout =

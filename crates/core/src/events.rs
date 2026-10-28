@@ -2,9 +2,9 @@
 //! subscriptions nobody can be reached at.
 
 use crate::Core;
-use crate::bus::Change;
-use crate::commands;
-use crate::error::Result;
+use caravel_db::commands;
+use caravel_domain::error::Result;
+use caravel_util::bus::Change;
 
 /// Delete every relay's events whose NIP-40 expiration passed, a batch at a time
 /// so other writers get between them.

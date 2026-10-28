@@ -1,8 +1,0 @@
-% source=web/src/shared/lib/pubkey.ts lang=typescript lines=18 sha=170c52fb43e2
-
-module @/shared/lib/pubkey
-  -- Showing pubkeys.
-
-  fn shortenPubkey(pubkey) -> str  -- the first and last 8 characters around "..." past 16  @3-5
-  pub fn toNpub(pubkey) -> str  -- a hex pubkey as an npub, or as given when it isn't valid  @7-14
-  pub fn shortenNpub(pubkey) -> str  -- the npub, shortened             @16-18

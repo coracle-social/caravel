@@ -1,4 +1,0 @@
-% source=crates/core/src/commands/mod.rs lang=rust lines=22 sha=b2e05f82465d
-
-module caravel_core::commands
-  -- Writes on a caller's connection at a caller's time, returning the events the relay signed.

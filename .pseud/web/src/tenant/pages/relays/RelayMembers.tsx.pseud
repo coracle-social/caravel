@@ -1,9 +1,0 @@
-% source=web/src/tenant/pages/relays/RelayMembers.tsx lang=typescript lines=42 sha=4776c153f1ab
-
-module @/tenant/pages/relays/RelayMembers  !net
-  -- A relay's members tab.
-
-  pub fn RelayMembers()  !net !-panic  -- routed only inside RelayFrame  @15-42
-    -- MemberList and RoleList over listRelayMembers, then InviteCodes and StaffList.
-    MemberList and RoleList refetch the one members-and-roles read when they change something
-    InviteCodes and StaffList wait for the framed relay and read their own lists

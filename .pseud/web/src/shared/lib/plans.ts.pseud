@@ -1,9 +1,0 @@
-% source=web/src/shared/lib/plans.ts lang=typescript lines=15 sha=5ff149ab0277
-
-module @/shared/lib/plans
-  -- The plan ids the dashboards name, and how plans read.
-
-  pub const FREE = "free"  -- a permanent billing key, never reused or repriced  @3-4
-  pub const BASIC = "basic"                                             @5
-  pub fn priceLabel(amount) -> str  -- "Free" at 0, else "$<amount / 100>"  @7-10
-  pub fn memberLabel(members?) -> str  -- "Unlimited members" for null, else "Up to N members"  @12-15

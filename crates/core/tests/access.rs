@@ -2,16 +2,18 @@
 //! method grants and claims, and the events the relay publishes about them.
 
 use anyhow::Result;
-use caravel_core::crypto::RelayKey;
-use caravel_core::models::events::Saved;
-use caravel_core::models::kinds;
-use caravel_core::models::management::{Call, Outcome};
-use caravel_core::models::members::MemberSource;
-use caravel_core::models::methods::MANAGED_METHODS;
-use caravel_core::models::relays::Relay;
-use caravel_core::models::roles::Role;
 use caravel_core::testing::{create_relay, sign_event};
-use caravel_core::{Core, Error, commands, management, queries, testing};
+use caravel_core::{Core, management, testing};
+use caravel_db::{commands, queries};
+use caravel_domain::Error;
+use caravel_domain::events::Saved;
+use caravel_domain::management::MANAGED_METHODS;
+use caravel_domain::management::{Call, Outcome};
+use caravel_domain::memberships::MemberSource;
+use caravel_domain::relays::Relay;
+use caravel_domain::roles::Role;
+use caravel_util::nostr::Key;
+use caravel_util::nostr::kinds;
 use coracle_lib::events::Event;
 use coracle_lib::filters::Filter;
 use coracle_lib::keys::SecretKey;
@@ -20,7 +22,7 @@ use serde_json::json;
 struct Fixture {
     core: Core,
     relay: Relay,
-    key: RelayKey,
+    key: Key,
     owner: String,
 }
 
@@ -47,7 +49,7 @@ impl Fixture {
 
     async fn members(&self) -> Result<Vec<String>> {
         Ok(
-            queries::members::list_members(self.core.db.pool(), &self.relay.id)
+            queries::memberships::list_members(self.core.db.pool(), &self.relay.id)
                 .await?
                 .into_iter()
                 .map(|member| member.pubkey)
@@ -96,7 +98,7 @@ async fn the_owner_is_a_member_from_the_start() -> Result<()> {
         vec![vec!["member".to_string(), f.owner.clone()]]
     );
 
-    let member = queries::members::get_member(f.core.db.pool(), &f.relay.id, &f.owner)
+    let member = queries::memberships::get_member(f.core.db.pool(), &f.relay.id, &f.owner)
         .await?
         .unwrap();
     assert_eq!(member.source, MemberSource::Owner);
@@ -113,8 +115,15 @@ async fn membership_changes_are_idempotent_and_published() -> Result<()> {
         .core
         .db
         .with_tx(async |conn| {
-            commands::members::admit(conn, &f.key, &f.relay.id, &alice, MemberSource::Manual, now)
-                .await
+            commands::memberships::admit(
+                conn,
+                &f.key,
+                &f.relay.id,
+                &alice,
+                MemberSource::Manual,
+                now,
+            )
+            .await
         })
         .await?;
     assert_eq!(
@@ -131,8 +140,15 @@ async fn membership_changes_are_idempotent_and_published() -> Result<()> {
         .core
         .db
         .with_tx(async |conn| {
-            commands::members::admit(conn, &f.key, &f.relay.id, &alice, MemberSource::Claim, now)
-                .await
+            commands::memberships::admit(
+                conn,
+                &f.key,
+                &f.relay.id,
+                &alice,
+                MemberSource::Claim,
+                now,
+            )
+            .await
         })
         .await?;
     assert!(again.is_empty());
@@ -318,7 +334,7 @@ async fn the_relays_name_description_and_icon_are_managed() -> Result<()> {
     f.call(Call::ChangeRelayIcon("https://example.com/icon.png".into()))
         .await?;
 
-    let relay = caravel_core::queries::relays::require_relay(f.core.db.pool(), &f.relay.id).await?;
+    let relay = caravel_db::queries::relays::require_relay(f.core.db.pool(), &f.relay.id).await?;
     assert_eq!(relay.info_name, "Renamed");
     assert_eq!(relay.info_description, "About us");
     assert_eq!(relay.info_icon, "https://example.com/icon.png");
@@ -327,7 +343,7 @@ async fn the_relays_name_description_and_icon_are_managed() -> Result<()> {
     for _ in 0..3 {
         assert!(matches!(
             changes.try_recv(),
-            Ok(caravel_core::bus::Change::RelayChanged { relay_id }) if relay_id == f.relay.id
+            Ok(caravel_util::bus::Change::RelayChanged { relay_id }) if relay_id == f.relay.id
         ));
     }
     Ok(())
@@ -513,7 +529,7 @@ async fn removing_a_member_takes_their_methods() -> Result<()> {
     f.call(Call::UnallowPubkey(alice.clone())).await?;
 
     assert!(
-        queries::methods::list_method_grants(f.core.db.pool(), &f.relay.id)
+        queries::management::list_method_grants(f.core.db.pool(), &f.relay.id)
             .await?
             .is_empty()
     );

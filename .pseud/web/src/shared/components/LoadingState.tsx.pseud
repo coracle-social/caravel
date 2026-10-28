@@ -1,7 +1,0 @@
-% source=web/src/shared/components/LoadingState.tsx lang=typescript lines=15 sha=038270d108ed
-
-module @/shared/components/LoadingState
-  -- The loading spinner pages show.
-
-  type LoadingStateProps = { message, class?, paddingClass? }           @1-5
-  pub fn LoadingState(props: LoadingStateProps)  -- a spinner and message, padded py-20 by default  @7-15

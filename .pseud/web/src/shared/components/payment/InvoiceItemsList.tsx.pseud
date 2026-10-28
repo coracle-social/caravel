@@ -1,8 +1,0 @@
-% source=web/src/shared/components/payment/InvoiceItemsList.tsx lang=typescript lines=34 sha=6cfc8e580e70
-
-module @/shared/components/payment/InvoiceItemsList
-  -- What an invoice charges for.
-
-  const MAX_VISIBLE_ITEMS = 8                                           @5
-  type InvoiceItemsListProps { items }                                  @7-10
-  pub fn InvoiceItemsList(props)  -- the first 8 items with their amounts, then "+ N more"  @12-34

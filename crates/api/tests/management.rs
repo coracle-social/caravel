@@ -4,8 +4,9 @@
 mod common;
 
 use axum::http::StatusCode;
+use caravel_core::hosting;
 use caravel_core::testing::{create_relay, sign_event};
-use caravel_core::{commands, hosting};
+use caravel_db::commands;
 use common::*;
 use coracle_lib::keys::SecretKey;
 use serde_json::{Value, json};

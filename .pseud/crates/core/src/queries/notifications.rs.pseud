@@ -1,7 +1,0 @@
-% source=crates/core/src/queries/notifications.rs lang=rust lines=24 sha=54c4ec3c15d5
-
-module caravel_core::queries::notifications  !db
-  -- Reading notifications.
-
-  pub async fn get_notification(relay_id, pubkey, now) -> Notification? fails  !db  @9-24
-    -- The pubkey's message on the relay, unless its expires_at is at or before now.

@@ -10,17 +10,38 @@ use std::process::Command;
 use serde_json::Value;
 
 /// Each workspace crate and the workspace crates it may depend on.
-const LAYERS: [(&str, &[&str]); 6] = [
-    ("caravel-db", &[]),
-    ("caravel-adapters", &[]),
-    ("caravel-core", &["caravel-db", "caravel-adapters"]),
-    ("caravel-relay", &["caravel-core"]),
-    ("caravel-api", &["caravel-core"]),
+const LAYERS: [(&str, &[&str]); 7] = [
+    ("caravel-util", &[]),
+    ("caravel-domain", &["caravel-util"]),
+    ("caravel-db", &["caravel-util", "caravel-domain"]),
+    (
+        "caravel-core",
+        &["caravel-util", "caravel-domain", "caravel-db"],
+    ),
+    (
+        "caravel-relay",
+        &[
+            "caravel-util",
+            "caravel-domain",
+            "caravel-db",
+            "caravel-core",
+        ],
+    ),
+    (
+        "caravel-api",
+        &[
+            "caravel-util",
+            "caravel-domain",
+            "caravel-db",
+            "caravel-core",
+        ],
+    ),
     (
         "caravel-app",
         &[
+            "caravel-util",
+            "caravel-domain",
             "caravel-db",
-            "caravel-adapters",
             "caravel-core",
             "caravel-relay",
             "caravel-api",
@@ -30,15 +51,21 @@ const LAYERS: [(&str, &[&str]); 6] = [
 
 /// Third-party crates and the only workspace crates that may depend on them.
 const CONFINED: [(&str, &[&str]); 7] = [
-    ("sqlx", &["caravel-db", "caravel-core"]),
-    ("reqwest", &["caravel-adapters"]),
-    ("tokio-tungstenite", &["caravel-adapters"]),
-    ("coracle-kinds", &["caravel-adapters"]),
+    ("sqlx", &["caravel-util", "caravel-domain", "caravel-db"]),
+    ("reqwest", &["caravel-util"]),
+    ("tokio-tungstenite", &["caravel-util"]),
+    ("coracle-kinds", &["caravel-util"]),
     ("axum", &["caravel-relay", "caravel-api", "caravel-app"]),
     ("tower-http", &["caravel-relay", "caravel-app"]),
     (
         "coracle-lib",
-        &["caravel-adapters", "caravel-core", "caravel-relay"],
+        &[
+            "caravel-util",
+            "caravel-domain",
+            "caravel-db",
+            "caravel-core",
+            "caravel-relay",
+        ],
     ),
 ];
 

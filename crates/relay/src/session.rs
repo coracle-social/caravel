@@ -16,7 +16,7 @@ use tokio::sync::mpsc;
 use tokio::time::{Instant, interval_at, timeout, timeout_at};
 use tokio_util::sync::CancellationToken;
 
-use caravel_core::models::policy::Refusal;
+use caravel_domain::policy::Refusal;
 
 use crate::instance::RelayInstance;
 use crate::message::{

@@ -8,8 +8,9 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use caravel_app::dispatch::{self, Hosts};
 use caravel_app::web::{PageConfig, Web};
-use caravel_core::models::relays::Relay;
-use caravel_core::{Core, commands, hosting, queries, testing};
+use caravel_core::{Core, hosting, testing};
+use caravel_db::{commands, queries};
+use caravel_domain::relays::Relay;
 use caravel_relay::{Relays, RelaysConfig};
 use coracle_lib::keys::SecretKey;
 use http_body_util::BodyExt;
@@ -66,7 +67,7 @@ struct Fixture {
 async fn fixture(api_url: &str) -> Fixture {
     let core = testing::core(&SecretKey::generate().public_key().to_hex()).await;
     let (relay, _) = testing::create_relay(&core).await;
-    let tag = &caravel_core::crypto::random_token()[..12];
+    let tag = &caravel_util::encoding::random_token()[..12];
     let (custom, old) = (format!("club-{tag}.example"), format!("old-{tag}.example"));
     let settings = serde_json::from_value(json!({"custom_domain": custom})).unwrap();
     let relay = hosting::update_relay(&core, relay, settings).await.unwrap();
@@ -285,7 +286,7 @@ async fn an_api_on_its_own_host_answers_with_and_without_its_path() {
 #[tokio::test]
 async fn a_relay_cant_take_over_the_platforms_hosts() {
     let core = testing::core(&SecretKey::generate().public_key().to_hex()).await;
-    let tag = &caravel_core::crypto::random_token()[..12];
+    let tag = &caravel_util::encoding::random_token()[..12];
     let (api, platform) = (format!("api-{tag}.example"), format!("app-{tag}.example"));
 
     // Hosts this core doesn't know as the platform's, verified as a relay's.

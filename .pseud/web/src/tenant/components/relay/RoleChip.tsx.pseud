@@ -1,7 +1,0 @@
-% source=web/src/tenant/components/relay/RoleChip.tsx lang=typescript lines=13 sha=77683b849054
-
-module @/tenant/components/relay/RoleChip
-  -- A relay role as members see it.
-
-  pub fn RoleChip(props: { id, roles })                                 @4-13
-    -- The role's label in its hue, or the bare id of a role the relay no longer defines.

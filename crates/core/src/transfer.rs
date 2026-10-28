@@ -5,18 +5,19 @@
 use std::collections::BTreeMap;
 
 use bytes::Bytes;
+use caravel_util::db::Pool;
 use coracle_lib::events::Event;
 use futures_util::{Stream, StreamExt};
-use sqlx::PgPool;
 
 use crate::Core;
-use crate::bus::Change;
-use crate::error::{Error, Result};
-use crate::models::events::{Saved, StoredEvent};
-use crate::models::relays::Relay;
-use crate::models::rooms;
-use crate::models::transfer::{HistoryEntry, ImportProblem, ImportResult, Line};
-use crate::{commands, domain, queries};
+use caravel_db::{commands, queries};
+use caravel_domain as domain;
+use caravel_domain::error::{Error, Result};
+use caravel_domain::events::{Saved, StoredEvent};
+use caravel_domain::relays::Relay;
+use caravel_domain::transfer::{HistoryEntry, ImportProblem, ImportResult, Line};
+use caravel_util::bus::Change;
+use caravel_util::nostr::kinds;
 
 /// The longest line an import takes.
 const MAX_LINE_BYTES: usize = 4 * 1024 * 1024;
@@ -30,7 +31,7 @@ const IMPORT_BATCH: usize = 500;
 /// Every event a relay stores, as JSONL, read a page at a time so a relay of any
 /// size streams in bounded memory.
 pub fn export_events(
-    pool: PgPool,
+    pool: Pool,
     relay_id: String,
 ) -> impl Stream<Item = Result<Bytes>> + Send + 'static {
     futures_util::stream::try_unfold(Some((i64::MAX, Vec::new())), move |cursor| {
@@ -101,7 +102,7 @@ where
                 continue;
             }
 
-            match domain::transfer::parse_line(line, &text[..text.len() - 1]) {
+            match Line::parse(line, &text[..text.len() - 1]) {
                 Line::Blank => {}
                 Line::Invalid(problem) => result.fail(problem),
                 Line::SourceState => result.skipped += 1,
@@ -124,7 +125,7 @@ where
                         if domain::rooms::is_moderation_kind(event.kind)
                             || matches!(
                                 event.kind,
-                                rooms::kinds::JOIN_REQUEST | rooms::kinds::LEAVE_REQUEST
+                                kinds::rooms::JOIN_REQUEST | kinds::rooms::LEAVE_REQUEST
                             )
                         {
                             history.push(HistoryEntry {
@@ -234,7 +235,7 @@ async fn rebuild_rooms(
     for (room_id, mut history) in rooms_touched {
         let created = history
             .iter()
-            .any(|entry| entry.kind == rooms::kinds::CREATE_GROUP);
+            .any(|entry| entry.kind == kinds::rooms::CREATE_GROUP);
         if !known.contains(&room_id) && !created {
             result.note(ImportProblem {
                 line: None,
@@ -251,7 +252,7 @@ async fn rebuild_rooms(
 
         history.sort_by_key(|entry| entry.created_at);
         let last = history.pop();
-        history.retain(|entry| entry.kind != rooms::kinds::DELETE_GROUP);
+        history.retain(|entry| entry.kind != kinds::rooms::DELETE_GROUP);
         history.extend(last);
         core.db
             .with_tx(async |conn| {

@@ -3,15 +3,15 @@
 
 use std::sync::Arc;
 
-use caravel_adapters::blobs::Blobs;
-use caravel_adapters::livekit::Livekit;
-use caravel_adapters::outbound::Outbound;
-use caravel_adapters::{robot::Robot, robot::RobotProfile, stripe::Stripe, wallet::Wallet};
+use caravel_util::blobs::Blobs;
+use caravel_util::livekit::Livekit;
+use caravel_util::outbound::Outbound;
+use caravel_util::{robot::Robot, robot::RobotProfile, stripe::Stripe, wallet::Wallet};
 
 use crate::Core;
-use crate::clock::Clock;
-use crate::config::Config;
-use crate::crypto::{PlatformKey, generate_keypair};
+use caravel_domain::config::Config;
+use caravel_util::clock::Clock;
+use caravel_util::nostr::{Key, generate_keypair};
 
 /// The relay domain test relays are created under.
 pub const RELAY_DOMAIN: &str = "relay.test";
@@ -35,7 +35,7 @@ const PLATFORM_SECRET: &str = "7f1d9a1c3c3f0e2b5a8d4c6e9f0a1b2c3d4e5f60718293a4b
 pub async fn core(admin_pubkey: &str) -> Core {
     let robot_secret = PLATFORM_SECRET.to_string();
     let (wallet_pubkey, wallet_secret) = generate_keypair();
-    let platform_key = PlatformKey::from_hex(&robot_secret).expect("invalid platform key");
+    let platform_key = Key::from_hex(&robot_secret).expect("invalid platform key");
 
     let config = Config {
         api_url: API_URL.to_string(),
@@ -56,7 +56,7 @@ pub async fn core(admin_pubkey: &str) -> Core {
     };
 
     Core {
-        db: caravel_db::testing::connect().await,
+        db: caravel_util::db::testing::connect().await,
         config: Arc::new(config),
         clock: Clock::default(),
         bus: Default::default(),
@@ -117,7 +117,7 @@ pub fn http_auth(
 ) -> String {
     let event = sign_event(
         secret,
-        crate::models::kinds::HTTP_AUTH,
+        caravel_util::nostr::kinds::HTTP_AUTH,
         "",
         &[&["u", url], &["method", method]],
         created_at,
@@ -127,9 +127,9 @@ pub fn http_auth(
 
 /// Make a pubkey a tenant, without reaching Stripe.
 pub async fn insert_tenant(core: &Core, pubkey: &str) {
-    crate::commands::tenants::insert_tenant(
+    caravel_db::commands::tenants::insert_tenant(
         core.db.pool(),
-        &crate::models::tenants::Tenant {
+        &caravel_domain::tenants::Tenant {
             pubkey: pubkey.to_string(),
             return_url: "http://localhost/account".to_string(),
             created_at: core.clock.now(),
@@ -150,7 +150,7 @@ pub fn subdomain() -> String {
 /// Returns the relay and the tenant's secret key.
 pub async fn create_relay(
     core: &Core,
-) -> (crate::models::relays::Relay, coracle_lib::keys::SecretKey) {
+) -> (caravel_domain::relays::Relay, coracle_lib::keys::SecretKey) {
     let secret = coracle_lib::keys::SecretKey::generate();
     let pubkey = secret.public_key().to_hex();
     insert_tenant(core, &pubkey).await;
@@ -158,7 +158,7 @@ pub async fn create_relay(
     let relay = crate::hosting::create_relay(
         core,
         &pubkey,
-        crate::models::relays::RelaySettings {
+        caravel_domain::relays::RelaySettings {
             subdomain: Some(subdomain()),
             domain: Some(RELAY_DOMAIN.to_string()),
             plan_id: Some("free".to_string()),

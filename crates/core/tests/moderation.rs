@@ -5,11 +5,11 @@
 mod common;
 
 use anyhow::Result;
-use caravel_core::models::kinds;
-use caravel_core::models::moderation::Subject;
-use caravel_core::models::rooms;
 use caravel_core::testing::sign_event;
-use caravel_core::{Core, commands, queries, testing};
+use caravel_core::{Core, testing};
+use caravel_db::{commands, queries};
+use caravel_domain::moderation::Subject;
+use caravel_util::nostr::kinds;
 use common::*;
 use coracle_lib::events::Event;
 use coracle_lib::keys::SecretKey;
@@ -21,7 +21,7 @@ async fn save(core: &Core, relay_id: &str, events: &[Event]) -> Result<()> {
             for event in events {
                 commands::events::save_event(&mut *conn, relay_id, event, now).await?;
             }
-            Ok::<_, caravel_core::Error>(())
+            Ok::<_, caravel_domain::Error>(())
         })
         .await?;
     Ok(())
@@ -164,11 +164,11 @@ async fn the_feed_leaves_out_what_runs_the_relay() -> Result<()> {
         &relay.id,
         &[
             note.clone(),
-            key.sign(rooms::kinds::METADATA, vec![room_tag], "", start),
+            key.sign(kinds::rooms::METADATA, vec![room_tag], "", start),
             key.sign(kinds::RELAY_ROLE, vec![], "", start),
             sign_event(
                 &author,
-                rooms::kinds::JOIN_REQUEST,
+                kinds::rooms::JOIN_REQUEST,
                 "",
                 &[&["h", "lobby"]],
                 start,

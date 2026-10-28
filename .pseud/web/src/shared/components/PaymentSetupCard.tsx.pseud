@@ -1,7 +1,0 @@
-% source=web/src/shared/components/PaymentSetupCard.tsx lang=typescript lines=31 sha=a6bfc09ac8f6
-
-module @/shared/components/PaymentSetupCard
-  -- The dialog for the card on file.
-
-  pub fn PaymentSetupCard(props: { open, onClose, isUpdate? })          @5-31
-    -- Adding a card in Stripe's billing portal, or with isUpdate managing the one on file.

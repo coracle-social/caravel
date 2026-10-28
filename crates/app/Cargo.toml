@@ -12,11 +12,12 @@ path = "src/main.rs"
 [dependencies]
 anyhow.workspace = true
 axum.workspace = true
-caravel-adapters.workspace = true
 caravel-api.workspace = true
 caravel-core.workspace = true
 caravel-db.workspace = true
+caravel-domain.workspace = true
 caravel-relay.workspace = true
+caravel-util.workspace = true
 dotenvy.workspace = true
 serde.workspace = true
 tokio.workspace = true

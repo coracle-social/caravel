@@ -1,9 +1,0 @@
-% source=web/src/shared/components/payment/LightningPayBody.tsx lang=typescript lines=61 sha=6fda0c916c9e
-
-module @/shared/components/payment/LightningPayBody
-  -- Paying an invoice over Lightning.
-
-  pub type Lightning = loading | ready(lnbc, qr) | error(message)  -- an invoice being made  @3-7
-  pub fn LightningPayBody(props { lightning, onRetry, onCopy })         @9-61
-    -- "Generating invoice..." while loading; the error with Retry; or the QR code and the invoice
-    -- text with a copy button.

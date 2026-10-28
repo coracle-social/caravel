@@ -1,9 +1,0 @@
-% source=web/src/shared/lib/useNwcSetup.ts lang=typescript lines=38 sha=d69691d9cc8d
-
-module @/shared/lib/useNwcSetup  !net !db !time
-  -- Saving a Nostr Wallet Connect url for the signed-in tenant.
-
-  pub fn useNwcSetup(onSaved?) -> NwcSetup  !net !db !time              @6-36
-    -- The url being typed, saving, saved, error, save and reset. save does nothing for a blank url,
-    -- else PUTs the trimmed nwc_url on the signed-in tenant, then marks it saved and runs onSaved.
-  pub type NwcSetup  -- what useNwcSetup returns                        @38

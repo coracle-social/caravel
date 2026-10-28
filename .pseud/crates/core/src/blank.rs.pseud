@@ -1,7 +1,0 @@
-% source=crates/core/src/blank.rs lang=rust lines=13 sha=a02d91d4cf89
-
-module caravel_core::blank
-  -- Serde for optional strings, which the API carries as "" when absent for older clients.
-
-  pub fn serialize(value: str?, serializer)  -- none as ""              @6-8
-  pub fn deserialize(deserializer) -> str?  -- "" reads as none         @10-13

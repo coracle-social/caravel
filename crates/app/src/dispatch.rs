@@ -9,7 +9,7 @@ use axum::Router;
 use axum::extract::{Request, State};
 use axum::http::{Method, StatusCode, Uri, header};
 use axum::response::{IntoResponse, Redirect, Response};
-use caravel_core::domain;
+use caravel_domain as domain;
 use caravel_relay::{Relays, Route};
 use tower::ServiceExt;
 

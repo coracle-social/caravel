@@ -1,9 +1,0 @@
-% source=web/src/shared/components/login/LoginTabsScreen.tsx lang=typescript lines=67 sha=23d172e68f11
-
-module @/shared/components/login/LoginTabsScreen
-  -- The login form's first screen.
-
-  type LoginTabsScreenProps  -- the tab, loading, hasExtension, and a continue callback per tab  @5-13
-  pub fn LoginTabsScreen(props)                                         @15-67
-    -- Extension, Signer and Key tabs, each with its continue button; Extension is disabled
-    -- without an extension, and its button shows "Connecting..." while loading.

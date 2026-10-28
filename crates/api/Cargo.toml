@@ -8,6 +8,9 @@ license.workspace = true
 [dependencies]
 axum.workspace = true
 caravel-core.workspace = true
+caravel-db.workspace = true
+caravel-domain.workspace = true
+caravel-util.workspace = true
 http-body-util = "0.1"
 serde.workspace = true
 serde_json.workspace = true

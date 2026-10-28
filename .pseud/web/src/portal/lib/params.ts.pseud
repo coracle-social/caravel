@@ -1,8 +1,0 @@
-% source=web/src/portal/lib/params.ts lang=typescript lines=21 sha=0b6030b4d27f
-
-module @/portal/lib/params
-  -- Reading the portal's query string.
-
-  pub fn useParam() -> (param, setSearch)                               @4-11
-    -- param(name) is one query value, the first when it repeats; setSearch is the router's.
-  pub fn returnLink(value) -> URL?  -- the value as a URL when it parses and is https  @14-21

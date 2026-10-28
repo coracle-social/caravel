@@ -1,7 +1,0 @@
-% source=crates/core/src/commands/usage.rs lang=rust lines=22 sha=a4f16bac47c7
-
-module caravel_core::commands::usage  !db
-  -- Recording usage readings.
-
-  pub async fn insert_usage_sample(sample: UsageSample) fails  !db      @8-22
-    -- Insert one storage and call-clock reading for a relay.

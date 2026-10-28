@@ -1,7 +1,0 @@
-% source=web/src/tenant/index.tsx lang=typescript lines=9 sha=1a6889584455
-
-module @/tenant/index
-  -- The tenant dashboard's entry: titles the page and mounts App.
-
-  set the document title to PLATFORM_NAME                               @7
-  render App into #root                                                 @9

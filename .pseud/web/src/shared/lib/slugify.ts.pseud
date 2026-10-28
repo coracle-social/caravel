@@ -1,7 +1,0 @@
-% source=web/src/shared/lib/slugify.ts lang=typescript lines=9 sha=e4638f916778
-
-module @/shared/lib/slugify
-  -- Turning a name into a slug.
-
-  pub fn slugify(value) -> str                                          @1-9
-    -- Lowercased, accents stripped, other runs of characters as "-", no hyphen at either end.

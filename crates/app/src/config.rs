@@ -1,11 +1,11 @@
 //! Reading and checking the environment, the only place configuration comes from.
 
 use anyhow::{Context, Result, bail};
-use caravel_adapters::blobs::S3Config;
-use caravel_adapters::robot::RobotProfile;
-use caravel_core::config::Config;
-use caravel_core::crypto::PlatformKey;
+use caravel_domain::config::Config;
 use caravel_relay::RelaysConfig;
+use caravel_util::blobs::S3Config;
+use caravel_util::nostr::Key;
+use caravel_util::robot::RobotProfile;
 
 /// Everything the app is configured with: the core's config, plus what the app
 /// needs to connect the database and build the adapters.
@@ -44,7 +44,7 @@ pub struct Livekit {
 pub fn load() -> Result<Settings> {
     let robot_secret = required("ROBOT_SECRET")?;
     let platform_key =
-        PlatformKey::from_hex(&robot_secret).context("ROBOT_SECRET is not a nostr secret key")?;
+        Key::from_hex(&robot_secret).context("ROBOT_SECRET is not a nostr secret key")?;
 
     let api_url = required("API_URL")?.trim_end_matches('/').to_string();
     url::Url::parse(&api_url).context("API_URL is not a url")?;

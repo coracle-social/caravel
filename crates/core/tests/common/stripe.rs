@@ -8,7 +8,7 @@ use axum::extract::{Form, Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use caravel_adapters::stripe::Stripe;
+use caravel_util::stripe::Stripe;
 use serde_json::{Value, json};
 
 #[derive(Clone, Debug)]

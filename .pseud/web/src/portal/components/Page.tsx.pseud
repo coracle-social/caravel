@@ -1,7 +1,0 @@
-% source=web/src/portal/components/Page.tsx lang=typescript lines=13 sha=db0f10094dac
-
-module @/portal/components/Page
-  -- The frame every portal page sits in.
-
-  pub fn Page(props: { children })                                      @4-13
-    -- One narrow centered column, ending in "Payments are processed securely by Stripe."

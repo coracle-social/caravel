@@ -145,6 +145,24 @@ async fn the_owner_publishes_and_a_subscriber_sees_it_live_and_stored() {
     assert!(reader.is_quiet().await);
 }
 
+/// Claim codes are made through the management API; a published one is refused
+/// rather than accepted and quietly dropped.
+#[tokio::test]
+async fn a_published_claim_code_is_refused() {
+    let server = Server::start().await;
+    let (relay, owner) = server.relay().await;
+    let mut client = server.connect(&relay.canonical_host()).await;
+    client.auth(&owner, server.now()).await;
+
+    let event = sign_event(&owner, kinds::RELAY_INVITE, "", &[], server.now());
+    let (accepted, message) = client.publish(&event).await;
+    assert!(!accepted);
+    assert_eq!(
+        message,
+        "invalid: claim codes are created through the relay's management API"
+    );
+}
+
 #[tokio::test]
 async fn strangers_may_neither_read_nor_write_a_private_relay() {
     let server = Server::start().await;

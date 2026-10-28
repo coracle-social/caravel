@@ -99,12 +99,7 @@ pub async fn admit_join(
     let Some(source) = source else {
         return Ok(Vec::new());
     };
-    if !queries::membership::has_seat(&mut *conn, relay, Some(pubkey)).await? {
-        return Err(Error::conflict(
-            "member-limit",
-            "this relay has reached its member limit",
-        ));
-    }
+    queries::membership::require_seat(&mut *conn, relay, Some(pubkey)).await?;
     access::commands::admit(conn, key, relay_id, pubkey, source, now).await
 }
 

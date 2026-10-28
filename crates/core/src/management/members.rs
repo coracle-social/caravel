@@ -26,6 +26,12 @@ pub async fn add_member(core: &Core, relay: &Relay, pubkey: &str) -> Result<()> 
     let published = core
         .db
         .with_tx(async |conn| {
+            caravel_billing::relays::queries::membership::require_seat(
+                &mut *conn,
+                relay,
+                Some(&pubkey),
+            )
+            .await?;
             caravel_relays::access::commands::admit(
                 conn,
                 &key,

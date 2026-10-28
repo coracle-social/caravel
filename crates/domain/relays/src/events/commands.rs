@@ -84,7 +84,7 @@ async fn save_relay_event(
             " ON CONFLICT (relay_id, kind, pubkey, d) WHERE d IS NOT NULL DO UPDATE SET
                 id = EXCLUDED.id, seq = DEFAULT, created_at = EXCLUDED.created_at,
                 content = EXCLUDED.content, tags = EXCLUDED.tags, sig = EXCLUDED.sig,
-                tag_values = EXCLUDED.tag_values, expires_at = EXCLUDED.expires_at, seen_at = EXCLUDED.seen_at
+                tag_values = EXCLUDED.tag_values, expires_at = EXCLUDED.expires_at
               WHERE event.created_at <= EXCLUDED.created_at AND event.id <> EXCLUDED.id",
         );
     } else {

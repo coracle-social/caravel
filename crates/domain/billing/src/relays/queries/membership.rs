@@ -2,7 +2,7 @@
 
 use sqlx::{PgConnection, PgExecutor};
 
-use caravel_util::error::Result;
+use caravel_util::error::{Error, Result};
 
 use crate::relays::{Membership, MembershipStatus, Relay};
 
@@ -132,4 +132,19 @@ pub async fn has_seat(
     let members = caravel_relays::access::queries::count_members(&mut *conn, &relay.id).await?;
     let reserved = count_reserved_seats(conn, &relay.id).await?;
     Ok(members + reserved < limit)
+}
+
+/// Refuse one more member the relay's plan has no seat for.
+pub async fn require_seat(
+    conn: &mut PgConnection,
+    relay: &Relay,
+    pubkey: Option<&str>,
+) -> Result<()> {
+    if has_seat(conn, relay, pubkey).await? {
+        return Ok(());
+    }
+    Err(Error::conflict(
+        "member-limit",
+        "this relay has reached its member limit",
+    ))
 }

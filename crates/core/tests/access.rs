@@ -161,6 +161,51 @@ async fn membership_changes_are_idempotent_and_published() -> Result<()> {
     Ok(())
 }
 
+/// The error code a failed call answers with, if it carries one.
+fn refusal_code(refused: &Result<serde_json::Value>) -> Option<&str> {
+    match refused.as_ref().err()?.downcast_ref::<Error>() {
+        Some(Error::Conflict { code, .. } | Error::Invalid { code, .. }) => Some(code),
+        _ => None,
+    }
+}
+
+/// A free relay seats ten, the owner included; a management call may not add an
+/// eleventh, and neither may assigning a role, which admits as it goes.
+#[tokio::test]
+async fn adding_members_stops_at_the_plans_limit() -> Result<()> {
+    let f = fixture().await;
+    for _ in 0..9 {
+        f.call(Call::AllowPubkey(pubkey())).await?;
+    }
+
+    let refused = f.call(Call::AllowPubkey(pubkey())).await;
+    assert_eq!(refusal_code(&refused), Some("member-limit"));
+
+    let outsider = pubkey();
+    f.call(Call::CreateRole(caravel_relays::access::Role {
+        id: "greeter".into(),
+        label: "Greeter".into(),
+        description: String::new(),
+        hue: 120,
+        position: 0,
+    }))
+    .await?;
+    let refused = f.call(Call::AssignRole(outsider, "greeter".into())).await;
+    assert_eq!(refusal_code(&refused), Some("member-limit"));
+
+    // The dashboard adds through the same rule.
+    let refused = management::add_member(&f.core, &f.relay, &pubkey()).await;
+    assert!(matches!(
+        refused,
+        Err(Error::Conflict {
+            code: "member-limit",
+            ..
+        })
+    ));
+    assert_eq!(f.members().await?.len(), 10);
+    Ok(())
+}
+
 #[tokio::test]
 async fn the_owner_can_be_neither_removed_nor_banned() -> Result<()> {
     let f = fixture().await;

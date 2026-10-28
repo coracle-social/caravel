@@ -100,6 +100,42 @@ async fn the_feed_holds_moderated_events_and_uploads_newest_first() -> Result<()
 }
 
 #[tokio::test]
+async fn a_replaced_event_keeps_when_the_relay_first_stored_it() -> Result<()> {
+    let core = core().await;
+    let start = day(2031, 6, 1);
+    let author = SecretKey::generate();
+    let tenant = create_tenant(&core).await?;
+    let relay = create_relay(&core, &tenant, "free").await?;
+
+    // A profile, which is replaceable, edited an hour later in place.
+    travel(&core, start);
+    save(
+        &core,
+        &relay.id,
+        &[sign_event(&author, 0, "before", &[], start)],
+    )
+    .await?;
+    travel(&core, start + 3600);
+    save(
+        &core,
+        &relay.id,
+        &[sign_event(&author, 0, "after", &[], start + 3600)],
+    )
+    .await?;
+
+    let page = caravel_operations::moderation::queries::list_moderation(
+        core.db.pool(),
+        &core.config.admin_pubkeys,
+        Some(start),
+        Some(start + 3600),
+    )
+    .await?;
+    let stored: Vec<i64> = page.items.iter().map(|item| item.seen_at).collect();
+    assert_eq!(stored, vec![start]);
+    Ok(())
+}
+
+#[tokio::test]
 async fn the_feed_window_is_inclusive_at_both_ends() -> Result<()> {
     let core = core().await;
     let start = day(2031, 1, 1);

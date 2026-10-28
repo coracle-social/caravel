@@ -37,6 +37,12 @@ pub(super) async fn write(
             .await
         }
         Call::AllowPubkey(pubkey) => {
+            caravel_billing::relays::queries::membership::require_seat(
+                &mut *conn,
+                relay,
+                Some(pubkey),
+            )
+            .await?;
             caravel_relays::access::commands::allow_pubkey(conn, key, relay_id, pubkey, now).await
         }
         Call::UnallowPubkey(pubkey) => {
@@ -64,6 +70,13 @@ pub(super) async fn write(
             caravel_relays::access::commands::delete_role(conn, key, relay_id, id, now).await
         }
         Call::AssignRole(pubkey, role_id) => {
+            // Assigning a role admits the pubkey, so it takes a seat like any add.
+            caravel_billing::relays::queries::membership::require_seat(
+                &mut *conn,
+                relay,
+                Some(pubkey),
+            )
+            .await?;
             caravel_relays::access::commands::assign_role(conn, key, relay_id, pubkey, role_id, now)
                 .await
         }

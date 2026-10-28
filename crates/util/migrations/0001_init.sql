@@ -239,7 +239,7 @@ CREATE INDEX event_tag_values_idx ON event USING gin (tag_values);
 -- NIP-50 full-text search.
 CREATE INDEX event_search_idx ON event USING gin (search);
 
--- The moderation feed, which reads every relay's events by when it last stored them.
+-- The moderation feed, which reads every relay's events by when it first stored them.
 CREATE INDEX event_seen_idx ON event (seen_at DESC, seq DESC);
 
 -- One event per replaceable or addressable slot, which a newer version overwrites

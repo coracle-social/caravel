@@ -24,9 +24,21 @@ pub const UNREADABLE_KINDS: [u16; 6] = [
     kinds::BLOSSOM_AUTH,
 ];
 
+/// Kinds the relay answers instead of keeping: claim codes are created through
+/// its management API, and a published one is not a claim.
+pub fn is_refused(kind: u16) -> bool {
+    kind == kinds::RELAY_INVITE
+}
+
 pub fn screen(event: &Event, now: i64) -> Result<(), Refusal> {
     if is_relay_written(event.kind) {
         return Err(Refusal::invalid("this event's kind is not accepted"));
+    }
+
+    if is_refused(event.kind) {
+        return Err(Refusal::invalid(
+            "claim codes are created through the relay's management API",
+        ));
     }
 
     if event.created_at - now > CREATED_AT_UPPER_LIMIT {

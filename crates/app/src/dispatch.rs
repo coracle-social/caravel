@@ -1,10 +1,8 @@
 //! Routing a request by its host. A relay's hosts get that relay's protocols and
-//! its member portal; the API host gets the API; the platform host gets the
-//! dashboards, and the API too when it shares the host under a path. Any other
-//! host gets nothing, except the health check and the TLS ask, which answer on
-//! every host.
+//! its member portal; the platform's host gets the dashboards, and the API under
+//! `/api`. Any other host gets nothing, except the health check and the TLS ask,
+//! which answer on every host.
 
-use anyhow::{Result, bail};
 use axum::Router;
 use axum::extract::{Request, State};
 use axum::http::{Method, StatusCode, Uri, header};
@@ -14,52 +12,24 @@ use tower::ServiceExt;
 
 use crate::web::{self, App, Web};
 
-/// The hosts the API and the dashboards are served on.
-#[derive(Clone, Debug)]
-pub struct Hosts {
-    pub api: String,
-    /// The path the API is served under, empty for the root.
-    pub api_prefix: String,
-    /// The dashboards' host, if this process serves them.
-    pub platform: Option<String>,
-}
-
-impl Hosts {
-    /// The hosts in the API's and the dashboards' public urls. An API sharing the
-    /// dashboards' host must sit under a path of its own.
-    pub fn from_urls(api_url: &str, platform_url: Option<&str>) -> Result<Self> {
-        let api_url = url::Url::parse(api_url)?;
-        let platform = platform_url
-            .map(url::Url::parse)
-            .transpose()?
-            .and_then(|url| url.host_str().map(str::to_lowercase));
-        let hosts = Self {
-            api: api_url.host_str().unwrap_or_default().to_lowercase(),
-            api_prefix: api_url.path().trim_end_matches('/').to_string(),
-            platform,
-        };
-
-        if hosts.platform.as_deref() == Some(hosts.api.as_str()) && hosts.api_prefix.is_empty() {
-            bail!("API_URL needs a path, such as /api, to share PLATFORM_URL's host");
-        }
-        Ok(hosts)
-    }
-}
+/// The path the API is served under on the platform's host.
+const API_PREFIX: &str = "/api";
 
 #[derive(Clone)]
 struct Dispatch {
     api: Router,
     relays: Relays,
     web: Web,
-    hosts: Hosts,
+    /// The platform's host, which the dashboards and the API are served on.
+    platform: String,
 }
 
-pub fn router(api: Router, relays: Relays, web: Web, hosts: Hosts) -> Router {
+pub fn router(api: Router, relays: Relays, web: Web, platform: String) -> Router {
     Router::new().fallback(dispatch).with_state(Dispatch {
         api,
         relays,
         web,
-        hosts,
+        platform,
     })
 }
 
@@ -73,11 +43,10 @@ async fn dispatch(State(dispatch): State<Dispatch>, request: Request) -> Respons
         _ => {}
     }
 
-    // The platform's own hosts come before relays', so no relay can take one over.
-    let prefix = &dispatch.hosts.api_prefix;
-    let on_platform = dispatch.hosts.platform.as_deref() == Some(host.as_str());
-    if host == dispatch.hosts.api && (!on_platform || is_under(&path, prefix)) {
-        return call(&dispatch.api, strip_prefix(request, prefix)).await;
+    // The platform's own host comes before relays', so no relay can take it over.
+    let on_platform = host == dispatch.platform;
+    if on_platform && is_under(&path, API_PREFIX) {
+        return call(&dispatch.api, strip_prefix(request, API_PREFIX)).await;
     }
 
     if on_platform {
@@ -147,14 +116,14 @@ async fn call(router: &Router, request: Request) -> Response {
     }
 }
 
-/// Whether `path` is `prefix` or below it. Everything is below the root.
+/// Whether `path` is `prefix` or below it.
 fn is_under(path: &str, prefix: &str) -> bool {
-    prefix.is_empty() || path == prefix || path.starts_with(&format!("{prefix}/"))
+    path == prefix || path.starts_with(&format!("{prefix}/"))
 }
 
 /// The request with `prefix` dropped from its path, if the path is under it.
 fn strip_prefix(mut request: Request, prefix: &str) -> Request {
-    if prefix.is_empty() || !is_under(request.uri().path(), prefix) {
+    if !is_under(request.uri().path(), prefix) {
         return request;
     }
 

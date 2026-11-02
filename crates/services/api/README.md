@@ -10,7 +10,7 @@ Boolean relay settings are written and read as `0` or `1`, a relay's domain is c
 
 A client signs in once and then sends a bearer token:
 
-- `POST /session` takes a NIP-98 `Authorization` header signed for exactly that request: its `u` tag is the API's base url followed by `/session`, its `method` tag is `POST`, and it was signed within a minute. It returns `{pubkey, token, expires_at}`. A session lasts thirty days.
+- `POST /session` takes a NIP-98 `Authorization` header signed for exactly that request: its `u` tag is the platform's url followed by `/api/session`, its `method` tag is `POST`, and it was signed within a minute. It returns `{pubkey, token, expires_at}`. A session lasts thirty days.
 - Every other authenticated route takes `Authorization: Bearer <token>`.
 - `DELETE /session` ends the session whose token it is sent with.
 

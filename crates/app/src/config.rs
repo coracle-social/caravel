@@ -48,16 +48,12 @@ pub fn load() -> Result<Settings> {
     let platform_key =
         Key::from_hex(&robot_secret).context("ROBOT_SECRET is not a nostr secret key")?;
 
-    let api_url = required("API_URL")?.trim_end_matches('/').to_string();
-    url::Url::parse(&api_url).context("API_URL is not a url")?;
-
     Ok(Settings {
         port: optional("PORT")
             .map_or(Ok(2892), |port| port.parse().context("PORT is not a port"))?,
         database_url: required("DATABASE_URL")?,
         config: Config {
-            api_url,
-            platform_url: optional("PLATFORM_URL").map(|url| url.trim_end_matches('/').to_string()),
+            platform_url: required_url("PLATFORM_URL")?,
             admin_pubkeys: list("ADMIN_PUBKEYS"),
             relay_domains: required_list("RELAY_DOMAINS")?,
             platform_key,
@@ -135,6 +131,13 @@ fn optional(key: &str) -> Option<String> {
 
 fn required(key: &str) -> Result<String> {
     optional(key).with_context(|| format!("{key} is required"))
+}
+
+/// A url from the environment, without its trailing slash.
+fn required_url(key: &str) -> Result<String> {
+    let url = required(key)?;
+    url::Url::parse(&url).with_context(|| format!("{key} is not a url"))?;
+    Ok(url.trim_end_matches('/').to_string())
 }
 
 fn list(key: &str) -> Vec<String> {

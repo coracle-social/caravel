@@ -59,7 +59,7 @@ pub struct PageConfig {
 impl PageConfig {
     pub fn new(config: &Config, web: &WebSettings) -> Self {
         Self {
-            api_url: config.api_url.clone(),
+            api_url: config.api_url(),
             relay_domains: config.relay_domains.clone(),
             platform_name: web.platform_name.clone(),
             platform_logo: web.platform_logo.clone(),

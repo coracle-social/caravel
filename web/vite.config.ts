@@ -45,6 +45,12 @@ export default defineConfig(({mode}) => {
     },
     server: {
       port: Number(env.VITE_PORT) || 5173,
+      // The API sits under /api on the platform's host, which under `vite dev` is
+      // this server: /api goes on to the backend with this host, so the NIP-98
+      // signatures the apps make match PLATFORM_URL.
+      proxy: {
+        "/api": { target: env.VITE_API_TARGET || "http://127.0.0.1:2892" },
+      },
     },
   }
 })

@@ -25,8 +25,7 @@ The binary reads these from the environment, or from a `.env` file in its workin
 | Variable | Description |
 | --- | --- |
 | `PORT` | The port everything is served on, `2892` by default |
-| `API_URL` | The API's public base url, which the NIP-98 signature that starts a session is checked against. On its own host, the API is served at the root, as Flotilla needs; sharing `PLATFORM_URL`'s host, it needs a path such as `/api` |
-| `PLATFORM_URL` | The dashboards' public url. Without it, no dashboard is served |
+| `PLATFORM_URL` | The platform's public url: the dashboards, and the API under `/api`, which the NIP-98 signature that starts a session is checked against |
 | `PLATFORM_NAME`, `PLATFORM_LOGO` | The name and logo the web apps show, `Caravel` and `/caravel.png` by default |
 | `ADMIN_PUBKEYS` | Comma-separated hex pubkeys of the platform's admins |
 | `DATABASE_URL` | A Postgres url |
@@ -46,13 +45,13 @@ The binary reads these from the environment, or from a `.env` file in its workin
 | `FORWARDED_HEADER` | The header a trusted proxy reports a client's address in, such as `X-Forwarded-For` |
 | `CONNECTIONS_PER_MINUTE` | New relay connections allowed per minute from one address, `0` (unlimited) by default |
 
-Every variable without a default is required, except `ADMIN_PUBKEYS`, the robot's profile, `FORWARDED_HEADER`, `PLATFORM_URL`, LiveKit's and the bucket's.
+Every variable without a default is required, except `ADMIN_PUBKEYS`, the robot's profile, `FORWARDED_HEADER`, LiveKit's and the bucket's.
 
 ## Deployment
 
-Caravel ships as a Docker image built from the [`Dockerfile`](./Dockerfile) and published as `gitea.coracle.social/coracle/caravel` by [CI](./.gitea/workflows/ci.yml) on each push to `master`. The image is one binary, with the web apps built in, serving everything on port `2892`: each request is answered by its host, so the platform host gets the dashboards, the API host the API, and a relay's hosts that relay and its member portal. Mount a volume at `/app/data` for media kept on disk.
+Caravel ships as a Docker image built from the [`Dockerfile`](./Dockerfile) and published as `gitea.coracle.social/coracle/caravel` by [CI](./.gitea/workflows/ci.yml) on each push to `master`. The image is one binary, with the web apps built in, serving everything on port `2892`: each request is answered by its host, so the platform host gets the dashboards and the API, and a relay's hosts that relay and its member portal. Mount a volume at `/app/data` for media kept on disk.
 
-Every host reaches Caravel through [Caddy](https://caddyserver.com/). The platform and API hosts get ordinary certificates; relay hosts use [on-demand TLS](https://caddyserver.com/docs/automatic-https#on-demand-tls), which asks `GET /domains/check?domain=` before issuing each certificate, so only hosts some relay answers on get one:
+Every host reaches Caravel through [Caddy](https://caddyserver.com/). The platform host gets an ordinary certificate; relay hosts use [on-demand TLS](https://caddyserver.com/docs/automatic-https#on-demand-tls), which asks `GET /domains/check?domain=` before issuing each certificate, so only hosts some relay answers on get one:
 
 ```
 {
@@ -61,7 +60,7 @@ Every host reaches Caravel through [Caddy](https://caddyserver.com/). The platfo
   }
 }
 
-<platform-host>, <api-host> {
+<platform-host> {
   reverse_proxy <caravel-host>:2892
 }
 
@@ -87,6 +86,6 @@ cd web && pnpm install && cd ..
 just dev
 ```
 
-`just pg` starts Postgres on `127.0.0.1:55433`, and `just reset-db` recreates its database, which a change to the schema needs until the first release. `just dev` runs the API on `http://127.0.0.1:2892` and the web apps on `http://127.0.0.1:5173`, restarting the API when a crate changes. There, `/admin` is the admin dashboard and `/portal?relay=<id>` a relay's member portal. To serve the built apps from the binary instead, run `just build-web` and set `PLATFORM_URL`.
+`just pg` starts Postgres on `127.0.0.1:55433`, and `just reset-db` recreates its database, which a change to the schema needs until the first release. `just dev` runs the backend on `http://127.0.0.1:2892` and the web apps on `http://localhost:5173`, restarting the API when a crate changes; the web apps call `/api`, which Vite proxies to the backend, so `PLATFORM_URL` in `.env` is the Vite server's url. There, `/admin` is the admin dashboard and `/portal?relay=<id>` a relay's member portal. To serve the built apps from the binary instead, run `just build-web` and set `PLATFORM_URL` to `http://127.0.0.1:2892`.
 
 `just check` formats, lints, builds and tests everything, as CI does. Tests create one database per test binary on the server `TEST_DATABASE_URL` names, `just pg`'s by default.

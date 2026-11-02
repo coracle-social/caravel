@@ -5,7 +5,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
-use caravel_app::dispatch::Hosts;
 use caravel_app::web::{PageConfig, Web};
 use caravel_app::{config, dispatch};
 use caravel_core::Core;
@@ -147,9 +146,9 @@ async fn start_router(ctx: &AppContext, core: Core) -> Result<()> {
         .allow_origin(Any)
         .allow_methods(Any)
         .allow_headers(Any);
-    let hosts = Hosts::from_urls(&core.config.api_url, core.config.platform_url.as_deref())?;
+    let platform = core.config.platform_host();
     let web = Web::new(PageConfig::new(&core.config, &ctx.settings.web));
-    let app = dispatch::router(caravel_api::router(core).layer(cors), relays, web, hosts);
+    let app = dispatch::router(caravel_api::router(core).layer(cors), relays, web, platform);
 
     let port = ctx.settings.port;
     let listener = tokio::net::TcpListener::bind(("0.0.0.0", port)).await?;

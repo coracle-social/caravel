@@ -20,7 +20,9 @@ function readInjected(): Injected {
 
 const injected = readInjected()
 
-export const API_URL = injected.api_url ?? import.meta.env.VITE_API_URL
+// The API's base url: `/api` on the platform's host, which is this page's origin
+// under `vite dev`, where no server writes the configuration into the page.
+export const API_URL = injected.api_url ?? `${location.origin}/api`
 
 // The domain new relays are created under: the first the platform serves.
 export const RELAY_DOMAIN = injected.relay_domains?.[0] ?? import.meta.env.VITE_RELAY_DOMAIN

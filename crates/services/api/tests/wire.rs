@@ -162,8 +162,9 @@ async fn validation_failures_carry_a_code() {
         ),
         // Its canonical host would be the dashboards'.
         (create("app", RELAY_DOMAIN, "free", 0), "invalid-subdomain"),
+        // The platform's own host can't serve a relay.
         (
-            with_custom_domain("fine-name", "api.test"),
+            with_custom_domain("fine-name", "app.relay.test"),
             "reserved-domain",
         ),
         (

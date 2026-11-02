@@ -1,0 +1,35 @@
+name: Mirror to GitHub
+
+# Requires a GH_MIRROR_TOKEN secret: a fine-grained GitHub token with contents:
+# write on the mirror repository.
+on:
+  push:
+    branches: ["**"]
+    tags: ["**"]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: https://github.com/actions/checkout@v4
+        with:
+          # The default branch, so a tag push or a manual run still has a ref to
+          # check out; full history, so every branch and tag comes along.
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Push to GitHub
+        env:
+          MIRROR_TOKEN: ${{ secrets.GH_MIRROR_TOKEN }}
+        run: |
+          git push --prune "https://x-access-token:${MIRROR_TOKEN}@github.com/coracle-social/caravel.git" \
+            +refs/heads/*:refs/heads/* \
+            +refs/tags/*:refs/tags/*

@@ -57,8 +57,8 @@ pub struct Core {
 }
 
 impl Core {
-    /// The same core on another pool, so background work can't starve requests.
-    pub fn with_db(&self, db: Db) -> Self {
+    /// The same core on another pool, so one service can't starve another.
+    pub fn with_database(&self, db: Db) -> Self {
         Self { db, ..self.clone() }
     }
 

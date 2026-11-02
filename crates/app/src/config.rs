@@ -42,6 +42,8 @@ pub struct Livekit {
 }
 
 pub fn load() -> Result<Settings> {
+    dotenvy::dotenv().ok();
+
     let robot_secret = required("ROBOT_SECRET")?;
     let platform_key =
         Key::from_hex(&robot_secret).context("ROBOT_SECRET is not a nostr secret key")?;

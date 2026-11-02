@@ -40,7 +40,8 @@ use crate::instance::{InstanceState, RelayInstance};
 use crate::limits::Limiter;
 use crate::push::Pusher;
 
-/// How much any one connection may ask of a relay.
+/// What a relay allows: how much one connection may ask of it, and how often one
+/// address may connect.
 #[derive(Clone, Copy, Debug)]
 pub struct RelayLimits {
     pub max_subscriptions: usize,
@@ -52,6 +53,9 @@ pub struct RelayLimits {
     pub max_limit: usize,
     /// The most events one reconciliation covers.
     pub max_sync: usize,
+    /// New connections allowed per minute from one address, allowing a minute's
+    /// worth at once.
+    pub connections_per_minute: u32,
 }
 
 impl Default for RelayLimits {
@@ -63,13 +67,10 @@ impl Default for RelayLimits {
             max_filters: 200,
             max_limit: 1000,
             max_sync: 20_000,
+            connections_per_minute: 60,
         }
     }
 }
-
-/// New connections allowed per minute from one address, allowing a minute's worth
-/// at once.
-const CONNECTIONS_PER_MINUTE: u32 = 60;
 
 /// How the relays are served.
 #[derive(Clone, Debug, Default)]
@@ -126,7 +127,7 @@ impl Relays {
     ) -> Result<Self> {
         let relays = Self {
             inner: Arc::new(Inner {
-                connecting: Limiter::new(CONNECTIONS_PER_MINUTE),
+                connecting: Limiter::new(config.limits.connections_per_minute),
                 pusher: Pusher::start(core.clone(), shutdown.clone()),
                 changes: Mutex::new(Some(core.bus.subscribe())),
                 core,

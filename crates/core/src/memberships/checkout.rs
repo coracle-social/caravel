@@ -26,7 +26,8 @@ async fn payout_account(core: &Core, relay: &Relay) -> Result<String> {
 
 /// Open a Stripe Checkout session for `pubkey` to join, or renew, a relay, and
 /// return its url. An unpaid or canceled membership is reused, since a relay and
-/// pubkey hold one live membership at a time.
+/// pubkey hold one live membership at a time. A pubkey already admitted another
+/// way, without a membership, is refused: it has no seat to buy.
 pub async fn open_checkout(
     core: &Core,
     relay: &Relay,
@@ -50,6 +51,19 @@ pub async fn open_checkout(
                 return Err(Error::conflict(
                     "already-a-member",
                     "you already have a membership here",
+                ));
+            }
+            // A comped, claimed or publicly joined member already has access.
+            if !live
+                .as_ref()
+                .is_some_and(|m| m.status == MembershipStatus::Canceled)
+                && caravel_relays::access::queries::get_member(&mut *conn, &relay.id, pubkey)
+                    .await?
+                    .is_some()
+            {
+                return Err(Error::conflict(
+                    "already-a-member",
+                    "you are already a member here",
                 ));
             }
             // A seat that can't be granted mustn't be sold.

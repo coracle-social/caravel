@@ -10,6 +10,7 @@ use caravel_billing::relays::{Relay, RelaySettings};
 use caravel_core::testing::sign_event;
 use caravel_core::{Core, hosting, management, memberships, sessions};
 use caravel_relays::access::MemberSource;
+use caravel_relays::management::Call;
 use caravel_relays::policy::Join;
 use caravel_util::error::Error;
 use caravel_util::nostr::kinds;
@@ -527,23 +528,26 @@ async fn a_lapse_removes_access_and_tells_the_member_how_to_renew() -> Result<()
     Ok(())
 }
 
-// Someone let in another way keeps their place when the membership they bought lapses.
+// A pubkey let in another way already has access, so it has no seat to buy.
 #[tokio::test]
-async fn a_lapse_leaves_a_member_admitted_another_way() -> Result<()> {
+async fn a_member_admitted_another_way_cannot_buy_a_membership() -> Result<()> {
     let f = fixture().await?;
     let member = pubkey();
     management::add_member(&f.core, &f.relay, &member).await?;
-    let membership = pay(&f, &member).await?;
-    memberships::cancel_renewal(&f.core, &f.relay, &member).await?;
 
-    travel(&f.core, membership.current_period_end.unwrap() + 1);
-    memberships::sweep(&f.core).await?;
-
-    assert!(live(&f, &member).await?.is_none());
+    let refused = memberships::open_checkout(&f.core, &f.relay, &member, None).await;
+    assert!(matches!(
+        refused,
+        Err(Error::Conflict {
+            code: "already-a-member",
+            ..
+        })
+    ));
     assert_eq!(
         member_source(&f, &member).await?,
         Some(MemberSource::Manual)
     );
+    assert!(live(&f, &member).await?.is_none());
     Ok(())
 }
 
@@ -598,6 +602,89 @@ async fn memberships_are_released_when_their_relay_stops_charging() -> Result<()
         !caravel_relays::access::queries::is_live_claim(f.core.db.pool(), &f.relay.id, &code)
             .await?
     );
+    Ok(())
+}
+
+// A paying member removed from the relay loses access and their subscription.
+#[tokio::test]
+async fn removing_a_paying_member_cancels_their_subscription() -> Result<()> {
+    let f = fixture().await?;
+    let member = pubkey();
+    let membership = pay(&f, &member).await?;
+    let subscription = membership.stripe_subscription_id.clone().unwrap();
+
+    management::remove_member(&f.core, &f.relay, &member).await?;
+
+    assert_eq!(member_source(&f, &member).await?, None);
+    assert!(live(&f, &member).await?.is_none());
+    assert!(f.stripe.subscription(&subscription).canceled);
+    Ok(())
+}
+
+// A NIP-86 removal ends the subscription the same way the dashboard's does.
+#[tokio::test]
+async fn unallowing_a_paying_member_cancels_their_subscription() -> Result<()> {
+    let f = fixture().await?;
+    let member = pubkey();
+    let membership = pay(&f, &member).await?;
+    let subscription = membership.stripe_subscription_id.clone().unwrap();
+
+    management::call(&f.core, &f.relay, Call::UnallowPubkey(member.clone())).await?;
+
+    assert_eq!(member_source(&f, &member).await?, None);
+    assert!(live(&f, &member).await?.is_none());
+    assert!(f.stripe.subscription(&subscription).canceled);
+    Ok(())
+}
+
+// A member who leaves the relay stops paying for it.
+#[tokio::test]
+async fn a_paying_member_who_leaves_cancels_their_subscription() -> Result<()> {
+    let f = fixture().await?;
+    let member = pubkey();
+    let membership = pay(&f, &member).await?;
+    let subscription = membership.stripe_subscription_id.clone().unwrap();
+    let key = f.core.relay_key(&f.relay)?;
+
+    caravel_core::ingest::leave(&f.core, &f.relay, &key, &member).await?;
+
+    assert_eq!(member_source(&f, &member).await?, None);
+    assert!(live(&f, &member).await?.is_none());
+    assert!(f.stripe.subscription(&subscription).canceled);
+    Ok(())
+}
+
+// A removal whose immediate release failed is settled by the sweep, which finds a
+// paid membership whose member is gone.
+#[tokio::test]
+async fn the_sweep_ends_a_paid_membership_whose_member_is_gone() -> Result<()> {
+    let f = fixture().await?;
+    let member = pubkey();
+    let membership = pay(&f, &member).await?;
+    let subscription = membership.stripe_subscription_id.clone().unwrap();
+
+    let key = f.core.relay_key(&f.relay)?;
+    let now = f.core.clock.now();
+    f.core
+        .db
+        .with_tx(async |conn| {
+            caravel_relays::access::commands::remove(
+                conn,
+                &key,
+                &f.relay.id,
+                &f.relay.tenant_pubkey,
+                &member,
+                now,
+            )
+            .await
+        })
+        .await?;
+    assert!(live(&f, &member).await?.is_some());
+
+    memberships::sweep(&f.core).await?;
+
+    assert!(live(&f, &member).await?.is_none());
+    assert!(f.stripe.subscription(&subscription).canceled);
     Ok(())
 }
 

@@ -74,11 +74,19 @@ pub async fn count_reserved_seats(db: impl PgExecutor<'_>, relay_id: &str) -> Re
     .await?)
 }
 
-/// Live memberships of relays that no longer sell them: free, paused or purged.
+/// Live memberships that should no longer be paid for: those of relays that stopped
+/// selling them, and those of pubkeys no longer on their relay.
 pub async fn list_memberships_needing_release(db: impl PgExecutor<'_>) -> Result<Vec<Membership>> {
     Ok(sqlx::query_as::<_, Membership>(&format!(
-        "{SELECT_MEMBERSHIP} WHERE status <> 'lapsed' AND relay_id IN (
-           SELECT id FROM relay WHERE member_price = 0 OR status <> 'active' OR purged_at IS NOT NULL
+        "{SELECT_MEMBERSHIP} WHERE status <> 'lapsed' AND (
+           relay_id IN (
+             SELECT id FROM relay WHERE member_price = 0 OR status <> 'active' OR purged_at IS NOT NULL
+           )
+           OR (status IN ('active', 'canceled') AND pubkey IS NOT NULL AND NOT EXISTS (
+             SELECT 1 FROM relay_member
+             WHERE relay_member.relay_id = membership.relay_id
+               AND relay_member.pubkey = membership.pubkey
+           ))
          )"
     ))
     .fetch_all(db)

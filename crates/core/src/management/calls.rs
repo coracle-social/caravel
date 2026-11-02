@@ -115,6 +115,14 @@ pub async fn run_call(core: &Core, relay: &Relay, call: Call) -> Result<Outcome>
                 .db
                 .with_tx(async |conn| write(conn, &key, relay, &call, now).await)
                 .await?;
+
+            // Removing or banning a member ends what they pay through, as the
+            // dashboard's removal does. The sweep retries one Stripe refused.
+            if let Call::UnallowPubkey(pubkey) | Call::BanPubkey(pubkey, _) = &call
+                && let Err(error) = crate::memberships::release_removed(core, relay, pubkey).await
+            {
+                tracing::warn!(relay = %relay.id, pubkey, error = %error, "failed to end a removed member's membership");
+            }
             Ok(Outcome::AccessChanged(published))
         }
     }

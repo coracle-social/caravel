@@ -123,6 +123,23 @@ async fn release(core: &Core, membership: &Membership) -> Result<()> {
         .await
 }
 
+/// End a removed member's live membership now, canceling what it pays through. A
+/// failure leaves it for the sweep, which finds paid memberships whose member is
+/// gone.
+pub async fn release_removed(core: &Core, relay: &Relay, pubkey: &str) -> Result<()> {
+    let Some(membership) = caravel_billing::relays::queries::membership::get_live_membership(
+        core.db.pool(),
+        &relay.id,
+        pubkey,
+    )
+    .await?
+    else {
+        return Ok(());
+    };
+
+    release(core, &membership).await
+}
+
 // --- Sweep ---
 
 /// Bring every membership in step with Stripe: release those whose relay stopped

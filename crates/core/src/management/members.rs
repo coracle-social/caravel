@@ -51,7 +51,8 @@ pub async fn add_member(core: &Core, relay: &Relay, pubkey: &str) -> Result<()> 
     Ok(())
 }
 
-/// Remove a member from a relay. Its owner can't be removed.
+/// Remove a member from a relay, ending any membership they pay through. Its owner
+/// can't be removed.
 pub async fn remove_member(core: &Core, relay: &Relay, pubkey: &str) -> Result<()> {
     relay.require_unpurged()?;
     let key = core.relay_key(relay)?;
@@ -75,5 +76,10 @@ pub async fn remove_member(core: &Core, relay: &Relay, pubkey: &str) -> Result<(
         relay_id: relay.id.clone(),
         published,
     });
+
+    // The sweep retries one that couldn't reach Stripe, since its member is gone.
+    if let Err(error) = crate::memberships::release_removed(core, relay, pubkey).await {
+        tracing::warn!(relay = %relay.id, pubkey, error = %error, "failed to end a removed member's membership");
+    }
     Ok(())
 }

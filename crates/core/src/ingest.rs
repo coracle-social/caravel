@@ -85,11 +85,12 @@ pub async fn join(
         .await
 }
 
-/// Act on a NIP-43 leave request, returning what the relay published. The owner
-/// can't leave.
+/// Act on a NIP-43 leave request, ending any membership the member pays through,
+/// and return what the relay published. The owner can't leave.
 pub async fn leave(core: &Core, relay: &Relay, key: &Key, pubkey: &str) -> Result<Vec<Event>> {
     let now = core.clock.now();
-    core.db
+    let published = core
+        .db
         .with_tx(async |conn| {
             caravel_relays::access::commands::remove(
                 conn,
@@ -101,5 +102,11 @@ pub async fn leave(core: &Core, relay: &Relay, key: &Key, pubkey: &str) -> Resul
             )
             .await
         })
-        .await
+        .await?;
+
+    // The sweep retries one that couldn't reach Stripe, since its member is gone.
+    if let Err(error) = crate::memberships::release_removed(core, relay, pubkey).await {
+        tracing::warn!(relay = %relay.id, pubkey, error = %error, "failed to end a leaving member's membership");
+    }
+    Ok(published)
 }

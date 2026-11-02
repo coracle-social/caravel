@@ -1,4 +1,4 @@
-import { For, Show, createSignal } from "solid-js"
+import { For, Show, createSignal, type JSX } from "solid-js"
 import { canonicalHost, relayName, type PlanId, type Relay, type RelayFlag } from "@/shared/lib/api"
 import ConfirmDialog, { type Confirmation } from "@/shared/components/ConfirmDialog"
 import CustomDomainModal from "@/shared/components/relay/CustomDomainModal"
@@ -17,7 +17,7 @@ import useMinLoading from "@/shared/lib/useMinLoading"
 import { FREE } from "@/shared/lib/plans"
 import useCustomDomain from "@/shared/lib/useCustomDomain"
 
-function DetailSection(props: { title: string; children: any }) {
+function DetailSection(props: { title: string; children: JSX.Element }) {
   return (
     <div>
       <h3 class="text-sm font-semibold uppercase tracking-wider mb-6">{props.title}</h3>
@@ -28,7 +28,7 @@ function DetailSection(props: { title: string; children: any }) {
   )
 }
 
-function MembershipSection(props: { title: string; children: any }) {
+function MembershipSection(props: { title: string; children: JSX.Element }) {
   return (
     <div>
       <h3 class="text-sm font-semibold uppercase tracking-wider mb-6">{props.title}</h3>

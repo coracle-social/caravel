@@ -1,5 +1,5 @@
-//! Where uploaded media lives: a directory on disk, an S3 bucket, or memory for
-//! tests. Blobs are keyed by path, and read back in whole or by byte range.
+//! Where uploaded media lives: an S3 bucket, or memory for tests. Blobs are keyed
+//! by path, and read back in whole or by byte range.
 
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::ops::Range;
@@ -9,7 +9,6 @@ use anyhow::Result;
 use bytes::Bytes;
 use futures_util::{StreamExt, TryStreamExt};
 use object_store::aws::AmazonS3Builder;
-use object_store::local::LocalFileSystem;
 use object_store::memory::InMemory;
 use object_store::path::Path;
 use object_store::{GetOptions, GetRange, ObjectStore, PutPayload};
@@ -22,7 +21,7 @@ const LOCKS: usize = 64;
 pub type ByteStream =
     std::pin::Pin<Box<dyn futures_util::Stream<Item = std::io::Result<Bytes>> + Send>>;
 
-/// The bucket media is stored in, when it isn't a directory.
+/// The bucket media is stored in.
 #[derive(Clone, Debug, Default)]
 pub struct S3Config {
     pub endpoint: String,
@@ -51,11 +50,6 @@ impl Blobs {
             store,
             locks: (0..LOCKS).map(|_| Mutex::new(())).collect(),
         }
-    }
-
-    pub fn local(dir: &str) -> Result<Self> {
-        std::fs::create_dir_all(dir)?;
-        Ok(Self::new(Arc::new(LocalFileSystem::new_with_prefix(dir)?)))
     }
 
     pub fn s3(config: &S3Config) -> Result<Self> {
@@ -140,5 +134,24 @@ impl Blobs {
             .try_collect::<Vec<_>>()
             .await?;
         Ok(())
+    }
+}
+
+#[cfg(feature = "testing")]
+pub mod testing {
+    //! Blobs in a directory, where a directory in a blob's place makes its delete
+    //! fail, as a bucket that refuses one does.
+
+    use std::sync::Arc;
+
+    use anyhow::Result;
+    use object_store::local::LocalFileSystem;
+
+    use super::Blobs;
+
+    /// Blobs kept under `dir`, which is created.
+    pub fn local(dir: &str) -> Result<Blobs> {
+        std::fs::create_dir_all(dir)?;
+        Ok(Blobs::new(Arc::new(LocalFileSystem::new_with_prefix(dir)?)))
     }
 }

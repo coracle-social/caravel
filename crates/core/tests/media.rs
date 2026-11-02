@@ -8,7 +8,6 @@ use caravel_core::testing::{create_relay, sign_event};
 use caravel_core::{Core, calls, hosting, management, media, testing};
 use caravel_relays::access::Role;
 use caravel_relays::media::{Blob, Deleted};
-use caravel_util::blobs::Blobs;
 use caravel_util::bus::Change;
 use caravel_util::nostr::kinds;
 use coracle_lib::filters::Filter;
@@ -442,7 +441,7 @@ async fn erasing_a_relay_keeps_only_its_settings_and_owner() -> Result<()> {
 async fn erasing_a_relay_outlasts_bytes_that_wont_delete() -> Result<()> {
     let dir = std::env::temp_dir().join(format!("caravel-erase-{}", uuid::Uuid::new_v4()));
     let mut core = core().await;
-    core.blobs = Blobs::local(dir.to_str().expect("a utf-8 temp dir"))?;
+    core.blobs = caravel_util::blobs::testing::local(dir.to_str().expect("a utf-8 temp dir"))?;
     let (relay, _) = create_relay(&core).await;
 
     for sha256 in ["a", "b"] {

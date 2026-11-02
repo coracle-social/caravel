@@ -67,6 +67,10 @@ impl Default for RelayLimits {
     }
 }
 
+/// New connections allowed per minute from one address, allowing a minute's worth
+/// at once.
+const CONNECTIONS_PER_MINUTE: u32 = 60;
+
 /// How the relays are served.
 #[derive(Clone, Debug, Default)]
 pub struct RelaysConfig {
@@ -75,8 +79,6 @@ pub struct RelaysConfig {
     /// The header a trusted proxy reports the client's address in, such as
     /// `X-Forwarded-For`. Without one, the peer address is the client's.
     pub forwarded_header: Option<String>,
-    /// New connections allowed per minute from one address; zero is unlimited.
-    pub connections_per_minute: u32,
 }
 
 /// A request's host resolved to the relay it belongs to.
@@ -124,7 +126,7 @@ impl Relays {
     ) -> Result<Self> {
         let relays = Self {
             inner: Arc::new(Inner {
-                connecting: Limiter::new(config.connections_per_minute),
+                connecting: Limiter::new(CONNECTIONS_PER_MINUTE),
                 pusher: Pusher::start(core.clone(), shutdown.clone()),
                 changes: Mutex::new(Some(core.bus.subscribe())),
                 core,

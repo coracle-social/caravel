@@ -16,7 +16,7 @@ pub struct Settings {
     pub robot_profile: RobotProfile,
     pub robot_wallet: String,
     pub stripe_secret_key: String,
-    pub media: Media,
+    pub media: S3Config,
     pub livekit: Option<Livekit>,
     pub relays: RelaysConfig,
     pub web: WebSettings,
@@ -26,12 +26,6 @@ pub struct Settings {
 pub struct WebSettings {
     pub platform_name: String,
     pub platform_logo: String,
-}
-
-/// Where relays' media is kept.
-pub enum Media {
-    Local(String),
-    S3(S3Config),
 }
 
 /// The LiveKit server calls run on.
@@ -77,15 +71,12 @@ pub fn load() -> Result<Settings> {
         },
         robot_wallet: required("ROBOT_WALLET")?,
         stripe_secret_key: required("STRIPE_SECRET_KEY")?,
-        media: match optional("MEDIA_S3_BUCKET") {
-            Some(bucket) => Media::S3(S3Config {
-                endpoint: optional("MEDIA_S3_ENDPOINT").unwrap_or_default(),
-                region: required("MEDIA_S3_REGION")?,
-                bucket,
-                access_key: required("MEDIA_S3_ACCESS_KEY")?,
-                secret_key: required("MEDIA_S3_SECRET_KEY")?,
-            }),
-            None => Media::Local(optional("MEDIA_DIR").unwrap_or_else(|| "data/media".to_string())),
+        media: S3Config {
+            endpoint: optional("MEDIA_S3_ENDPOINT").unwrap_or_default(),
+            region: required("MEDIA_S3_REGION")?,
+            bucket: required("MEDIA_S3_BUCKET")?,
+            access_key: required("MEDIA_S3_ACCESS_KEY")?,
+            secret_key: required("MEDIA_S3_SECRET_KEY")?,
         },
         livekit: match optional("LIVEKIT_URL") {
             Some(url) => Some(Livekit {
@@ -101,11 +92,6 @@ pub fn load() -> Result<Settings> {
         },
         relays: RelaysConfig {
             forwarded_header: optional("FORWARDED_HEADER"),
-            connections_per_minute: optional("CONNECTIONS_PER_MINUTE").map_or(Ok(0), |value| {
-                value
-                    .parse()
-                    .context("CONNECTIONS_PER_MINUTE is not a number")
-            })?,
             ..Default::default()
         },
     })

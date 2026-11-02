@@ -49,8 +49,7 @@ COPY --from=build /app/target/release/caravel /app/caravel
 
 USER caravel
 
-ENV PORT=2892 \
-    MEDIA_DIR=/app/data/media
+ENV PORT=2892
 
 EXPOSE 2892
 

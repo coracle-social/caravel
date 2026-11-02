@@ -90,10 +90,7 @@ fn build_robot(settings: &config::Settings) -> Result<Robot> {
 }
 
 fn build_blobs(settings: &config::Settings) -> Result<Blobs> {
-    match &settings.media {
-        config::Media::Local(dir) => Blobs::local(dir).context("MEDIA_DIR is not usable"),
-        config::Media::S3(s3) => Blobs::s3(s3).context("the media bucket is misconfigured"),
-    }
+    Blobs::s3(&settings.media).context("the media bucket is misconfigured")
 }
 
 fn build_stripe(settings: &config::Settings) -> Stripe {

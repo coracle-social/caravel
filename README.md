@@ -37,19 +37,17 @@ The binary reads these from the environment, or from a `.env` file in its workin
 | `ROBOT_MESSAGING_RELAYS` | Relays the robot receives DMs on |
 | `RELAY_DOMAINS` | Comma-separated domains relay subdomains live under |
 | `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` | The LiveKit server relays' calls run on. Without them no relay has calls |
-| `MEDIA_DIR` | The directory relays' media is kept in when no bucket is set, `data/media` by default |
-| `MEDIA_S3_BUCKET`, `MEDIA_S3_REGION`, `MEDIA_S3_ACCESS_KEY`, `MEDIA_S3_SECRET_KEY`, `MEDIA_S3_ENDPOINT` | The S3 bucket relays' media is kept in instead; the endpoint is needed only for a service other than AWS |
+| `MEDIA_S3_BUCKET`, `MEDIA_S3_REGION`, `MEDIA_S3_ACCESS_KEY`, `MEDIA_S3_SECRET_KEY`, `MEDIA_S3_ENDPOINT` | The S3 bucket relays' media is kept in; the endpoint is needed only for a service other than AWS |
 | `STRIPE_SECRET_KEY` | The Stripe account tenants pay, and through whose Connect platform members pay tenants |
 | `MEMBER_FEE_PERCENT` | The platform's cut of each membership payment, `10` by default, with at most two decimal places |
 | `FLOTILLA_URL` | The Flotilla instance invites are accepted in, `https://app.flotilla.social` by default |
 | `FORWARDED_HEADER` | The header a trusted proxy reports a client's address in, such as `X-Forwarded-For` |
-| `CONNECTIONS_PER_MINUTE` | New relay connections allowed per minute from one address, `0` (unlimited) by default |
 
-Every variable without a default is required, except `ADMIN_PUBKEYS`, the robot's profile, `FORWARDED_HEADER`, LiveKit's and the bucket's.
+Every variable without a default is required, except `ADMIN_PUBKEYS`, the robot's profile, `FORWARDED_HEADER`, LiveKit's and `MEDIA_S3_ENDPOINT`.
 
 ## Deployment
 
-Caravel ships as a Docker image built from the [`Dockerfile`](./Dockerfile) and published as `gitea.coracle.social/coracle/caravel` by [CI](./.gitea/workflows/ci.yml) on each push to `master`. The image is one binary, with the web apps built in, serving everything on port `2892`: each request is answered by its host, so the platform host gets the dashboards and the API, and a relay's hosts that relay and its member portal. Mount a volume at `/app/data` for media kept on disk.
+Caravel ships as a Docker image built from the [`Dockerfile`](./Dockerfile) and published as `gitea.coracle.social/coracle/caravel` by [CI](./.gitea/workflows/ci.yml) on each push to `master`. The image is one binary, with the web apps built in, serving everything on port `2892`: each request is answered by its host, so the platform host gets the dashboards and the API, and a relay's hosts that relay and its member portal.
 
 Every host reaches Caravel through [Caddy](https://caddyserver.com/). The platform host gets an ordinary certificate; relay hosts use [on-demand TLS](https://caddyserver.com/docs/automatic-https#on-demand-tls), which asks `GET /domains/check?domain=` before issuing each certificate, so only hosts some relay answers on get one:
 

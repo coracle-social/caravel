@@ -8,8 +8,7 @@ use std::time::Instant;
 /// How many addresses a limiter remembers before forgetting the refilled ones.
 const MAX_TRACKED: usize = 10_000;
 
-/// So many actions a minute per address, allowing a minute's worth at once. Zero
-/// is no limit.
+/// So many actions a minute per address, allowing a minute's worth at once.
 #[derive(Debug)]
 pub struct Limiter {
     per_minute: u32,
@@ -47,10 +46,6 @@ impl Limiter {
     }
 
     fn allow_at(&self, ip: IpAddr, now: Instant) -> bool {
-        if self.per_minute == 0 {
-            return true;
-        }
-
         let capacity = f64::from(self.per_minute);
         let per_second = capacity / 60.0;
         let mut buckets = self
@@ -107,13 +102,6 @@ mod tests {
         assert!(limiter.allow_at(ip, start));
         assert!(!limiter.allow_at(ip, start));
         assert!(limiter.allow_at(ip, start + Duration::from_secs(30)));
-    }
-
-    #[test]
-    fn zero_is_no_limit() {
-        let limiter = Limiter::new(0);
-        let ip: IpAddr = "127.0.0.1".parse().unwrap();
-        assert!((0..1000).all(|_| limiter.allow(ip)));
     }
 
     #[test]

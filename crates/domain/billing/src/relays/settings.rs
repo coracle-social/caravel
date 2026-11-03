@@ -6,6 +6,7 @@ use regex::Regex;
 
 use super::plans;
 use super::{Relay, RelaySettings};
+use crate::tenants::Tenant;
 use caravel_util::config::Config;
 use caravel_util::error::{Error, Result};
 use caravel_util::flag::Flag;
@@ -93,8 +94,14 @@ impl Relay {
 
     /// Check a relay's subdomain, domain and plan, that the plan allows the premium
     /// features it has on, and that its member price is one Stripe can charge for a
-    /// relay that doesn't let anyone in for free.
-    pub fn validate(self, config: &Config) -> Result<Relay> {
+    /// relay that doesn't let anyone in for free. A price it newly charges over
+    /// `previous` has to be one its tenant can be paid.
+    pub fn validate(
+        self,
+        config: &Config,
+        tenant: &Tenant,
+        previous: Option<&Relay>,
+    ) -> Result<Relay> {
         if !SUBDOMAIN_RE.is_match(&self.subdomain)
             || RESERVED_SUBDOMAINS.contains(&self.subdomain.as_str())
             || config.is_platform_host(&self.canonical_host())
@@ -129,6 +136,16 @@ impl Relay {
             return Err(Error::invalid(
                 "paid-public-join",
                 "a relay anyone may join can't charge for membership",
+            ));
+        }
+
+        // A relay already on sale stays as it is when its tenant can no longer be
+        // paid: memberships keep renewing, and its settings stay editable.
+        let charged = previous.map_or(0, |relay| relay.member_price);
+        if self.member_price > charged && tenant.payout_account().is_none() {
+            return Err(Error::conflict(
+                "payouts-not-ready",
+                "set up payouts with Stripe before charging members",
             ));
         }
 

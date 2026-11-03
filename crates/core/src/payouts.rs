@@ -1,10 +1,12 @@
 //! Payouts: onboarding a tenant to the Stripe Connect account their members pay
 //! into, and keeping track of whether it can take payments.
 
-use crate::Core;
 use caravel_billing::tenants::PayoutStatus;
 use caravel_billing::tenants::Tenant;
+use caravel_util::bus::Change;
 use caravel_util::error::{Error, Result};
+
+use crate::Core;
 
 /// A Stripe onboarding link for a tenant, creating their Connect account the
 /// first time. Stripe sends them back to `return_url`, also when the link goes
@@ -38,22 +40,35 @@ pub async fn refresh_status(core: &Core, tenant: &Tenant) -> Result<PayoutStatus
         return Ok(PayoutStatus {
             account_id: None,
             ready: false,
+            reason: None,
             fee_percent,
         });
     };
 
-    let ready = core.stripe.is_connect_account_ready(account_id).await?;
+    let account = core.stripe.connect_account(account_id).await?;
     caravel_billing::tenants::commands::set_tenant_stripe_account(
         core.db.pool(),
         &tenant.pubkey,
         account_id,
-        ready,
+        account.ready,
     )
     .await?;
 
+    // What a relay states about where to pay follows from this.
+    if account.ready != tenant.stripe_account_ready {
+        for relay in
+            caravel_billing::relays::queries::list_relays_for_tenant(core.db.pool(), &tenant.pubkey)
+                .await?
+        {
+            core.bus
+                .publish(Change::RelayChanged { relay_id: relay.id });
+        }
+    }
+
     Ok(PayoutStatus {
         account_id: Some(account_id.clone()),
-        ready,
+        ready: account.ready,
+        reason: account.reason,
         fee_percent,
     })
 }

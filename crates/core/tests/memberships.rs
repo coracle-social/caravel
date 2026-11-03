@@ -57,12 +57,12 @@ async fn fixture() -> Result<Fixture> {
     })
 }
 
-async fn price(core: &Core, relay: Relay, member_price: i64) -> Result<Relay> {
+async fn price(core: &Core, relay: Relay, member_price: i64) -> caravel_util::error::Result<Relay> {
     let settings = RelaySettings {
         member_price: Some(member_price),
         ..Default::default()
     };
-    Ok(hosting::update_relay(core, relay, settings).await?)
+    hosting::update_relay(core, relay, settings).await
 }
 
 fn pubkey() -> String {
@@ -759,6 +759,89 @@ async fn the_sweep_settles_a_checkout_its_payer_left() -> Result<()> {
     Ok(())
 }
 
+// A relay can't go on sale until its tenant can be paid, but one already on sale
+// stays as it is when payouts stop working.
+#[tokio::test]
+async fn a_relay_only_goes_on_sale_once_its_tenant_can_be_paid() -> Result<()> {
+    let core = core().await;
+    travel(&core, day(2030, 3, 1));
+
+    let tenant = create_tenant(&core).await?;
+    let relay = create_relay(&core, &tenant, PLAN_FREE).await?;
+    let account = |account_id: &'static str, ready| {
+        let pool = core.db.pool();
+        let tenant = tenant.clone();
+        async move {
+            caravel_billing::tenants::commands::set_tenant_stripe_account(
+                pool, &tenant, account_id, ready,
+            )
+            .await
+        }
+    };
+    let refused = |result: caravel_util::error::Result<Relay>| {
+        matches!(
+            result,
+            Err(Error::Conflict {
+                code: "payouts-not-ready",
+                ..
+            })
+        )
+    };
+
+    assert!(refused(price(&core, relay.clone(), 500).await));
+
+    // An account Stripe says can't take payments is no better than none at all.
+    account("acct_unfinished", false).await?;
+    assert!(refused(price(&core, relay.clone(), 500).await));
+
+    account("acct_ready", true).await?;
+    let relay = price(&core, relay, 500).await?;
+    assert_eq!(relay.member_price, 500);
+
+    // Payouts stop working. The relay stays editable at its price, so its members
+    // keep theirs, and raising the price is what needs payouts again.
+    account("acct_ready", false).await?;
+    let renamed = RelaySettings {
+        info_name: Some("Renamed".to_string()),
+        ..Default::default()
+    };
+    let renamed = hosting::update_relay(&core, relay.clone(), renamed).await?;
+    assert_eq!(
+        (renamed.info_name.as_str(), renamed.member_price),
+        ("Renamed", 500)
+    );
+    assert!(refused(price(&core, renamed, 900).await));
+    Ok(())
+}
+
+// Only a relay that stops selling releases its memberships, so a tenant whose
+// payouts lapse keeps their paying members.
+#[tokio::test]
+async fn a_lapsed_payout_account_leaves_memberships_alone() -> Result<()> {
+    let f = fixture().await?;
+    let member = pubkey();
+    pay(&f, &member).await?;
+
+    caravel_billing::tenants::commands::set_tenant_stripe_account(
+        f.core.db.pool(),
+        &f.relay.tenant_pubkey,
+        "acct_ready",
+        false,
+    )
+    .await?;
+    memberships::sweep(&f.core).await?;
+
+    assert_eq!(
+        live(&f, &member).await?.unwrap().status,
+        MembershipStatus::Active
+    );
+    assert_eq!(
+        member_source(&f, &member).await?,
+        Some(MemberSource::Payment)
+    );
+    Ok(())
+}
+
 // Ported from zooid's payments validation: a price Stripe can charge, on a relay
 // that doesn't let anyone in for free.
 #[tokio::test]
@@ -887,6 +970,21 @@ async fn a_tenant_onboards_for_payouts() -> Result<()> {
             .await?
             .stripe_account_ready
     );
+
+    // Stripe's reason an account can't be paid reaches the tenant, and a change in
+    // readiness reloads the tenant's relays, whose documents say where to pay.
+    let tenant = get_tenant(&f.core, &f.relay.tenant_pubkey).await?;
+    let mut changes = f.core.bus.subscribe();
+    f.stripe.set_account_ready("acct_ready", false);
+    f.stripe
+        .set_account_reason("acct_ready", "requirements.past_due");
+    let status = caravel_core::payouts::refresh_status(&f.core, &tenant).await?;
+    assert!(!status.ready);
+    assert_eq!(status.reason.as_deref(), Some("requirements.past_due"));
+    assert!(matches!(
+        changes.try_recv(),
+        Ok(caravel_util::bus::Change::RelayChanged { relay_id }) if relay_id == f.relay.id
+    ));
     Ok(())
 }
 

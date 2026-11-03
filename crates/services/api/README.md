@@ -2,7 +2,7 @@
 
 The headless JSON API, which the platform's dashboards, relays' member portals and other clients such as Flotilla use to manage tenants, relays, billing and paid memberships.
 
-Responses wrap their payload as `{"data": ..., "code": "ok"}`, and errors as `{"error": "...", "code": "..."}`. A `401` means the caller isn't authenticated, `403` that they may not do this, `404` that the thing named doesn't exist, `400` that it is in a state that doesn't allow the request (such as `relay-is-purged`), and `422` that the input isn't acceptable (such as `subdomain-exists`).
+Responses wrap their payload as `{"data": ..., "code": "ok"}`, and errors as `{"error": "...", "code": "..."}`. A `401` means the caller isn't authenticated, `403` that they may not do this, `404` that the thing named doesn't exist, `400` that it is in a state that doesn't allow the request (such as `relay-is-purged`, or `payouts-not-ready` for a relay that would charge members before its tenant can be paid), and `422` that the input isn't acceptable (such as `subdomain-exists`).
 
 Boolean relay settings are written and read as `0` or `1`, a relay's domain is carried as `zooid_domain`, and a relay without a custom domain has `custom_domain` `""`, as clients from before the monolith expect.
 
@@ -45,7 +45,7 @@ Tenants:
 - `GET /tenants/{pubkey}/invoices/draft/items`
 - `POST /tenants/{pubkey}/reconcile` — bring billing up to date without charging
 - `GET /tenants/{pubkey}/stripe/session?return_url=` — a Stripe billing portal url (the tenant only)
-- `GET /tenants/{pubkey}/payouts` — `{account_id, ready, fee_percent}`: whether the tenant's members can pay them, and the platform's cut
+- `GET /tenants/{pubkey}/payouts` — `{account_id, ready, reason, fee_percent}`: whether the tenant's members can pay them, Stripe's code for what it still needs (`reason`, such as `requirements.past_due`), and the platform's cut
 - `POST /tenants/{pubkey}/payouts/onboard` — `{return_url?}`: a Stripe onboarding url, creating the tenant's payout account the first time (the tenant only)
 - `POST /tenants/{pubkey}/payouts/dashboard` — a url into the tenant's Stripe payouts dashboard (the tenant only)
 - `POST /relays` — `{tenant_pubkey, subdomain, zooid_domain, plan_id, ...settings}`
@@ -76,4 +76,4 @@ Admins:
 - `GET /moderation?since=&until=` — `{items, truncated}`: up to a thousand events and uploads every relay not owned by an admin saw in an inclusive window of `seen_at`, newest first, each as `{type, relay_id, seen_at, data}`; events that run a relay (what the relay signs, room moderation and join requests, and relay and room lists) are left out
 - `GET /moderation/blob/{relay_id}/{sha256}` — a blob's bytes
 
-Relay settings are `subdomain`, `zooid_domain`, `plan_id`, `info_name`, `info_icon`, `info_description`, `policy_public_read`, `policy_anonymous_read`, `policy_public_write`, `policy_public_join`, `policy_strip_signatures`, `groups_enabled`, `management_enabled`, `members_can_invite`, `blossom_enabled`, `blossom_authenticated_read`, `livekit_enabled`, `push_enabled`, `custom_domain`, `member_price` (cents, `0` or at least `50`) and `member_interval` (`month` or `year`). A relay with a member price can't take public joins.
+Relay settings are `subdomain`, `zooid_domain`, `plan_id`, `info_name`, `info_icon`, `info_description`, `policy_public_read`, `policy_anonymous_read`, `policy_public_write`, `policy_public_join`, `policy_strip_signatures`, `groups_enabled`, `management_enabled`, `members_can_invite`, `blossom_enabled`, `blossom_authenticated_read`, `livekit_enabled`, `push_enabled`, `custom_domain`, `member_price` (cents, `0` or at least `50`) and `member_interval` (`month` or `year`). A relay with a member price can't take public joins, and its tenant has to have finished Stripe onboarding, so payouts are ready, before it can be given one.

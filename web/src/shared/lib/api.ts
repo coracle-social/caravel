@@ -128,6 +128,8 @@ export type Membership = {
 export type PayoutStatus = {
   account_id: string | null
   ready: boolean
+  // Stripe's code for what it still needs, such as `requirements.past_due`.
+  reason: string | null
   fee_percent: number
 }
 

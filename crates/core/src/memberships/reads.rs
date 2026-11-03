@@ -45,18 +45,26 @@ pub async fn membership_by_invite(core: &Core, code: &str) -> Result<Option<Memb
         .await
 }
 
-/// What a relay sells memberships for, and whether it can take payment now.
-pub async fn get_offer(core: &Core, relay: &Relay) -> Result<Offer> {
-    let accepting_payment =
+/// Whether a relay's tenant can take what it charges its members.
+pub async fn accepting_payment(core: &Core, relay: &Relay) -> Result<bool> {
+    if !relay.charges_members() {
+        return Ok(false);
+    }
+
+    Ok(
         caravel_billing::tenants::queries::get_tenant(core.db.pool(), &relay.tenant_pubkey)
             .await?
-            .is_some_and(|tenant| tenant.payout_account().is_some());
+            .is_some_and(|tenant| tenant.payout_account().is_some()),
+    )
+}
 
+/// What a relay sells memberships for, and whether it can take payment now.
+pub async fn get_offer(core: &Core, relay: &Relay) -> Result<Offer> {
     Ok(Offer {
         relay: relay.profile(),
         price: relay.member_price,
         interval: relay.member_interval,
-        accepting_payment: accepting_payment && relay.charges_members(),
+        accepting_payment: accepting_payment(core, relay).await?,
     })
 }
 

@@ -41,6 +41,8 @@ pub struct InstanceState {
     pub snapshot: RelaySnapshot,
     /// Its push subscriptions, when push is on.
     pub push: Vec<push::Subscription>,
+    /// The tenant can take what the relay charges its members.
+    pub accepting_payment: bool,
 }
 
 impl InstanceState {
@@ -55,6 +57,7 @@ impl InstanceState {
             key: core.relay_key(&relay)?,
             snapshot: caravel_core::events::load_snapshot(core, &relay).await?,
             push,
+            accepting_payment: caravel_core::memberships::accepting_payment(core, &relay).await?,
             relay,
         })
     }

@@ -52,6 +52,30 @@ async fn a_paid_relay_states_its_price_and_where_to_pay() {
     assert_eq!(yearly["fees"]["subscription"][0]["period"], 31536000);
 }
 
+// A relay whose tenant can no longer be paid still says what a membership costs,
+// since joining still takes a claim, but not where to pay for one.
+#[tokio::test]
+async fn a_relay_whose_tenant_cant_be_paid_says_nothing_about_paying() {
+    let server = Server::start().await;
+    let (relay, _) = server.relay().await;
+    let relay = server.update(&relay, json!({"member_price": 500})).await;
+
+    caravel_billing::tenants::commands::set_tenant_stripe_account(
+        server.core.db.pool(),
+        &relay.tenant_pubkey,
+        "acct_ready",
+        false,
+    )
+    .await
+    .unwrap();
+    server.relays.reload(&relay.id).await.unwrap();
+
+    let info = info(&server, &relay.canonical_host()).await;
+    assert_eq!(info["limitation"]["payment_required"], true);
+    assert_eq!(info["fees"]["subscription"][0]["amount"], 500);
+    assert!(info.get("payments_url").is_none());
+}
+
 #[tokio::test]
 async fn a_paid_relay_takes_joins_only_with_a_claim() {
     let server = Server::start().await;

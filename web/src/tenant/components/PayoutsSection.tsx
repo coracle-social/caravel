@@ -1,6 +1,7 @@
 import { createResource, Show } from "solid-js"
 import StatusBadge from "@/shared/components/StatusBadge"
 import { getPayoutStatus, openPayoutDashboard, openPayoutOnboarding, type PayoutStatus } from "@/shared/lib/api"
+import { payoutReason } from "@/shared/lib/payouts"
 import { loaded } from "@/shared/lib/resource"
 import { useRedirect } from "@/shared/lib/useRedirect"
 
@@ -34,6 +35,9 @@ export default function PayoutsSection(props: { pubkey: string }) {
       </p>
       <Show when={connect.error}>
         <p class="text-sm text-red-600 mb-3">Failed to load your payout account.</p>
+      </Show>
+      <Show when={payoutReason(status())}>
+        {(reason) => <p class="text-sm text-yellow-800 mb-3">{reason()}</p>}
       </Show>
       <Show when={stripe.error()}>
         <p class="text-sm text-red-600 mb-3">{stripe.error()}</p>

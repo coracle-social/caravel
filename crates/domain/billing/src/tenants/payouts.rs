@@ -8,5 +8,7 @@ use serde::{Deserialize, Serialize};
 pub struct PayoutStatus {
     pub account_id: Option<String>,
     pub ready: bool,
+    /// Stripe's code for what it still needs, such as `requirements.past_due`.
+    pub reason: Option<String>,
     pub fee_percent: f64,
 }

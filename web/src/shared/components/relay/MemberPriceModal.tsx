@@ -3,6 +3,7 @@ import Modal from "@/shared/components/Modal"
 import { account } from "@/shared/lib/account"
 import { getPayoutStatus, openPayoutOnboarding, updateRelay, type MemberInterval, type Relay } from "@/shared/lib/api"
 import { formatError } from "@/shared/lib/format"
+import { payoutReason } from "@/shared/lib/payouts"
 import { loaded } from "@/shared/lib/resource"
 import { useRedirect } from "@/shared/lib/useRedirect"
 
@@ -92,6 +93,9 @@ export default function MemberPriceModal(props: Props) {
                   fallback={<p class="text-sm text-yellow-800">The owner of this relay has not finished setting up payouts.</p>}
                 >
                   <p class="text-sm text-yellow-800">Set up payouts with Stripe before charging members.</p>
+                  <Show when={payoutReason(connect())}>
+                    {(reason) => <p class="text-sm text-yellow-800">{reason()}</p>}
+                  </Show>
                   <Show when={stripe.error()}>
                     <p class="text-sm text-red-600">{stripe.error()}</p>
                   </Show>

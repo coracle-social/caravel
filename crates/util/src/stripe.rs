@@ -24,6 +24,14 @@ pub struct Stripe {
     api: String,
 }
 
+/// What Stripe says about a tenant's Connect account.
+#[derive(Clone, Debug)]
+pub struct ConnectAccount {
+    pub ready: bool,
+    /// Stripe's code for what it still needs, such as `requirements.past_due`.
+    pub reason: Option<String>,
+}
+
 impl Stripe {
     pub fn new(secret_key: &str) -> Self {
         Self::with_api(secret_key, STRIPE_API)
@@ -252,14 +260,21 @@ impl Stripe {
         field(&body, "id", "connect account id")
     }
 
-    /// Whether a Connect account can both take charges and receive payouts.
-    pub async fn is_connect_account_ready(&self, account_id: &str) -> Result<bool> {
+    /// What Stripe says about a Connect account: whether it can both take charges
+    /// and receive payouts, and its reason if it can't.
+    pub async fn connect_account(&self, account_id: &str) -> Result<ConnectAccount> {
         let body = self
             .get(&format!("/accounts/{account_id}"))
             .send_json()
             .await?;
-        Ok(body["charges_enabled"].as_bool().unwrap_or(false)
-            && body["payouts_enabled"].as_bool().unwrap_or(false))
+        let ready = body["charges_enabled"].as_bool().unwrap_or(false)
+            && body["payouts_enabled"].as_bool().unwrap_or(false);
+        Ok(ConnectAccount {
+            ready,
+            reason: body["requirements"]["disabled_reason"]
+                .as_str()
+                .map(str::to_string),
+        })
     }
 
     /// Open a single-use onboarding link for an Express account.

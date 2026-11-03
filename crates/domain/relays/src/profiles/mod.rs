@@ -63,11 +63,14 @@ pub fn document(info: &RelayInfo, limits: &Limits, max_subid_length: usize) -> V
     });
 
     if let Some((amount, period)) = info.membership {
-        document["payments_url"] = json!(info.payments_url);
         document["fees"] = json!({
             // A currency amount is in its minor units, as Flotilla reads it.
             "subscription": [{ "amount": amount, "unit": "USD", "period": period }],
         });
+    }
+
+    if let Some(payments_url) = &info.payments_url {
+        document["payments_url"] = json!(payments_url);
     }
 
     document

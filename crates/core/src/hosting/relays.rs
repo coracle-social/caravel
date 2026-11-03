@@ -86,7 +86,7 @@ pub async fn create_relay(
         created_at: now,
         ..Default::default()
     };
-    let relay = with_settings(&core.config, relay, settings)?;
+    let relay = with_settings(&core.config, relay, settings, &tenant, None)?;
     require_custom_domain_free(core, &relay).await?;
     let key = core.relay_key(&relay)?;
 
@@ -130,8 +130,11 @@ pub async fn create_relay(
 pub async fn update_relay(core: &Core, relay: Relay, settings: RelaySettings) -> Result<Relay> {
     relay.require_unpurged()?;
 
+    let tenant =
+        caravel_billing::tenants::queries::require_tenant(core.db.pool(), &relay.tenant_pubkey)
+            .await?;
     let previous = relay.clone();
-    let relay = with_settings(&core.config, relay, settings)?;
+    let relay = with_settings(&core.config, relay, settings, &tenant, Some(&previous))?;
 
     if relay.custom_domain != previous.custom_domain {
         require_custom_domain_free(core, &relay).await?;
@@ -278,8 +281,12 @@ fn with_settings(
     config: &caravel_util::config::Config,
     relay: Relay,
     settings: RelaySettings,
+    tenant: &caravel_billing::tenants::Tenant,
+    previous: Option<&Relay>,
 ) -> Result<Relay> {
-    relay.apply_settings(config, settings)?.validate(config)
+    relay
+        .apply_settings(config, settings)?
+        .validate(config, tenant, previous)
 }
 
 /// Refuse a custom domain another relay has verified.

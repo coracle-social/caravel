@@ -196,8 +196,9 @@ impl Relay {
         }
     }
 
-    /// What the relay states about itself in its NIP-11 document.
-    pub fn info(&self) -> caravel_relays::profiles::RelayInfo {
+    /// What the relay states about itself in its NIP-11 document, with where to
+    /// pay only when `accepting_payment`.
+    pub fn info(&self, accepting_payment: bool) -> caravel_relays::profiles::RelayInfo {
         caravel_relays::profiles::RelayInfo {
             name: self.info_name.clone(),
             description: self.info_description.clone(),
@@ -213,7 +214,8 @@ impl Relay {
             membership: self
                 .charges_members()
                 .then(|| (self.member_price, self.member_interval.seconds())),
-            payments_url: self.charges_members().then(|| self.portal_url("/")),
+            payments_url: (self.charges_members() && accepting_payment)
+                .then(|| self.portal_url("/")),
         }
     }
 

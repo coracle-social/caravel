@@ -1,8 +1,9 @@
 import { createResource, createSignal, For, Show } from "solid-js"
 import MemberPriceModal from "@/shared/components/relay/MemberPriceModal"
 import StatusBadge from "@/shared/components/StatusBadge"
-import { listRelayMemberships, relayPortalUrl, type Relay } from "@/shared/lib/api"
+import { getPayoutStatus, listRelayMemberships, relayPortalUrl, type Relay } from "@/shared/lib/api"
 import { copyToClipboard } from "@/shared/lib/clipboard"
+import { payoutReason } from "@/shared/lib/payouts"
 import { loaded } from "@/shared/lib/resource"
 import { formatDate, formatUsd } from "@/shared/lib/format"
 import { shortenNpub } from "@/shared/lib/pubkey"
@@ -16,10 +17,13 @@ type Props = {
 export default function MemberPayments(props: Props) {
   const [modalOpen, setModalOpen] = createSignal(false)
   const [memberships] = createResource(() => props.relay().id, listRelayMemberships)
+  const [connect] = createResource(() => props.relay().tenant_pubkey, getPayoutStatus)
 
   const paying = () => (loaded(memberships) ?? []).filter(m => m.status === "active" || m.status === "canceled")
   const isPaid = () => props.relay().member_price > 0
   const payUrl = () => relayPortalUrl(props.relay())
+  // A relay can charge members whether or not its tenant can still be paid.
+  const unpaid = () => isPaid() && connect()?.ready === false
 
   return (
     <div>
@@ -36,6 +40,12 @@ export default function MemberPayments(props: Props) {
             {isPaid() ? "Change price" : "Set price"}
           </button>
         </div>
+        <Show when={unpaid()}>
+          <p class="rounded-lg border border-yellow-200 bg-yellow-50 px-4 py-3 text-sm text-yellow-800">
+            Members can't pay until you finish setting up payouts
+            <Show when={payoutReason(connect())}>{(reason) => <>. {reason()}</>}</Show>
+          </p>
+        </Show>
         <Show when={isPaid()}>
           <div class="flex items-center justify-between gap-2">
             <a href={payUrl()} target="_blank" rel="noopener" class="text-sm text-blue-600 hover:underline break-all">

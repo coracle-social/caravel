@@ -78,9 +78,18 @@ impl Server {
         }
     }
 
-    /// A new relay, served from now on, with its tenant's key.
+    /// A new relay, served from now on, with its tenant's key. The tenant can be
+    /// paid, so the relay may charge members.
     pub async fn relay(&self) -> (Relay, SecretKey) {
         let (relay, owner) = testing::create_relay(&self.core).await;
+        caravel_billing::tenants::commands::set_tenant_stripe_account(
+            self.core.db.pool(),
+            &relay.tenant_pubkey,
+            "acct_ready",
+            true,
+        )
+        .await
+        .expect("failed to set the tenant's payout account");
         self.relays
             .reload(&relay.id)
             .await

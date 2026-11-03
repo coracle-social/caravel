@@ -37,6 +37,8 @@ pub struct StripeState {
     pub sessions: Vec<CheckoutSession>,
     pub subscriptions: Vec<Subscription>,
     pub accounts: HashMap<String, bool>,
+    /// What Stripe says each account still needs, by id.
+    reasons: HashMap<String, String>,
     /// Decline every new card charge while set.
     decline_charges: bool,
     /// Each charge's answer by idempotency key, which Stripe replays.
@@ -199,6 +201,13 @@ impl FakeStripe {
 
     pub fn set_account_ready(&self, account_id: &str, ready: bool) {
         self.state().accounts.insert(account_id.to_string(), ready);
+    }
+
+    /// What Stripe says an account still needs, such as `requirements.past_due`.
+    pub fn set_account_reason(&self, account_id: &str, reason: &str) {
+        self.state()
+            .reasons
+            .insert(account_id.to_string(), reason.to_string());
     }
 
     /// Decline card charges from now on, or stop declining them.
@@ -429,14 +438,15 @@ async fn create_account(State(state): State<Shared>) -> Json<Value> {
 }
 
 async fn get_account(State(state): State<Shared>, Path(id): Path<String>) -> Json<Value> {
-    let ready = state
-        .lock()
-        .unwrap()
-        .accounts
-        .get(&id)
-        .copied()
-        .unwrap_or(false);
-    Json(json!({ "id": id, "charges_enabled": ready, "payouts_enabled": ready }))
+    let state = state.lock().unwrap();
+    let ready = state.accounts.get(&id).copied().unwrap_or(false);
+    let reason = state.reasons.get(&id);
+    Json(json!({
+        "id": id,
+        "charges_enabled": ready,
+        "payouts_enabled": ready,
+        "requirements": { "disabled_reason": reason },
+    }))
 }
 
 async fn account_link(Form(form): Form<HashMap<String, String>>) -> Json<Value> {

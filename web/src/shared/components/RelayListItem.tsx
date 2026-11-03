@@ -11,6 +11,8 @@ type RelayListItemProps = {
   relay: Relay
   href: string
   showTenant?: boolean
+  // Whether the tenant can be paid, for a list that knows it.
+  payoutsReady?: boolean
 }
 
 // A relay in a list. A list that shows tenants fetches their profiles itself.
@@ -37,6 +39,9 @@ export default function RelayListItem(props: RelayListItemProps) {
             </Show>
           </div>
           <div class="flex items-center gap-2 shrink-0">
+            <Show when={props.relay.member_price > 0 && props.payoutsReady === false}>
+              <StatusBadge status="incomplete">Payouts needed</StatusBadge>
+            </Show>
             <StatusBadge status={relayStatus(props.relay)} />
             <PlanBadge planId={props.relay.plan_id} />
           </div>

@@ -374,7 +374,10 @@ async fn root(
             max_subscriptions: relays.inner.config.limits.max_subscriptions,
             max_message_size: relays.inner.config.transport.max_message_size,
         };
-        return nip11::response(nip11::document(&state.relay.info(), &limits));
+        return nip11::response(nip11::document(
+            &state.relay.info(state.accepting_payment),
+            &limits,
+        ));
     }
 
     if !is_upgrade(headers) {

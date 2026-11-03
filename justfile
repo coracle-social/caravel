@@ -14,7 +14,7 @@ dev:
   wait
 
 dev-backend:
-  onchange crates -ik -- bash -c 'RUST_LOG=caravel=info,caravel_core=info,caravel_api=info cargo run -p caravel-app'
+  onchange crates -ik -- bash -c 'RUST_LOG=caravel=info,caravel_core=info,caravel_api=info cargo run -p caravel-app -- serve'
 
 dev-web:
   cd web && pnpm run dev

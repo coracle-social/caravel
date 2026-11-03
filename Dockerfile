@@ -53,4 +53,4 @@ ENV PORT=2892
 
 EXPOSE 2892
 
-CMD ["/app/caravel"]
+CMD ["/app/caravel", "serve"]

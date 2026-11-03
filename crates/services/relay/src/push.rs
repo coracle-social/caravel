@@ -12,6 +12,7 @@ use caravel_relays::policy::{EventFacts, RelaySnapshot};
 use caravel_util::nostr::kinds;
 use coracle_lib::events::{Event, EventId};
 use coracle_lib::filters::{Filter, matches_any};
+use coracle_lib::keys::PublicKey;
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -32,7 +33,7 @@ const MAX_SUBSCRIPTIONS: usize = 100_000;
 #[derive(Clone, Debug)]
 pub struct Subscription {
     pub id: EventId,
-    pub pubkey: String,
+    pub pubkey: PublicKey,
     pub d: String,
     pub filters: Vec<Filter>,
     pub ignore: Vec<Filter>,
@@ -53,7 +54,7 @@ impl Subscription {
 
         Some(Self {
             id: event.id,
-            pubkey: event.pubkey.to_hex(),
+            pubkey: event.pubkey,
             d: event.tags.value("d")?.to_string(),
             filters: parse_filters("filter"),
             ignore: parse_filters("ignore"),
@@ -86,7 +87,7 @@ pub async fn load_subscriptions(
 
 /// How many subscriptions an author holds besides the one `event` replaces.
 pub fn held_by(subscriptions: &[Subscription], event: &Event) -> usize {
-    let author = event.pubkey.to_hex();
+    let author = event.pubkey;
     let d = event.tags.value("d").unwrap_or_default();
     subscriptions
         .iter()
@@ -150,13 +151,12 @@ impl Pusher {
         primary_host: &str,
         event: &Event,
     ) {
-        let author = event.pubkey.to_hex();
-        let facts = EventFacts::of(event, &author);
+        let facts = EventFacts::of(event);
         let stored = StoredEvent::from_event(event);
 
         for subscription in subscriptions {
-            let reader = [subscription.pubkey.clone()];
-            if subscription.pubkey == author
+            let reader = [subscription.pubkey];
+            if subscription.pubkey == event.pubkey
                 || !snapshot.can_deliver(&reader, facts)
                 || !matches_any(&subscription.filters, event)
                 || matches_any(&subscription.ignore, event)
@@ -242,12 +242,14 @@ impl Pusher {
 
 #[cfg(test)]
 mod tests {
+    use coracle_lib::keys::SecretKey;
+
     use super::*;
 
     fn subscription(id: u8) -> Subscription {
         Subscription {
             id: EventId::new([id; 32]),
-            pubkey: String::new(),
+            pubkey: SecretKey::generate().public_key(),
             d: id.to_string(),
             filters: Vec::new(),
             ignore: Vec::new(),

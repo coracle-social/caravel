@@ -65,6 +65,12 @@ impl Key {
     }
 }
 
+/// A pubkey as the platform's rows hold it, or an internal error if a row holds
+/// something that isn't one.
+pub fn parse_pubkey(hex: &str) -> crate::error::Result<PublicKey> {
+    PublicKey::from_hex(hex).map_err(|error| crate::error::Error::Internal(error.into()))
+}
+
 /// A fresh keypair as hex `(pubkey, secret)`.
 pub fn generate_keypair() -> (String, String) {
     let secret = SecretKey::generate();

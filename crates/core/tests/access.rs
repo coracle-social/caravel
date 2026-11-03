@@ -15,7 +15,7 @@ use caravel_util::nostr::Key;
 use caravel_util::nostr::kinds;
 use coracle_lib::events::Event;
 use coracle_lib::filters::Filter;
-use coracle_lib::keys::SecretKey;
+use coracle_lib::keys::{PublicKey, SecretKey};
 use serde_json::json;
 
 struct Fixture {
@@ -524,16 +524,20 @@ async fn methods_are_granted_individually_and_to_members_of_inviting_relays() ->
         "a method makes its holder a member"
     );
 
-    let snapshot =
-        caravel_relays::policy::queries::load_snapshot(f.core.db.pool(), f.relay.snapshot())
-            .await?;
-    let mut methods = snapshot.methods_for(&alice);
+    let snapshot = caravel_core::events::load_snapshot(&f.core, &f.relay).await?;
+    let alice_key = PublicKey::from_hex(&alice).unwrap();
+    let mut methods = snapshot.methods_for(&alice_key);
     methods.sort();
     // Members of a relay whose members may invite also hold the invite methods.
     assert_eq!(methods, ["banpubkey", "createclaim", "listclaims"]);
-    assert!(snapshot.may_call(&alice, "supportedmethods"));
-    assert!(!snapshot.may_call(&alice, "banevent"));
-    assert_eq!(snapshot.methods_for(&f.owner).len(), MANAGED_METHODS.len());
+    assert!(snapshot.may_call(&alice_key, "supportedmethods"));
+    assert!(!snapshot.may_call(&alice_key, "banevent"));
+    assert_eq!(
+        snapshot
+            .methods_for(&PublicKey::from_hex(&f.owner).unwrap())
+            .len(),
+        MANAGED_METHODS.len()
+    );
 
     let assignees = f.call(Call::ListMethodAssignees).await?;
     let alice_entry = assignees
@@ -546,12 +550,10 @@ async fn methods_are_granted_individually_and_to_members_of_inviting_relays() ->
 
     f.call(Call::UnassignMethod(alice.clone(), "banpubkey".into()))
         .await?;
-    let snapshot =
-        caravel_relays::policy::queries::load_snapshot(f.core.db.pool(), f.relay.snapshot())
-            .await?;
+    let snapshot = caravel_core::events::load_snapshot(&f.core, &f.relay).await?;
     assert!(
         !snapshot
-            .methods_for(&alice)
+            .methods_for(&alice_key)
             .contains(&"banpubkey".to_string())
     );
     Ok(())

@@ -13,6 +13,7 @@ use caravel_core::media;
 use caravel_relays::media::{Blob, Deleted, MAX_BLOB_SIZE};
 use caravel_util::encoding::{is_hex64, sha256_hex};
 use caravel_util::nostr::kinds::BLOSSOM_AUTH;
+use coracle_lib::keys::PublicKey;
 use futures_util::StreamExt;
 use serde_json::{Value, json};
 
@@ -135,7 +136,7 @@ fn authorize(
     route: &Route,
     headers: &HeaderMap,
     verb: &str,
-) -> Result<(String, Vec<String>), Refused> {
+) -> Result<(PublicKey, Vec<String>), Refused> {
     let unauthorized = |reason: &str| Refused::new(StatusCode::UNAUTHORIZED, reason);
     let header = headers
         .get(header::AUTHORIZATION)
@@ -174,7 +175,7 @@ fn authorize(
         return Err(unauthorized("the authorization is for another server"));
     }
 
-    let pubkey = event.pubkey.to_hex();
+    let pubkey = event.pubkey;
     if !route.instance.state().snapshot.has_access(&pubkey) {
         return Err(Refused::new(StatusCode::FORBIDDEN, "unauthorized"));
     }
@@ -351,7 +352,7 @@ pub async fn upload(Extension(route): Extension<Route>, request: Request) -> Ans
 
     let blob = keep(
         &route,
-        &uploader,
+        &uploader.to_hex(),
         Bytes::from(bytes),
         content_type,
         &covered,
@@ -393,7 +394,14 @@ pub async fn mirror(Extension(route): Extension<Route>, headers: HeaderMap, body
         .content_type
         .unwrap_or_else(|| "application/octet-stream".to_string());
 
-    let blob = keep(&route, &uploader, fetched.bytes, content_type, &covered).await?;
+    let blob = keep(
+        &route,
+        &uploader.to_hex(),
+        fetched.bytes,
+        content_type,
+        &covered,
+    )
+    .await?;
     Ok(axum::Json(descriptor(&route, &blob)).into_response())
 }
 
@@ -469,7 +477,7 @@ pub async fn delete(
     }
 
     let relay_id = route.instance.relay_id();
-    let deleted = media::delete_upload(route.instance.core(), &relay_id, &sha256, &pubkey)
+    let deleted = media::delete_upload(route.instance.core(), &relay_id, &sha256, &pubkey.to_hex())
         .await
         .map_err(|error| Refused::failed("the blob could not be deleted", error))?;
 

@@ -6,7 +6,7 @@ use crate::policy::{Join, Refusal, RelaySnapshot};
 
 impl RelaySnapshot {
     pub fn admit_join(&self, event: &Event) -> Result<Join, Refusal> {
-        let author = event.pubkey.to_hex();
+        let author = event.pubkey;
 
         if self.members.contains(&author) {
             return Ok(Join::AlreadyMember);

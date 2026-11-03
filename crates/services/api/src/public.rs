@@ -54,10 +54,10 @@ pub async fn create_session(State(core): State<Core>, headers: HeaderMap) -> Api
     let url = format!("{}/session", core.config.api_url());
     let pubkey =
         caravel_util::auth::verify_request_auth(authorization(&headers)?, &url, "POST", now)?;
-    let (token, session) = sessions::start(&core, &pubkey).await?;
+    let (token, session) = sessions::start(&core, &pubkey.to_hex()).await?;
 
     created(SessionResponse {
-        pubkey,
+        pubkey: pubkey.to_hex(),
         token,
         expires_at: session.expires_at,
     })

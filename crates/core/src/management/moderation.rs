@@ -28,8 +28,7 @@ pub async fn moderate_room(
     let key = core.relay_key(relay)?;
     let now = core.clock.now();
     let event = key.sign(kind, tags, "", now);
-    let snapshot =
-        caravel_relays::policy::queries::load_snapshot(core.db.pool(), relay.snapshot()).await?;
+    let snapshot = crate::events::load_snapshot(core, relay).await?;
     snapshot
         .check_room_write(&event)
         .map_err(|refusal| Error::invalid("refused", refusal.message()))?;

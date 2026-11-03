@@ -1,6 +1,7 @@
 //! Whether a verified event may be published, and the checks before its signature.
 
 use coracle_lib::events::Event;
+use coracle_lib::keys::PublicKey;
 
 use crate::policy::{Refusal, RelaySnapshot};
 use caravel_util::nostr::kinds;
@@ -50,14 +51,14 @@ pub fn screen(event: &Event, now: i64) -> Result<(), Refusal> {
     Ok(())
 }
 
-fn check_protected(event: &Event, authed: &[String]) -> Result<(), Refusal> {
+fn check_protected(event: &Event, authed: &[PublicKey]) -> Result<(), Refusal> {
     if coracle_lib::protected::is_protected(&event.tags) {
         if authed.is_empty() {
             return Err(Refusal::AuthRequired(
                 "must be published by authenticated event author",
             ));
         }
-        if !authed.contains(&event.pubkey.to_hex()) {
+        if !authed.contains(&event.pubkey) {
             return Err(Refusal::blocked("must be published by event author"));
         }
         return Ok(());
@@ -77,11 +78,16 @@ fn check_protected(event: &Event, authed: &[String]) -> Result<(), Refusal> {
 }
 
 impl RelaySnapshot {
-    pub fn admit_write(&self, event: &Event, authed: &[String], now: i64) -> Result<(), Refusal> {
+    pub fn admit_write(
+        &self,
+        event: &Event,
+        authed: &[PublicKey],
+        now: i64,
+    ) -> Result<(), Refusal> {
         check_protected(event, authed)?;
         screen(event, now)?;
 
-        let author = event.pubkey.to_hex();
+        let author = event.pubkey;
 
         if self.banned_events.contains(&event.id.to_hex()) {
             return Err(Refusal::blocked(
@@ -134,9 +140,8 @@ impl RelaySnapshot {
     }
     fn is_for_member(&self, event: &Event) -> bool {
         matches!(event.kind, kinds::ZAP_RECEIPT | kinds::GIFT_WRAP)
-            && event
-                .tags
-                .find_all("p")
-                .any(|tag| self.has_access(tag.value()))
+            && event.tags.find_all("p").any(|tag| {
+                PublicKey::from_hex(tag.value()).is_ok_and(|pubkey| self.has_access(&pubkey))
+            })
     }
 }

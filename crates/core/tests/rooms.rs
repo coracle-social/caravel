@@ -16,7 +16,7 @@ use caravel_util::nostr::Key;
 use caravel_util::nostr::kinds::rooms as kinds;
 use coracle_lib::events::Event;
 use coracle_lib::filters::Filter;
-use coracle_lib::keys::SecretKey;
+use coracle_lib::keys::{PublicKey, SecretKey};
 
 struct Fixture {
     core: Core,
@@ -43,7 +43,7 @@ impl Fixture {
     }
 
     async fn snapshot(&self) -> RelaySnapshot {
-        caravel_relays::policy::queries::load_snapshot(self.core.db.pool(), self.relay.snapshot())
+        caravel_core::events::load_snapshot(&self.core, &self.relay)
             .await
             .unwrap()
     }
@@ -309,7 +309,11 @@ async fn moderators_put_and_remove_members() -> Result<()> {
         values(&f.published(kinds::MEMBERS, "room").await.unwrap(), "p"),
         std::slice::from_ref(&alice)
     );
-    assert!(!f.snapshot().await.rooms["room"].members.contains(&bob));
+    assert!(
+        !f.snapshot().await.rooms["room"]
+            .members
+            .contains(&PublicKey::from_hex(&bob).unwrap())
+    );
     Ok(())
 }
 
@@ -520,7 +524,7 @@ async fn a_room_is_moderated_by_the_kinds_its_members_are_permitted() -> Result<
     assert!(
         f.snapshot().await.rooms["room"]
             .members
-            .contains(&moderator_hex)
+            .contains(&moderator.public_key())
     );
     Ok(())
 }

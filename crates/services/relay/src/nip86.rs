@@ -8,6 +8,7 @@ use axum::http::{HeaderMap, HeaderValue, header};
 use axum::response::{IntoResponse, Response};
 use caravel_core::management;
 use caravel_relays::management::{Call, Outcome};
+use coracle_lib::keys::PublicKey;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -81,7 +82,12 @@ async fn call(route: &Route, headers: &HeaderMap, body: &[u8]) -> Result<Value, 
 }
 
 /// The signer of a NIP-98 header made for this relay's url and this body.
-fn authenticate(headers: &HeaderMap, body: &[u8], host: &str, now: i64) -> Result<String, String> {
+fn authenticate(
+    headers: &HeaderMap,
+    body: &[u8],
+    host: &str,
+    now: i64,
+) -> Result<PublicKey, String> {
     let header = headers
         .get(AUTHORIZATION)
         .and_then(|value| value.to_str().ok())

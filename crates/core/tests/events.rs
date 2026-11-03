@@ -63,7 +63,7 @@ async fn query(core: &Core, relay_id: &str, filter: Filter) -> Result<Vec<Stored
         caravel_relays::events::queries::query_events(core.db.pool(), relay_id, &filter, 1000, NOW)
             .await?
             .into_iter()
-            .filter(|event| event.head.pubkey_hex() != relay.pubkey)
+            .filter(|event| event.head.pubkey.to_hex() != relay.pubkey)
             .collect(),
     )
 }
@@ -591,7 +591,7 @@ async fn counts_group_matching_events_by_kind_author_and_room_tags() -> Result<(
     };
     let group = |author: &SecretKey, kind, d: Option<&str>, h: Option<&str>, count| EventGroup {
         kind,
-        pubkey: author.public_key().as_bytes(),
+        pubkey: author.public_key(),
         d: d.map(str::to_string),
         h: h.map(str::to_string),
         count,

@@ -3,6 +3,7 @@
 use caravel_util::nostr::kinds::CLIENT_AUTH;
 use caravel_util::urls::url_host;
 use coracle_lib::events::Event;
+use coracle_lib::keys::PublicKey;
 
 /// How far an answer's timestamp may be from the relay's clock.
 const MAX_DRIFT: i64 = 600;
@@ -16,7 +17,7 @@ pub fn challenge() -> String {
 /// this connection was issued and the host it connected to, returning the pubkey
 /// it proves. The relay tag is compared by host, so an answer naming `wss://` or
 /// `ws://`, with or without a trailing slash, is the same relay.
-pub fn validate(event: &Event, challenge: &str, host: &str, now: i64) -> Result<String, String> {
+pub fn validate(event: &Event, challenge: &str, host: &str, now: i64) -> Result<PublicKey, String> {
     if event.kind != CLIENT_AUTH {
         return Err(format!("expected kind {CLIENT_AUTH}, got {}", event.kind));
     }
@@ -39,7 +40,7 @@ pub fn validate(event: &Event, challenge: &str, host: &str, now: i64) -> Result<
         ));
     }
 
-    Ok(event.pubkey.to_hex())
+    Ok(event.pubkey)
 }
 
 #[cfg(test)]
@@ -80,7 +81,7 @@ mod tests {
         );
         assert_eq!(
             validate(&event, "abc", "relay.example", NOW),
-            Ok(secret.public_key().to_hex())
+            Ok(secret.public_key())
         );
     }
 

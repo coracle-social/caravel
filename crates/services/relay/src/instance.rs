@@ -15,6 +15,7 @@ use caravel_util::nostr::kinds;
 use caravel_util::nostr::kinds::{DELETION, VANISH};
 use coracle_lib::events::{Event, EventId};
 use coracle_lib::filters::Filter;
+use coracle_lib::keys::PublicKey;
 use coracle_lib::sync::{FrameBudget, Item, Message as SyncMessage, SyncSet, reconcile_responder};
 use tokio_util::sync::CancellationToken;
 
@@ -316,8 +317,7 @@ impl RelayInstance {
     /// relay strips them.
     fn fanout(&self, event: &Event) {
         let state = self.state();
-        let author = event.pubkey.to_hex();
-        let facts = EventFacts::of(event, &author);
+        let facts = EventFacts::of(event);
         let stored = StoredEvent::from_event(event);
         let mut signed: Option<RawEvent> = None;
         let mut stripped: Option<RawEvent> = None;
@@ -420,11 +420,10 @@ impl RelayInstance {
             })?;
 
             for stored in found {
-                let author = stored.head.pubkey_hex();
                 if !sent.insert(stored.head.id)
                     || !state
                         .snapshot
-                        .can_any_receive(&authed, EventFacts::of_head(&stored.head, &author))
+                        .can_any_receive(&authed, EventFacts::of_head(&stored.head))
                 {
                     continue;
                 }
@@ -526,7 +525,7 @@ impl RelayInstance {
 
         if let Err(error) =
             self.connections
-                .authenticate(session, pubkey.clone(), self.limits.max_identities)
+                .authenticate(session, pubkey, self.limits.max_identities)
         {
             let refusal = registration_refusal(
                 error,
@@ -546,7 +545,7 @@ impl RelayInstance {
         match caravel_core::events::get_notification(
             &self.core,
             &relay_id,
-            &pubkey,
+            &pubkey.to_hex(),
             self.core.clock.now(),
         )
         .await
@@ -565,7 +564,10 @@ impl RelayInstance {
 
     /// Send a message to every connection authenticated as a pubkey.
     pub fn deliver_notification(&self, pubkey: &str, message: &str) {
-        for session in self.connections.sessions_for(pubkey) {
+        let Ok(pubkey) = PublicKey::from_hex(pubkey) else {
+            return;
+        };
+        for session in self.connections.sessions_for(&pubkey) {
             session.try_send(RelayMessage::Notify(message.to_string()));
         }
     }
@@ -656,10 +658,9 @@ impl RelayInstance {
         let items = heads
             .into_iter()
             .filter(|head| {
-                let author = head.pubkey_hex();
                 state
                     .snapshot
-                    .can_any_receive(&authed, EventFacts::of_head(head, &author))
+                    .can_any_receive(&authed, EventFacts::of_head(head))
             })
             .map(|head| Item {
                 timestamp: head.created_at,

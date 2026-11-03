@@ -3,6 +3,7 @@
 use sqlx::PgExecutor;
 
 use caravel_util::error::Result;
+use caravel_util::nostr::keys::parse_pubkey;
 
 use super::{RelaySnapshot, RoomSnapshot};
 use crate::{access, management, rooms};
@@ -19,18 +20,18 @@ pub async fn load_snapshot(
     snapshot.members = access::queries::list_members(db, &relay_id)
         .await?
         .into_iter()
-        .map(|member| member.pubkey)
-        .collect();
+        .map(|member| parse_pubkey(&member.pubkey))
+        .collect::<Result<_>>()?;
     snapshot.method_grants = management::queries::list_method_grants(db, &relay_id)
         .await?
         .into_iter()
-        .map(|(pubkey, methods)| (pubkey, methods.into_iter().collect()))
-        .collect();
+        .map(|(held_by, methods)| Ok((parse_pubkey(&held_by)?, methods.into_iter().collect())))
+        .collect::<Result<_>>()?;
     snapshot.banned_pubkeys = access::queries::list_banned_pubkeys(db, &relay_id)
         .await?
         .into_iter()
-        .map(|ban| ban.subject)
-        .collect();
+        .map(|ban| parse_pubkey(&ban.subject))
+        .collect::<Result<_>>()?;
     snapshot.banned_events = access::queries::list_banned_events(db, &relay_id)
         .await?
         .into_iter()
@@ -54,9 +55,9 @@ pub async fn load_snapshot(
                 .permissions
                 .iter()
                 .filter_map(|kind| u16::try_from(*kind).ok());
-            room.permissions
-                .insert(member.pubkey.clone(), permissions.collect());
-            room.members.insert(member.pubkey);
+            let pubkey = parse_pubkey(&member.pubkey)?;
+            room.permissions.insert(pubkey, permissions.collect());
+            room.members.insert(pubkey);
         }
     }
     for (room_id, code) in rooms::queries::list_room_invites(db, &relay_id).await? {

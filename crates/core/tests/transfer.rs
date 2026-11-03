@@ -272,7 +272,7 @@ async fn an_import_rebuilds_room_state() -> Result<()> {
 
     let metadata = stored(&core, &relay, kinds::METADATA, "room").await?;
     assert_eq!(metadata.len(), 1);
-    assert_eq!(metadata[0].head.pubkey_hex(), relay.pubkey);
+    assert_eq!(metadata[0].head.pubkey.to_hex(), relay.pubkey);
     assert!(metadata[0].tags.contains("imported room"));
 
     let members = stored(&core, &relay, kinds::MEMBERS, "room").await?;

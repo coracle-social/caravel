@@ -48,6 +48,7 @@ impl Actor {
 
 use base64::Engine;
 use coracle_lib::events::Event;
+use coracle_lib::keys::PublicKey;
 
 use crate::nostr::kinds;
 
@@ -95,7 +96,7 @@ const MAX_SKEW: i64 = 60;
 /// The signer of a NIP-98 `Authorization` header made for exactly this request:
 /// its `u` tag is `url`, its `method` tag is `method`, and it was signed within a
 /// minute of `now`.
-pub fn verify_request_auth(header: &str, url: &str, method: &str, now: i64) -> Result<String> {
+pub fn verify_request_auth(header: &str, url: &str, method: &str, now: i64) -> Result<PublicKey> {
     let event = decode_http_auth(header)?;
 
     if !same_url(event.tags.value("u").unwrap_or_default(), url) {
@@ -114,13 +115,13 @@ pub fn verify_request_auth(header: &str, url: &str, method: &str, now: i64) -> R
         return Err(unauthorized("authorization is stale"));
     }
 
-    Ok(event.pubkey.to_hex())
+    Ok(event.pubkey)
 }
 
 /// The signer of a NIP-98 header made for a request to a relay on `host` with
 /// this body: its `u` tag names the host, its `payload` tag is the body's hash,
 /// and it was signed within a minute of `now`.
-pub fn verify_payload_auth(header: &str, host: &str, body: &[u8], now: i64) -> Result<String> {
+pub fn verify_payload_auth(header: &str, host: &str, body: &[u8], now: i64) -> Result<PublicKey> {
     let event = decode_http_auth(header)?;
 
     let url = event.tags.value("u").unwrap_or_default();
@@ -136,5 +137,5 @@ pub fn verify_payload_auth(header: &str, host: &str, body: &[u8], now: i64) -> R
         return Err(unauthorized("authorization is stale"));
     }
 
-    Ok(event.pubkey.to_hex())
+    Ok(event.pubkey)
 }

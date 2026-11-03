@@ -1,9 +1,11 @@
 //! Who may join a room's call.
 
+use coracle_lib::keys::PublicKey;
+
 use crate::policy::{CallRefusal, RelaySnapshot};
 
 impl RelaySnapshot {
-    pub fn admit_call(&self, pubkey: &str, room_id: &str) -> Result<(), CallRefusal> {
+    pub fn admit_call(&self, pubkey: &PublicKey, room_id: &str) -> Result<(), CallRefusal> {
         if !self.has_access(pubkey) {
             return Err(CallRefusal::NotMember);
         }

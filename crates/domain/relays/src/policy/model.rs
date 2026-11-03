@@ -4,17 +4,19 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
+use coracle_lib::keys::PublicKey;
+
 use crate::management::{INVITE_METHODS, MANAGED_METHODS};
 
 /// What a relay's rules read: its settings, who holds which access, and its rooms,
 /// as of the last change to any of them.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct RelaySnapshot {
     pub relay_id: String,
     /// The relay's own pubkey, which signs what it publishes about itself.
-    pub relay_pubkey: String,
+    pub relay_pubkey: PublicKey,
     /// The tenant who owns the relay.
-    pub tenant_pubkey: String,
+    pub tenant_pubkey: PublicKey,
     pub public_read: bool,
     pub anonymous_read: bool,
     pub public_write: bool,
@@ -26,10 +28,10 @@ pub struct RelaySnapshot {
     pub member_limit: Option<usize>,
     /// The relay sells memberships, so joining needs a claim.
     pub charges_members: bool,
-    pub members: HashSet<String>,
+    pub members: HashSet<PublicKey>,
     /// NIP-86 methods granted to pubkeys individually.
-    pub method_grants: HashMap<String, BTreeSet<String>>,
-    pub banned_pubkeys: HashSet<String>,
+    pub method_grants: HashMap<PublicKey, BTreeSet<String>>,
+    pub banned_pubkeys: HashSet<PublicKey>,
     pub banned_events: HashSet<String>,
     pub rooms: HashMap<String, RoomSnapshot>,
 }
@@ -47,9 +49,9 @@ pub struct RoomSnapshot {
     pub livekit: bool,
     /// Only its members and the relay's managers may post to it or speak in its calls.
     pub restricted: bool,
-    pub members: HashSet<String>,
+    pub members: HashSet<PublicKey>,
     /// The moderation kinds members may publish in the room.
-    pub permissions: HashMap<String, BTreeSet<u16>>,
+    pub permissions: HashMap<PublicKey, BTreeSet<u16>>,
     pub invites: HashSet<String>,
 }
 
@@ -57,7 +59,7 @@ pub struct RoomSnapshot {
 #[derive(Clone, Copy, Debug)]
 pub struct EventFacts<'a> {
     pub kind: u16,
-    pub pubkey: &'a str,
+    pub pubkey: PublicKey,
     /// The room the event is about or posted in.
     pub room: Option<&'a str>,
 }
@@ -140,24 +142,47 @@ impl Refusal {
 }
 
 impl RelaySnapshot {
+    /// A snapshot of a relay's settings, before its access lists and rooms are read.
+    pub fn new(relay_id: String, relay_pubkey: PublicKey, tenant_pubkey: PublicKey) -> Self {
+        Self {
+            relay_id,
+            relay_pubkey,
+            tenant_pubkey,
+            public_read: false,
+            anonymous_read: false,
+            public_write: false,
+            public_join: false,
+            strip_signatures: false,
+            groups_enabled: false,
+            members_can_invite: false,
+            member_limit: None,
+            charges_members: false,
+            members: HashSet::new(),
+            method_grants: HashMap::new(),
+            banned_pubkeys: HashSet::new(),
+            banned_events: HashSet::new(),
+            rooms: HashMap::new(),
+        }
+    }
+
     /// The owner and the relay itself, who may do anything.
-    pub fn can_manage(&self, pubkey: &str) -> bool {
-        pubkey == self.tenant_pubkey || pubkey == self.relay_pubkey
+    pub fn can_manage(&self, pubkey: &PublicKey) -> bool {
+        *pubkey == self.tenant_pubkey || *pubkey == self.relay_pubkey
     }
 
     /// Whether a pubkey belongs on the relay: a manager or a member.
-    pub fn has_access(&self, pubkey: &str) -> bool {
+    pub fn has_access(&self, pubkey: &PublicKey) -> bool {
         self.can_manage(pubkey) || self.members.contains(pubkey)
     }
 
-    pub fn is_banned(&self, pubkey: &str) -> bool {
+    pub fn is_banned(&self, pubkey: &PublicKey) -> bool {
         self.banned_pubkeys.contains(pubkey)
     }
 
     /// The NIP-86 methods a pubkey may call: every one for the relay's managers,
     /// otherwise those granted to it, and the invite methods for any member of a
     /// relay whose members may invite.
-    pub fn methods_for(&self, pubkey: &str) -> Vec<String> {
+    pub fn methods_for(&self, pubkey: &PublicKey) -> Vec<String> {
         if self.can_manage(pubkey) {
             return MANAGED_METHODS
                 .iter()
@@ -184,7 +209,7 @@ impl RelaySnapshot {
 
     /// Whether a pubkey may call a NIP-86 method. Anyone holding a method may ask
     /// which ones they hold.
-    pub fn may_call(&self, pubkey: &str, method: &str) -> bool {
+    pub fn may_call(&self, pubkey: &PublicKey, method: &str) -> bool {
         let methods = self.methods_for(pubkey);
         if method == "supportedmethods" {
             !methods.is_empty()
@@ -195,18 +220,18 @@ impl RelaySnapshot {
 
     /// Whether a pubkey may publish a moderation `kind` in a room: the relay's
     /// managers may publish any, and the room's members those they're permitted.
-    pub fn can_moderate_room(&self, pubkey: &str, room_id: &str, kind: u16) -> bool {
+    pub fn can_moderate_room(&self, pubkey: &PublicKey, room_id: &str, kind: u16) -> bool {
         self.can_manage(pubkey) || self.room_permits(pubkey, room_id, kind)
     }
 
-    pub fn room_permits(&self, pubkey: &str, room_id: &str, kind: u16) -> bool {
+    pub fn room_permits(&self, pubkey: &PublicKey, room_id: &str, kind: u16) -> bool {
         self.rooms
             .get(room_id)
             .and_then(|room| room.permissions.get(pubkey))
             .is_some_and(|permissions| permissions.contains(&kind))
     }
 
-    pub fn has_room_access(&self, room: &RoomSnapshot, pubkey: &str) -> bool {
+    pub fn has_room_access(&self, room: &RoomSnapshot, pubkey: &PublicKey) -> bool {
         self.can_manage(pubkey) || room.members.contains(pubkey)
     }
 }

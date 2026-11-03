@@ -6,32 +6,32 @@ use crate::events::{EventGroup, EventHead};
 use crate::policy::EventFacts;
 
 impl<'a> EventFacts<'a> {
-    pub fn of(event: &'a Event, pubkey: &'a str) -> Self {
+    pub fn of(event: &'a Event) -> Self {
         Self {
             kind: event.kind,
-            pubkey,
+            pubkey: event.pubkey,
             room: crate::rooms::room_id(event),
         }
     }
 
-    pub fn of_head(head: &'a EventHead, pubkey: &'a str) -> Self {
+    pub fn of_head(head: &'a EventHead) -> Self {
         Self {
             kind: head.kind,
-            pubkey,
+            pubkey: head.pubkey,
             room: head
                 .tag(crate::rooms::room_tag(head.kind))
                 .filter(|room| !room.is_empty()),
         }
     }
 
-    pub fn of_group(group: &'a EventGroup, pubkey: &'a str) -> Self {
+    pub fn of_group(group: &'a EventGroup) -> Self {
         let room = match crate::rooms::room_tag(group.kind) {
             "d" => group.d.as_deref(),
             _ => group.h.as_deref(),
         };
         Self {
             kind: group.kind,
-            pubkey,
+            pubkey: group.pubkey,
             room: room.filter(|room| !room.is_empty()),
         }
     }

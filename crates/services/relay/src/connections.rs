@@ -7,6 +7,7 @@ use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use coracle_lib::events::Event;
 use coracle_lib::filters::Filter;
+use coracle_lib::keys::PublicKey;
 use coracle_lib::sync::SyncSet;
 
 use crate::message::SubscriptionId;
@@ -23,7 +24,7 @@ struct Connection {
     challenge: String,
     /// Every pubkey the connection has proved. A client holding several keys
     /// answers once for each.
-    pubkeys: BTreeSet<String>,
+    pubkeys: BTreeSet<PublicKey>,
     subscriptions: HashMap<SubscriptionId, Vec<Filter>>,
     /// Reconciliations in their own id namespace, each over a snapshot of the set
     /// taken when it opened.
@@ -43,7 +44,7 @@ pub enum RegisterError {
 pub struct Match {
     pub session: Session,
     pub subscription_id: SubscriptionId,
-    pub pubkeys: Vec<String>,
+    pub pubkeys: Vec<PublicKey>,
 }
 
 impl Connections {
@@ -71,7 +72,7 @@ impl Connections {
     }
 
     /// The pubkeys a connection has proved, in order. Empty until it authenticates.
-    pub fn pubkeys(&self, session: &Session) -> Vec<String> {
+    pub fn pubkeys(&self, session: &Session) -> Vec<PublicKey> {
         self.read()
             .get(&session.id())
             .map(|connection| connection.pubkeys.iter().cloned().collect())
@@ -82,7 +83,7 @@ impl Connections {
     pub fn authenticate(
         &self,
         session: &Session,
-        pubkey: String,
+        pubkey: PublicKey,
         max: usize,
     ) -> Result<(), RegisterError> {
         let mut state = self.write();
@@ -185,7 +186,7 @@ impl Connections {
     }
 
     /// Every connection authenticated as a pubkey.
-    pub fn sessions_for(&self, pubkey: &str) -> Vec<Session> {
+    pub fn sessions_for(&self, pubkey: &PublicKey) -> Vec<Session> {
         self.read()
             .values()
             .filter(|connection| connection.pubkeys.contains(pubkey))

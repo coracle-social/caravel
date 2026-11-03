@@ -3,13 +3,14 @@
 //! NIP-09 deletions and NIP-62 vanish requests stay stored as tombstones.
 
 use coracle_lib::events::Event;
+use coracle_lib::keys::PublicKey;
 
 /// What a relay's policy reads about an event without its content: who wrote it,
 /// when, what kind it is, and its single-letter tags as `name:value`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EventHead {
     pub id: [u8; 32],
-    pub pubkey: [u8; 32],
+    pub pubkey: PublicKey,
     pub created_at: i64,
     pub kind: u16,
     pub tag_values: Vec<String>,
@@ -20,7 +21,7 @@ pub struct EventHead {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EventGroup {
     pub kind: u16,
-    pub pubkey: [u8; 32],
+    pub pubkey: PublicKey,
     pub d: Option<String>,
     pub h: Option<String>,
     pub count: i64,
@@ -68,7 +69,7 @@ impl EventHead {
     pub fn from_event(event: &Event) -> Self {
         Self {
             id: event.id.to_bytes(),
-            pubkey: event.pubkey.as_bytes(),
+            pubkey: event.pubkey,
             created_at: event.created_at,
             kind: event.kind,
             tag_values: tag_values(event),
@@ -77,10 +78,6 @@ impl EventHead {
 
     pub fn id_hex(&self) -> String {
         hex::encode(self.id)
-    }
-
-    pub fn pubkey_hex(&self) -> String {
-        hex::encode(self.pubkey)
     }
 
     /// The first value of a single-letter tag.
@@ -113,7 +110,7 @@ impl StoredEvent {
         format!(
             r#"{{"id":"{}","pubkey":"{}","created_at":{},"kind":{},"tags":{},"content":{}{}}}"#,
             self.head.id_hex(),
-            self.head.pubkey_hex(),
+            self.head.pubkey.to_hex(),
             self.head.created_at,
             self.head.kind,
             self.tags,

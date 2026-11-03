@@ -82,7 +82,7 @@ pub async fn token(
         return refuse(StatusCode::INTERNAL_SERVER_ERROR, "failed to create room");
     }
 
-    let identity = calls::participant_identity(&pubkey);
+    let identity = calls::participant_identity(&pubkey.to_hex());
     match livekit.participant_token(&name, &identity, now) {
         Ok(token) => axum::Json(json!({
             "server_url": livekit.url(),

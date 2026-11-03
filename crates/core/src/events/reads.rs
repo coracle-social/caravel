@@ -1,6 +1,7 @@
 //! Reading the event store for the relay runtime: a subscription's events, a sync's
 //! heads, what a count names and the notification waiting for a peer.
 
+use caravel_util::nostr::keys::parse_pubkey;
 use coracle_lib::filters::Filter;
 
 use crate::Core;
@@ -64,5 +65,22 @@ pub async fn get_notification(
 
 /// What a relay's rules read: its settings, then its access lists and rooms.
 pub async fn load_snapshot(core: &Core, relay: &Relay) -> Result<RelaySnapshot> {
-    caravel_relays::policy::queries::load_snapshot(core.db.pool(), relay.snapshot()).await
+    let relay_pubkey = parse_pubkey(&relay.pubkey)?;
+    let tenant_pubkey = parse_pubkey(&relay.tenant_pubkey)?;
+    let snapshot = RelaySnapshot {
+        public_read: relay.policy_public_read,
+        anonymous_read: relay.policy_anonymous_read,
+        public_write: relay.policy_public_write,
+        public_join: relay.policy_public_join,
+        strip_signatures: relay.policy_strip_signatures,
+        groups_enabled: relay.groups_enabled,
+        members_can_invite: relay.members_can_invite,
+        charges_members: relay.charges_members(),
+        member_limit: relay
+            .member_limit()
+            .and_then(|limit| usize::try_from(limit).ok()),
+        ..RelaySnapshot::new(relay.id.clone(), relay_pubkey, tenant_pubkey)
+    };
+
+    caravel_relays::policy::queries::load_snapshot(core.db.pool(), snapshot).await
 }

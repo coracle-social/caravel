@@ -19,7 +19,7 @@ impl RelaySnapshot {
             return Err(Refusal::invalid("missing group id"));
         };
         let room = self.rooms.get(room_id);
-        let author = event.pubkey.to_hex();
+        let author = event.pubkey;
 
         if event.kind == kinds::rooms::CREATE_GROUP {
             if room.is_some() {

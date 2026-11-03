@@ -69,7 +69,7 @@ async fn save_relay_event(
             .push_bind(stored.head.id.to_vec())
             .push_bind(stored.head.created_at)
             .push_bind(i32::from(stored.head.kind))
-            .push_bind(stored.head.pubkey.to_vec())
+            .push_bind(stored.head.pubkey.as_bytes().to_vec())
             .push_bind(&stored.content)
             .push_bind(&stored.tags)
             .push_bind(stored.sig.to_vec())

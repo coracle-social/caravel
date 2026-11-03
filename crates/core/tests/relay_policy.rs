@@ -8,7 +8,7 @@ use caravel_relays::policy::{EventFacts, Refusal, RelaySnapshot, RoomSnapshot};
 use caravel_util::nostr::kinds;
 use caravel_util::nostr::kinds::rooms as room_kinds;
 use caravel_util::urls::url_host;
-use coracle_lib::keys::SecretKey;
+use coracle_lib::keys::{PublicKey, SecretKey};
 
 const NOW: i64 = 1_800_000_000;
 
@@ -27,11 +27,8 @@ fn fixture() -> Fixture {
     let stranger = SecretKey::generate();
 
     let snapshot = RelaySnapshot {
-        relay_id: "test".to_string(),
-        relay_pubkey: relay.public_key().to_hex(),
-        tenant_pubkey: owner.public_key().to_hex(),
-        members: [member.public_key().to_hex()].into_iter().collect(),
-        ..Default::default()
+        members: [member.public_key()].into_iter().collect(),
+        ..RelaySnapshot::new("test".to_string(), relay.public_key(), owner.public_key())
     };
 
     Fixture {
@@ -43,16 +40,12 @@ fn fixture() -> Fixture {
     }
 }
 
-fn facts(kind: u16, pubkey: &str) -> EventFacts<'_> {
+fn facts(kind: u16, pubkey: PublicKey) -> EventFacts<'static> {
     EventFacts {
         kind,
         pubkey,
         room: None,
     }
-}
-
-fn hex(secret: &SecretKey) -> String {
-    secret.public_key().to_hex()
 }
 
 #[test]
@@ -61,12 +54,16 @@ fn members_and_managers_may_write_and_strangers_may_not() {
 
     for author in [&f.owner, &f.member] {
         let event = sign_event(author, 1, "hi", &[], NOW);
-        assert_eq!(f.snapshot.admit_write(&event, &[hex(author)], NOW), Ok(()));
+        assert_eq!(
+            f.snapshot.admit_write(&event, &[author.public_key()], NOW),
+            Ok(())
+        );
     }
 
     let event = sign_event(&f.stranger, 1, "hi", &[], NOW);
     assert_eq!(
-        f.snapshot.admit_write(&event, &[hex(&f.stranger)], NOW),
+        f.snapshot
+            .admit_write(&event, &[f.stranger.public_key()], NOW),
         Err(Refusal::restricted("you are not a member of this relay"))
     );
 
@@ -74,7 +71,10 @@ fn members_and_managers_may_write_and_strangers_may_not() {
         public_write: true,
         ..f.snapshot.clone()
     };
-    assert_eq!(open.admit_write(&event, &[hex(&f.stranger)], NOW), Ok(()));
+    assert_eq!(
+        open.admit_write(&event, &[f.stranger.public_key()], NOW),
+        Ok(())
+    );
 }
 
 #[test]
@@ -89,7 +89,7 @@ fn writing_needs_authentication_as_the_author() {
         ))
     );
     assert_eq!(
-        f.snapshot.admit_write(&event, &[hex(&f.owner)], NOW),
+        f.snapshot.admit_write(&event, &[f.owner.public_key()], NOW),
         Err(Refusal::restricted(
             "you cannot publish events on behalf of others"
         ))
@@ -98,7 +98,8 @@ fn writing_needs_authentication_as_the_author() {
     // The relay's own events may be delivered by anyone authenticated.
     let relay_event = sign_event(&f.relay, 1, "from the relay", &[], NOW);
     assert_eq!(
-        f.snapshot.admit_write(&relay_event, &[hex(&f.member)], NOW),
+        f.snapshot
+            .admit_write(&relay_event, &[f.member.public_key()], NOW),
         Ok(())
     );
 }
@@ -106,25 +107,31 @@ fn writing_needs_authentication_as_the_author() {
 #[test]
 fn a_gift_wrap_or_zap_for_a_member_needs_no_authentication() {
     let f = fixture();
-    let member = hex(&f.member);
+    let member = f.member.public_key();
 
     let wrap = sign_event(
         &f.stranger,
         kinds::GIFT_WRAP,
         "sealed",
-        &[&["p", &member]],
+        &[&["p", &member.to_hex()]],
         NOW,
     );
     assert_eq!(f.snapshot.admit_write(&wrap, &[], NOW), Ok(()));
 
-    let zap = sign_event(&f.stranger, kinds::ZAP_RECEIPT, "", &[&["p", &member]], NOW);
+    let zap = sign_event(
+        &f.stranger,
+        kinds::ZAP_RECEIPT,
+        "",
+        &[&["p", &member.to_hex()]],
+        NOW,
+    );
     assert_eq!(f.snapshot.admit_write(&zap, &[], NOW), Ok(()));
 
     let elsewhere = sign_event(
         &f.stranger,
         kinds::GIFT_WRAP,
         "sealed",
-        &[&["p", &hex(&f.stranger)]],
+        &[&["p", &f.stranger.public_key().to_hex()]],
         NOW,
     );
     assert!(f.snapshot.admit_write(&elsewhere, &[], NOW).is_err());
@@ -133,7 +140,7 @@ fn a_gift_wrap_or_zap_for_a_member_needs_no_authentication() {
 #[test]
 fn events_dated_too_far_ahead_are_refused() {
     let f = fixture();
-    let author = [hex(&f.member)];
+    let author = [f.member.public_key()];
 
     let edge = sign_event(&f.member, 1, "", &[], NOW + CREATED_AT_UPPER_LIMIT);
     assert_eq!(f.snapshot.admit_write(&edge, &author, NOW), Ok(()));
@@ -159,7 +166,7 @@ fn kinds_the_relay_writes_itself_are_refused() {
     ] {
         let event = sign_event(&f.owner, kind, "", &[], NOW);
         assert_eq!(
-            f.snapshot.admit_write(&event, &[hex(&f.owner)], NOW),
+            f.snapshot.admit_write(&event, &[f.owner.public_key()], NOW),
             Err(Refusal::invalid("this event's kind is not accepted")),
             "kind {kind}"
         );
@@ -170,7 +177,7 @@ fn kinds_the_relay_writes_itself_are_refused() {
 fn banned_authors_and_events_are_blocked() {
     let mut f = fixture();
     let event = sign_event(&f.member, 1, "", &[], NOW);
-    let author = [hex(&f.member)];
+    let author = [f.member.public_key()];
 
     f.snapshot.banned_events.insert(event.id.to_hex());
     assert_eq!(
@@ -181,7 +188,7 @@ fn banned_authors_and_events_are_blocked() {
     );
 
     f.snapshot.banned_events.clear();
-    f.snapshot.banned_pubkeys.insert(hex(&f.member));
+    f.snapshot.banned_pubkeys.insert(f.member.public_key());
     assert_eq!(
         f.snapshot.admit_write(&event, &author, NOW),
         Err(Refusal::blocked(
@@ -200,11 +207,12 @@ fn a_protected_event_is_published_only_by_its_authenticated_author() {
         Err(Refusal::AuthRequired(_))
     ));
     assert_eq!(
-        f.snapshot.admit_write(&event, &[hex(&f.owner)], NOW),
+        f.snapshot.admit_write(&event, &[f.owner.public_key()], NOW),
         Err(Refusal::blocked("must be published by event author"))
     );
     assert_eq!(
-        f.snapshot.admit_write(&event, &[hex(&f.member)], NOW),
+        f.snapshot
+            .admit_write(&event, &[f.member.public_key()], NOW),
         Ok(())
     );
 
@@ -216,7 +224,8 @@ fn a_protected_event_is_published_only_by_its_authenticated_author() {
         NOW,
     );
     assert_eq!(
-        f.snapshot.admit_write(&repost, &[hex(&f.member)], NOW),
+        f.snapshot
+            .admit_write(&repost, &[f.member.public_key()], NOW),
         Err(Refusal::blocked("can't repost nip70 protected"))
     );
 }
@@ -234,7 +243,7 @@ fn reading_needs_authentication_unless_anonymous_reads_are_on() {
         ..f.snapshot.clone()
     };
     assert_eq!(anonymous.admit_req(&[]), Ok(()));
-    let note = facts(1, &f.snapshot.tenant_pubkey);
+    let note = facts(1, f.snapshot.tenant_pubkey);
     assert!(anonymous.can_receive(None, note));
     assert!(!f.snapshot.can_receive(None, note));
 }
@@ -242,43 +251,44 @@ fn reading_needs_authentication_unless_anonymous_reads_are_on() {
 #[test]
 fn a_private_relay_is_read_only_by_its_members() {
     let f = fixture();
-    assert_eq!(f.snapshot.admit_req(&[hex(&f.member)]), Ok(()));
+    assert_eq!(f.snapshot.admit_req(&[f.member.public_key()]), Ok(()));
     assert_eq!(
-        f.snapshot.admit_req(&[hex(&f.stranger)]),
+        f.snapshot.admit_req(&[f.stranger.public_key()]),
         Err(Refusal::restricted("you are not a member of this relay"))
     );
     // One proven member is enough for a connection holding several keys.
     assert_eq!(
-        f.snapshot.admit_req(&[hex(&f.stranger), hex(&f.member)]),
+        f.snapshot
+            .admit_req(&[f.stranger.public_key(), f.member.public_key()]),
         Ok(())
     );
 
     let public = RelaySnapshot {
         public_read: true,
-        banned_pubkeys: [hex(&f.stranger)].into_iter().collect(),
+        banned_pubkeys: [f.stranger.public_key()].into_iter().collect(),
         ..f.snapshot.clone()
     };
-    assert_eq!(public.admit_req(&[hex(&f.member)]), Ok(()));
+    assert_eq!(public.admit_req(&[f.member.public_key()]), Ok(()));
     assert_eq!(public.admit_req(&[pubkey_of_nobody()]), Ok(()));
     assert_eq!(
-        public.admit_req(&[hex(&f.stranger)]),
+        public.admit_req(&[f.stranger.public_key()]),
         Err(Refusal::blocked("you have been banned from this relay"))
     );
 }
 
-fn pubkey_of_nobody() -> String {
-    SecretKey::generate().public_key().to_hex()
+fn pubkey_of_nobody() -> PublicKey {
+    SecretKey::generate().public_key()
 }
 
 /// A snapshot holding an open, a private, a hidden and a restricted room, each with
 /// `member` in it, and a closed one `member` was invited to with a code.
 fn rooms_fixture(f: &Fixture) -> RelaySnapshot {
-    let member = hex(&f.member);
+    let member = f.member.public_key();
     let room = |hidden, private, closed| RoomSnapshot {
         hidden,
         private,
         closed,
-        members: [member.clone()].into_iter().collect(),
+        members: [member].into_iter().collect(),
         invites: ["sesame".to_string()].into_iter().collect(),
         ..Default::default()
     };
@@ -309,7 +319,7 @@ fn rooms_fixture(f: &Fixture) -> RelaySnapshot {
     snapshot
 }
 
-fn in_room<'a>(kind: u16, pubkey: &'a str, room: &'a str) -> EventFacts<'a> {
+fn in_room<'a>(kind: u16, pubkey: PublicKey, room: &'a str) -> EventFacts<'a> {
     EventFacts {
         kind,
         pubkey,
@@ -321,7 +331,7 @@ fn in_room<'a>(kind: u16, pubkey: &'a str, room: &'a str) -> EventFacts<'a> {
 fn rooms_decide_who_sees_their_events() {
     let f = fixture();
     let snapshot = rooms_fixture(&f);
-    let (owner, member) = (hex(&f.owner), hex(&f.member));
+    let (owner, member) = (f.owner.public_key(), f.member.public_key());
     let outsider = pubkey_of_nobody();
     let readers = |event: EventFacts<'_>| {
         [
@@ -333,37 +343,37 @@ fn rooms_decide_who_sees_their_events() {
     };
 
     // Owner, member, outsider and anonymous reader, in that order.
-    assert_eq!(readers(in_room(9, &member, "open")), [true; 4]);
+    assert_eq!(readers(in_room(9, member, "open")), [true; 4]);
     assert_eq!(
-        readers(in_room(9, &member, "private")),
+        readers(in_room(9, member, "private")),
         [true, true, false, false]
     );
     assert_eq!(
-        readers(in_room(room_kinds::METADATA, &owner, "private")),
+        readers(in_room(room_kinds::METADATA, owner, "private")),
         [true; 4],
         "a private room shows outsiders its metadata"
     );
     assert_eq!(
-        readers(in_room(room_kinds::MEMBERS, &owner, "private")),
+        readers(in_room(room_kinds::MEMBERS, owner, "private")),
         [true, true, false, false]
     );
     assert_eq!(
-        readers(in_room(room_kinds::METADATA, &owner, "hidden")),
+        readers(in_room(room_kinds::METADATA, owner, "hidden")),
         [true, true, false, false],
         "a hidden room shows outsiders nothing"
     );
     assert_eq!(
-        readers(in_room(9, &member, "hidden")),
+        readers(in_room(9, member, "hidden")),
         [true, true, false, false]
     );
 
     // A room nobody created shows outsiders only its deletion.
     assert_eq!(
-        readers(in_room(9, &member, "ghost")),
+        readers(in_room(9, member, "ghost")),
         [true, false, false, false]
     );
     assert_eq!(
-        readers(in_room(room_kinds::DELETE_GROUP, &owner, "ghost")),
+        readers(in_room(room_kinds::DELETE_GROUP, owner, "ghost")),
         [true; 4]
     );
 
@@ -372,18 +382,18 @@ fn rooms_decide_who_sees_their_events() {
         groups_enabled: false,
         ..snapshot.clone()
     };
-    assert!(off.can_receive(Some(&outsider), in_room(9, &member, "hidden")));
+    assert!(off.can_receive(Some(&outsider), in_room(9, member, "hidden")));
 }
 
 #[test]
 fn a_count_includes_only_what_the_reader_may_see() {
     let f = fixture();
     let snapshot = rooms_fixture(&f);
-    let (owner, member) = (hex(&f.owner), hex(&f.member));
+    let (owner, member) = (f.owner.public_key(), f.member.public_key());
     let outsider = pubkey_of_nobody();
     let group = |kind, author: &SecretKey, d: Option<&str>, h: Option<&str>, count| EventGroup {
         kind,
-        pubkey: author.public_key().as_bytes(),
+        pubkey: author.public_key(),
         d: d.map(str::to_string),
         h: h.map(str::to_string),
         count,
@@ -397,7 +407,7 @@ fn a_count_includes_only_what_the_reader_may_see() {
         group(room_kinds::CREATE_INVITE, &f.owner, None, Some("open"), 5),
         group(kinds::PUSH_SUBSCRIPTION, &f.member, Some("phone"), None, 1),
     ];
-    let count = |authed: &[String]| snapshot.count_visible(authed, &groups);
+    let count = |authed: &[PublicKey]| snapshot.count_visible(authed, &groups);
 
     assert_eq!(count(std::slice::from_ref(&owner)), 17);
     assert_eq!(count(std::slice::from_ref(&member)), 18);
@@ -475,13 +485,13 @@ fn a_restricted_room_takes_posts_only_from_its_members() {
 fn a_gift_wrap_or_zap_for_a_member_still_answers_to_its_room() {
     let f = fixture();
     let snapshot = rooms_fixture(&f);
-    let member = hex(&f.member);
+    let member = f.member.public_key();
     let zap = |room: &str| {
         let event = sign_event(
             &f.stranger,
             kinds::ZAP_RECEIPT,
             "",
-            &[&["p", &member], &["h", room]],
+            &[&["p", &member.to_hex()], &["h", room]],
             NOW,
         );
         snapshot.admit_write(&event, &[], NOW)
@@ -503,7 +513,7 @@ fn a_room_event_must_name_its_room() {
     let snapshot = rooms_fixture(&f);
     let write = |author: &SecretKey, kind: u16, tags: &[&[&str]]| {
         let event = sign_event(author, kind, "", tags, NOW);
-        snapshot.admit_write(&event, &[hex(author)], NOW)
+        snapshot.admit_write(&event, &[author.public_key()], NOW)
     };
     let missing = Err(Refusal::invalid("missing group id"));
 
@@ -528,7 +538,7 @@ fn a_room_event_must_name_its_room() {
 #[test]
 fn credentials_and_requests_are_never_served() {
     let f = fixture();
-    let owner = hex(&f.owner);
+    let owner = f.owner.public_key();
 
     for kind in [
         kinds::RELAY_INVITE,
@@ -538,14 +548,14 @@ fn credentials_and_requests_are_never_served() {
         kinds::BLOSSOM_AUTH,
     ] {
         assert!(
-            !f.snapshot.can_receive(Some(&owner), facts(kind, &owner)),
+            !f.snapshot.can_receive(Some(&owner), facts(kind, owner)),
             "kind {kind}"
         );
     }
 
     // A push subscription comes back to its author and nobody else.
-    let member = hex(&f.member);
-    let subscription = facts(kinds::PUSH_SUBSCRIPTION, &member);
+    let member = f.member.public_key();
+    let subscription = facts(kinds::PUSH_SUBSCRIPTION, member);
     assert!(f.snapshot.can_receive(Some(&member), subscription));
     assert!(!f.snapshot.can_receive(Some(&owner), subscription));
 }
@@ -558,10 +568,10 @@ fn stripping_spares_whoever_manages_the_relay() {
         ..f.snapshot.clone()
     };
 
-    assert!(stripping.strips_signature(&[hex(&f.member)]));
+    assert!(stripping.strips_signature(&[f.member.public_key()]));
     assert!(stripping.strips_signature(&[]));
-    assert!(!stripping.strips_signature(&[hex(&f.owner)]));
-    assert!(!f.snapshot.strips_signature(&[hex(&f.member)]));
+    assert!(!stripping.strips_signature(&[f.owner.public_key()]));
+    assert!(!f.snapshot.strips_signature(&[f.member.public_key()]));
 }
 
 #[test]
@@ -584,7 +594,7 @@ fn a_push_subscription_is_admitted_like_a_subscription() {
     let f = fixture();
     let subscribe = |snapshot: &RelaySnapshot, author: &SecretKey| {
         let event = sign_event(author, kinds::PUSH_SUBSCRIPTION, "", &[], NOW);
-        snapshot.admit_write(&event, &[hex(author)], NOW)
+        snapshot.admit_write(&event, &[author.public_key()], NOW)
     };
 
     assert_eq!(subscribe(&f.snapshot, &f.member), Ok(()));

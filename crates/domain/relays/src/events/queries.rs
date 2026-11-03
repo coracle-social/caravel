@@ -2,6 +2,7 @@
 
 use coracle_lib::events::{Event, EventId};
 use coracle_lib::filters::Filter;
+use coracle_lib::keys::PublicKey;
 use sqlx::postgres::PgRow;
 use sqlx::{PgConnection, PgExecutor, Postgres, QueryBuilder, Row};
 
@@ -202,7 +203,7 @@ pub async fn count_event_groups(
         .filter_map(|row| {
             Some(EventGroup {
                 kind: u16::try_from(row.get::<i32, _>("kind")).ok()?,
-                pubkey: row.get::<Vec<u8>, _>("pubkey").try_into().ok()?,
+                pubkey: PublicKey::from_bytes(&row.get::<Vec<u8>, _>("pubkey")).ok()?,
                 d: row.get("d_value"),
                 h: row.get("h_value"),
                 count: row.get("count"),
@@ -330,7 +331,7 @@ fn push_conditions(query: &mut QueryBuilder<'_, Postgres>, filter: &Filter) {
 fn event_head(row: &PgRow) -> Option<EventHead> {
     Some(EventHead {
         id: row.get::<Vec<u8>, _>("id").try_into().ok()?,
-        pubkey: row.get::<Vec<u8>, _>("pubkey").try_into().ok()?,
+        pubkey: PublicKey::from_bytes(&row.get::<Vec<u8>, _>("pubkey")).ok()?,
         created_at: row.get("created_at"),
         kind: u16::try_from(row.get::<i32, _>("kind")).ok()?,
         tag_values: row.get("tag_values"),

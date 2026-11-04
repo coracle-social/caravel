@@ -78,6 +78,10 @@ pub async fn grant_permissions(
             .into_iter()
             .map(i32::from)
             .collect::<Vec<_>>();
+        // A tag naming no kind grants nothing, and adds nobody to the room.
+        if permissions.is_empty() {
+            continue;
+        }
         sqlx::query(
             "INSERT INTO room_member (relay_id, room_id, pubkey, permissions, created_at)
              VALUES ($1, $2, $3, ARRAY(SELECT DISTINCT unnest($4::int[]) ORDER BY 1), $5)

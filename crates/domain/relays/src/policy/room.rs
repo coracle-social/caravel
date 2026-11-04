@@ -45,6 +45,12 @@ impl RelaySnapshot {
                 let Some(kinds) = crate::rooms::permission_kinds(grant.as_slice()) else {
                     return Err(Refusal::invalid("permissions are group management kinds"));
                 };
+                // Naming no kind would only add the target to the room, granted nothing.
+                if kinds.is_empty() {
+                    return Err(Refusal::invalid(
+                        "a permission tag has to name a group management kind",
+                    ));
+                }
                 // Nobody hands out a power they don't hold.
                 if !self.can_manage(&author)
                     && !kinds

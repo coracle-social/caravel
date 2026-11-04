@@ -457,6 +457,19 @@ async fn a_room_is_moderated_by_the_kinds_its_members_are_permitted() -> Result<
         .map(drop),
         Err(Refusal::invalid("permissions are group management kinds"))
     );
+    // A grant that names no kind would only put the target in the room.
+    assert_eq!(
+        f.publish(
+            &f.owner,
+            kinds::ASSIGN_PERMISSION,
+            &[&["h", "room"], &["p", &titled_hex]]
+        )
+        .await
+        .map(drop),
+        Err(Refusal::invalid(
+            "a permission tag has to name a group management kind"
+        ))
+    );
     f.publish(
         &moderator,
         kinds::ASSIGN_PERMISSION,

@@ -87,6 +87,13 @@ pub(super) async fn write(
             .await
         }
         Call::AssignMethod(pubkey, method) => {
+            // Granting a method admits the pubkey, so it takes a seat like any add.
+            caravel_billing::relays::queries::membership::require_seat(
+                &mut *conn,
+                relay,
+                Some(pubkey),
+            )
+            .await?;
             caravel_relays::management::commands::grant_method(
                 conn,
                 key,

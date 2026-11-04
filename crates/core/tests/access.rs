@@ -170,7 +170,8 @@ fn refusal_code(refused: &Result<serde_json::Value>) -> Option<&str> {
 }
 
 /// A free relay seats ten, the owner included; a management call may not add an
-/// eleventh, and neither may assigning a role, which admits as it goes.
+/// eleventh, neither may assigning a role, and nor may granting a method, which
+/// admits as it goes.
 #[tokio::test]
 async fn adding_members_stops_at_the_plans_limit() -> Result<()> {
     let f = fixture().await;
@@ -191,6 +192,11 @@ async fn adding_members_stops_at_the_plans_limit() -> Result<()> {
     }))
     .await?;
     let refused = f.call(Call::AssignRole(outsider, "greeter".into())).await;
+    assert_eq!(refusal_code(&refused), Some("member-limit"));
+
+    let refused = f
+        .call(Call::AssignMethod(pubkey(), "banpubkey".into()))
+        .await;
     assert_eq!(refusal_code(&refused), Some("member-limit"));
 
     // The dashboard adds through the same rule.

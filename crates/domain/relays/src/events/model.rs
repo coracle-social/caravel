@@ -134,3 +134,40 @@ fn tag_values(event: &Event) -> Vec<String> {
         .map(|tag| format!("{}:{}", tag.name(), tag.value()))
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use coracle_lib::events::EventContent;
+    use coracle_lib::keys::SecretKey;
+    use coracle_lib::tags::Tags;
+
+    use super::*;
+
+    fn event() -> Event {
+        let secret = SecretKey::generate();
+        let hashed = EventContent::new()
+            .with_content("a \"quote\", a \\ backslash and a newline\n")
+            .with_tags(
+                Tags::new()
+                    .add("t", ["with \"quotes\" and \\slashes\\"])
+                    .add("e", ["abc"]),
+            )
+            .with_kind(1)
+            .with_created_at(1_700_000_000)
+            .with_pubkey(secret.public_key())
+            .with_id();
+        let sig = secret.sign(hashed.id.as_bytes());
+        hashed.with_sig(sig)
+    }
+
+    #[test]
+    fn an_event_reads_back_from_the_json_it_is_sent_as() {
+        let event = event();
+        let stored = StoredEvent::from_event(&event);
+
+        assert_eq!(stored.to_event().unwrap(), event);
+
+        let stripped: serde_json::Value = serde_json::from_str(&stored.to_json(true)).unwrap();
+        assert!(stripped.get("sig").is_none(), "{stripped}");
+    }
+}

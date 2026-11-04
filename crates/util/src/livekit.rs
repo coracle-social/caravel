@@ -250,7 +250,9 @@ impl Livekit {
         Ok(serde_json::from_slice(body)?)
     }
 
-    /// A webhook token for `body`, as LiveKit signs one. For tests.
+    /// A webhook token for `body`, as LiveKit signs one. For tests, and so not
+    /// part of what a deployment links.
+    #[cfg(any(test, feature = "testing"))]
     pub fn sign_webhook(&self, body: &[u8], now: i64) -> Result<String> {
         let claims = Claims {
             iss: self.api_key.clone(),

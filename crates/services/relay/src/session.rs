@@ -17,6 +17,8 @@ use tokio::time::{Instant, interval_at, timeout, timeout_at};
 use tokio_util::sync::CancellationToken;
 
 use caravel_relays::policy::Refusal;
+use coracle_lib::events::EventId;
+use serde::Deserialize;
 
 use crate::instance::RelayInstance;
 use crate::message::{
@@ -228,26 +230,52 @@ async fn dispatch(session: &Session, instance: &RelayInstance, text: &str) {
     }
 }
 
-/// How to tell a client its message was no good: on the subscription it named,
-/// where it named one, so a client waiting for an `EOSE` isn't left waiting.
+/// How to tell a client its message was no good, on whatever of the message was
+/// still readable: the id of an event names it for an `OK`, and a subscription's
+/// names it for a `CLOSED` or `NEG-ERR`, so a client waiting on either isn't left
+/// waiting.
 fn malformed(text: &str, error: &serde_json::Error) -> RelayMessage {
     let refusal = Refusal::invalid(error.to_string());
+    let notice = RelayMessage::Notice(refusal.message());
     let Ok(parts) = serde_json::from_str::<Vec<&serde_json::value::RawValue>>(text) else {
-        return RelayMessage::Notice(refusal.message());
+        return notice;
     };
 
     let verb = parts
         .first()
         .and_then(|verb| serde_json::from_str::<String>(verb.get()).ok());
-    let subscription_id = parts
-        .get(1)
-        .and_then(|id| serde_json::from_str::<SubscriptionId>(id.get()).ok());
 
-    match (verb.as_deref(), subscription_id) {
-        (Some("REQ" | "COUNT"), Some(id)) => refused_subscription(id, &refusal),
-        (Some("NEG-OPEN" | "NEG-MSG"), Some(id)) => refused_reconciliation(id, &refusal),
-        _ => RelayMessage::Notice(refusal.message()),
+    match (verb.as_deref(), parts.get(1)) {
+        (Some("EVENT" | "AUTH"), Some(event)) => match event_id(event.get()) {
+            Some(id) => refused_event(id, &refusal),
+            None => notice,
+        },
+        (Some("REQ" | "COUNT"), Some(id)) => {
+            match serde_json::from_str::<SubscriptionId>(id.get()) {
+                Ok(id) => refused_subscription(id, &refusal),
+                Err(_) => notice,
+            }
+        }
+        (Some("NEG-OPEN" | "NEG-MSG"), Some(id)) => {
+            match serde_json::from_str::<SubscriptionId>(id.get()) {
+                Ok(id) => refused_reconciliation(id, &refusal),
+                Err(_) => notice,
+            }
+        }
+        _ => notice,
     }
+}
+
+/// The id an event carries, which names it even when the rest of it can't be read.
+fn event_id(json: &str) -> Option<EventId> {
+    #[derive(Deserialize)]
+    struct IdOnly {
+        id: Option<String>,
+    }
+
+    let IdOnly { id } = serde_json::from_str(json).ok()?;
+
+    EventId::from_hex(&id?).ok()
 }
 
 /// Serialize queued messages onto the socket, pinging the client between them,

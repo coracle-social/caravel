@@ -430,6 +430,45 @@ async fn events_with_a_bad_id_or_signature_are_refused() {
     assert!(stored.is_empty());
 }
 
+// A message the relay can't read is answered by whatever of it names what it was
+// about: an event's id for an `OK`, a subscription's for a `CLOSED`, else a notice.
+#[tokio::test]
+async fn a_message_it_cannot_read_is_answered_by_what_it_can() {
+    let server = Server::start().await;
+    let (relay, owner) = server.relay().await;
+    let mut client = server.connect(&relay.canonical_host()).await;
+    client.auth(&owner, server.now()).await;
+
+    // An unsigned event still names itself, as nak sends when it can't sign.
+    let mut unsigned =
+        serde_json::to_value(sign_event(&owner, 1, "unsigned", &[], server.now())).unwrap();
+    let id = unsigned["id"].as_str().unwrap().to_string();
+    unsigned.as_object_mut().unwrap().remove("sig");
+
+    for verb in ["EVENT", "AUTH"] {
+        client.send(json!([verb, unsigned.clone()])).await;
+        let ok = client.recv().await.unwrap();
+        assert_eq!(ok[0], "OK");
+        assert_eq!(ok[1], id);
+        assert_eq!(ok[2], false);
+        assert!(ok[3].as_str().unwrap().starts_with("invalid:"), "{ok}");
+    }
+
+    // A filter that won't parse still names its subscription.
+    client.send(json!(["REQ", "c", {"kinds": "many"}])).await;
+    let closed = client.recv().await.unwrap();
+    assert_eq!(closed[0], "CLOSED");
+    assert_eq!(closed[1], "c");
+    assert!(
+        closed[2].as_str().unwrap().starts_with("invalid:"),
+        "{closed}"
+    );
+
+    // Nothing left to name it by, so a notice is all there is.
+    client.send(json!(["EVENT", {"kind": 1}])).await;
+    assert_eq!(client.recv().await.unwrap()[0], "NOTICE");
+}
+
 #[tokio::test]
 async fn a_count_is_admitted_and_filtered_like_a_subscription() {
     let server = Server::start().await;

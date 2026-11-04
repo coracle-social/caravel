@@ -230,6 +230,27 @@ async fn a_checkout_is_refused_when_it_cant_be_granted() -> Result<()> {
     Ok(())
 }
 
+/// An invite nobody has paid for holds its seat until it lapses, so opening
+/// checkouts can't mint Stripe customers and memberships without bound.
+#[tokio::test]
+async fn an_unpaid_invite_holds_its_seat() -> Result<()> {
+    let f = fixture().await?;
+
+    // The free plan's ten seats are the owner's and nine more.
+    for _ in 0..9 {
+        memberships::open_invite_checkout(&f.core, &f.relay, None).await?;
+    }
+    let refused = memberships::open_invite_checkout(&f.core, &f.relay, None).await;
+    assert!(matches!(
+        refused,
+        Err(Error::Conflict {
+            code: "member-limit",
+            ..
+        })
+    ));
+    Ok(())
+}
+
 #[tokio::test]
 async fn a_session_settles_only_its_own_membership() -> Result<()> {
     let f = fixture().await?;

@@ -118,6 +118,10 @@ pub async fn list_memberships_past_period(
     .await?)
 }
 
+/// The most invites one relay may have in flight at once, for a plan that sets no
+/// member limit: an anonymous checkout still has to be bounded by something.
+pub const MAX_INVITES_IN_FLIGHT: i64 = 100;
+
 /// Whether a relay has room for one more paying member. A pubkey already on the
 /// relay takes no new seat, and each invite paid for and unused holds one.
 pub async fn has_seat(
@@ -155,4 +159,30 @@ pub async fn require_seat(
         "member-limit",
         "this relay has reached its member limit",
     ))
+}
+
+/// Whether the relay can open one more invite. An invite nobody has paid for yet
+/// holds its seat until it lapses, so opening checkouts can't outnumber the seats
+/// the relay has to honor them with; a plan with no member limit is held to
+/// [`MAX_INVITES_IN_FLIGHT`] instead.
+pub async fn has_invite_seat(conn: &mut PgConnection, relay: &Relay) -> Result<bool> {
+    let in_flight = count_invites_in_flight(&mut *conn, &relay.id).await?;
+    let Some(limit) = relay.member_limit() else {
+        return Ok(in_flight < MAX_INVITES_IN_FLIGHT);
+    };
+
+    let members = caravel_relays::access::queries::count_members(&mut *conn, &relay.id).await?;
+    Ok(members + in_flight < limit)
+}
+
+/// A relay's invites with no pubkey yet: those opened and unpaid, and those paid
+/// for and waiting for whoever joins with their code.
+async fn count_invites_in_flight(db: impl PgExecutor<'_>, relay_id: &str) -> Result<i64> {
+    Ok(sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM membership
+         WHERE relay_id = $1 AND pubkey IS NULL AND status IN ('pending', 'active', 'canceled')",
+    )
+    .bind(relay_id)
+    .fetch_one(db)
+    .await?)
 }

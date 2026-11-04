@@ -100,7 +100,8 @@ pub async fn open_checkout(
 }
 
 /// Open a Stripe Checkout session buying an invite to a relay, for someone who may
-/// have no Nostr account yet, and return its url.
+/// have no Nostr account yet, and return its url. An unpaid invite holds its seat
+/// until it lapses, so repeat visits can't mint checkouts without bound.
 pub async fn open_invite_checkout(
     core: &Core,
     relay: &Relay,
@@ -113,7 +114,7 @@ pub async fn open_invite_checkout(
     let membership = core
         .db
         .with_tx(async |conn| {
-            if !caravel_billing::relays::queries::membership::has_seat(&mut *conn, relay, None)
+            if !caravel_billing::relays::queries::membership::has_invite_seat(&mut *conn, relay)
                 .await?
             {
                 return Err(Error::conflict("member-limit", "this relay is full"));

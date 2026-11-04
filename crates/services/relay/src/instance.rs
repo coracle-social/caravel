@@ -319,13 +319,18 @@ impl RelayInstance {
     /// may still read the relay and see the event, without signatures where the
     /// relay strips them.
     fn fanout(&self, event: &Event) {
+        let matched = self.connections.matching(event);
+        if matched.is_empty() {
+            return;
+        }
+
         let state = self.state();
         let facts = EventFacts::of(event);
         let stored = StoredEvent::from_event(event);
         let mut signed: Option<RawEvent> = None;
         let mut stripped: Option<RawEvent> = None;
 
-        for matched in self.connections.matching(event) {
+        for matched in matched {
             if !state.snapshot.can_deliver(&matched.pubkeys, facts) {
                 continue;
             }

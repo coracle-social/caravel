@@ -23,7 +23,8 @@ const MANUAL_PAYMENT_DM: &str = "Payment is due for your relay subscription. Ope
 
 /// Collect an invoice as far as `collection` goes. Payments that may already be in
 /// flight, a Lightning invoice or a Checkout session the tenant paid, are settled
-/// first, so a fresh charge is never made on top of one. A failed charge's error is
+/// first, so a fresh charge is never made on top of one; when one's state can't be
+/// read, the pass stops rather than charge on a guess. A failed charge's error is
 /// stored on the tenant but never stops the cascade.
 pub(super) async fn reconcile_payments(
     core: &Core,
@@ -39,11 +40,7 @@ pub(super) async fn reconcile_payments(
     )
     .await?
         && bolt11.settled_at.is_none()
-        && core
-            .wallet
-            .is_settled(&bolt11.lnbc, now)
-            .await
-            .unwrap_or(false)
+        && core.wallet.is_settled(&bolt11.lnbc, now).await?
     {
         core.db
             .with_tx(async |conn| {
@@ -69,11 +66,7 @@ pub(super) async fn reconcile_payments(
     )
     .await?
         && checkout.settled_at.is_none()
-        && core
-            .stripe
-            .is_checkout_paid(&checkout.session_id)
-            .await
-            .unwrap_or(false)
+        && core.stripe.is_checkout_paid(&checkout.session_id).await?
     {
         core.db
             .with_tx(async |conn| {

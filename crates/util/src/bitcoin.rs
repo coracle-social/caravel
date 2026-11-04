@@ -34,5 +34,7 @@ async fn get_usd_price() -> Result<f64> {
     body.data
         .amount
         .parse::<f64>()
-        .map_err(|e| anyhow!("invalid BTC spot quote: {e}"))
+        .ok()
+        .filter(|price| price.is_finite() && *price > 0.0)
+        .ok_or_else(|| anyhow!("invalid BTC spot quote: {}", body.data.amount))
 }

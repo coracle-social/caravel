@@ -84,7 +84,7 @@ impl RelaySnapshot {
         groups
             .iter()
             .filter(|group| self.can_any_receive(authed, EventFacts::of_group(group)))
-            .map(|group| group.count.unsigned_abs())
+            .map(|group| group.count)
             .sum()
     }
     pub fn can_deliver(&self, authed: &[PublicKey], event: EventFacts<'_>) -> bool {

@@ -206,7 +206,7 @@ pub async fn count_event_groups(
                 pubkey: PublicKey::from_bytes(&row.get::<Vec<u8>, _>("pubkey")).ok()?,
                 d: row.get("d_value"),
                 h: row.get("h_value"),
-                count: row.get("count"),
+                count: u64::try_from(row.get::<i64, _>("count")).ok()?,
             })
         })
         .collect())

@@ -24,7 +24,7 @@ pub struct EventGroup {
     pub pubkey: PublicKey,
     pub d: Option<String>,
     pub h: Option<String>,
-    pub count: i64,
+    pub count: u64,
 }
 
 /// An event as stored, with its tags as the JSON it was signed with.

@@ -3,6 +3,7 @@
 use caravel_billing::relays::{Activity, ActivityType, Relay, RelaySettings, RelayStatus};
 use caravel_relays::access::MemberSource;
 use caravel_util::bus::Change;
+use caravel_util::db::Connection;
 use caravel_util::error::{Error, Result};
 use caravel_util::nostr::generate_keypair;
 
@@ -87,11 +88,11 @@ pub async fn create_relay(
         ..Default::default()
     };
     let relay = with_settings(&core.config, relay, settings, &tenant, None)?;
-    require_custom_domain_free(core, &relay).await?;
     let key = core.relay_key(&relay)?;
 
     core.db
         .with_tx(async |conn| {
+            require_custom_domain_free(&mut *conn, &relay).await?;
             caravel_billing::relays::commands::insert_relay(conn, &relay).await?;
             caravel_billing::relays::commands::activity::insert_relay_activity(
                 &mut *conn,
@@ -126,59 +127,79 @@ pub async fn create_relay(
 /// domain withdraws the custom domain's verification; a replaced verified domain
 /// redirects to the relay from then on. A new custom domain another relay has
 /// verified is refused, as is downgrading to a plan with a member limit the relay
-/// is over.
+/// is over. Judged on the locked row, so a concurrent purge or update is met.
 pub async fn update_relay(core: &Core, relay: Relay, settings: RelaySettings) -> Result<Relay> {
-    relay.require_unpurged()?;
-
-    let tenant =
-        caravel_billing::tenants::queries::require_tenant(core.db.pool(), &relay.tenant_pubkey)
-            .await?;
-    let previous = relay.clone();
-    let relay = with_settings(&core.config, relay, settings, &tenant, Some(&previous))?;
-
-    if relay.custom_domain != previous.custom_domain {
-        require_custom_domain_free(core, &relay).await?;
-    }
-    if relay.plan_id != previous.plan_id {
-        require_members_fit_plan(core, &relay).await?;
-    }
-
     let now = core.clock.now();
-    let replaced_domain = previous.custom_domain.clone().filter(|_| {
-        previous.custom_domain_verified && previous.custom_domain != relay.custom_domain
-    });
-    let mut own_hosts = vec![relay.canonical_host()];
-    own_hosts.extend(relay.custom_domain.clone());
+    let config = core.config.as_ref();
+    let settings = &settings;
 
-    core.db
+    let id = core
+        .db
         .with_tx(async |conn| {
-            caravel_billing::relays::commands::update_relay(conn, &relay).await?;
+            let previous =
+                caravel_billing::relays::queries::lock_relay(&mut *conn, &relay.id).await?;
+            previous.require_unpurged()?;
+
+            let tenant = caravel_billing::tenants::queries::require_tenant(
+                &mut *conn,
+                &previous.tenant_pubkey,
+            )
+            .await?;
+            let updated = with_settings(
+                config,
+                previous.clone(),
+                settings.clone(),
+                &tenant,
+                Some(&previous),
+            )?;
+
+            if updated.custom_domain != previous.custom_domain {
+                require_custom_domain_free(&mut *conn, &updated).await?;
+            }
+            if updated.plan_id != previous.plan_id {
+                require_members_fit_plan(&mut *conn, &updated).await?;
+            }
+
+            let replaced_domain = previous.custom_domain.clone().filter(|_| {
+                previous.custom_domain_verified && previous.custom_domain != updated.custom_domain
+            });
+            let mut own_hosts = vec![updated.canonical_host()];
+            own_hosts.extend(updated.custom_domain.clone());
+
+            caravel_billing::relays::commands::update_relay(&mut *conn, &updated).await?;
             if let Some(host) = &replaced_domain {
                 caravel_billing::relays::commands::add_host_redirect(
-                    &mut *conn, host, &relay.id, now,
+                    &mut *conn,
+                    host,
+                    &updated.id,
+                    now,
                 )
                 .await?;
             }
             caravel_billing::relays::commands::remove_host_redirects(
-                &mut *conn, &relay.id, &own_hosts,
+                &mut *conn,
+                &updated.id,
+                &own_hosts,
             )
             .await?;
             caravel_billing::relays::commands::activity::insert_relay_activity(
                 conn,
                 ActivityType::UpdateRelay,
-                &relay,
-                relay.status,
+                &updated,
+                updated.status,
                 now,
             )
-            .await
+            .await?;
+
+            Ok::<_, Error>(updated.id)
         })
         .await?;
 
     core.bus.publish(Change::RelayChanged {
-        relay_id: relay.id.clone(),
+        relay_id: id.clone(),
     });
 
-    caravel_billing::relays::queries::require_relay(core.db.pool(), &relay.id).await
+    caravel_billing::relays::queries::require_relay(core.db.pool(), &id).await
 }
 
 /// Pause a relay at its tenant's request, crediting the rest of the period.
@@ -290,12 +311,12 @@ fn with_settings(
 }
 
 /// Refuse a custom domain another relay has verified.
-async fn require_custom_domain_free(core: &Core, relay: &Relay) -> Result<()> {
+async fn require_custom_domain_free(conn: &mut Connection, relay: &Relay) -> Result<()> {
     let Some(custom_domain) = &relay.custom_domain else {
         return Ok(());
     };
     if caravel_billing::relays::queries::is_custom_domain_taken(
-        core.db.pool(),
+        &mut *conn,
         custom_domain,
         &relay.id,
     )
@@ -307,11 +328,11 @@ async fn require_custom_domain_free(core: &Core, relay: &Relay) -> Result<()> {
 }
 
 /// Refuse a plan whose member limit the relay is over already.
-async fn require_members_fit_plan(core: &Core, relay: &Relay) -> Result<()> {
+async fn require_members_fit_plan(conn: &mut Connection, relay: &Relay) -> Result<()> {
     let Some(limit) = relay.member_limit() else {
         return Ok(());
     };
-    let members = caravel_relays::access::queries::count_members(core.db.pool(), &relay.id).await?;
+    let members = caravel_relays::access::queries::count_members(&mut *conn, &relay.id).await?;
     if members > limit {
         return Err(Error::invalid(
             "member-limit-exceeded",

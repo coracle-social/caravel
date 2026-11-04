@@ -2,10 +2,16 @@
 //! relay answers on it.
 
 use caravel_util::dns;
+use futures_util::StreamExt;
 
 use crate::Core;
+use caravel_billing::relays::Relay;
 use caravel_util::bus::Change;
 use caravel_util::error::Result;
+
+/// How many domains are checked at once. Each check is three DNS queries with a
+/// timeout, so a serial pass over many domains couldn't keep up with its interval.
+const CHECKS_AT_ONCE: usize = 16;
 
 /// Whether the platform serves `host`, which on-demand TLS asks before issuing a
 /// certificate for it.
@@ -21,52 +27,62 @@ pub async fn is_served_host(core: &Core, host: &str) -> Result<bool> {
 
 /// Verify each unverified custom domain that now points at its relay.
 pub async fn verify_custom_domains(core: &Core) -> Result<()> {
-    for relay in
+    let relays =
         caravel_billing::relays::queries::list_relays_with_custom_domain(core.db.pool(), false)
-            .await?
-    {
-        let Some(domain) = relay.custom_domain.as_deref() else {
-            continue;
-        };
-        match dns::domain_points_to(domain, &relay.canonical_host()).await {
-            Ok(true) => {
-                if set_verified(core, &relay.id, domain, true).await {
-                    tracing::info!(relay = %relay.id, domain, "custom domain verified");
-                }
-            }
-            Ok(false) => {
-                tracing::debug!(relay = %relay.id, domain, "custom domain not pointing at relay yet");
-            }
-            Err(error) => {
-                tracing::warn!(relay = %relay.id, error = %error, "DNS check failed for custom domain");
+            .await?;
+
+    futures_util::stream::iter(relays)
+        .for_each_concurrent(CHECKS_AT_ONCE, |relay| verify(core, relay))
+        .await;
+    Ok(())
+}
+
+async fn verify(core: &Core, relay: Relay) {
+    let Some(domain) = relay.custom_domain.as_deref() else {
+        return;
+    };
+    match dns::domain_points_to(domain, &relay.canonical_host()).await {
+        Ok(true) => {
+            if set_verified(core, &relay.id, domain, true).await {
+                tracing::info!(relay = %relay.id, domain, "custom domain verified");
             }
         }
+        Ok(false) => {
+            tracing::debug!(relay = %relay.id, domain, "custom domain not pointing at relay yet");
+        }
+        Err(error) => {
+            tracing::warn!(relay = %relay.id, error = %error, "DNS check failed for custom domain");
+        }
     }
-    Ok(())
 }
 
 /// Withdraw verification from each verified custom domain that no longer points at
 /// its relay, which then answers on its canonical host again.
 pub async fn reverify_custom_domains(core: &Core) -> Result<()> {
-    for relay in
+    let relays =
         caravel_billing::relays::queries::list_relays_with_custom_domain(core.db.pool(), true)
-            .await?
-    {
-        let Some(domain) = relay.custom_domain.as_deref() else {
-            continue;
-        };
-        match dns::domain_points_to(domain, &relay.canonical_host()).await {
-            Ok(true) => {}
-            Ok(false) => {
-                tracing::warn!(relay = %relay.id, domain, "custom domain no longer points at relay");
-                set_verified(core, &relay.id, domain, false).await;
-            }
-            Err(error) => {
-                tracing::warn!(relay = %relay.id, error = %error, "DNS check failed for verified custom domain");
-            }
+            .await?;
+
+    futures_util::stream::iter(relays)
+        .for_each_concurrent(CHECKS_AT_ONCE, |relay| reverify(core, relay))
+        .await;
+    Ok(())
+}
+
+async fn reverify(core: &Core, relay: Relay) {
+    let Some(domain) = relay.custom_domain.as_deref() else {
+        return;
+    };
+    match dns::domain_points_to(domain, &relay.canonical_host()).await {
+        Ok(true) => {}
+        Ok(false) => {
+            tracing::warn!(relay = %relay.id, domain, "custom domain no longer points at relay");
+            set_verified(core, &relay.id, domain, false).await;
+        }
+        Err(error) => {
+            tracing::warn!(relay = %relay.id, error = %error, "DNS check failed for verified custom domain");
         }
     }
-    Ok(())
 }
 
 /// Record a verification result, returning whether it changed the relay. A

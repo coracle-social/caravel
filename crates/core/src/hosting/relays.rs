@@ -14,6 +14,11 @@ pub async fn list_relays(core: &Core) -> Result<Vec<Relay>> {
     caravel_billing::relays::queries::list_relays(core.db.pool()).await
 }
 
+/// A page of every relay on the platform, newest first.
+pub async fn page_relays(core: &Core, before: Option<&str>, limit: i64) -> Result<Vec<Relay>> {
+    caravel_billing::relays::queries::page_relays(core.db.pool(), before, limit).await
+}
+
 /// A tenant's relays.
 pub async fn list_relays_for_tenant(core: &Core, tenant_pubkey: &str) -> Result<Vec<Relay>> {
     caravel_billing::relays::queries::list_relays_for_tenant(core.db.pool(), tenant_pubkey).await

@@ -13,8 +13,30 @@ use crate::auth::Admin;
 use crate::response::{ApiResult, ok};
 use crate::tenant::TenantView;
 
-pub async fn list_tenants(State(core): State<Core>, _: Admin) -> ApiResult {
-    let tenants = hosting::list_tenants(&core).await?;
+/// The most items one admin list page holds.
+const PAGE_SIZE: usize = 100;
+
+/// How an admin asks for a page of a list: how many items, and the last item of the
+/// page before.
+#[derive(Deserialize)]
+pub struct Page {
+    limit: Option<usize>,
+    before: Option<String>,
+}
+
+impl Page {
+    /// How many items to return, whatever the caller asked for.
+    fn limit(&self) -> i64 {
+        self.limit.unwrap_or(PAGE_SIZE).clamp(1, PAGE_SIZE) as i64
+    }
+}
+
+pub async fn list_tenants(
+    State(core): State<Core>,
+    _: Admin,
+    Query(page): Query<Page>,
+) -> ApiResult {
+    let tenants = hosting::page_tenants(&core, page.before.as_deref(), page.limit()).await?;
     ok(tenants
         .into_iter()
         .map(TenantView::from)
@@ -67,12 +89,20 @@ pub async fn revoke_sessions(
     ok(serde_json::json!({ "revoked": revoked }))
 }
 
-pub async fn list_relays(State(core): State<Core>, _: Admin) -> ApiResult {
-    ok(hosting::list_relays(&core).await?)
+pub async fn list_relays(
+    State(core): State<Core>,
+    _: Admin,
+    Query(page): Query<Page>,
+) -> ApiResult {
+    ok(hosting::page_relays(&core, page.before.as_deref(), page.limit()).await?)
 }
 
-pub async fn list_invoices(State(core): State<Core>, _: Admin) -> ApiResult {
-    ok(billing::list_invoices(&core).await?)
+pub async fn list_invoices(
+    State(core): State<Core>,
+    _: Admin,
+    Query(page): Query<Page>,
+) -> ApiResult {
+    ok(billing::page_invoices(&core, page.before.as_deref(), page.limit()).await?)
 }
 
 #[derive(Deserialize)]

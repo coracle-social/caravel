@@ -14,9 +14,9 @@ pub async fn require_invoice(core: &Core, id: &str) -> Result<Invoice> {
     caravel_billing::tenants::queries::billing::require_invoice(core.db.pool(), id).await
 }
 
-/// Every invoice on the platform, newest first.
-pub async fn list_invoices(core: &Core) -> Result<Vec<Invoice>> {
-    caravel_billing::tenants::queries::billing::list_invoices(core.db.pool()).await
+/// A page of every invoice on the platform, newest first.
+pub async fn page_invoices(core: &Core, before: Option<&str>, limit: i64) -> Result<Vec<Invoice>> {
+    caravel_billing::tenants::queries::billing::page_invoices(core.db.pool(), before, limit).await
 }
 
 /// A tenant's invoices, newest first.

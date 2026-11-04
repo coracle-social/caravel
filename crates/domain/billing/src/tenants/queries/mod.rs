@@ -1,6 +1,6 @@
 //! Reading tenants.
 
-use sqlx::{PgConnection, PgExecutor};
+use sqlx::{PgConnection, PgExecutor, Postgres, QueryBuilder};
 
 use caravel_util::error::{Error, Result};
 
@@ -14,6 +14,27 @@ pub async fn list_tenants(db: impl PgExecutor<'_>) -> Result<Vec<Tenant>> {
             .fetch_all(db)
             .await?,
     )
+}
+
+/// A page of every tenant on the platform, newest first with ties broken by pubkey,
+/// starting after the tenant `before` names.
+pub async fn page_tenants(
+    db: impl PgExecutor<'_>,
+    before: Option<&str>,
+    limit: i64,
+) -> Result<Vec<Tenant>> {
+    let mut query = QueryBuilder::<Postgres>::new("SELECT * FROM tenant");
+    if let Some(before) = before {
+        query
+            .push(" WHERE (created_at, pubkey) < (SELECT created_at, pubkey FROM tenant WHERE pubkey = ")
+            .push_bind(before.to_string())
+            .push(")");
+    }
+    query
+        .push(" ORDER BY created_at DESC, pubkey DESC LIMIT ")
+        .push_bind(limit);
+
+    Ok(query.build_query_as::<Tenant>().fetch_all(db).await?)
 }
 
 pub async fn get_tenant(db: impl PgExecutor<'_>, pubkey: &str) -> Result<Option<Tenant>> {

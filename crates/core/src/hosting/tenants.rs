@@ -7,9 +7,9 @@ use caravel_util::error::{Error, Result};
 use crate::Core;
 use crate::billing;
 
-/// Every tenant on the platform.
-pub async fn list_tenants(core: &Core) -> Result<Vec<Tenant>> {
-    caravel_billing::tenants::queries::list_tenants(core.db.pool()).await
+/// A page of every tenant on the platform, newest first.
+pub async fn page_tenants(core: &Core, before: Option<&str>, limit: i64) -> Result<Vec<Tenant>> {
+    caravel_billing::tenants::queries::page_tenants(core.db.pool(), before, limit).await
 }
 
 /// The tenant for `pubkey`, or a 404.

@@ -69,7 +69,7 @@ Tenants:
 
 Admins:
 
-- `GET /tenants`, `GET /relays`, `GET /invoices`
+- `GET /tenants?limit=&before=`, `GET /relays?limit=&before=`, `GET /invoices?limit=&before=` — at most a hundred at a time, newest first; the next page passes the last item of the one before as `before`, which is its `pubkey` for a tenant and its `id` for a relay or invoice
 - `POST /tenants/{pubkey}/ban`, `POST /tenants/{pubkey}/unban`
 - `POST /tenants/{pubkey}/delete` — purge the tenant's relays and settle their billing, without banning them
 - `DELETE /sessions/{pubkey}` — end every session a pubkey holds

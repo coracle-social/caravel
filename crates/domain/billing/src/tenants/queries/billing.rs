@@ -1,6 +1,6 @@
 //! Reading the billing ledger.
 
-use sqlx::PgExecutor;
+use sqlx::{PgExecutor, Postgres, QueryBuilder};
 
 use crate::tenants::{Bolt11, Checkout, Invoice, InvoiceItem};
 use caravel_util::error::{Error, Result};
@@ -21,12 +21,25 @@ pub async fn require_invoice(db: impl PgExecutor<'_>, id: &str) -> Result<Invoic
         .ok_or(Error::NotFound("invoice not found"))
 }
 
-pub async fn list_invoices(db: impl PgExecutor<'_>) -> Result<Vec<Invoice>> {
-    Ok(
-        sqlx::query_as::<_, Invoice>("SELECT * FROM invoice ORDER BY created_at DESC, seq DESC")
-            .fetch_all(db)
-            .await?,
-    )
+/// A page of every invoice on the platform, newest first, starting after the
+/// invoice `before` names.
+pub async fn page_invoices(
+    db: impl PgExecutor<'_>,
+    before: Option<&str>,
+    limit: i64,
+) -> Result<Vec<Invoice>> {
+    let mut query = QueryBuilder::<Postgres>::new("SELECT * FROM invoice");
+    if let Some(before) = before {
+        query
+            .push(" WHERE (created_at, seq) < (SELECT created_at, seq FROM invoice WHERE id = ")
+            .push_bind(before.to_string())
+            .push(")");
+    }
+    query
+        .push(" ORDER BY created_at DESC, seq DESC LIMIT ")
+        .push_bind(limit);
+
+    Ok(query.build_query_as::<Invoice>().fetch_all(db).await?)
 }
 
 pub async fn list_invoices_for_tenant(

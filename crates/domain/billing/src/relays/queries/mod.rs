@@ -1,6 +1,6 @@
 //! Reading relays, and finding the one a host belongs to.
 
-use sqlx::{PgConnection, PgExecutor};
+use sqlx::{PgConnection, PgExecutor, Postgres, QueryBuilder};
 
 use caravel_util::error::{Error, Result};
 
@@ -20,6 +20,27 @@ pub async fn list_relays(db: impl PgExecutor<'_>) -> Result<Vec<Relay>> {
             .fetch_all(db)
             .await?,
     )
+}
+
+/// A page of every relay on the platform, newest first with ties broken by id,
+/// starting after the relay `before` names.
+pub async fn page_relays(
+    db: impl PgExecutor<'_>,
+    before: Option<&str>,
+    limit: i64,
+) -> Result<Vec<Relay>> {
+    let mut query = QueryBuilder::<Postgres>::new(SELECT_RELAY);
+    if let Some(before) = before {
+        query
+            .push(" WHERE (created_at, id) < (SELECT created_at, id FROM relay WHERE id = ")
+            .push_bind(before.to_string())
+            .push(")");
+    }
+    query
+        .push(" ORDER BY created_at DESC, id DESC LIMIT ")
+        .push_bind(limit);
+
+    Ok(query.build_query_as::<Relay>().fetch_all(db).await?)
 }
 
 pub async fn list_relays_for_tenant(

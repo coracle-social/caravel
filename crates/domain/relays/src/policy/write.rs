@@ -43,11 +43,12 @@ pub fn screen(event: &Event) -> Result<(), Refusal> {
     Ok(())
 }
 
-/// Whether the relay may hold this event until its time: a regular, stored kind the
-/// relay doesn't act on when it arrives.
+/// Whether the relay may hold this event until its time. A plain-replaceable kind
+/// is left out, since it has a single slot a future version would take over before
+/// its time; a regular or addressable one keeps just its own `d`.
 fn can_schedule(event: &Event) -> bool {
     crate::policy::is_stored(event.kind)
-        && crate::events::slot(event).is_none()
+        && crate::events::slot(event).as_deref() != Some("")
         && !matches!(
             event.kind,
             kinds::DELETION

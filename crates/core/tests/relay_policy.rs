@@ -172,9 +172,16 @@ fn only_kinds_the_relay_publishes_later_can_be_scheduled() {
     let author = [f.member.public_key()];
     let ahead = NOW + 31;
 
+    // A regular or addressable event schedules: it keeps only its own slot.
+    let message = sign_event(&f.member, 1, "", &[], ahead);
+    assert_eq!(f.snapshot.admit_write(&message, &author, NOW), Ok(()));
+
+    let article = sign_event(&f.member, 30023, "", &[&["d", "next-week"]], ahead);
+    assert_eq!(f.snapshot.admit_write(&article, &author, NOW), Ok(()));
+
     for kind in [
-        0,     // replaceable, so it would take over its slot before its time
-        30023, // addressable, which does the same
+        0, // plain replaceable, so it would take over its slot before its time
+        10002,
         20001, // ephemeral, so the relay never publishes it at all
         kinds::DELETION,
         kinds::VANISH,

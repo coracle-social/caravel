@@ -120,6 +120,7 @@ impl Fixture {
             &filter,
             1,
             self.now(),
+            &[],
         )
         .await
         .unwrap();
@@ -703,6 +704,7 @@ async fn deleting_a_room_removes_it_and_everything_in_it() -> Result<()> {
         &Filter::new().add_tag(coracle_lib::filters::TagMatch::Any, "h", "room"),
         10,
         f.now(),
+        &[],
     )
     .await?;
     assert_eq!(
@@ -839,6 +841,7 @@ async fn published_state(f: &Fixture) -> BTreeMap<(u16, String), Vec<Vec<String>
         &filter,
         1000,
         f.now(),
+        &[],
     )
     .await
     .unwrap()

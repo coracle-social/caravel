@@ -157,7 +157,7 @@ impl RelayInstance {
 
     /// The checks that settle an event before its signature is verified.
     pub fn screen(&self, event: &Event) -> Result<(), Refusal> {
-        caravel_relays::policy::screen(event, self.core.clock.now())
+        caravel_relays::policy::screen(event)
     }
 
     /// Challenge every connection as it opens, so a reader can prove itself before
@@ -310,8 +310,14 @@ impl RelayInstance {
         self.fanout(event);
         let state = self.state();
         if state.relay.push_enabled {
-            self.pusher
-                .push(&state.snapshot, &state.push, &state.relay.host(), event);
+            let now = self.core.clock.now();
+            self.pusher.push(
+                &state.snapshot,
+                &state.push,
+                &state.relay.host(),
+                event,
+                now,
+            );
         }
     }
 
@@ -325,13 +331,14 @@ impl RelayInstance {
         }
 
         let state = self.state();
+        let now = self.core.clock.now();
         let facts = EventFacts::of(event);
         let stored = StoredEvent::from_event(event);
         let mut signed: Option<RawEvent> = None;
         let mut stripped: Option<RawEvent> = None;
 
         for matched in matched {
-            if !state.snapshot.can_deliver(&matched.pubkeys, facts) {
+            if !state.snapshot.can_deliver(&matched.pubkeys, facts, now) {
                 continue;
             }
 
@@ -419,6 +426,7 @@ impl RelayInstance {
                 filter,
                 self.limits.max_limit,
                 now,
+                &authed,
             )
             .await
             .map_err(|error| {
@@ -429,9 +437,11 @@ impl RelayInstance {
 
             for stored in found {
                 if !sent.insert(stored.head.id)
-                    || !state
-                        .snapshot
-                        .can_any_receive(&authed, EventFacts::of_head(&stored.head))
+                    || !state.snapshot.can_any_receive(
+                        &authed,
+                        EventFacts::of_head(&stored.head),
+                        now,
+                    )
                 {
                     continue;
                 }
@@ -495,11 +505,14 @@ impl RelayInstance {
             )));
         }
 
+        let now = self.core.clock.now();
+
         let groups = caravel_core::events::count_event_groups(
             &self.core,
             &state.relay.id,
             filters,
-            self.core.clock.now(),
+            now,
+            &authed,
         )
         .await
         .map_err(|error| {
@@ -507,7 +520,7 @@ impl RelayInstance {
             Refusal::Error("the count could not be run")
         })?;
 
-        Ok(state.snapshot.count_visible(&authed, &groups))
+        Ok(state.snapshot.count_visible(&authed, &groups, now))
     }
 
     pub async fn on_auth(&self, session: &Session, event: Event) {
@@ -641,6 +654,7 @@ impl RelayInstance {
     ) -> Result<Arc<SyncSet>, Refusal> {
         let state = self.state();
         let authed = self.connections.pubkeys(session);
+        let now = self.core.clock.now();
 
         state.snapshot.admit_req(&authed)?;
 
@@ -649,7 +663,8 @@ impl RelayInstance {
             &state.relay.id,
             &filter,
             self.limits.max_sync,
-            self.core.clock.now(),
+            now,
+            &authed,
         )
         .await
         .map_err(|error| {
@@ -668,7 +683,7 @@ impl RelayInstance {
             .filter(|head| {
                 state
                     .snapshot
-                    .can_any_receive(&authed, EventFacts::of_head(head))
+                    .can_any_receive(&authed, EventFacts::of_head(head), now)
             })
             .map(|head| Item {
                 timestamp: head.created_at,

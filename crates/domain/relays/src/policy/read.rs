@@ -29,13 +29,15 @@ impl RelaySnapshot {
 
         Ok(())
     }
-    pub fn can_receive(&self, reader: Option<&PublicKey>, event: EventFacts<'_>) -> bool {
+    pub fn can_receive(&self, reader: Option<&PublicKey>, event: EventFacts<'_>, now: i64) -> bool {
         if reader.is_none() && !self.anonymous_read {
             return false;
         }
 
-        // A push subscription isn't readable, but its author gets their own back.
-        if event.kind == kinds::PUSH_SUBSCRIPTION {
+        // A push subscription, or an event scheduled for later, goes back to its author only.
+        if event.kind == kinds::PUSH_SUBSCRIPTION
+            || event.created_at.is_some_and(|created_at| created_at > now)
+        {
             return reader == Some(&event.pubkey);
         }
 
@@ -72,22 +74,22 @@ impl RelaySnapshot {
 
         !room.private || has_access
     }
-    pub fn can_any_receive(&self, authed: &[PublicKey], event: EventFacts<'_>) -> bool {
+    pub fn can_any_receive(&self, authed: &[PublicKey], event: EventFacts<'_>, now: i64) -> bool {
         if authed.is_empty() {
-            return self.can_receive(None, event);
+            return self.can_receive(None, event, now);
         }
         authed
             .iter()
-            .any(|reader| self.can_receive(Some(reader), event))
+            .any(|reader| self.can_receive(Some(reader), event, now))
     }
-    pub fn count_visible(&self, authed: &[PublicKey], groups: &[EventGroup]) -> u64 {
+    pub fn count_visible(&self, authed: &[PublicKey], groups: &[EventGroup], now: i64) -> u64 {
         groups
             .iter()
-            .filter(|group| self.can_any_receive(authed, EventFacts::of_group(group)))
+            .filter(|group| self.can_any_receive(authed, EventFacts::of_group(group), now))
             .map(|group| group.count)
             .sum()
     }
-    pub fn can_deliver(&self, authed: &[PublicKey], event: EventFacts<'_>) -> bool {
-        self.admit_req(authed).is_ok() && self.can_any_receive(authed, event)
+    pub fn can_deliver(&self, authed: &[PublicKey], event: EventFacts<'_>, now: i64) -> bool {
+        self.admit_req(authed).is_ok() && self.can_any_receive(authed, event, now)
     }
 }

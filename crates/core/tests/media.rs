@@ -274,9 +274,16 @@ async fn erasing_a_purged_relay_removes_what_it_held() -> Result<()> {
 
     let filter = Filter::new();
     assert!(
-        caravel_relays::events::queries::query_events(core.db.pool(), &relay.id, &filter, 10, NOW)
-            .await?
-            .is_empty()
+        caravel_relays::events::queries::query_events(
+            core.db.pool(),
+            &relay.id,
+            &filter,
+            10,
+            NOW,
+            &[]
+        )
+        .await?
+        .is_empty()
     );
     assert!(
         caravel_relays::media::queries::get_blob(core.db.pool(), &relay.id, "a")
@@ -295,9 +302,16 @@ async fn erasing_a_purged_relay_removes_what_it_held() -> Result<()> {
     assert_eq!(erased.erased_at, Some(NOW));
 
     assert!(
-        !caravel_relays::events::queries::query_events(core.db.pool(), &kept.id, &filter, 10, NOW)
-            .await?
-            .is_empty()
+        !caravel_relays::events::queries::query_events(
+            core.db.pool(),
+            &kept.id,
+            &filter,
+            10,
+            NOW,
+            &[]
+        )
+        .await?
+        .is_empty()
     );
     assert!(
         core.blobs
@@ -368,9 +382,15 @@ async fn erasing_a_relay_keeps_only_its_settings_and_owner() -> Result<()> {
 
     // Only the member list the relay signed again is left.
     let pool = core.db.pool();
-    let left =
-        caravel_relays::events::queries::query_events(pool, &relay.id, &Filter::new(), 10, NOW)
-            .await?;
+    let left = caravel_relays::events::queries::query_events(
+        pool,
+        &relay.id,
+        &Filter::new(),
+        10,
+        NOW,
+        &[],
+    )
+    .await?;
     assert_eq!(
         left.iter().map(|event| event.head.kind).collect::<Vec<_>>(),
         [kinds::RELAY_MEMBERS]

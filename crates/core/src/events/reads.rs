@@ -3,6 +3,7 @@
 
 use caravel_util::nostr::keys::parse_pubkey;
 use coracle_lib::filters::Filter;
+use coracle_lib::keys::PublicKey;
 
 use crate::Core;
 use caravel_billing::relays::Relay;
@@ -12,16 +13,24 @@ use caravel_relays::policy::RelaySnapshot;
 use caravel_util::error::Result;
 
 /// A relay's unexpired events matching `filter`, newest first, for a client's
-/// subscription.
+/// subscription. Only `authed` sees the events they scheduled.
 pub async fn query_events(
     core: &Core,
     relay_id: &str,
     filter: &Filter,
     max_limit: usize,
     now: i64,
+    authed: &[PublicKey],
 ) -> Result<Vec<StoredEvent>> {
-    caravel_relays::events::queries::query_events(core.db.pool(), relay_id, filter, max_limit, now)
-        .await
+    caravel_relays::events::queries::query_events(
+        core.db.pool(),
+        relay_id,
+        filter,
+        max_limit,
+        now,
+        authed,
+    )
+    .await
 }
 
 /// The head of each group of a relay's events matching the filters, for a sync.
@@ -31,6 +40,7 @@ pub async fn query_event_heads(
     filter: &Filter,
     max_limit: usize,
     now: i64,
+    authed: &[PublicKey],
 ) -> Result<Option<Vec<EventHead>>> {
     caravel_relays::events::queries::query_event_heads(
         core.db.pool(),
@@ -38,6 +48,7 @@ pub async fn query_event_heads(
         filter,
         max_limit,
         now,
+        authed,
     )
     .await
 }
@@ -48,9 +59,16 @@ pub async fn count_event_groups(
     relay_id: &str,
     filters: &[Filter],
     now: i64,
+    authed: &[PublicKey],
 ) -> Result<Vec<EventGroup>> {
-    caravel_relays::events::queries::count_event_groups(core.db.pool(), relay_id, filters, now)
-        .await
+    caravel_relays::events::queries::count_event_groups(
+        core.db.pool(),
+        relay_id,
+        filters,
+        now,
+        authed,
+    )
+    .await
 }
 
 /// The notification waiting for a pubkey on a relay, if there is one.

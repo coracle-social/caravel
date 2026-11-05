@@ -79,6 +79,7 @@ pub async fn load_subscriptions(
         &filter,
         MAX_SUBSCRIPTIONS,
         core.clock.now(),
+        &[],
     )
     .await?;
 
@@ -150,6 +151,7 @@ impl Pusher {
         subscriptions: &[Subscription],
         primary_host: &str,
         event: &Event,
+        now: i64,
     ) {
         let facts = EventFacts::of(event);
         let stored = StoredEvent::from_event(event);
@@ -157,7 +159,7 @@ impl Pusher {
         for subscription in subscriptions {
             let reader = [subscription.pubkey];
             if subscription.pubkey == event.pubkey
-                || !snapshot.can_deliver(&reader, facts)
+                || !snapshot.can_deliver(&reader, facts, now)
                 || !matches_any(&subscription.filters, event)
                 || matches_any(&subscription.ignore, event)
             {

@@ -145,6 +145,49 @@ async fn the_owner_publishes_and_a_subscriber_sees_it_live_and_stored() {
     assert!(reader.is_quiet().await);
 }
 
+/// A scheduled event comes back to its author at once, and
+/// nobody else is served or delivered it until its time.
+#[tokio::test]
+async fn a_scheduled_event_is_only_its_authors_until_its_time() {
+    let server = Server::start().await;
+    let (relay, owner) = server.relay().await;
+    let host = relay.canonical_host();
+    let member = SecretKey::generate();
+    caravel_core::management::add_member(&server.core, &relay, &member.public_key().to_hex())
+        .await
+        .expect("failed to add a member");
+    server
+        .relays
+        .reload(&relay.id)
+        .await
+        .expect("failed to reload");
+
+    let mut reader = server.connect(&host).await;
+    reader.auth(&member, server.now()).await;
+    let (stored, eose) = reader.req("live", json!({"kinds": [1]})).await;
+    assert!(stored.is_empty());
+    assert_eq!(eose[0], "EOSE");
+
+    let mut writer = server.connect(&host).await;
+    writer.auth(&owner, server.now()).await;
+    let scheduled = sign_event(&owner, 1, "later", &[], server.now() + 3600);
+    assert_eq!(writer.publish(&scheduled).await, (true, String::new()));
+
+    assert!(reader.is_quiet().await, "a schedule isn't delivered live");
+
+    let (mine, _) = writer.req("mine", json!({"kinds": [1]})).await;
+    assert_eq!(mine.len(), 1, "its author reads it back");
+    assert_eq!(mine[0]["id"], scheduled.id.to_hex());
+
+    let (theirs, _) = reader.req("theirs", json!({"kinds": [1]})).await;
+    assert!(theirs.is_empty(), "and nobody else does until its time");
+
+    server.core.clock.pin(server.now() + 3600);
+    let (published, _) = reader.req("published", json!({"kinds": [1]})).await;
+    assert_eq!(published.len(), 1);
+    assert_eq!(published[0]["created_at"], scheduled.created_at);
+}
+
 /// Claim codes are made through the management API; a published one is refused
 /// rather than accepted and quietly dropped.
 #[tokio::test]

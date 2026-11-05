@@ -67,6 +67,7 @@ impl Fixture {
             &filter,
             1,
             self.core.clock.now(),
+            &[],
         )
         .await?;
         Ok(found
@@ -253,6 +254,7 @@ async fn banning_a_pubkey_removes_it_and_everything_it_wrote() -> Result<()> {
         &Filter::new().add_author(spammer.public_key()),
         10,
         now,
+        &[],
     )
     .await?;
     assert!(written.is_empty());
@@ -296,6 +298,7 @@ async fn a_ban_keeps_the_pubkeys_deletions_and_requests_to_vanish() -> Result<()
         &Filter::new().add_author(author.public_key()),
         10,
         now,
+        &[],
     )
     .await?
     .iter()

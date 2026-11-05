@@ -59,13 +59,18 @@ async fn query(core: &Core, relay_id: &str, filter: Filter) -> Result<Vec<Stored
     let relay = caravel_billing::relays::queries::get_relay(core.db.pool(), relay_id)
         .await?
         .expect("no relay");
-    Ok(
-        caravel_relays::events::queries::query_events(core.db.pool(), relay_id, &filter, 1000, NOW)
-            .await?
-            .into_iter()
-            .filter(|event| event.head.pubkey.to_hex() != relay.pubkey)
-            .collect(),
+    Ok(caravel_relays::events::queries::query_events(
+        core.db.pool(),
+        relay_id,
+        &filter,
+        1000,
+        NOW,
+        &[],
     )
+    .await?
+    .into_iter()
+    .filter(|event| event.head.pubkey.to_hex() != relay.pubkey)
+    .collect())
 }
 
 async fn ids(core: &Core, relay_id: &str, filter: Filter) -> Result<Vec<[u8; 32]>> {
@@ -264,6 +269,7 @@ async fn limits_cap_results_and_ties_break_on_id() -> Result<()> {
         &Filter::new(),
         3,
         NOW,
+        &[],
     )
     .await?;
     assert_eq!(capped.len(), 3);
@@ -273,6 +279,7 @@ async fn limits_cap_results_and_ties_break_on_id() -> Result<()> {
         &Filter::new().add_limit(100),
         3,
         NOW,
+        &[],
     )
     .await?;
     assert_eq!(capped.len(), 3);
@@ -551,6 +558,7 @@ async fn expired_events_are_hidden_then_swept() -> Result<()> {
         &kinds(&[1]),
         1000,
         NOW + 60,
+        &[],
     )
     .await?;
     assert!(later.is_empty());
@@ -584,6 +592,7 @@ async fn counts_group_matching_events_by_kind_author_and_room_tags() -> Result<(
             &relay.id,
             filters,
             NOW + 60,
+            &[],
         )
         .await?;
         groups.sort_by_key(|group| (group.kind, group.h.clone()));
@@ -686,6 +695,7 @@ async fn negentropy_heads_refuse_sets_over_the_cap() -> Result<()> {
         &kinds(&[1]),
         3,
         NOW,
+        &[],
     )
     .await?;
     assert_eq!(heads.map(|heads| heads.len()), Some(3));
@@ -695,6 +705,7 @@ async fn negentropy_heads_refuse_sets_over_the_cap() -> Result<()> {
         &kinds(&[1]),
         2,
         NOW,
+        &[],
     )
     .await?;
     assert!(over.is_none());

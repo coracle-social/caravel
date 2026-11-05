@@ -56,7 +56,7 @@ pub async fn is_tombstoned(
     .await?)
 }
 
-/// A page of a relay's unexpired events for the dashboards.
+/// A page of the unexpired events a relay serves, for the dashboards.
 pub async fn page_events(
     db: impl PgExecutor<'_>,
     relay_id: &str,
@@ -86,7 +86,7 @@ pub async fn page_events(
         .map_err(|_| Error::invalid("invalid-after", "after must be a hex event id"))?;
 
     let mut query = QueryBuilder::<Postgres>::new(SELECT_EVENT);
-    push_filter(&mut query, relay_id, &filter, now);
+    push_filter(&mut query, relay_id, &filter, now, &[]);
     if let (Some(until), Some(after)) = (page.until, after) {
         query
             .push(" AND (created_at < ")
@@ -108,20 +108,22 @@ pub async fn page_events(
 }
 
 /// A relay's unexpired events matching a filter, newest first with ties broken by
-/// id, at most `max_limit` of them whatever the filter asks.
+/// id, at most `max_limit` of them whatever the filter asks. Only `authed` sees
+/// the events they scheduled.
 pub async fn query_events(
     db: impl PgExecutor<'_>,
     relay_id: &str,
     filter: &Filter,
     max_limit: usize,
     now: i64,
+    authed: &[PublicKey],
 ) -> Result<Vec<StoredEvent>> {
     if filter.matches_nothing() || filter.limit == Some(0) {
         return Ok(Vec::new());
     }
 
     let mut query = QueryBuilder::<Postgres>::new(SELECT_EVENT);
-    push_filter(&mut query, relay_id, filter, now);
+    push_filter(&mut query, relay_id, filter, now, authed);
     query
         .push(" ORDER BY created_at DESC, id LIMIT ")
         .push_bind(filter.limit.unwrap_or(max_limit).min(max_limit) as i64);
@@ -138,6 +140,7 @@ pub async fn query_event_heads(
     filter: &Filter,
     max: usize,
     now: i64,
+    authed: &[PublicKey],
 ) -> Result<Option<Vec<EventHead>>> {
     if filter.matches_nothing() {
         return Ok(Some(Vec::new()));
@@ -145,7 +148,7 @@ pub async fn query_event_heads(
 
     let mut query =
         QueryBuilder::<Postgres>::new("SELECT id, pubkey, created_at, kind, tag_values FROM event");
-    push_filter(&mut query, relay_id, filter, now);
+    push_filter(&mut query, relay_id, filter, now, authed);
     query
         .push(" ORDER BY created_at, id LIMIT ")
         .push_bind(max as i64 + 1);
@@ -165,6 +168,7 @@ pub async fn count_event_groups(
     relay_id: &str,
     filters: &[Filter],
     now: i64,
+    authed: &[PublicKey],
 ) -> Result<Vec<EventGroup>> {
     let filters: Vec<&Filter> = filters
         .iter()
@@ -185,7 +189,7 @@ pub async fn count_event_groups(
         first_value('d'),
         first_value('h'),
     ));
-    push_scope(&mut query, relay_id, now);
+    push_scope(&mut query, relay_id, now, authed);
     query.push(" AND (");
     for (index, filter) in filters.iter().enumerate() {
         if index > 0 {
@@ -253,19 +257,39 @@ pub async fn get_events(
 }
 
 /// Constrain a query to one relay's unexpired events matching a filter.
-fn push_filter(query: &mut QueryBuilder<'_, Postgres>, relay_id: &str, filter: &Filter, now: i64) {
-    push_scope(query, relay_id, now);
+fn push_filter(
+    query: &mut QueryBuilder<'_, Postgres>,
+    relay_id: &str,
+    filter: &Filter,
+    now: i64,
+    authed: &[PublicKey],
+) {
+    push_scope(query, relay_id, now, authed);
     push_conditions(query, filter);
 }
 
-/// Constrain a query to one relay's unexpired events.
-fn push_scope(query: &mut QueryBuilder<'_, Postgres>, relay_id: &str, now: i64) {
+/// Constrain a query to one relay's unexpired events, with scheduled ones only for
+/// their authors among `authed`.
+fn push_scope(
+    query: &mut QueryBuilder<'_, Postgres>,
+    relay_id: &str,
+    now: i64,
+    authed: &[PublicKey],
+) {
+    let authed: Vec<Vec<u8>> = authed
+        .iter()
+        .map(|pubkey| pubkey.as_bytes().to_vec())
+        .collect();
     query
         .push(" WHERE relay_id = ")
         .push_bind(relay_id.to_string())
         .push(" AND (expires_at IS NULL OR expires_at > ")
         .push_bind(now)
-        .push(")");
+        .push(") AND (created_at <= ")
+        .push_bind(now)
+        .push(" OR pubkey = ANY(")
+        .push_bind(authed)
+        .push("))");
 }
 
 /// A filter's conditions, each led by ` AND`. A tag constraint on a multi-letter

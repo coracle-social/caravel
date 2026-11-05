@@ -11,6 +11,7 @@ impl<'a> EventFacts<'a> {
             kind: event.kind,
             pubkey: event.pubkey,
             room: crate::rooms::room_id(event),
+            created_at: Some(event.created_at),
         }
     }
 
@@ -21,6 +22,7 @@ impl<'a> EventFacts<'a> {
             room: head
                 .tag(crate::rooms::room_tag(head.kind))
                 .filter(|room| !room.is_empty()),
+            created_at: Some(head.created_at),
         }
     }
 
@@ -33,6 +35,7 @@ impl<'a> EventFacts<'a> {
             kind: group.kind,
             pubkey: group.pubkey,
             room: room.filter(|room| !room.is_empty()),
+            created_at: None,
         }
     }
 }

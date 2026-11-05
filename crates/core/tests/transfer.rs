@@ -59,16 +59,15 @@ async fn stored(core: &Core, relay: &Relay, kind: u16, room_id: &str) -> Result<
         ..Filter::new()
     }
     .add_tag(TagMatch::Any, tag, room_id);
-    Ok(
-        caravel_relays::events::queries::query_events(
-            core.db.pool(),
-            &relay.id,
-            &filter,
-            1000,
-            NOW,
-        )
-        .await?,
+    Ok(caravel_relays::events::queries::query_events(
+        core.db.pool(),
+        &relay.id,
+        &filter,
+        1000,
+        NOW,
+        &[],
     )
+    .await?)
 }
 
 async fn is_room_member(core: &Core, relay: &Relay, room_id: &str, pubkey: &str) -> Result<bool> {

@@ -31,7 +31,7 @@ pub fn is_refused(kind: u16) -> bool {
     kind == kinds::RELAY_INVITE
 }
 
-pub fn screen(event: &Event, now: i64) -> Result<(), Refusal> {
+pub fn screen(event: &Event) -> Result<(), Refusal> {
     if is_relay_written(event.kind) {
         return Err(Refusal::invalid("this event's kind is not accepted"));
     }
@@ -42,13 +42,25 @@ pub fn screen(event: &Event, now: i64) -> Result<(), Refusal> {
         ));
     }
 
-    if event.created_at - now > CREATED_AT_UPPER_LIMIT {
-        return Err(Refusal::invalid(
-            "this event is dated too far in the future",
-        ));
-    }
-
     Ok(())
+}
+
+/// Whether the relay may hold this event until its time: a regular, stored kind the
+/// relay doesn't act on when it arrives.
+fn can_schedule(event: &Event) -> bool {
+    crate::policy::is_stored(event.kind)
+        && crate::events::slot(event).is_none()
+        && !matches!(
+            event.kind,
+            kinds::DELETION
+                | kinds::VANISH
+                | kinds::RELAY_JOIN
+                | kinds::RELAY_LEAVE
+                | kinds::rooms::JOIN_REQUEST
+                | kinds::rooms::LEAVE_REQUEST
+        )
+        && !crate::rooms::is_metadata_kind(event.kind)
+        && !crate::rooms::is_moderation_kind(event.kind)
 }
 
 fn check_protected(event: &Event, authed: &[PublicKey]) -> Result<(), Refusal> {
@@ -85,7 +97,24 @@ impl RelaySnapshot {
         now: i64,
     ) -> Result<(), Refusal> {
         check_protected(event, authed)?;
-        screen(event, now)?;
+        screen(event)?;
+
+        // An event dated ahead is scheduled, and held until its time.
+        if event.created_at - now > CREATED_AT_UPPER_LIMIT {
+            if authed.is_empty() {
+                return Err(Refusal::AuthRequired(
+                    "a scheduled event must be published by its author",
+                ));
+            }
+            if !authed.contains(&event.pubkey) {
+                return Err(Refusal::restricted(
+                    "a scheduled event must be published by its author",
+                ));
+            }
+            if !can_schedule(event) {
+                return Err(Refusal::invalid("this event's kind cannot be scheduled"));
+            }
+        }
 
         let author = event.pubkey;
 

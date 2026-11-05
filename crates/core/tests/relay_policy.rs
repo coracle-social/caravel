@@ -45,6 +45,7 @@ fn facts(kind: u16, pubkey: PublicKey) -> EventFacts<'static> {
         kind,
         pubkey,
         room: None,
+        created_at: Some(NOW),
     }
 }
 
@@ -138,20 +139,78 @@ fn a_gift_wrap_or_zap_for_a_member_needs_no_authentication() {
 }
 
 #[test]
-fn events_dated_too_far_ahead_are_refused() {
+fn a_scheduled_event_is_taken_only_from_its_authenticated_author() {
     let f = fixture();
     let author = [f.member.public_key()];
 
     let edge = sign_event(&f.member, 1, "", &[], NOW + CREATED_AT_UPPER_LIMIT);
     assert_eq!(f.snapshot.admit_write(&edge, &author, NOW), Ok(()));
 
-    let beyond = sign_event(&f.member, 1, "", &[], NOW + CREATED_AT_UPPER_LIMIT + 1);
+    let scheduled = sign_event(&f.member, 1, "", &[], NOW + CREATED_AT_UPPER_LIMIT + 1);
     assert_eq!(
-        f.snapshot.admit_write(&beyond, &author, NOW),
-        Err(Refusal::invalid(
-            "this event is dated too far in the future"
+        f.snapshot.admit_write(&scheduled, &author, NOW),
+        Ok(()),
+        "its author may date it as far ahead as they like"
+    );
+    assert_eq!(
+        f.snapshot.admit_write(&scheduled, &[], NOW),
+        Err(Refusal::AuthRequired(
+            "a scheduled event must be published by its author"
         ))
     );
+    assert_eq!(
+        f.snapshot
+            .admit_write(&scheduled, &[f.owner.public_key()], NOW),
+        Err(Refusal::restricted(
+            "a scheduled event must be published by its author"
+        ))
+    );
+}
+
+#[test]
+fn only_kinds_the_relay_publishes_later_can_be_scheduled() {
+    let f = fixture();
+    let author = [f.member.public_key()];
+    let ahead = NOW + CREATED_AT_UPPER_LIMIT + 1;
+
+    for kind in [
+        0,     // replaceable, so it would take over its slot before its time
+        30023, // addressable, which does the same
+        20001, // ephemeral, so the relay never publishes it at all
+        kinds::DELETION,
+        kinds::VANISH,
+        room_kinds::METADATA,
+        room_kinds::PUT_USER,
+        room_kinds::JOIN_REQUEST,
+    ] {
+        let event = sign_event(&f.member, kind, "", &[&["h", "open"]], ahead);
+        assert_eq!(
+            f.snapshot.admit_write(&event, &author, NOW),
+            Err(Refusal::invalid("this event's kind cannot be scheduled")),
+            "kind {kind}"
+        );
+    }
+}
+
+#[test]
+fn a_scheduled_event_is_seen_by_its_author_until_its_time() {
+    let f = fixture();
+    let snapshot = RelaySnapshot {
+        anonymous_read: true,
+        ..f.snapshot.clone()
+    };
+    let (owner, member) = (f.owner.public_key(), f.member.public_key());
+    let scheduled = EventFacts {
+        created_at: Some(NOW + 60),
+        ..facts(1, member)
+    };
+
+    assert!(snapshot.can_receive(Some(&member), scheduled, NOW));
+    assert!(!snapshot.can_receive(Some(&owner), scheduled, NOW));
+    assert!(!snapshot.can_receive(None, scheduled, NOW));
+
+    assert!(snapshot.can_receive(Some(&owner), scheduled, NOW + 60));
+    assert!(snapshot.can_receive(None, scheduled, NOW + 60));
 }
 
 #[test]
@@ -244,8 +303,8 @@ fn reading_needs_authentication_unless_anonymous_reads_are_on() {
     };
     assert_eq!(anonymous.admit_req(&[]), Ok(()));
     let note = facts(1, f.snapshot.tenant_pubkey);
-    assert!(anonymous.can_receive(None, note));
-    assert!(!f.snapshot.can_receive(None, note));
+    assert!(anonymous.can_receive(None, note, NOW));
+    assert!(!f.snapshot.can_receive(None, note, NOW));
 }
 
 #[test]
@@ -324,6 +383,7 @@ fn in_room<'a>(kind: u16, pubkey: PublicKey, room: &'a str) -> EventFacts<'a> {
         kind,
         pubkey,
         room: Some(room),
+        created_at: Some(NOW),
     }
 }
 
@@ -335,10 +395,10 @@ fn rooms_decide_who_sees_their_events() {
     let outsider = pubkey_of_nobody();
     let readers = |event: EventFacts<'_>| {
         [
-            snapshot.can_receive(Some(&owner), event),
-            snapshot.can_receive(Some(&member), event),
-            snapshot.can_receive(Some(&outsider), event),
-            snapshot.can_receive(None, event),
+            snapshot.can_receive(Some(&owner), event, NOW),
+            snapshot.can_receive(Some(&member), event, NOW),
+            snapshot.can_receive(Some(&outsider), event, NOW),
+            snapshot.can_receive(None, event, NOW),
         ]
     };
 
@@ -382,7 +442,7 @@ fn rooms_decide_who_sees_their_events() {
         groups_enabled: false,
         ..snapshot.clone()
     };
-    assert!(off.can_receive(Some(&outsider), in_room(9, member, "hidden")));
+    assert!(off.can_receive(Some(&outsider), in_room(9, member, "hidden"), NOW));
 }
 
 #[test]
@@ -407,7 +467,7 @@ fn a_count_includes_only_what_the_reader_may_see() {
         group(room_kinds::CREATE_INVITE, &f.owner, None, Some("open"), 5),
         group(kinds::PUSH_SUBSCRIPTION, &f.member, Some("phone"), None, 1),
     ];
-    let count = |authed: &[PublicKey]| snapshot.count_visible(authed, &groups);
+    let count = |authed: &[PublicKey]| snapshot.count_visible(authed, &groups, NOW);
 
     assert_eq!(count(std::slice::from_ref(&owner)), 17);
     assert_eq!(count(std::slice::from_ref(&member)), 18);
@@ -548,7 +608,8 @@ fn credentials_and_requests_are_never_served() {
         kinds::BLOSSOM_AUTH,
     ] {
         assert!(
-            !f.snapshot.can_receive(Some(&owner), facts(kind, owner)),
+            !f.snapshot
+                .can_receive(Some(&owner), facts(kind, owner), NOW),
             "kind {kind}"
         );
     }
@@ -556,8 +617,8 @@ fn credentials_and_requests_are_never_served() {
     // A push subscription comes back to its author and nobody else.
     let member = f.member.public_key();
     let subscription = facts(kinds::PUSH_SUBSCRIPTION, member);
-    assert!(f.snapshot.can_receive(Some(&member), subscription));
-    assert!(!f.snapshot.can_receive(Some(&owner), subscription));
+    assert!(f.snapshot.can_receive(Some(&member), subscription, NOW));
+    assert!(!f.snapshot.can_receive(Some(&owner), subscription, NOW));
 }
 
 #[test]

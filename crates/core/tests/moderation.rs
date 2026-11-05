@@ -99,6 +99,46 @@ async fn the_feed_holds_moderated_events_and_uploads_newest_first() -> Result<()
     Ok(())
 }
 
+/// A scheduled event is reviewed where the relay saw it, not pinned to the top
+/// of the feed by its date.
+#[tokio::test]
+async fn a_scheduled_event_is_seen_when_it_arrived() -> Result<()> {
+    let core = core().await;
+    let start = day(2034, 1, 1);
+    let author = SecretKey::generate();
+    let tenant = create_tenant(&core).await?;
+    let relay = create_relay(&core, &tenant, "free").await?;
+
+    travel(&core, start);
+    let scheduled = sign_event(&author, 1, "ahead", &[], start + 3600);
+    save(&core, &relay.id, std::slice::from_ref(&scheduled)).await?;
+
+    travel(&core, start + 10);
+    save(
+        &core,
+        &relay.id,
+        &[sign_event(&author, 1, "now", &[], start + 10)],
+    )
+    .await?;
+
+    let page = caravel_operations::moderation::queries::list_moderation(
+        core.db.pool(),
+        &core.config.admin_pubkeys,
+        Some(start),
+        Some(start + 10),
+    )
+    .await?;
+    let seen: Vec<i64> = page.items.iter().map(|item| item.seen_at).collect();
+    assert_eq!(seen, vec![start + 10, start]);
+
+    let Subject::Event(event) = &page.items[1].subject else {
+        panic!("expected the scheduled event second");
+    };
+    assert_eq!(event["id"], scheduled.id.to_hex());
+    assert_eq!(event["created_at"], start + 3600);
+    Ok(())
+}
+
 /// Seen once per event id: republishing an event keeps its first time, while the
 /// newer version that replaces it is seen when that version arrived.
 #[tokio::test]

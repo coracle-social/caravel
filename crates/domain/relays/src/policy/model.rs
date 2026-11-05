@@ -62,6 +62,8 @@ pub struct EventFacts<'a> {
     pub pubkey: PublicKey,
     /// The room the event is about or posted in.
     pub room: Option<&'a str>,
+    /// When the event is dated, or `None` for a group of events counted together.
+    pub created_at: Option<i64>,
 }
 
 /// How a join request is admitted.

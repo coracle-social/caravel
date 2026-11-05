@@ -46,7 +46,7 @@ async fn the_information_document_describes_the_relay() {
     assert_eq!(document["pubkey"], owner.public_key().to_hex());
     assert_eq!(document["self"], relay.pubkey);
     assert_eq!(document["limitation"]["auth_required"], true);
-    assert_eq!(document["limitation"]["created_at_upper_limit"], 300);
+    assert_eq!(document["limitation"]["created_at_upper_limit"], 30);
     assert_eq!(document["limitation"]["restricted_writes"], true);
     let nips = document["supported_nips"].as_array().unwrap().clone();
     for nip in [
@@ -145,8 +145,8 @@ async fn the_owner_publishes_and_a_subscriber_sees_it_live_and_stored() {
     assert!(reader.is_quiet().await);
 }
 
-/// A scheduled event comes back to its author at once, and
-/// nobody else is served or delivered it until its time.
+/// A scheduled event comes back to its author at once, and nobody else is served
+/// or delivered it until its time, when it is delivered as if published then.
 #[tokio::test]
 async fn a_scheduled_event_is_only_its_authors_until_its_time() {
     let server = Server::start().await;
@@ -183,9 +183,55 @@ async fn a_scheduled_event_is_only_its_authors_until_its_time() {
     assert!(theirs.is_empty(), "and nobody else does until its time");
 
     server.core.clock.pin(server.now() + 3600);
+    let mut delivered = Vec::new();
+    for _ in 0..2 {
+        let message = reader.recv().await.unwrap();
+        assert_eq!(message[0], "EVENT");
+        assert_eq!(message[2]["id"], scheduled.id.to_hex());
+        delivered.push(message[1].as_str().unwrap().to_string());
+    }
+    delivered.sort();
+    assert_eq!(
+        delivered,
+        ["live", "theirs"],
+        "each open subscription gets it"
+    );
+    assert!(reader.is_quiet().await, "and only once");
+
     let (published, _) = reader.req("published", json!({"kinds": [1]})).await;
     assert_eq!(published.len(), 1);
     assert_eq!(published[0]["created_at"], scheduled.created_at);
+}
+
+/// An event dated past the hour the relay holds is read in a later hour, and
+/// delivered at its time.
+#[tokio::test]
+async fn a_scheduled_event_beyond_the_hour_is_delivered_at_its_time() {
+    let server = Server::start().await;
+    let (relay, owner) = server.relay().await;
+    let host = relay.canonical_host();
+    let start = server.now();
+
+    let mut writer = server.connect(&host).await;
+    writer.auth(&owner, start).await;
+    let scheduled = sign_event(&owner, 1, "much later", &[], start + 7200);
+    assert_eq!(writer.publish(&scheduled).await, (true, String::new()));
+
+    let mut reader = server.connect(&host).await;
+    reader.auth(&owner, start).await;
+    reader
+        .req("live", json!({"kinds": [1], "since": start + 7200}))
+        .await;
+
+    server.core.clock.pin(start + 3600);
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    assert!(reader.is_quiet().await, "not before its time");
+
+    server.core.clock.pin(start + 7200);
+    let delivered = reader.recv().await.unwrap();
+    assert_eq!(delivered[0], "EVENT");
+    assert_eq!(delivered[1], "live");
+    assert_eq!(delivered[2]["id"], scheduled.id.to_hex());
 }
 
 /// Claim codes are made through the management API; a published one is refused

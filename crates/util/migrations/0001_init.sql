@@ -246,6 +246,9 @@ CREATE INDEX event_seen_idx ON event (seen_at DESC, seq DESC);
 -- in place.
 CREATE UNIQUE INDEX event_slot_key ON event (relay_id, kind, pubkey, d) WHERE d IS NOT NULL;
 
+-- The scheduled events, which the relays deliver as each one comes due.
+CREATE INDEX event_scheduled_idx ON event (created_at) WHERE created_at > seen_at;
+
 -- The NIP-40 sweep of expired events.
 CREATE INDEX event_expires_idx ON event (expires_at) WHERE expires_at IS NOT NULL;
 

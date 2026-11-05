@@ -3,7 +3,6 @@
 
 use caravel_core::testing::sign_event;
 use caravel_relays::events::EventGroup;
-use caravel_relays::policy::CREATED_AT_UPPER_LIMIT;
 use caravel_relays::policy::{EventFacts, Refusal, RelaySnapshot, RoomSnapshot};
 use caravel_util::nostr::kinds;
 use caravel_util::nostr::kinds::rooms as room_kinds;
@@ -143,10 +142,10 @@ fn a_scheduled_event_is_taken_only_from_its_authenticated_author() {
     let f = fixture();
     let author = [f.member.public_key()];
 
-    let edge = sign_event(&f.member, 1, "", &[], NOW + CREATED_AT_UPPER_LIMIT);
+    let edge = sign_event(&f.member, 1, "", &[], NOW + 30);
     assert_eq!(f.snapshot.admit_write(&edge, &author, NOW), Ok(()));
 
-    let scheduled = sign_event(&f.member, 1, "", &[], NOW + CREATED_AT_UPPER_LIMIT + 1);
+    let scheduled = sign_event(&f.member, 1, "", &[], NOW + 31);
     assert_eq!(
         f.snapshot.admit_write(&scheduled, &author, NOW),
         Ok(()),
@@ -171,7 +170,7 @@ fn a_scheduled_event_is_taken_only_from_its_authenticated_author() {
 fn only_kinds_the_relay_publishes_later_can_be_scheduled() {
     let f = fixture();
     let author = [f.member.public_key()];
-    let ahead = NOW + CREATED_AT_UPPER_LIMIT + 1;
+    let ahead = NOW + 31;
 
     for kind in [
         0,     // replaceable, so it would take over its slot before its time

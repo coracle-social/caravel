@@ -6,8 +6,6 @@ use coracle_lib::keys::PublicKey;
 use crate::policy::{Refusal, RelaySnapshot};
 use caravel_util::nostr::kinds;
 
-pub const CREATED_AT_UPPER_LIMIT: i64 = 300;
-
 pub fn is_relay_written(kind: u16) -> bool {
     use kinds::*;
     matches!(
@@ -100,7 +98,7 @@ impl RelaySnapshot {
         screen(event)?;
 
         // An event dated ahead is scheduled, and held until its time.
-        if event.created_at - now > CREATED_AT_UPPER_LIMIT {
+        if event.created_at - now > 30 {
             if authed.is_empty() {
                 return Err(Refusal::AuthRequired(
                     "a scheduled event must be published by its author",

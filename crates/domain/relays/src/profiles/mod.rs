@@ -54,7 +54,7 @@ pub fn document(info: &RelayInfo, limits: &Limits, max_subid_length: usize) -> V
             "auth_required": !info.anonymous_read,
             "restricted_writes": !info.public_write,
             "payment_required": info.membership.is_some(),
-            "created_at_upper_limit": crate::policy::CREATED_AT_UPPER_LIMIT,
+            "created_at_upper_limit": 30,
             "max_limit": limits.max_limit,
             "max_subscriptions": limits.max_subscriptions,
             "max_message_length": limits.max_message_size,

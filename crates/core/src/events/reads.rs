@@ -33,6 +33,21 @@ pub async fn query_events(
     .await
 }
 
+/// Every relay's scheduled events that come due in `(after, until]`, with the id of
+/// the relay holding each.
+pub async fn list_scheduled_events(
+    core: &Core,
+    after: i64,
+    until: i64,
+) -> Result<Vec<(String, EventHead)>> {
+    caravel_relays::events::queries::list_scheduled_events(core.db.pool(), after, until).await
+}
+
+/// Events of one relay by id, in no order.
+pub async fn get_events(core: &Core, relay_id: &str, ids: &[[u8; 32]]) -> Result<Vec<StoredEvent>> {
+    caravel_relays::events::queries::get_events(core.db.pool(), relay_id, ids).await
+}
+
 /// The head of each group of a relay's events matching the filters, for a sync.
 pub async fn query_event_heads(
     core: &Core,

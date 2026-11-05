@@ -239,6 +239,28 @@ pub async fn list_events_after(
     Ok(rows.iter().filter_map(stored_event).collect())
 }
 
+/// Every relay's scheduled events that come due in `(after, until]`, with the id of
+/// the relay holding each.
+pub async fn list_scheduled_events(
+    db: impl PgExecutor<'_>,
+    after: i64,
+    until: i64,
+) -> Result<Vec<(String, EventHead)>> {
+    let rows = sqlx::query(
+        "SELECT relay_id, id, pubkey, created_at, kind, tag_values FROM event
+         WHERE created_at > seen_at AND created_at > $1 AND created_at <= $2",
+    )
+    .bind(after)
+    .bind(until)
+    .fetch_all(db)
+    .await?;
+
+    Ok(rows
+        .iter()
+        .filter_map(|row| Some((row.get("relay_id"), event_head(row)?)))
+        .collect())
+}
+
 /// Events of one relay by id, in no order.
 pub async fn get_events(
     db: impl PgExecutor<'_>,

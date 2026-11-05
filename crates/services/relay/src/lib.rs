@@ -13,6 +13,7 @@ mod message;
 mod nip11;
 mod nip86;
 mod push;
+mod schedule;
 mod session;
 
 pub use session::Transport;
@@ -20,6 +21,7 @@ pub use session::Transport;
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
+use std::time::Duration;
 
 use axum::Router;
 use axum::extract::{ConnectInfo, Extension, FromRequestParts, Request, State, WebSocketUpgrade};
@@ -39,6 +41,7 @@ use tower_http::cors::{Any, CorsLayer};
 use crate::instance::{InstanceState, RelayInstance};
 use crate::limits::Limiter;
 use crate::push::Pusher;
+use crate::schedule::Schedule;
 
 /// What a relay allows: how much one connection may ask of it, and how often one
 /// address may connect.
@@ -108,6 +111,7 @@ struct Inner {
     config: RelaysConfig,
     connecting: Limiter,
     pusher: Pusher,
+    schedule: Arc<Schedule>,
     shutdown: CancellationToken,
     instances: RwLock<HashMap<String, Arc<RelayInstance>>>,
     /// The relay each host belongs to, by id.
@@ -119,7 +123,8 @@ struct Inner {
 
 impl Relays {
     /// Load every live relay, holding the changes published meanwhile for
-    /// [`Relays::watch`]. `shutdown` closes every connection when cancelled.
+    /// [`Relays::watch`], and deliver scheduled events as they come due.
+    /// `shutdown` closes every connection and stops delivery when cancelled.
     pub async fn load(
         core: Core,
         config: RelaysConfig,
@@ -129,6 +134,7 @@ impl Relays {
             inner: Arc::new(Inner {
                 connecting: Limiter::new(config.limits.connections_per_minute),
                 pusher: Pusher::start(core.clone(), shutdown.clone()),
+                schedule: Arc::new(Schedule::new(core.clock.now())),
                 changes: Mutex::new(Some(core.bus.subscribe())),
                 core,
                 config,
@@ -139,7 +145,68 @@ impl Relays {
             }),
         };
         relays.reload_all().await?;
+        tokio::spawn(relays.clone().release_scheduled());
         Ok(relays)
+    }
+
+    /// Deliver each scheduled event as its time comes, as if it were published then,
+    /// until shutdown. An event that came due while the process was down is only
+    /// served to queries.
+    async fn release_scheduled(self) {
+        let core = &self.inner.core;
+        let schedule = &self.inner.schedule;
+
+        loop {
+            let now = core.clock.now();
+            if let Err(error) = schedule.refill(core, now).await {
+                tracing::warn!(error = %error, "failed to load scheduled events");
+            }
+
+            let mut due: HashMap<String, Vec<[u8; 32]>> = HashMap::new();
+            for (relay_id, id) in schedule.take_due(now) {
+                due.entry(relay_id).or_default().push(id);
+            }
+            for (relay_id, ids) in due {
+                self.release(&relay_id, &ids, now).await;
+            }
+
+            tokio::select! {
+                _ = self.inner.shutdown.cancelled() => break,
+                _ = tokio::time::sleep(Duration::from_secs(1)) => {}
+            }
+        }
+    }
+
+    /// Deliver a relay's scheduled events that came due and are still held, oldest
+    /// first.
+    async fn release(&self, relay_id: &str, ids: &[[u8; 32]], now: i64) {
+        let Some(instance) = self.instance(relay_id) else {
+            return;
+        };
+        let mut found =
+            match caravel_core::events::get_events(&self.inner.core, relay_id, ids).await {
+                Ok(found) => found,
+                Err(error) => {
+                    tracing::warn!(relay = relay_id, error = %error, "failed to read due events");
+                    return;
+                }
+            };
+        found.sort_by_key(|stored| (stored.head.created_at, stored.head.id));
+
+        for stored in found {
+            match stored.to_event() {
+                Ok(event)
+                    if coracle_lib::expiration::get_expiration(&event.tags)
+                        .is_none_or(|expires_at| expires_at > now) =>
+                {
+                    instance.broadcast(&event)
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    tracing::warn!(relay = relay_id, error = %error, "failed to read a due event")
+                }
+            }
+        }
     }
 
     /// The relay a host belongs to, if any.
@@ -304,6 +371,7 @@ impl Relays {
                     self.inner.config.limits,
                     state,
                     self.inner.pusher.clone(),
+                    self.inner.schedule.clone(),
                     self.inner.shutdown.child_token(),
                 );
                 self.inner

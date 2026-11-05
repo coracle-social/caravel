@@ -7,7 +7,7 @@ use std::sync::{Arc, RwLock};
 
 use caravel_billing::relays::Relay;
 use caravel_core::{Core, ingest};
-use caravel_relays::events::{Saved, StoredEvent};
+use caravel_relays::events::{EventHead, Saved, StoredEvent};
 use caravel_relays::policy::{EventFacts, Refusal, RelaySnapshot};
 use caravel_util::error::Error;
 use caravel_util::nostr::Key;
@@ -27,6 +27,7 @@ use crate::message::{
     refused_subscription,
 };
 use crate::push::{self, Pusher};
+use crate::schedule::Schedule;
 use crate::session::Session;
 
 /// The size a reconciliation round is held to. Negentropy folds what doesn't fit
@@ -72,6 +73,7 @@ pub struct RelayInstance {
     reloading: tokio::sync::Mutex<()>,
     connections: Connections,
     pusher: Pusher,
+    schedule: Arc<Schedule>,
     /// Cancelled when the relay stops being served, closing its connections.
     closed: CancellationToken,
 }
@@ -82,6 +84,7 @@ impl RelayInstance {
         limits: RelayLimits,
         state: InstanceState,
         pusher: Pusher,
+        schedule: Arc<Schedule>,
         closed: CancellationToken,
     ) -> Self {
         Self {
@@ -91,6 +94,7 @@ impl RelayInstance {
             reloading: tokio::sync::Mutex::new(()),
             connections: Connections::default(),
             pusher,
+            schedule,
             closed,
         }
     }
@@ -176,6 +180,10 @@ impl RelayInstance {
         match self.ingest(session, &event).await {
             Ok(published) => {
                 session.send(RelayMessage::accepted(event.id)).await;
+                if event.created_at > self.core.clock.now() {
+                    self.schedule
+                        .add(&self.relay_id(), &EventHead::from_event(&event));
+                }
                 self.broadcast(&event);
                 for event in &published {
                     self.broadcast(event);

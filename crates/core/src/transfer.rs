@@ -259,6 +259,13 @@ async fn rebuild_rooms(
         }
 
         history.sort_by_key(|entry| entry.created_at);
+        // A client's clock can date an event a moment before the room it's about.
+        if let Some(first) = history
+            .iter()
+            .position(|entry| entry.kind == kinds::rooms::CREATE_GROUP)
+        {
+            history[..=first].rotate_right(1);
+        }
         let last = history.pop();
         history.retain(|entry| entry.kind != kinds::rooms::DELETE_GROUP);
         history.extend(last);

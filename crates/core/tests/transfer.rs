@@ -280,6 +280,41 @@ async fn an_import_rebuilds_room_state() -> Result<()> {
     Ok(())
 }
 
+// Zooid took a put-user its client signed a second before the room's creation.
+#[tokio::test]
+async fn an_import_creates_a_room_before_what_predates_it() -> Result<()> {
+    let core = core().await;
+    let (relay, _) = create_relay(&core).await;
+    let owner = SecretKey::generate();
+    let member = SecretKey::generate().public_key().to_hex();
+
+    let dump = [
+        sign_event(
+            &owner,
+            kinds::PUT_USER,
+            "",
+            &[&["h", "room"], &["p", &member]],
+            NOW - 301,
+        ),
+        sign_event(
+            &owner,
+            kinds::CREATE_GROUP,
+            "",
+            &[&["h", "room"]],
+            NOW - 300,
+        ),
+    ]
+    .iter()
+    .map(line)
+    .collect::<Vec<_>>()
+    .join("\n");
+
+    let result = import(&core, &relay, &dump).await?;
+    assert_eq!(result.rooms_rebuilt, 1, "{result:?}");
+    assert!(is_room_member(&core, &relay, "room", &member).await?);
+    Ok(())
+}
+
 // A join request replays the admission an arriving one would.
 #[tokio::test]
 async fn an_import_admits_join_requests() -> Result<()> {

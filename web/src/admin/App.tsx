@@ -1,4 +1,5 @@
 import { Navigate, Router, Route } from "@solidjs/router"
+import { ADMIN_BASE } from "@/shared/lib/config"
 import Layout from "@/admin/components/Layout"
 import RelayEdit from "@/shared/views/RelayEdit"
 import AdminTenantList from "@/admin/pages/AdminTenantList"
@@ -11,16 +12,16 @@ import AdminModeration from "@/admin/pages/AdminModeration"
 
 export default function App() {
   return (
-    <Router root={Layout}>
-      <Route path="/admin" component={() => <Navigate href="/admin/tenants" />} />
-      <Route path="/admin/tenants" component={AdminTenantList} />
-      <Route path="/admin/tenants/:id" component={AdminTenantDetail} />
-      <Route path="/admin/relays" component={AdminRelayList} />
-      <Route path="/admin/relays/:id" component={AdminRelayDetail} />
-      <Route path="/admin/relays/:id/edit" component={() => <RelayEdit basePath="/admin/relays" title="Edit Relay (Admin)" />} />
-      <Route path="/admin/invoices" component={AdminInvoiceList} />
-      <Route path="/admin/invoices/:id" component={AdminInvoiceDetail} />
-      <Route path="/admin/moderation" component={AdminModeration} />
+    <Router root={Layout} base={ADMIN_BASE}>
+      <Route path="/" component={() => <Navigate href="/tenants" />} />
+      <Route path="/tenants" component={AdminTenantList} />
+      <Route path="/tenants/:id" component={AdminTenantDetail} />
+      <Route path="/relays" component={AdminRelayList} />
+      <Route path="/relays/:id" component={AdminRelayDetail} />
+      <Route path="/relays/:id/edit" component={() => <RelayEdit basePath="/relays" title="Edit Relay (Admin)" />} />
+      <Route path="/invoices" component={AdminInvoiceList} />
+      <Route path="/invoices/:id" component={AdminInvoiceDetail} />
+      <Route path="/moderation" component={AdminModeration} />
     </Router>
   )
 }

@@ -1,4 +1,5 @@
 import { Router, Route } from "@solidjs/router"
+import { TENANT_BASE } from "@/shared/lib/config"
 import Layout, { requireTenant, TenantGate } from "@/tenant/components/Layout"
 import RelayEdit from "@/shared/views/RelayEdit"
 import Home from "@/tenant/pages/Home"
@@ -16,7 +17,7 @@ import Account from "@/tenant/pages/Account"
 
 export default function App() {
   return (
-    <Router root={Layout}>
+    <Router root={Layout} base={TENANT_BASE}>
       <Route path="/" component={Home} />
       <Route path="/relays" component={requireTenant(RelayList)} />
       <Route path="/relays/new" component={requireTenant(RelayNew)} />

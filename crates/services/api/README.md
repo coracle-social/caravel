@@ -10,8 +10,9 @@ Boolean relay settings are written and read as `0` or `1`, a relay's domain is c
 
 A client signs in once and then sends a bearer token:
 
-- `POST /session` takes a NIP-98 `Authorization` header signed for exactly that request: its `u` tag is the platform's url followed by `/api/session`, its `method` tag is `POST`, and it was signed within a minute. It returns `{pubkey, token, expires_at}`. A session lasts thirty days.
+- `POST /session` takes a NIP-98 `Authorization` header signed for exactly that request: its `u` tag is `API_URL` followed by `/session`, its `method` tag is `POST`, and it was signed within a minute. It returns `{pubkey, token, expires_at}`. A session lasts thirty days.
 - Every other authenticated route takes `Authorization: Bearer <token>`.
+- While `LEGACY_API_URL` is set, an authenticated route also takes the NIP-98 header clients from before sessions send: signed for `LEGACY_API_URL` itself, by any method, within fifteen minutes.
 - `DELETE /session` ends the session whose token it is sent with.
 
 Admins are the pubkeys in `ADMIN_PUBKEYS`. Unless marked otherwise, a route that names a tenant, relay or invoice may be called by that tenant or by an admin.

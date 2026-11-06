@@ -2,6 +2,7 @@ import { sortBy } from "@welshman/lib"
 import type { IAccount } from "applesauce-accounts"
 import { account } from "@/shared/lib/account"
 import { createSession, hasStatus, request, unwrap } from "@/shared/lib/http"
+import { PORTAL_PATH } from "@/shared/lib/config"
 
 export type Plan = {
   id: string
@@ -107,7 +108,7 @@ export function canonicalHost(relay: Pick<Relay, "subdomain" | "zooid_domain">) 
 // The page a relay's members pay on: its portal, on its own host.
 export function relayPortalUrl(relay: Pick<Relay, "subdomain" | "zooid_domain" | "custom_domain" | "custom_domain_verified">) {
   const host = relay.custom_domain_verified && relay.custom_domain ? relay.custom_domain : canonicalHost(relay)
-  return `https://${host}/`
+  return `https://${host}${PORTAL_PATH}/`
 }
 
 export type MembershipStatus = "pending" | "active" | "canceled" | "lapsed"

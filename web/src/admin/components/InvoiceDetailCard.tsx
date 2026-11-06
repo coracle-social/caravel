@@ -33,7 +33,7 @@ export default function InvoiceDetailCard(props: { invoice: Invoice }) {
           </Field>
         </Show>
         <Field label="Tenant">
-          <A href={`/admin/tenants/${props.invoice.tenant_pubkey}`} class="group flex w-fit items-center gap-2 min-w-0">
+          <A href={`/tenants/${props.invoice.tenant_pubkey}`} class="group flex w-fit items-center gap-2 min-w-0">
             <Avatar profile={metadata()} pubkey={props.invoice.tenant_pubkey} class="h-5 w-5 flex-shrink-0" fallbackClass="bg-gray-200 text-[10px] text-gray-500" />
             <Show
               when={profileName(metadata())}

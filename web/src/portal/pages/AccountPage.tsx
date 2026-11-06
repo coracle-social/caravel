@@ -9,6 +9,7 @@ import { loaded } from "@/shared/lib/resource"
 import { getAccount } from "@/portal/lib/api"
 import { shortNpub } from "@/portal/lib/nostr"
 import { session, signOut } from "@/portal/lib/session"
+import { PORTAL_PATH } from "@/shared/lib/config"
 
 const STATUS_LABELS = {
   pending: "Awaiting payment",
@@ -58,7 +59,7 @@ export default function AccountPage() {
                     <For each={a().memberships}>
                       {({ offer, membership }) => (
                         <li>
-                          <a href={`https://${offer.host}/`} class="flex items-center gap-3 py-3 hover:opacity-80">
+                          <a href={`https://${offer.host}${PORTAL_PATH}/`} class="flex items-center gap-3 py-3 hover:opacity-80">
                             <Show
                               when={offer.icon}
                               fallback={

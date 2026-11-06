@@ -4,6 +4,7 @@
 
 mod admin;
 mod auth;
+mod legacy;
 mod management;
 mod member;
 mod public;

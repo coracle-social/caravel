@@ -2,6 +2,7 @@ import { A, useLocation, useParams, type RouteSectionProps } from "@solidjs/rout
 import { createContext, For, useContext } from "solid-js"
 import BackLink from "@/shared/components/BackLink"
 import { useRelay } from "@/shared/lib/relays"
+import { TENANT_BASE, pathWithin } from "@/shared/lib/config"
 
 const RelayContext = createContext<ReturnType<typeof useRelay>>()
 
@@ -29,7 +30,8 @@ export default function RelayFrame(props: RouteSectionProps) {
 
   const base = () => `/relays/${params.id}`
   const sectionClass = (path: string) => {
-    const active = path ? location.pathname.startsWith(base() + path) : location.pathname === base()
+    const current = pathWithin(TENANT_BASE, location.pathname)
+    const active = path ? current.startsWith(base() + path) : current === base()
     return active
       ? "shrink-0 border-b-2 border-gray-900 px-3 py-2 text-sm font-medium text-gray-900"
       : "shrink-0 border-b-2 border-transparent px-3 py-2 text-sm text-gray-500 hover:text-gray-800"

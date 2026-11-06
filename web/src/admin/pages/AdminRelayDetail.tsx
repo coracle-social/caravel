@@ -30,7 +30,7 @@ export default function AdminRelayDetail() {
               relay={r()}
               currentMembers={members()?.length}
               showTenant
-              editHref={`/admin/relays/${params.id}/edit`}
+              editHref={`/relays/${params.id}/edit`}
               busy={busy()}
               onDeactivate={deactivate}
               onReactivate={reactivate}

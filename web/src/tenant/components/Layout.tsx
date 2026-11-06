@@ -3,12 +3,13 @@ import { useLocation, useNavigate } from "@solidjs/router"
 import Toast from "@/shared/components/Toast"
 import TenantShell from "@/tenant/components/TenantShell"
 import { identity } from "@/shared/lib/state"
+import { TENANT_BASE, pathWithin } from "@/shared/lib/config"
 
 // The tenant dashboard's frame: its navigation on the signed-in pages, and the toast.
 export default function Layout(props: { children?: JSX.Element }) {
   const location = useLocation()
 
-  const usesShell = () => /^\/(relays|account)/.test(location.pathname)
+  const usesShell = () => /^\/(relays|account)/.test(pathWithin(TENANT_BASE, location.pathname))
 
   return (
     <div class="min-h-screen bg-gray-50">

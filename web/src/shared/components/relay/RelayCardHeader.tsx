@@ -64,7 +64,7 @@ export default function RelayCardHeader(props: RelayCardHeaderProps) {
             wss://{canonicalHost(r())}
           </a>
           <Show when={props.showTenant}>
-            <A href={`/admin/tenants/${r().tenant_pubkey}`} class="group mt-1.5 flex w-fit items-center gap-2 min-w-0">
+            <A href={`/tenants/${r().tenant_pubkey}`} class="group mt-1.5 flex w-fit items-center gap-2 min-w-0">
               <Avatar profile={metadata()} pubkey={r().tenant_pubkey} class="h-6 w-6 flex-shrink-0" fallbackClass="bg-gray-200 text-[10px] text-gray-500" />
               <Show
                 when={profileName(metadata())}

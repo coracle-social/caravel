@@ -150,7 +150,7 @@ export default function ModerationListItem(props: ModerationListItemProps) {
       </Show>
 
       <div class="mt-3 border-t border-gray-100 pt-3">
-        <A href={`/admin/relays/${props.item.relay_id}`} class="text-xs text-gray-500 hover:text-gray-900 hover:underline">
+        <A href={`/relays/${props.item.relay_id}`} class="text-xs text-gray-500 hover:text-gray-900 hover:underline">
           <Show when={props.relay} fallback={props.item.relay_id}>
             {(relay) => <>{relayName(relay())} · {canonicalHost(relay())}</>}
           </Show>

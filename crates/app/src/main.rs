@@ -143,9 +143,9 @@ async fn start_router(ctx: &AppContext, core: Core) -> Result<()> {
         .allow_origin(Any)
         .allow_methods(Any)
         .allow_headers(Any);
-    let platform = core.config.platform_host();
-    let web = Web::new(PageConfig::new(&core.config, &ctx.settings.web));
-    let app = dispatch::router(caravel_api::router(core).layer(cors), relays, web, platform);
+    let config = core.config.clone();
+    let web = Web::new(PageConfig::new(&config, &ctx.settings.web));
+    let app = dispatch::router(caravel_api::router(core).layer(cors), relays, web, config);
 
     let port = ctx.settings.port;
     let listener = tokio::net::TcpListener::bind(("0.0.0.0", port)).await?;

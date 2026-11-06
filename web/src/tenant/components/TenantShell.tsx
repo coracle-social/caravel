@@ -13,6 +13,7 @@ import Modal from "@/shared/components/Modal"
 import BillingPrompts from "@/shared/components/BillingPrompts"
 import CopyNpub from "@/shared/components/CopyNpub"
 import { shortenNpub } from "@/shared/lib/pubkey"
+import { ADMIN_URL, TENANT_BASE, pathWithin } from "@/shared/lib/config"
 
 function SearchIcon() {
   return (
@@ -52,7 +53,8 @@ export default function TenantShell(props: { children: JSX.Element }) {
   const myResources = [{ href: "/relays", label: "My Relays" }]
 
   const navItemClass = (href: string) => {
-    const active = location.pathname === href || location.pathname.startsWith(`${href}/`)
+    const path = pathWithin(TENANT_BASE, location.pathname)
+    const active = path === href || path.startsWith(`${href}/`)
     return active
       ? "block rounded-lg bg-white/15 px-3 py-2 text-sm font-medium text-white"
       : "block rounded-lg px-3 py-2 text-sm text-white/80 hover:bg-white/10 hover:text-white"
@@ -77,7 +79,7 @@ export default function TenantShell(props: { children: JSX.Element }) {
             <For each={myResources}>{(item) => <li><A href={item.href} class={navItemClass(item.href)}>{item.label}</A></li>}</For>
             <Show when={identity()?.is_admin}>
               {/* The admin dashboard is another app, so the router mustn't take this link. */}
-              <li><a href="/admin" rel="external" class={navItemClass("/admin")}>Administration</a></li>
+              <li><a href={ADMIN_URL} rel="external" class={navItemClass("/admin")}>Administration</a></li>
             </Show>
           </ul>
         </div>

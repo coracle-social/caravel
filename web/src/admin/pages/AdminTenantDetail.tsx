@@ -218,7 +218,7 @@ export default function AdminTenantDetail() {
             <Show when={(loaded(relays)?.length ?? 0) > 0} fallback={<p class="text-gray-500">No relays.</p>}>
               <ul class="space-y-3">
                 <For each={loaded(relays) ?? []}>
-                  {(relay) => <RelayListItem relay={relay} href={`/admin/relays/${relay.id}`} />}
+                  {(relay) => <RelayListItem relay={relay} href={`/relays/${relay.id}`} />}
                 </For>
               </ul>
             </Show>
@@ -228,7 +228,7 @@ export default function AdminTenantDetail() {
             <Show when={(loaded(invoices)?.length ?? 0) > 0} fallback={<p class="text-gray-500">No invoices.</p>}>
               <ul class="space-y-3">
                 <For each={loaded(invoices) ?? []}>
-                  {(invoice) => <AdminInvoiceListItem invoice={invoice} href={`/admin/invoices/${invoice.id}`} />}
+                  {(invoice) => <AdminInvoiceListItem invoice={invoice} href={`/invoices/${invoice.id}`} />}
                 </For>
               </ul>
             </Show>

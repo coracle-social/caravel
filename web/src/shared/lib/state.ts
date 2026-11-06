@@ -9,6 +9,7 @@ import { account, setAccount } from "@/shared/lib/account"
 import { createTenant, getDraftInvoice, getIdentity, getTenant, listPayableInvoices, listPlans, listTenantInvoices, listTenantRelays, reconcileInvoice, reconcileTenant, type Plan } from "@/shared/lib/api"
 import { formatError } from "@/shared/lib/format"
 import { autopayConfigured } from "@/shared/lib/paymentMethod"
+import { TENANT_URL } from "@/shared/lib/config"
 
 export const eventStore = new EventStore()
 export const pool = new RelayPool()
@@ -106,7 +107,7 @@ export function ensureSessionTenant(): Promise<void> {
 
   const promise = (async () => {
     try {
-      await createTenant(window.location.origin + '/account')
+      await createTenant(TENANT_URL + '/account')
       if (account()?.pubkey === pubkey) setBillingPubkey(pubkey)
     } finally {
       if (tenantEnsure?.pubkey === pubkey) tenantEnsure = undefined

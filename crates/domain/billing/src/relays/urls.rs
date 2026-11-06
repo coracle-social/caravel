@@ -1,7 +1,7 @@
 //! The pages a membership is bought, renewed and accepted on.
 
 use super::Relay;
-use caravel_util::config::Config;
+use caravel_util::config::{Config, PORTAL_PATH};
 use caravel_util::error::{Error, Result};
 
 /// `page`, carrying the `return_url` a client asked to be sent back to. The portal
@@ -24,7 +24,7 @@ pub fn checkout_success_url(page: &str) -> String {
 impl Relay {
     /// A page of the relay's member portal, on its own host.
     pub fn portal_url(&self, path: &str) -> String {
-        format!("https://{}{path}", self.host())
+        format!("https://{}{PORTAL_PATH}{path}", self.host())
     }
 
     /// Where an invite is accepted: Flotilla's join page for the relay and code.

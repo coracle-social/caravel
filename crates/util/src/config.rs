@@ -3,10 +3,20 @@
 use crate::nostr::Key;
 use crate::urls::url_host;
 
+/// The path each relay's member portal is under, on the relay's own hosts.
+pub const PORTAL_PATH: &str = "/members";
+
 #[derive(Clone, Debug)]
 pub struct Config {
-    /// The platform's public url: the dashboards, and the API under `/api`.
-    pub platform_url: String,
+    /// The API's public base url, which NIP-98 `u` tags are checked against.
+    pub api_url: String,
+    /// The url the tenant dashboard is served at.
+    pub tenant_url: String,
+    /// The url the admin dashboard is served at.
+    pub admin_url: String,
+    /// The url the API answered at before sessions, which it still answers at,
+    /// accepting the sessionless NIP-98 signatures clients from then send.
+    pub legacy_api_url: Option<String>,
     pub admin_pubkeys: Vec<String>,
     /// Domains relay subdomains live under. A relay's canonical host is
     /// `<subdomain>.<domain>` for one of these.
@@ -20,16 +30,6 @@ pub struct Config {
 }
 
 impl Config {
-    /// The API's public base url, which NIP-98 `u` tags are checked against.
-    pub fn api_url(&self) -> String {
-        format!("{}/api", self.platform_url)
-    }
-
-    /// The host the dashboards and the API are served on.
-    pub fn platform_host(&self) -> String {
-        url_host(&self.platform_url)
-    }
-
     /// Whether `pubkey` administers the platform.
     pub fn is_admin(&self, pubkey: &str) -> bool {
         self.admin_pubkeys.iter().any(|admin| admin == pubkey)
@@ -87,8 +87,11 @@ impl Config {
         Ok(Some(domain))
     }
 
-    /// Whether `host` is the one the API and the dashboards are served on.
+    /// Whether `host` is one the API or the dashboards are served on.
     pub fn is_platform_host(&self, host: &str) -> bool {
-        self.platform_host() == host
+        [&self.api_url, &self.tenant_url, &self.admin_url]
+            .into_iter()
+            .chain(&self.legacy_api_url)
+            .any(|url| url_host(url) == host)
     }
 }

@@ -42,12 +42,17 @@ pub fn load() -> Result<Settings> {
     let platform_key =
         Key::from_hex(&robot_secret).context("ROBOT_SECRET is not a nostr secret key")?;
 
-    Ok(Settings {
+    let settings = Settings {
         port: optional("PORT")
             .map_or(Ok(2892), |port| port.parse().context("PORT is not a port"))?,
         database_url: required("DATABASE_URL")?,
         config: Config {
-            platform_url: required_url("PLATFORM_URL")?,
+            api_url: required_url("API_URL")?,
+            tenant_url: required_url("TENANT_URL")?,
+            admin_url: required_url("ADMIN_URL")?,
+            legacy_api_url: optional("LEGACY_API_URL")
+                .map(|_| required_url("LEGACY_API_URL"))
+                .transpose()?,
             admin_pubkeys: list("ADMIN_PUBKEYS"),
             relay_domains: required_list("RELAY_DOMAINS")?,
             platform_key,
@@ -94,7 +99,17 @@ pub fn load() -> Result<Settings> {
             forwarded_header: optional("FORWARDED_HEADER"),
             ..Default::default()
         },
-    })
+    };
+
+    let config = &settings.config;
+    let mut urls = vec![&config.api_url, &config.tenant_url, &config.admin_url];
+    urls.extend(&config.legacy_api_url);
+    urls.sort();
+    if let Some(pair) = urls.windows(2).find(|pair| pair[0] == pair[1]) {
+        bail!("{} is configured for two sections", pair[0]);
+    }
+
+    Ok(settings)
 }
 
 /// A percent from 0 to 100 with at most two decimal places, which is what Stripe

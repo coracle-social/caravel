@@ -39,7 +39,10 @@ async fn a_paid_relay_states_its_price_and_where_to_pay() {
     let relay = server.update(&relay, json!({"member_price": 500})).await;
     let paid = info(&server, &relay.canonical_host()).await;
     assert_eq!(paid["limitation"]["payment_required"], true);
-    assert_eq!(paid["payments_url"], format!("https://{}/", relay.host()));
+    assert_eq!(
+        paid["payments_url"],
+        format!("https://{}/members/", relay.host())
+    );
     assert_eq!(
         paid["fees"],
         json!({"subscription": [{"amount": 500, "unit": "USD", "period": 2592000}]})

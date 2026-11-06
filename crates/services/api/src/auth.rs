@@ -21,7 +21,11 @@ impl FromRequestParts<Core> for Authed {
     type Rejection = ApiError;
 
     async fn from_request_parts(parts: &mut Parts, core: &Core) -> Result<Self, Self::Rejection> {
-        let token = authorization(&parts.headers)?
+        let header = authorization(&parts.headers)?;
+        if header.starts_with("Nostr ") {
+            return Ok(Self(crate::legacy::authenticate(core, header)?));
+        }
+        let token = header
             .strip_prefix("Bearer ")
             .ok_or_else(|| Error::Unauthorized("authorization must be a bearer token".into()))?;
         let pubkey = sessions::find(core, token.trim())

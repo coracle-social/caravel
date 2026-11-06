@@ -177,7 +177,7 @@ async fn a_paying_member_is_admitted() -> Result<()> {
     assert_eq!(
         session.form["success_url"],
         format!(
-            "https://{}/?checkout={{CHECKOUT_SESSION_ID}}",
+            "https://{}/members/?checkout={{CHECKOUT_SESSION_ID}}",
             f.relay.host()
         )
     );

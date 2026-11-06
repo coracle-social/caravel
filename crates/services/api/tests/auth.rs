@@ -5,7 +5,7 @@ mod common;
 
 use axum::http::StatusCode;
 use caravel_core::testing;
-use caravel_core::testing::API_URL;
+use caravel_core::testing::{API_URL, LEGACY_API_URL};
 use common::*;
 use coracle_lib::keys::SecretKey;
 
@@ -115,10 +115,45 @@ async fn a_signature_is_no_substitute_for_a_session() {
     ] {
         let response = api.request("GET", "/identity", Some(&auth), None).await;
         assert_eq!(response.status, StatusCode::UNAUTHORIZED);
-        assert_eq!(
-            response.body["error"],
-            "authorization must be a bearer token"
-        );
+        assert_eq!(response.body["error"], "authorization url mismatch");
+    }
+}
+
+#[tokio::test]
+async fn a_fresh_signature_over_the_legacy_url_stands_in_for_a_session() {
+    let api = TestApi::new().await;
+    let user = SecretKey::generate();
+    let now = api.core.clock.now();
+
+    // Those clients sign one GET over the bare url and send it with every request.
+    let auth = testing::http_auth(&user, LEGACY_API_URL, "GET", now - 600);
+    let identity = api.request("GET", "/identity", Some(&auth), None).await;
+    assert_eq!(identity.status, StatusCode::OK);
+    assert_eq!(identity.body["data"]["pubkey"], user.public_key().to_hex());
+    let pubkey = api.create_tenant(&user).await;
+    let relays = api
+        .request(
+            "GET",
+            &format!("/tenants/{pubkey}/relays"),
+            Some(&auth),
+            None,
+        )
+        .await;
+    assert_eq!(relays.status, StatusCode::OK);
+
+    for (auth, error) in [
+        (
+            testing::http_auth(&user, LEGACY_API_URL, "GET", now - 3600),
+            "authorization is stale",
+        ),
+        (
+            testing::http_auth(&user, &format!("{LEGACY_API_URL}/identity"), "GET", now),
+            "authorization url mismatch",
+        ),
+    ] {
+        let response = api.request("GET", "/identity", Some(&auth), None).await;
+        assert_eq!(response.status, StatusCode::UNAUTHORIZED);
+        assert_eq!(response.body["error"], error);
     }
 }
 

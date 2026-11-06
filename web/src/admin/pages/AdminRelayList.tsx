@@ -31,7 +31,7 @@ export default function AdminRelayList() {
         <Show when={filtered().length > 0} fallback={<p class="py-20 text-center text-gray-500">No relays found.</p>}>
           <ul class="space-y-3">
             <For each={filtered()}>
-              {(relay) => <RelayListItem relay={relay} href={`/admin/relays/${relay.id}`} showTenant />}
+              {(relay) => <RelayListItem relay={relay} href={`/relays/${relay.id}`} showTenant />}
             </For>
           </ul>
         </Show>

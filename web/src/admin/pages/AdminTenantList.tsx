@@ -49,7 +49,7 @@ export default function AdminTenantList() {
                 const name = () => profileName(profile())
                 return (
                   <li>
-                    <A href={`/admin/tenants/${tenant.pubkey}`} class="block border border-gray-200 rounded-lg p-4 bg-white hover:border-gray-300">
+                    <A href={`/tenants/${tenant.pubkey}`} class="block border border-gray-200 rounded-lg p-4 bg-white hover:border-gray-300">
                       <div class="flex items-start justify-between gap-3">
                         <div class="min-w-0 flex items-start gap-3">
                           <Avatar profile={profile()} pubkey={tenant.pubkey} alt="Profile" class="h-10 w-10" fallbackClass="bg-gray-200 text-gray-500 text-xs" />

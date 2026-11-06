@@ -2,6 +2,7 @@
 //! through the same dispatcher the binary serves.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use axum::Router;
 use axum::body::Body;
@@ -9,15 +10,17 @@ use axum::http::{Request, StatusCode, header};
 use caravel_app::dispatch;
 use caravel_app::web::{PageConfig, Web};
 use caravel_billing::relays::Relay;
+use caravel_core::testing::{API_URL, LEGACY_API_URL, PLATFORM_HOST};
 use caravel_core::{Core, hosting, testing};
 use caravel_relay::{Relays, RelaysConfig};
+use caravel_util::config::Config;
 use coracle_lib::keys::SecretKey;
 use http_body_util::BodyExt;
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 use tower::ServiceExt;
 
-const PLATFORM: &str = "platform.test";
+const PLATFORM: &str = PLATFORM_HOST;
 const UNKNOWN: &str = "unknown.test";
 const BLOB: &str = "a3f2c1d4e5b6a7980123456789abcdef0123456789abcdef0123456789abcdef";
 
@@ -35,7 +38,12 @@ fn files() -> HashMap<String, Vec<u8>> {
 }
 
 /// The dispatcher the binary serves, over the relays as they stand now.
-async fn app(core: &Core, platform_url: &str) -> Router {
+async fn app(core: &Core) -> Router {
+    app_with(core, (*core.config).clone()).await
+}
+
+/// The dispatcher, with the sections at the urls `config` puts them.
+async fn app_with(core: &Core, config: Config) -> Router {
     let relays = Relays::load(
         core.clone(),
         RelaysConfig::default(),
@@ -43,13 +51,18 @@ async fn app(core: &Core, platform_url: &str) -> Router {
     )
     .await
     .unwrap();
-    let config = PageConfig {
-        api_url: format!("{platform_url}/api"),
+    let page = PageConfig {
+        api_url: config.api_url.clone(),
+        portal_path: caravel_util::config::PORTAL_PATH.to_string(),
         ..Default::default()
     };
-    let web = Web::with_files(config, files());
-    let platform = caravel_util::urls::url_host(platform_url);
-    dispatch::router(caravel_api::router(core.clone()), relays, web, platform)
+    let web = Web::with_files(page, files());
+    dispatch::router(
+        caravel_api::router(core.clone()),
+        relays,
+        web,
+        Arc::new(config),
+    )
 }
 
 struct Fixture {
@@ -90,7 +103,7 @@ async fn fixture() -> Fixture {
         .unwrap()
         .unwrap();
 
-    let app = app(&core, &format!("https://{PLATFORM}")).await;
+    let app = app(&core).await;
 
     Fixture {
         core,
@@ -184,31 +197,48 @@ async fn each_host_answers_for_what_it_serves() {
     );
     assert_eq!(get(app, PLATFORM, "/caravel.png", "*/*").await.body, "png");
     let shell = get(app, PLATFORM, "/", PAGE).await;
-    assert_eq!(shell.config()["api_url"], format!("https://{PLATFORM}/api"));
+    assert_eq!(shell.config()["api_url"], API_URL);
 
-    // The platform host serves the API under /api.
-    let plans = get(app, PLATFORM, "/api/plans", JSON).await;
-    assert_eq!(plans.status, StatusCode::OK);
-    assert!(plans.body.contains(r#""code":"ok""#));
+    // The API answers under its path, and at the url it had before sessions.
+    let legacy = caravel_util::urls::url_host(LEGACY_API_URL);
+    for (host, path) in [(PLATFORM, "/api/plans"), (legacy.as_str(), "/plans")] {
+        let plans = get(app, host, path, JSON).await;
+        assert_eq!(plans.status, StatusCode::OK, "{host}{path}");
+        assert!(plans.body.contains(r#""code":"ok""#));
+    }
 
-    // A relay's primary host serves its portal to browsers and its protocols to clients.
-    let portal = get(app, custom, "/", PAGE).await;
+    // A relay's primary host serves its portal under /members, and its protocols to clients.
+    let portal = get(app, custom, "/members", PAGE).await;
     assert_eq!(portal.shell().as_deref(), Some("portal"));
     assert_eq!(portal.config()["relay"]["relay_id"], f.relay.id);
     assert_eq!(portal.config()["relay"]["host"], custom);
+    assert_eq!(portal.config()["portal_path"], "/members");
     assert_eq!(
-        get(app, custom, "/invites/abc", PAGE)
+        get(app, custom, "/members/invites/abc", PAGE)
             .await
             .shell()
             .as_deref(),
         Some("portal")
     );
-    let info: Value = serde_json::from_str(&get(app, custom, "/", NIP11).await.body).unwrap();
-    assert_eq!(info["self"], f.relay.pubkey);
     assert_eq!(
         get(app, custom, "/assets/app.js", "*/*").await.body,
         "console.log(1)"
     );
+    let info: Value = serde_json::from_str(&get(app, custom, "/", NIP11).await.body).unwrap();
+    assert_eq!(info["self"], f.relay.pubkey);
+
+    // Its other hosts redirect portal pages to the primary one and serve the protocols as they are.
+    for alias in [canonical.as_str(), f.old.as_str()] {
+        let page = get(app, alias, "/members/join?x=1", PAGE).await;
+        assert_eq!(page.status, StatusCode::PERMANENT_REDIRECT, "{alias}");
+        assert_eq!(
+            page.location,
+            Some(format!("https://{custom}/members/join?x=1"))
+        );
+        let info: Value = serde_json::from_str(&get(app, alias, "/", NIP11).await.body).unwrap();
+        assert_eq!(info["self"], f.relay.pubkey, "{alias}");
+    }
+
     // A blob opened in a tab is a blob, not a page: this relay has no media.
     assert_eq!(
         get(app, custom, &format!("/{BLOB}.png"), PAGE).await.status,
@@ -218,15 +248,6 @@ async fn each_host_answers_for_what_it_serves() {
         get(app, custom, "/plans", JSON).await.status,
         StatusCode::NOT_FOUND
     );
-
-    // Its other hosts redirect pages to the primary one and serve the protocols as they are.
-    for alias in [canonical.as_str(), f.old.as_str()] {
-        let page = get(app, alias, "/join?x=1", PAGE).await;
-        assert_eq!(page.status, StatusCode::PERMANENT_REDIRECT, "{alias}");
-        assert_eq!(page.location, Some(format!("https://{custom}/join?x=1")));
-        let info: Value = serde_json::from_str(&get(app, alias, "/", NIP11).await.body).unwrap();
-        assert_eq!(info["self"], f.relay.pubkey, "{alias}");
-    }
 
     // An unknown host serves nothing but the health check and the TLS ask.
     assert_eq!(
@@ -268,7 +289,7 @@ async fn a_relay_cant_take_over_the_platforms_host() {
     .await
     .unwrap();
 
-    let app = app(&core, &format!("https://{PLATFORM}")).await;
+    let app = app(&core).await;
 
     assert_eq!(
         get(&app, PLATFORM, "/", PAGE).await.shell().as_deref(),
@@ -289,12 +310,48 @@ async fn a_relay_name_cant_break_out_of_the_portal_config() {
         .unwrap();
 
     // The fixture's relays reload from the bus; a fresh router reads the row now.
-    let app = app(&f.core, &format!("https://{PLATFORM}")).await;
+    let app = app(&f.core).await;
 
-    let portal = get(&app, &f.custom, "/", PAGE).await;
+    let portal = get(&app, &f.custom, "/members", PAGE).await;
     assert!(!portal.body.contains("</script><script>"));
     assert_eq!(
         portal.config()["relay"]["name"],
         "</script><script>alert(1)</script>"
+    );
+}
+
+#[tokio::test]
+async fn each_section_answers_at_the_url_it_is_given() {
+    let f = fixture().await;
+    let mut config = (*f.core.config).clone();
+    config.api_url = "https://api.platform.example".to_string();
+    config.tenant_url = "https://platform.example/dashboard".to_string();
+    config.admin_url = "https://admin.platform.example".to_string();
+    config.legacy_api_url = None;
+    let app = app_with(&f.core, config).await;
+
+    let plans = get(&app, "api.platform.example", "/plans", JSON).await;
+    assert_eq!(plans.status, StatusCode::OK);
+    for (host, path, shell) in [
+        ("platform.example", "/dashboard/relays/abc", "tenant"),
+        ("admin.platform.example", "/tenants", "admin"),
+    ] {
+        let page = get(&app, host, path, PAGE).await;
+        assert_eq!(page.shell().as_deref(), Some(shell), "{host}{path}");
+        // Each page asks for the built files at its host's root.
+        assert_eq!(
+            get(&app, host, "/assets/app.js", "*/*").await.body,
+            "console.log(1)"
+        );
+    }
+
+    // Nothing answers outside the sections, nor at the urls they used to have.
+    assert_eq!(
+        get(&app, "platform.example", "/", PAGE).await.status,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        get(&app, PLATFORM, "/api/plans", JSON).await.status,
+        StatusCode::NOT_FOUND
     );
 }

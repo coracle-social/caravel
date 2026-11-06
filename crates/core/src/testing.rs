@@ -16,11 +16,14 @@ use caravel_util::nostr::{Key, generate_keypair};
 /// The relay domain test relays are created under.
 pub const RELAY_DOMAIN: &str = "relay.test";
 
-/// The API base url test requests sign for: `/api` on the platform's host.
+/// The platform's host in tests, under the relay domain as a deployment may put it.
+pub const PLATFORM_HOST: &str = "app.relay.test";
+
+/// The API base url test requests sign for.
 pub const API_URL: &str = "http://app.relay.test/api";
 
-/// The platform's url in tests, under the relay domain as a deployment may put it.
-pub const PLATFORM_URL: &str = "http://app.relay.test";
+/// The url the API answered at before sessions.
+pub const LEGACY_API_URL: &str = "http://api.relay.test";
 
 const DEAD_RELAY: &str = "ws://127.0.0.1:1";
 
@@ -38,7 +41,10 @@ pub async fn core(admin_pubkey: &str) -> Core {
     let platform_key = Key::from_hex(&robot_secret).expect("invalid platform key");
 
     let config = Config {
-        platform_url: PLATFORM_URL.to_string(),
+        api_url: API_URL.to_string(),
+        tenant_url: "http://app.relay.test".to_string(),
+        admin_url: "http://app.relay.test/admin".to_string(),
+        legacy_api_url: Some(LEGACY_API_URL.to_string()),
         admin_pubkeys: vec![admin_pubkey.to_string()],
         relay_domains: vec![RELAY_DOMAIN.to_string()],
         member_fee_percent: 10.0,

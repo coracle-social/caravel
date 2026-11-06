@@ -7,19 +7,20 @@ import { signOut } from "@/shared/lib/api"
 import { PLATFORM_LOGO, PLATFORM_NAME } from "@/shared/lib/config"
 import { profileName, useProfileMetadata } from "@/shared/lib/profiles"
 import { shortenNpub } from "@/shared/lib/pubkey"
+import { ADMIN_BASE, ADMIN_URL, pathWithin } from "@/shared/lib/config"
 
 const SECTIONS = [
-  { href: "/admin/tenants", label: "Tenants" },
-  { href: "/admin/relays", label: "Relays" },
-  { href: "/admin/invoices", label: "Invoices" },
-  { href: "/admin/moderation", label: "Moderation" },
+  { href: "/tenants", label: "Tenants" },
+  { href: "/relays", label: "Relays" },
+  { href: "/invoices", label: "Invoices" },
+  { href: "/moderation", label: "Moderation" },
 ]
 
 // End the admin's session and return to the admin dashboard's sign-in.
 export async function signOutOfAdmin() {
   await signOut()
   localStorage.clear()
-  window.location.href = "/admin"
+  window.location.href = ADMIN_URL
 }
 
 // The admin dashboard's frame: a dark bar across the top with its sections and the
@@ -30,7 +31,7 @@ export default function AdminShell(props: { children: JSX.Element }) {
   const name = createMemo(() => profileName(metadata()) || shortenNpub(account()?.pubkey ?? ""))
 
   const sectionClass = (href: string) =>
-    location.pathname === href || location.pathname.startsWith(`${href}/`)
+    pathWithin(ADMIN_BASE, location.pathname) === href || pathWithin(ADMIN_BASE, location.pathname).startsWith(`${href}/`)
       ? "shrink-0 rounded-md bg-zinc-800 px-3 py-1.5 text-sm font-medium text-white"
       : "shrink-0 rounded-md px-3 py-1.5 text-sm text-zinc-400 hover:bg-zinc-900 hover:text-white"
 
@@ -40,7 +41,7 @@ export default function AdminShell(props: { children: JSX.Element }) {
     <div class="min-h-screen bg-zinc-100">
       <header class="sticky top-0 z-20 bg-zinc-950 text-zinc-100 shadow">
         <div class="mx-auto flex h-14 max-w-4xl items-center gap-6 px-4">
-          <A href="/admin/tenants" class="flex shrink-0 items-center gap-2 font-semibold">
+          <A href="/tenants" class="flex shrink-0 items-center gap-2 font-semibold">
             <img src={PLATFORM_LOGO} alt="" class="h-6 w-6 rounded" />
             <span class="hidden sm:inline">{PLATFORM_NAME}</span>
             <span class="rounded bg-amber-400 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-zinc-950">Admin</span>

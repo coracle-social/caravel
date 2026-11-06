@@ -50,6 +50,9 @@ enum Files {
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct PageConfig {
     pub api_url: String,
+    pub tenant_url: String,
+    pub admin_url: String,
+    pub portal_path: String,
     pub relay_domains: Vec<String>,
     pub platform_name: String,
     pub platform_logo: String,
@@ -59,7 +62,10 @@ pub struct PageConfig {
 impl PageConfig {
     pub fn new(config: &Config, web: &WebSettings) -> Self {
         Self {
-            api_url: config.api_url(),
+            api_url: config.api_url.clone(),
+            tenant_url: config.tenant_url.clone(),
+            admin_url: config.admin_url.clone(),
+            portal_path: caravel_util::config::PORTAL_PATH.to_string(),
             relay_domains: config.relay_domains.clone(),
             platform_name: web.platform_name.clone(),
             platform_logo: web.platform_logo.clone(),

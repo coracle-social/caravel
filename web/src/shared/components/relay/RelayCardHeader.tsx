@@ -25,6 +25,7 @@ type RelayCardHeaderProps = {
   showTenant?: boolean
   tenantProfile: () => ProfileContent | undefined
   editHref?: string
+  moderationHref?: string
   busy?: boolean
   onRequestDeactivate?: () => void
   onRequestReactivate?: () => void
@@ -41,7 +42,7 @@ export default function RelayCardHeader(props: RelayCardHeaderProps) {
 
   const showMenu = () =>
     r().purged_at == null &&
-    (props.editHref || props.onRequestDeactivate || props.onRequestReactivate ||
+    (props.editHref || props.moderationHref || props.onRequestDeactivate || props.onRequestReactivate ||
       props.onRequestManageCustomDomain || props.onRequestTransferData || props.onRequestErase ||
       props.onRequestPurge)
 
@@ -91,6 +92,15 @@ export default function RelayCardHeader(props: RelayCardHeaderProps) {
                   onClick={close}
                 >
                   Edit Details
+                </A>
+              </Show>
+              <Show when={props.moderationHref}>
+                <A
+                  href={props.moderationHref!}
+                  class="block px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                  onClick={close}
+                >
+                  Moderate content
                 </A>
               </Show>
               <Show when={props.onRequestManageCustomDomain}>

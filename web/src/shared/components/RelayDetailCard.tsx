@@ -127,6 +127,7 @@ type RelayDetailCardProps = {
   currentMembers?: number
   showTenant?: boolean
   editHref?: string
+  moderationHref?: string
   busy?: boolean
   onDeactivate?: () => void | Promise<void>
   onReactivate?: () => void | Promise<void>
@@ -218,6 +219,7 @@ export default function RelayDetailCard(props: RelayDetailCardProps) {
         showTenant={props.showTenant}
         tenantProfile={tenantProfile}
         editHref={props.editHref}
+        moderationHref={props.moderationHref}
         busy={busy()}
         onRequestDeactivate={props.onDeactivate ? () => setPendingAction("deactivate") : undefined}
         onRequestReactivate={props.onReactivate ? () => setPendingAction("reactivate") : undefined}

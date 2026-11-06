@@ -1,6 +1,7 @@
 import { createMemo, createResource, createSignal, For, onMount, Show } from "solid-js"
+import { useSearchParams } from "@solidjs/router"
 import { uniq } from "@welshman/lib"
-import { listModeration, listRelays, type ModerationItem } from "@/shared/lib/api"
+import { listModeration, listRelays, relayHost, type ModerationItem } from "@/shared/lib/api"
 import LoadingState from "@/shared/components/LoadingState"
 import ModerationListItem from "@/admin/components/ModerationListItem"
 import PageContainer from "@/shared/components/PageContainer"
@@ -46,11 +47,18 @@ export default function AdminModeration() {
   const [range, setRange] = createSignal<RangeValue>("1d")
   const [since, setSince] = createSignal<number | undefined>(startOfRange("1d"))
   const [relays] = createResource(listRelays)
+  const [searchParams, setSearchParams] = useSearchParams<{ relay?: string }>()
 
   // Bumped when the window changes, so a response for the old one is dropped.
   let generation = 0
 
   const relaysById = createMemo(() => new Map((loaded(relays) ?? []).map(relay => [relay.id, relay])))
+  const relayFilter = () => searchParams.relay
+  const relayFilterLabel = () => {
+    const id = relayFilter() ?? ""
+    const relay = relaysById().get(id)
+    return relay ? relayHost(relay) : id
+  }
   const metadata = useProfileMetadataMap(() => uniq(items().map(item => item.data.pubkey)))
 
   const loadMore = async () => {
@@ -103,7 +111,10 @@ export default function AdminModeration() {
   // Filters what has loaded, so paging back can find more matches.
   const filtered = createMemo(() => {
     const type = typeFilter()
-    const matching = type === "all" ? items() : items().filter(item => item.type === type)
+    const relayId = relayFilter()
+    const matching = items().filter(
+      item => (type === "all" || item.type === type) && (!relayId || item.relay_id === relayId),
+    )
     const q = query().trim()
 
     if (!q) return matching
@@ -144,6 +155,19 @@ export default function AdminModeration() {
                 </button>
               )}
             </For>
+            <Show when={relayFilter()}>
+              <span class="ml-2 inline-flex items-center gap-2 rounded-lg bg-gray-100 px-3 py-1.5 text-sm text-gray-700">
+                {relayFilterLabel()}
+                <button
+                  type="button"
+                  class="text-gray-500 hover:text-gray-900"
+                  aria-label="Show every relay"
+                  onClick={() => setSearchParams({ relay: undefined })}
+                >
+                  ×
+                </button>
+              </span>
+            </Show>
           </div>
           <div class="flex items-center gap-1">
             <For each={RANGES}>
@@ -188,7 +212,11 @@ export default function AdminModeration() {
           </Show>
           <Show
             when={!exhausted()}
-            fallback={<p class="text-sm text-gray-500">That's everything in this range.</p>}
+            fallback={
+              <Show when={filtered().length > 0}>
+                <p class="text-sm text-gray-500">That's everything in this range.</p>
+              </Show>
+            }
           >
             <button
               type="button"

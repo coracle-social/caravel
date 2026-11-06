@@ -105,10 +105,14 @@ export function canonicalHost(relay: Pick<Relay, "subdomain" | "zooid_domain">) 
   return `${relay.subdomain}.${relay.zooid_domain}`
 }
 
+// The host a relay answers on: its verified custom domain, or its canonical host.
+export function relayHost(relay: Pick<Relay, "subdomain" | "zooid_domain" | "custom_domain" | "custom_domain_verified">) {
+  return relay.custom_domain_verified && relay.custom_domain ? relay.custom_domain : canonicalHost(relay)
+}
+
 // The page a relay's members pay on: its portal, on its own host.
 export function relayPortalUrl(relay: Pick<Relay, "subdomain" | "zooid_domain" | "custom_domain" | "custom_domain_verified">) {
-  const host = relay.custom_domain_verified && relay.custom_domain ? relay.custom_domain : canonicalHost(relay)
-  return `https://${host}${PORTAL_PATH}/`
+  return `https://${relayHost(relay)}${PORTAL_PATH}/`
 }
 
 export type MembershipStatus = "pending" | "active" | "canceled" | "lapsed"

@@ -31,6 +31,7 @@ export default function AdminRelayDetail() {
               currentMembers={members()?.length}
               showTenant
               editHref={`/relays/${params.id}/edit`}
+              moderationHref={`/moderation?relay=${params.id}`}
               busy={busy()}
               onDeactivate={deactivate}
               onReactivate={reactivate}

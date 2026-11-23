@@ -121,6 +121,7 @@ impl Fixture {
             1,
             self.now(),
             &[],
+            |_| true,
         )
         .await
         .unwrap();
@@ -705,6 +706,7 @@ async fn deleting_a_room_removes_it_and_everything_in_it() -> Result<()> {
         10,
         f.now(),
         &[],
+        |_| true,
     )
     .await?;
     assert_eq!(
@@ -842,6 +844,7 @@ async fn published_state(f: &Fixture) -> BTreeMap<(u16, String), Vec<Vec<String>
         1000,
         f.now(),
         &[],
+        |_| true,
     )
     .await
     .unwrap()

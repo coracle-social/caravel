@@ -66,6 +66,7 @@ async fn stored(core: &Core, relay: &Relay, kind: u16, room_id: &str) -> Result<
         1000,
         NOW,
         &[],
+        |_| true,
     )
     .await?)
 }

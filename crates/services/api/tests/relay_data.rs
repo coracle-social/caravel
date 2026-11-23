@@ -176,7 +176,8 @@ async fn an_owner_or_an_admin_erases_a_relay() {
             &filter,
             10,
             now,
-            &[]
+            &[],
+            |_| true,
         )
         .await
         .unwrap()

@@ -107,29 +107,62 @@ pub async fn page_events(
     Ok(rows.iter().filter_map(stored_event).collect())
 }
 
-/// A relay's unexpired events matching a filter, newest first with ties broken by
-/// id, at most `max_limit` of them whatever the filter asks. Only `authed` sees
-/// the events they scheduled.
+/// A relay's unexpired events matching a filter that `is_visible` admits, newest
+/// first with ties broken by id, at most `max_limit` of them whatever the filter
+/// asks. The limit counts only admitted events, so hidden ones never shorten the
+/// result while older matches remain. Only `authed` sees the events they scheduled.
 pub async fn query_events(
-    db: impl PgExecutor<'_>,
+    db: impl PgExecutor<'_> + Copy,
     relay_id: &str,
     filter: &Filter,
     max_limit: usize,
     now: i64,
     authed: &[PublicKey],
+    is_visible: impl Fn(&EventHead) -> bool,
 ) -> Result<Vec<StoredEvent>> {
-    if filter.matches_nothing() || filter.limit == Some(0) {
+    let limit = filter.limit.unwrap_or(max_limit).min(max_limit);
+    if filter.matches_nothing() || limit == 0 {
         return Ok(Vec::new());
     }
 
-    let mut query = QueryBuilder::<Postgres>::new(SELECT_EVENT);
-    push_filter(&mut query, relay_id, filter, now, authed);
-    query
-        .push(" ORDER BY created_at DESC, id LIMIT ")
-        .push_bind(filter.limit.unwrap_or(max_limit).min(max_limit) as i64);
+    // Read in batches past the last row seen, each twice the last, until enough are admitted.
+    let mut found = Vec::new();
+    let mut batch = limit;
+    let mut after: Option<(i64, Vec<u8>)> = None;
+    loop {
+        let mut query = QueryBuilder::<Postgres>::new(SELECT_EVENT);
+        push_filter(&mut query, relay_id, filter, now, authed);
+        if let Some((created_at, id)) = &after {
+            query
+                .push(" AND (created_at < ")
+                .push_bind(*created_at)
+                .push(" OR (created_at = ")
+                .push_bind(*created_at)
+                .push(" AND id > ")
+                .push_bind(id.clone())
+                .push("))");
+        }
+        query
+            .push(" ORDER BY created_at DESC, id LIMIT ")
+            .push_bind(batch as i64);
 
-    let rows = query.build().fetch_all(db).await?;
-    Ok(rows.iter().filter_map(stored_event).collect())
+        let rows = query.build().fetch_all(db).await?;
+        let wanted = limit - found.len();
+        found.extend(
+            rows.iter()
+                .filter_map(stored_event)
+                .filter(|stored| is_visible(&stored.head))
+                .take(wanted),
+        );
+
+        match rows.last() {
+            Some(last) if found.len() < limit && rows.len() == batch => {
+                after = Some((last.get("created_at"), last.get("id")));
+                batch = (batch * 2).min(max_limit);
+            }
+            _ => return Ok(found),
+        }
+    }
 }
 
 /// The heads of a relay's unexpired events matching a filter, oldest first, or

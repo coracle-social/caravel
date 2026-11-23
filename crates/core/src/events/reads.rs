@@ -12,8 +12,8 @@ use caravel_relays::notify::Notification;
 use caravel_relays::policy::RelaySnapshot;
 use caravel_util::error::Result;
 
-/// A relay's unexpired events matching `filter`, newest first, for a client's
-/// subscription. Only `authed` sees the events they scheduled.
+/// A relay's unexpired events matching `filter` that `is_visible` admits, newest
+/// first, for a client's subscription. Only `authed` sees the events they scheduled.
 pub async fn query_events(
     core: &Core,
     relay_id: &str,
@@ -21,6 +21,7 @@ pub async fn query_events(
     max_limit: usize,
     now: i64,
     authed: &[PublicKey],
+    is_visible: impl Fn(&EventHead) -> bool,
 ) -> Result<Vec<StoredEvent>> {
     caravel_relays::events::queries::query_events(
         core.db.pool(),
@@ -29,6 +30,7 @@ pub async fn query_events(
         max_limit,
         now,
         authed,
+        is_visible,
     )
     .await
 }

@@ -435,6 +435,11 @@ impl RelayInstance {
                 self.limits.max_limit,
                 now,
                 &authed,
+                |head| {
+                    state
+                        .snapshot
+                        .can_any_receive(&authed, EventFacts::of_head(head), now)
+                },
             )
             .await
             .map_err(|error| {
@@ -444,13 +449,7 @@ impl RelayInstance {
             })?;
 
             for stored in found {
-                if !sent.insert(stored.head.id)
-                    || !state.snapshot.can_any_receive(
-                        &authed,
-                        EventFacts::of_head(&stored.head),
-                        now,
-                    )
-                {
+                if !sent.insert(stored.head.id) {
                     continue;
                 }
 

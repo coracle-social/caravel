@@ -280,7 +280,8 @@ async fn erasing_a_purged_relay_removes_what_it_held() -> Result<()> {
             &filter,
             10,
             NOW,
-            &[]
+            &[],
+            |_| true,
         )
         .await?
         .is_empty()
@@ -308,7 +309,8 @@ async fn erasing_a_purged_relay_removes_what_it_held() -> Result<()> {
             &filter,
             10,
             NOW,
-            &[]
+            &[],
+            |_| true,
         )
         .await?
         .is_empty()
@@ -389,6 +391,7 @@ async fn erasing_a_relay_keeps_only_its_settings_and_owner() -> Result<()> {
         10,
         NOW,
         &[],
+        |_| true,
     )
     .await?;
     assert_eq!(

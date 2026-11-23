@@ -80,6 +80,7 @@ pub async fn load_subscriptions(
         MAX_SUBSCRIPTIONS,
         core.clock.now(),
         &[],
+        |_| true,
     )
     .await?;
 

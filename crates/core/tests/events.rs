@@ -11,7 +11,7 @@ use caravel_util::error::Error;
 use caravel_util::nostr::kinds;
 use coracle_lib::events::Event;
 use coracle_lib::filters::{Filter, TagMatch};
-use coracle_lib::keys::SecretKey;
+use coracle_lib::keys::{PublicKey, SecretKey};
 use futures_util::future::join_all;
 
 const NOW: i64 = 1_800_000_000;
@@ -66,6 +66,7 @@ async fn query(core: &Core, relay_id: &str, filter: Filter) -> Result<Vec<Stored
         1000,
         NOW,
         &[],
+        |_| true,
     )
     .await?
     .into_iter()
@@ -270,6 +271,7 @@ async fn limits_cap_results_and_ties_break_on_id() -> Result<()> {
         3,
         NOW,
         &[],
+        |_| true,
     )
     .await?;
     assert_eq!(capped.len(), 3);
@@ -280,9 +282,82 @@ async fn limits_cap_results_and_ties_break_on_id() -> Result<()> {
         3,
         NOW,
         &[],
+        |_| true,
     )
     .await?;
     assert_eq!(capped.len(), 3);
+    Ok(())
+}
+
+/// The ids of the events a filter matches, newest first, as a reader who can't see
+/// `hidden`'s events reads them.
+async fn visible_ids(
+    core: &Core,
+    relay_id: &str,
+    filter: Filter,
+    max_limit: usize,
+    hidden: &PublicKey,
+) -> Result<Vec<[u8; 32]>> {
+    Ok(caravel_relays::events::queries::query_events(
+        core.db.pool(),
+        relay_id,
+        &filter,
+        max_limit,
+        NOW,
+        &[],
+        |head| head.pubkey != *hidden,
+    )
+    .await?
+    .iter()
+    .map(|event| event.head.id)
+    .collect())
+}
+
+#[tokio::test]
+async fn a_limit_counts_only_the_events_the_reader_may_see() -> Result<()> {
+    let core = core().await;
+    let (relay, _) = create_relay(&core).await;
+    let seen = SecretKey::generate();
+    let unseen = SecretKey::generate();
+    let hidden = unseen.public_key();
+
+    // More hidden events than a page holds, newer than any the reader may see.
+    for i in 0..5 {
+        save(
+            &core,
+            &relay.id,
+            &sign_event(&unseen, 1, &i.to_string(), &[], NOW),
+        )
+        .await?;
+    }
+    // Seen and hidden events sharing a second, so batches break between ties.
+    let mut tied = Vec::new();
+    for i in 0..4 {
+        let content = i.to_string();
+        save(
+            &core,
+            &relay.id,
+            &sign_event(&unseen, 1, &content, &[], NOW - 1),
+        )
+        .await?;
+        let event = sign_event(&seen, 1, &content, &[], NOW - 1);
+        save(&core, &relay.id, &event).await?;
+        tied.push(event.id.to_bytes());
+    }
+    tied.sort();
+    let older = sign_event(&seen, 1, "older", &[], NOW - 2);
+    save(&core, &relay.id, &older).await?;
+
+    let page = visible_ids(&core, &relay.id, kinds(&[1]).add_limit(3), 1000, &hidden).await?;
+    assert_eq!(page, tied[..3]);
+
+    // A page runs short only when nothing older is left.
+    let page = visible_ids(&core, &relay.id, kinds(&[1]).add_limit(10), 1000, &hidden).await?;
+    assert_eq!(page, [&tied[..], &[older.id.to_bytes()]].concat());
+
+    // The relay's cap still bounds what is sent.
+    let page = visible_ids(&core, &relay.id, kinds(&[1]).add_limit(100), 2, &hidden).await?;
+    assert_eq!(page, tied[..2]);
     Ok(())
 }
 
@@ -559,6 +634,7 @@ async fn expired_events_are_hidden_then_swept() -> Result<()> {
         1000,
         NOW + 60,
         &[],
+        |_| true,
     )
     .await?;
     assert!(later.is_empty());

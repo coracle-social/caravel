@@ -491,3 +491,51 @@ async fn a_private_room_is_read_only_by_its_members_stored_and_live() {
         .await;
     assert_eq!(stored.len(), 1);
 }
+
+#[tokio::test]
+async fn a_limited_read_fills_its_page_past_rooms_the_reader_cant_see() {
+    let server = Server::start().await;
+    let (relay, owner) = server.relay().await;
+    let host = relay.canonical_host();
+    let outsider = SecretKey::generate();
+    management::add_member(&server.core, &relay, &outsider.public_key().to_hex())
+        .await
+        .unwrap();
+    server.relays.reload(&relay.id).await.unwrap();
+
+    let now = server.now();
+    let mut admin = server.connect(&host).await;
+    admin.auth(&owner, now).await;
+    let lobby = sign_event(&owner, 9007, "", &[&["h", "lobby"]], now - 100);
+    assert!(admin.publish(&lobby).await.0);
+    let secret = sign_event(
+        &owner,
+        9007,
+        "",
+        &[&["h", "secret"], &["private"]],
+        now - 100,
+    );
+    assert!(admin.publish(&secret).await.0);
+
+    // Everything newer than the lobby's messages is in the private room.
+    let public =
+        [50, 60].map(|age| sign_event(&owner, 9, "for everyone", &[&["h", "lobby"]], now - age));
+    for event in &public {
+        assert!(admin.publish(event).await.0);
+    }
+    for age in 1..=3 {
+        let private = sign_event(&owner, 9, "for members", &[&["h", "secret"]], now - age);
+        assert!(admin.publish(&private).await.0);
+    }
+
+    let mut outside = server.connect(&host).await;
+    outside.auth(&outsider, now).await;
+    let (stored, _) = outside
+        .req("space", json!({"kinds": [9], "limit": 2}))
+        .await;
+    let ids: Vec<&str> = stored
+        .iter()
+        .map(|event| event["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, public.map(|event| event.id.to_hex()));
+}

@@ -211,6 +211,10 @@ async fn dispatch(session: &Session, instance: &RelayInstance, text: &str) {
             subscription_id,
             filters,
         } => instance.on_count(session, subscription_id, filters).await,
+        ClientMessage::Select {
+            subscription_id,
+            query,
+        } => instance.on_select(session, subscription_id, query).await,
         ClientMessage::NegOpen {
             subscription_id,
             filter,
@@ -250,7 +254,7 @@ fn malformed(text: &str, error: &serde_json::Error) -> RelayMessage {
             Some(id) => refused_event(id, &refusal),
             None => notice,
         },
-        (Some("REQ" | "COUNT"), Some(id)) => {
+        (Some("REQ" | "COUNT" | "SELECT"), Some(id)) => {
             match serde_json::from_str::<SubscriptionId>(id.get()) {
                 Ok(id) => refused_subscription(id, &refusal),
                 Err(_) => notice,

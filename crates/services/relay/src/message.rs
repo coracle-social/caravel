@@ -5,6 +5,7 @@
 use std::fmt;
 
 use caravel_relays::policy::Refusal;
+use caravel_relays::select::{Column, Options, Query, Selection};
 use coracle_lib::events::{Event, EventId};
 use coracle_lib::filters::Filter;
 use serde::de::{self, IgnoredAny, SeqAccess, Visitor};
@@ -134,6 +135,12 @@ pub enum ClientMessage {
         subscription_id: SubscriptionId,
         filters: Vec<Filter>,
     },
+    /// `["SELECT", <id>, <filter>, <columns>, <options>]` — group and aggregate
+    /// the events a filter matches, returning rows rather than events.
+    Select {
+        subscription_id: SubscriptionId,
+        query: Query,
+    },
     /// `["AUTH", <event>]` — answer an auth challenge (NIP-42).
     Auth(Event),
     /// `["NEG-OPEN", <id>, <filter>, <message>]` — start reconciling a set of
@@ -184,6 +191,19 @@ impl<'de> Visitor<'de> for ClientMessageVisitor {
                 subscription_id: required(&mut seq, 1)?,
                 message: required(&mut seq, 2)?,
             },
+            "SELECT" => {
+                let subscription_id = required(&mut seq, 1)?;
+                let filter = required(&mut seq, 2)?;
+                let columns: Vec<Column> = required(&mut seq, 3)?;
+                let options: Option<Options> = seq.next_element()?;
+                let query = Query::new(filter, columns, options.unwrap_or_default())
+                    .map_err(de::Error::custom)?;
+
+                ClientMessage::Select {
+                    subscription_id,
+                    query,
+                }
+            }
             "REQ" | "COUNT" => {
                 let subscription_id = required(&mut seq, 1)?;
                 let mut filters = Vec::new();
@@ -247,6 +267,12 @@ pub enum RelayMessage {
         subscription_id: SubscriptionId,
         count: u64,
     },
+    /// `["SELECT", <id>, <rows>, <samples>]` — a `SELECT`'s rows, and its samples
+    /// when it asked for them.
+    Select {
+        subscription_id: SubscriptionId,
+        selection: Selection,
+    },
     /// `["CLOSED", <id>, <message>]` — the relay ended a subscription.
     Closed {
         subscription_id: SubscriptionId,
@@ -291,6 +317,7 @@ impl RelayMessage {
             RelayMessage::Ok { .. } => "OK",
             RelayMessage::Eose(..) => "EOSE",
             RelayMessage::Count { .. } => "COUNT",
+            RelayMessage::Select { .. } => "SELECT",
             RelayMessage::Closed { .. } => "CLOSED",
             RelayMessage::Notice(_) => "NOTICE",
             RelayMessage::Auth { .. } => "AUTH",
@@ -340,6 +367,20 @@ impl Serialize for RelayMessage {
                 seq.serialize_element("COUNT")?;
                 seq.serialize_element(subscription_id)?;
                 seq.serialize_element(&serde_json::json!({ "count": count }))?;
+                seq.end()
+            }
+            RelayMessage::Select {
+                subscription_id,
+                selection,
+            } => {
+                let length = if selection.samples.is_some() { 4 } else { 3 };
+                let mut seq = serializer.serialize_seq(Some(length))?;
+                seq.serialize_element("SELECT")?;
+                seq.serialize_element(subscription_id)?;
+                seq.serialize_element(&selection.rows)?;
+                if let Some(samples) = &selection.samples {
+                    seq.serialize_element(samples)?;
+                }
                 seq.end()
             }
             RelayMessage::Closed {
@@ -491,6 +532,41 @@ mod tests {
     }
 
     #[test]
+    fn reads_a_select() {
+        let message = parse(
+            r#"["SELECT","s",{"kinds":[7]},["content",{"count":"id"}],{"order":[1,"desc"],"salt":"x","sample":8}]"#,
+        );
+
+        let ClientMessage::Select { query, .. } = message else {
+            panic!("expected a SELECT");
+        };
+
+        assert_eq!(query.columns.len(), 2);
+        assert_eq!(query.options.order.map(|order| order.column), Some(1));
+        assert_eq!(query.options.sample.map(|sample| sample.size), Some(8));
+        assert!(matches!(
+            parse(r#"["SELECT","s",{},["content"]]"#),
+            ClientMessage::Select { .. }
+        ));
+    }
+
+    #[test]
+    fn refuses_a_select_whose_columns_or_options_dont_fit() {
+        for message in [
+            r#"["SELECT","s",{},[]]"#,
+            r#"["SELECT","s",{},[{"median":"id"}]]"#,
+            r#"["SELECT","s",{},["content"],{"order":[1,"asc"]}]"#,
+            r#"["SELECT","s",{},["content"],{"sample":8}]"#,
+            r#"["SELECT","s",{},["content"],{"unknown":true}]"#,
+        ] {
+            assert!(
+                serde_json::from_str::<ClientMessage>(message).is_err(),
+                "{message}"
+            );
+        }
+    }
+
+    #[test]
     fn reads_a_close() {
         assert_eq!(
             parse(r#"["CLOSE","sub"]"#),
@@ -555,6 +631,27 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&message).unwrap(),
             r#"["COUNT","c",{"count":42}]"#
+        );
+    }
+
+    #[test]
+    fn writes_a_select_with_samples_only_when_asked() {
+        let rows = vec![vec![serde_json::json!("+"), serde_json::json!(3)]];
+        let message = |samples| RelayMessage::Select {
+            subscription_id: SubscriptionId::new("s").unwrap(),
+            selection: Selection {
+                rows: rows.clone(),
+                samples,
+            },
+        };
+
+        assert_eq!(
+            serde_json::to_string(&message(None)).unwrap(),
+            r#"["SELECT","s",[["+",3]]]"#
+        );
+        assert_eq!(
+            serde_json::to_string(&message(Some(vec![vec![None, Some(vec![])]]))).unwrap(),
+            r#"["SELECT","s",[["+",3]],[[null,[]]]]"#
         );
     }
 

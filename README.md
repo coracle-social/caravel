@@ -7,7 +7,7 @@ A multi-tenant platform for hosting Nostr community relays. Tenants create relay
 The backend is a Rust workspace whose crates are layered, each depending only on those listed before it. The vocabulary is in [DOMAIN.md](./DOMAIN.md).
 
 - `crates/util` — the foundations: the errors, configuration, clock, change bus, serde helpers, hex and hashing, the Postgres pool, migrations and transactions, and clients for Stripe, Nostr relays and keys, Nostr Wallet Connect, the robot's Nostr identity, DNS, media storage, LiveKit and outbound HTTP
-- `crates/domain/relays` — the relay itself: NIP-11 profiles, access, NIP-86 management, rooms, media, events, calls, transfer, notifications and the policy rules
+- `crates/domain/relays` — the relay itself: NIP-11 profiles, access, NIP-86 management, rooms, media, events, `SELECT` queries, calls, transfer, notifications and the policy rules
 - `crates/domain/billing` — tenants and relays as billable entities: plans, billing periods, invoices, payouts, usage, and the memberships relays sell
 - `crates/domain/operations` — what operators need to run the platform: the moderation feed and web sessions
 - `crates/core` — the adapter between the services and the domain: the `Core` handle and the subsystems (hosting, management, ingest, memberships, billing and the rest) that run the domain's rules against it

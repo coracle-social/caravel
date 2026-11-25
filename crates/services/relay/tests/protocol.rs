@@ -48,6 +48,15 @@ async fn the_information_document_describes_the_relay() {
     assert_eq!(document["limitation"]["auth_required"], true);
     assert_eq!(document["limitation"]["created_at_upper_limit"], 30);
     assert_eq!(document["limitation"]["restricted_writes"], true);
+    let defaults = RelayLimits::default();
+    assert_eq!(
+        document["select"],
+        json!({
+            "max_events": defaults.max_select_events,
+            "max_rows": defaults.max_select_rows,
+            "max_sample": defaults.max_select_sample,
+        })
+    );
     let nips = document["supported_nips"].as_array().unwrap().clone();
     for nip in [
         json!(1),
@@ -653,6 +662,191 @@ async fn count(client: &mut Client, filters: Vec<Value>) -> Value {
     let mut message = vec![json!("COUNT"), json!("c")];
     message.extend(filters);
     client.send(Value::Array(message)).await;
+    client.recv_skipping_auth().await.unwrap()
+}
+
+#[tokio::test]
+async fn a_select_is_admitted_and_filtered_like_a_subscription() {
+    let server = Server::start().await;
+    let (relay, owner) = server.relay().await;
+    let host = relay.canonical_host();
+    let (insider, outsider) = (SecretKey::generate(), SecretKey::generate());
+    for member in [&insider, &outsider] {
+        caravel_core::management::add_member(&server.core, &relay, &member.public_key().to_hex())
+            .await
+            .unwrap();
+    }
+    server.relays.reload(&relay.id).await.unwrap();
+
+    let mut admin = server.connect(&host).await;
+    admin.auth(&owner, server.now()).await;
+    let create = sign_event(
+        &owner,
+        9007,
+        "",
+        &[&["h", "secret"], &["private"]],
+        server.now(),
+    );
+    assert!(admin.publish(&create).await.0);
+    for (i, content) in ["+", "+", "🔥"].into_iter().enumerate() {
+        let note = sign_event(&owner, 1, content, &[&["n", &i.to_string()]], server.now());
+        assert!(admin.publish(&note).await.0);
+    }
+    let mut inside = server.connect(&host).await;
+    inside.auth(&insider, server.now()).await;
+    let join = sign_event(&insider, 9021, "", &[&["h", "secret"]], server.now());
+    assert!(inside.publish(&join).await.0);
+    for content in ["+", "🔥"] {
+        let post = sign_event(&insider, 9, content, &[&["h", "secret"]], server.now());
+        assert!(inside.publish(&post).await.0);
+    }
+
+    // A private room's posts count only for its members.
+    let query = json!([
+        "SELECT",
+        "s",
+        {"kinds": [1, 9]},
+        ["content", {"count": "id"}, {"distinct": "pubkey"}],
+        {"order": [0, "asc"]}
+    ]);
+    assert_eq!(
+        select(&mut inside, query.clone()).await,
+        json!(["SELECT", "s", [["+", 3, 2], ["🔥", 2, 2]]])
+    );
+    let mut outside = server.connect(&host).await;
+    outside.auth(&outsider, server.now()).await;
+    assert_eq!(
+        select(&mut outside, query.clone()).await,
+        json!(["SELECT", "s", [["+", 2, 1], ["🔥", 1, 1]]])
+    );
+
+    // A reader who may not subscribe may not select either.
+    let mut stranger = server.connect(&host).await;
+    stranger.auth(&SecretKey::generate(), server.now()).await;
+    assert_eq!(
+        select(&mut stranger, query.clone()).await,
+        json!([
+            "CLOSED",
+            "s",
+            "restricted: you are not a member of this relay"
+        ])
+    );
+    let mut anonymous = server.connect(&host).await;
+    anonymous.send(query).await;
+    assert_eq!(
+        anonymous.recv().await.unwrap(),
+        json!(["AUTH", anonymous.challenge])
+    );
+    let refused = anonymous.recv().await.unwrap();
+    assert_eq!(refused[0], "CLOSED");
+    assert!(
+        refused[2].as_str().unwrap().starts_with("auth-required:"),
+        "{refused}"
+    );
+}
+
+#[tokio::test]
+async fn a_select_samples_its_items_and_refuses_what_it_may_not_answer() {
+    let core = testing::core(&SecretKey::generate().public_key().to_hex()).await;
+    let config = RelaysConfig {
+        limits: RelayLimits {
+            max_select_events: 3,
+            max_select_rows: 2,
+            max_select_sample: 4,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let server = Server::start_configured(core, config).await;
+    let (relay, owner) = server.relay().await;
+    let mut client = server.connect(&relay.canonical_host()).await;
+    client.auth(&owner, server.now()).await;
+    let mut ids = Vec::new();
+    for content in ["a", "b", "c"] {
+        let note = sign_event(&owner, 1, content, &[], server.now());
+        assert!(client.publish(&note).await.0);
+        ids.push(note.id.to_hex());
+    }
+    let notes = json!({"kinds": [1]});
+
+    // A sample smaller than its size holds every item.
+    let sampled = select(
+        &mut client,
+        json!(["SELECT", "s", notes, [{"count": "id"}], {"salt": "x", "sample": 4}]),
+    )
+    .await;
+    assert_eq!(sampled[2], json!([[3]]));
+    let mut entries: Vec<String> = serde_json::from_value(sampled[3][0][0].clone()).unwrap();
+    entries.sort();
+    ids.sort();
+    assert_eq!(entries, ids);
+
+    // Rows past the limit are refused, unless the query keeps only as many as allowed.
+    let by_content = json!(["content", {"count": "id"}]);
+    assert_eq!(
+        select(&mut client, json!(["SELECT", "s", notes, by_content])).await,
+        json!(["CLOSED", "s", "blocked: a SELECT may return at most 2 rows"])
+    );
+    assert_eq!(
+        select(
+            &mut client,
+            json!(["SELECT", "s", notes, by_content, {"order": [0, "asc"], "limit": 2}])
+        )
+        .await,
+        json!(["SELECT", "s", [["a", 1], ["b", 1]]])
+    );
+    assert_eq!(
+        select(
+            &mut client,
+            json!(["SELECT", "s", notes, [{"count": "id"}], {"salt": "x", "sample": 5}])
+        )
+        .await,
+        json!(["CLOSED", "s", "blocked: a sample may hold at most 4 items"])
+    );
+    assert_eq!(
+        select(
+            &mut client,
+            json!(["SELECT", "s", notes, ["lower(content)"]])
+        )
+        .await,
+        json!(["CLOSED", "s", "invalid: unknown function lower"])
+    );
+    let malformed = select(&mut client, json!(["SELECT", "s", notes, []])).await;
+    assert_eq!(malformed[0], "CLOSED");
+    assert!(
+        malformed[2].as_str().unwrap().starts_with("invalid:"),
+        "{malformed}"
+    );
+
+    // More events than a SELECT may cover are refused, unless the filter's limit keeps
+    // within it.
+    let fourth = sign_event(&owner, 1, "d", &[], server.now());
+    assert!(client.publish(&fourth).await.0);
+    assert_eq!(
+        select(
+            &mut client,
+            json!(["SELECT", "s", notes, [{"count": "id"}]])
+        )
+        .await,
+        json!([
+            "CLOSED",
+            "s",
+            "blocked: a SELECT may cover at most 3 events"
+        ])
+    );
+    assert_eq!(
+        select(
+            &mut client,
+            json!(["SELECT", "s", {"kinds": [1], "limit": 3}, [{"count": "id"}]])
+        )
+        .await,
+        json!(["SELECT", "s", [[3]]])
+    );
+}
+
+/// Send a `SELECT`, returning the relay's answer.
+async fn select(client: &mut Client, message: Value) -> Value {
+    client.send(message).await;
     client.recv_skipping_auth().await.unwrap()
 }
 

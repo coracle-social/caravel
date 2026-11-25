@@ -9,6 +9,7 @@ use caravel_billing::relays::Relay;
 use caravel_core::{Core, ingest};
 use caravel_relays::events::{EventHead, Saved, StoredEvent};
 use caravel_relays::policy::{EventFacts, Refusal, RelaySnapshot};
+use caravel_relays::select::{Plan, Query, Selection};
 use caravel_util::error::Error;
 use caravel_util::nostr::Key;
 use caravel_util::nostr::kinds;
@@ -528,6 +529,93 @@ impl RelayInstance {
         })?;
 
         Ok(state.snapshot.count_visible(&authed, &groups, now))
+    }
+
+    pub async fn on_select(
+        &self,
+        session: &Session,
+        subscription_id: SubscriptionId,
+        query: Query,
+    ) {
+        match self.select(session, query).await {
+            Ok(selection) => {
+                session
+                    .send(RelayMessage::Select {
+                        subscription_id,
+                        selection,
+                    })
+                    .await;
+            }
+            Err(refusal) => {
+                self.offer_challenge(session, &refusal).await;
+                session
+                    .send(refused_subscription(subscription_id, &refusal))
+                    .await;
+            }
+        }
+    }
+
+    /// A `SELECT`'s rows over the events its filter matches that the connection may
+    /// see: admitted and filtered by the rules a subscription is, and evaluated off
+    /// the async runtime.
+    async fn select(&self, session: &Session, query: Query) -> Result<Selection, Refusal> {
+        let state = self.state();
+        let authed = self.connections.pubkeys(session);
+        let now = self.core.clock.now();
+        let limits = &self.limits;
+
+        state.snapshot.admit_req(&authed)?;
+        if let Some(sample) = &query.options.sample
+            && sample.size > limits.max_select_sample
+        {
+            return Err(Refusal::blocked(format!(
+                "a sample may hold at most {} items",
+                limits.max_select_sample
+            )));
+        }
+
+        let plan = Plan::new(query).map_err(Refusal::invalid)?;
+        let events = caravel_core::events::query_events(
+            &self.core,
+            &state.relay.id,
+            &plan.query.filter,
+            limits.max_select_events + 1,
+            now,
+            &authed,
+            |head| {
+                state
+                    .snapshot
+                    .can_any_receive(&authed, EventFacts::of_head(head), now)
+            },
+        )
+        .await
+        .map_err(|error| {
+            tracing::warn!(relay = %state.relay.id, error = %error, "select failed");
+            Refusal::Error("the query could not be run")
+        })?;
+
+        if events.len() > limits.max_select_events {
+            return Err(Refusal::blocked(format!(
+                "a SELECT may cover at most {} events",
+                limits.max_select_events
+            )));
+        }
+
+        let selection = tokio::task::spawn_blocking(move || plan.evaluate(&events))
+            .await
+            .map_err(|error| {
+                tracing::warn!(relay = %state.relay.id, error = %error, "select failed");
+                Refusal::Error("the query could not be run")
+            })?;
+
+        if selection.rows.len() > limits.max_select_rows {
+            return Err(Refusal::blocked(format!(
+                "a SELECT may return at most {} rows",
+                limits.max_select_rows
+            )));
+        }
+
+        Ok(selection)
     }
 
     pub async fn on_auth(&self, session: &Session, event: Event) {

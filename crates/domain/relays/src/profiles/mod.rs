@@ -36,6 +36,12 @@ pub struct Limits {
     pub max_limit: usize,
     pub max_subscriptions: usize,
     pub max_message_size: usize,
+    /// The most events one `SELECT` evaluates.
+    pub max_select_events: usize,
+    /// The most rows one `SELECT` returns.
+    pub max_select_rows: usize,
+    /// The largest sample a `SELECT` may ask for.
+    pub max_select_sample: usize,
 }
 
 /// The document, given what the relay says about itself and what the process
@@ -59,6 +65,11 @@ pub fn document(info: &RelayInfo, limits: &Limits, max_subid_length: usize) -> V
             "max_subscriptions": limits.max_subscriptions,
             "max_message_length": limits.max_message_size,
             "max_subid_length": max_subid_length,
+        },
+        "select": {
+            "max_events": limits.max_select_events,
+            "max_rows": limits.max_select_rows,
+            "max_sample": limits.max_select_sample,
         },
     });
 

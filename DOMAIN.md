@@ -55,6 +55,7 @@ Relays (`crates/domain/relays`) is the relay itself. It knows nothing about bill
 - **Rooms** — room-level bans, membership, metadata.
 - **Media** — blossom file storage.
 - **Events** — nostr event storage.
+- **Select** — `SELECT` queries, which group and aggregate events with JMESPath expressions.
 - **Calls** — LiveKit calls.
 - **Transfer** — imports and exports.
 - **Notify** — messages the relay sends members over their connections.

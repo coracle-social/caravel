@@ -56,6 +56,12 @@ pub struct RelayLimits {
     pub max_limit: usize,
     /// The most events one reconciliation covers.
     pub max_sync: usize,
+    /// The most events one `SELECT` evaluates.
+    pub max_select_events: usize,
+    /// The most rows one `SELECT` returns.
+    pub max_select_rows: usize,
+    /// The largest sample a `SELECT` may ask for.
+    pub max_select_sample: usize,
     /// New connections allowed per minute from one address, allowing a minute's
     /// worth at once.
     pub connections_per_minute: u32,
@@ -70,6 +76,9 @@ impl Default for RelayLimits {
             max_filters: 200,
             max_limit: 1000,
             max_sync: 20_000,
+            max_select_events: 50_000,
+            max_select_rows: 10_000,
+            max_select_sample: 1024,
             connections_per_minute: 60,
         }
     }
@@ -437,10 +446,14 @@ async fn root(
 
     if wants_relay_info(headers) {
         let state = route.instance.state();
+        let config = &relays.inner.config;
         let limits = caravel_relays::profiles::Limits {
-            max_limit: relays.inner.config.limits.max_limit,
-            max_subscriptions: relays.inner.config.limits.max_subscriptions,
-            max_message_size: relays.inner.config.transport.max_message_size,
+            max_limit: config.limits.max_limit,
+            max_subscriptions: config.limits.max_subscriptions,
+            max_message_size: config.transport.max_message_size,
+            max_select_events: config.limits.max_select_events,
+            max_select_rows: config.limits.max_select_rows,
+            max_select_sample: config.limits.max_select_sample,
         };
         return nip11::response(nip11::document(
             &state.relay.info(state.accepting_payment),

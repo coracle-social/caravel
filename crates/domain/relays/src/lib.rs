@@ -10,4 +10,5 @@ pub mod notify;
 pub mod policy;
 pub mod profiles;
 pub mod rooms;
+pub mod select;
 pub mod transfer;

@@ -109,6 +109,11 @@ impl RelayInstance {
         self.state().relay.id.clone()
     }
 
+    /// How many clients are connected to the relay.
+    pub fn connection_count(&self) -> usize {
+        self.connections.count()
+    }
+
     pub fn state(&self) -> Arc<InstanceState> {
         self.state
             .read()

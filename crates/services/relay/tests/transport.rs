@@ -67,7 +67,17 @@ async fn a_client_that_stops_reading_is_dropped() {
         .send(json!(["REQ", "everything", {"kinds": [1]}]))
         .await;
 
-    // Without reading, the client fills the socket and stalls the relay's writes.
-    tokio::time::sleep(Duration::from_secs(3)).await;
+    // The client never reads, so the relay's writes stall once the socket fills, whenever that is.
+    let instance = server.relays.instance(&relay.id).unwrap();
+    let released = tokio::time::timeout(Duration::from_secs(30), async {
+        while instance.connection_count() > 0 {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await;
+    assert!(
+        released.is_ok(),
+        "the relay kept a client that stopped reading"
+    );
     assert!(client.is_dropped().await);
 }

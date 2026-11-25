@@ -185,6 +185,11 @@ impl Connections {
         matched
     }
 
+    /// How many connections are open.
+    pub fn count(&self) -> usize {
+        self.read().len()
+    }
+
     /// Every connection authenticated as a pubkey.
     pub fn sessions_for(&self, pubkey: &PublicKey) -> Vec<Session> {
         self.read()

@@ -715,7 +715,7 @@ async fn a_select_is_admitted_and_filtered_like_a_subscription() {
     let query = json!([
         "SELECT",
         "s",
-        {"kinds": [1, 9]},
+        [{"kinds": [1, 9]}],
         ["content", {"count": "id"}, {"distinct": "pubkey"}],
         {"order": [0, "asc"]}
     ]);
@@ -731,7 +731,7 @@ async fn a_select_is_admitted_and_filtered_like_a_subscription() {
     );
 
     // A filter's limit keeps the newest events the reader may see.
-    let newest = json!(["SELECT", "s", {"kinds": [1, 9], "limit": 2}, [{"count": "id"}]]);
+    let newest = json!(["SELECT", "s", [{"kinds": [1, 9], "limit": 2}], [{"count": "id"}]]);
     assert_eq!(
         select(&mut outside, newest.clone()).await,
         json!(["SELECT", "s", [[2]]])
@@ -789,7 +789,7 @@ async fn a_select_samples_its_items_and_refuses_what_it_may_not_answer() {
         assert!(client.publish(&note).await.0);
         ids.push(note.id.to_hex());
     }
-    let notes = json!({"kinds": [1]});
+    let notes = json!([{"kinds": [1]}]);
 
     // A sample smaller than its size holds every item.
     let sampled = select(
@@ -886,10 +886,61 @@ async fn a_select_samples_its_items_and_refuses_what_it_may_not_answer() {
     assert_eq!(
         select(
             &mut client,
-            json!(["SELECT", "s", {"kinds": [1], "limit": 3}, [{"count": "id"}]])
+            json!(["SELECT", "s", [{"kinds": [1], "limit": 3}], [{"count": "id"}]])
         )
         .await,
         json!(["SELECT", "s", [[3]]])
+    );
+}
+
+#[tokio::test]
+async fn a_select_counts_an_event_its_filters_share_once() {
+    let core = testing::core(&SecretKey::generate().public_key().to_hex()).await;
+    let config = RelaysConfig {
+        limits: RelayLimits {
+            max_filters: 2,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let server = Server::start_configured(core, config).await;
+    let (relay, owner) = server.relay().await;
+    let mut client = server.connect(&relay.canonical_host()).await;
+    client.auth(&owner, server.now()).await;
+    for (kind, content, tags) in [
+        (1, "both", vec![vec!["t", "x"]]),
+        (1, "notes", vec![]),
+        (7, "tagged", vec![vec!["t", "x"]]),
+    ] {
+        let tags: Vec<&[&str]> = tags.iter().map(Vec::as_slice).collect();
+        let event = sign_event(&owner, kind, content, &tags, server.now());
+        assert!(client.publish(&event).await.0);
+    }
+
+    // The note both filters match counts once, and each filter's other event counts.
+    let filters = json!([{"kinds": [1]}, {"#t": ["x"]}]);
+    assert_eq!(
+        select(
+            &mut client,
+            json!(["SELECT", "s", filters, [{"count": "id"}]])
+        )
+        .await,
+        json!(["SELECT", "s", [[3]]])
+    );
+
+    // A SELECT may have as many filters as a REQ.
+    let filters = json!([{"kinds": [1]}, {"#t": ["x"]}, {"kinds": [7]}]);
+    assert_eq!(
+        select(
+            &mut client,
+            json!(["SELECT", "s", filters, [{"count": "id"}]])
+        )
+        .await,
+        json!([
+            "CLOSED",
+            "s",
+            "blocked: a request may have at most 2 filters"
+        ])
     );
 }
 

@@ -445,7 +445,7 @@ mod tests {
     fn run(events: &[StoredEvent], columns: &[&str], options: Value) -> Selection {
         let columns = columns.iter().map(|text| column(text)).collect();
         let options: Options = serde_json::from_value(options).unwrap();
-        let query = Query::new(Filter::new(), columns, options).unwrap();
+        let query = Query::new(vec![Filter::new()], columns, options).unwrap();
         let aggregation = Plan::new(query)
             .unwrap()
             .start(1000)
@@ -614,7 +614,7 @@ mod tests {
         let query = || {
             let columns = vec![column(r#""content""#), column(r#"{"count": "id"}"#)];
             let options = serde_json::from_value(json!({"latest": "pubkey"})).unwrap();
-            Plan::new(Query::new(Filter::new(), columns, options).unwrap()).unwrap()
+            Plan::new(Query::new(vec![Filter::new()], columns, options).unwrap()).unwrap()
         };
         let whole = query()
             .start(100)
@@ -648,7 +648,7 @@ mod tests {
         let a = SecretKey::generate().public_key();
         let gather = |events: &[StoredEvent], columns: &[&str]| {
             let columns = columns.iter().map(|text| column(text)).collect();
-            let query = Query::new(Filter::new(), columns, Options::default()).unwrap();
+            let query = Query::new(vec![Filter::new()], columns, Options::default()).unwrap();
             Plan::new(query).unwrap().start(10).gather(events).err()
         };
         let notes: Vec<StoredEvent> = (0..11)
@@ -848,8 +848,15 @@ mod tests {
             ..Options::default()
         };
 
-        assert!(Query::new(Filter::new(), vec![column(r#"{"count": "id"}"#)], order).is_err());
-        assert!(Query::new(Filter::new(), Vec::new(), Options::default()).is_err());
+        assert!(
+            Query::new(
+                vec![Filter::new()],
+                vec![column(r#"{"count": "id"}"#)],
+                order
+            )
+            .is_err()
+        );
+        assert!(Query::new(vec![Filter::new()], Vec::new(), Options::default()).is_err());
         assert!(serde_json::from_value::<Options>(json!({"sample": 10})).is_err());
         assert!(serde_json::from_value::<Column>(json!({"median": "id"})).is_err());
         assert_eq!(

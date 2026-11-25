@@ -4,11 +4,12 @@ use coracle_lib::filters::Filter;
 use serde::Deserialize;
 use serde_json::Value;
 
-/// A SELECT: the events matching `filter`, grouped and aggregated as `columns` say,
-/// with `options` narrowing the events, ordering the rows and asking for samples.
+/// A SELECT: the events matching any of `filters`, grouped and aggregated as
+/// `columns` say, with `options` narrowing the events, ordering the rows and asking
+/// for samples.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Query {
-    pub filter: Filter,
+    pub filters: Vec<Filter>,
     pub columns: Vec<Column>,
     pub options: Options,
 }
@@ -74,8 +75,16 @@ pub struct Selection {
 }
 
 impl Query {
-    /// A query, if its columns and options agree with each other.
-    pub fn new(filter: Filter, columns: Vec<Column>, options: Options) -> Result<Self, String> {
+    /// A query, if it has filters and its columns and options agree with each other.
+    pub fn new(
+        filters: Vec<Filter>,
+        columns: Vec<Column>,
+        options: Options,
+    ) -> Result<Self, String> {
+        if filters.is_empty() {
+            return Err("a SELECT needs at least one filter".to_string());
+        }
+
         if columns.is_empty() {
             return Err("a SELECT needs at least one column".to_string());
         }
@@ -90,7 +99,7 @@ impl Query {
         }
 
         Ok(Self {
-            filter,
+            filters,
             columns,
             options,
         })

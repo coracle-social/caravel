@@ -556,10 +556,11 @@ impl RelayInstance {
         }
     }
 
-    /// A `SELECT`'s rows over the events its filter matches that the connection may
-    /// see, admitted and filtered by the rules a subscription is. Events are read a page
-    /// at a time and gathered off the async runtime, so a `SELECT` holds one page of
-    /// events and the rows it has gathered.
+    /// A `SELECT`'s rows over the events its filters match that the connection may
+    /// see, admitted and filtered by the rules a subscription is. Each filter selects
+    /// what it would for a `REQ`, and an event several filters select counts once.
+    /// Events are read a page at a time and gathered off the async runtime, so a
+    /// `SELECT` holds one page of events, the ids it has gathered and its rows.
     async fn select(&self, session: &Session, query: Query) -> Result<Selection, Refusal> {
         let state = self.state();
         let authed = self.connections.pubkeys(session);
@@ -572,6 +573,13 @@ impl RelayInstance {
         };
 
         state.snapshot.admit_req(&authed)?;
+        if query.filters.len() > limits.max_filters {
+            return Err(Refusal::blocked(format!(
+                "a request may have at most {} filters",
+                limits.max_filters
+            )));
+        }
+
         if let Some(sample) = &query.options.sample
             && sample.size > limits.max_select_sample
         {
@@ -582,62 +590,73 @@ impl RelayInstance {
         }
 
         let plan = Plan::new(query).map_err(Refusal::invalid)?;
-        let filter = plan.query.filter.clone();
-        let wanted = filter.limit.unwrap_or(usize::MAX);
+        let filters = plan.query.filters.clone();
         let mut aggregation = plan.start(limits.max_select_groups);
-        let (mut after, mut read, mut taken) = (None, 0, 0);
-        loop {
-            if Instant::now() > deadline {
-                return Err(Refusal::blocked(format!(
-                    "a SELECT may take at most {} seconds",
-                    limits.select_timeout.as_secs()
-                )));
-            }
+        let mut gathered = HashSet::new();
+        let mut read = 0;
+        for filter in &filters {
+            let wanted = filter.limit.unwrap_or(usize::MAX);
+            let (mut after, mut taken) = (None, 0);
+            loop {
+                if Instant::now() > deadline {
+                    return Err(Refusal::blocked(format!(
+                        "a SELECT may take at most {} seconds",
+                        limits.select_timeout.as_secs()
+                    )));
+                }
 
-            // One more than the reading limit allows, to tell a filter that matches too
-            // many events from one that matches exactly that many.
-            let batch = limits
-                .max_limit
-                .min(wanted - taken)
-                .min(limits.max_select_events + 1 - read);
-            let (page, next) = caravel_core::events::scan_events(
-                &self.core,
-                &state.relay.id,
-                &filter,
-                after,
-                batch,
-                now,
-                &authed,
-            )
-            .await
-            .map_err(|error| failed(&error))?;
-
-            read += page.len();
-            if read > limits.max_select_events {
-                return Err(Refusal::blocked(format!(
-                    "a SELECT may read at most {} events",
-                    limits.max_select_events
-                )));
-            }
-
-            let visible: Vec<StoredEvent> = page
-                .into_iter()
-                .filter(|stored| {
-                    state
-                        .snapshot
-                        .can_any_receive(&authed, EventFacts::of_head(&stored.head), now)
-                })
-                .take(wanted - taken)
-                .collect();
-            taken += visible.len();
-            aggregation = tokio::task::spawn_blocking(move || aggregation.gather(&visible))
+                // One more than the reading limit allows, to tell filters that match too
+                // many events from ones that match exactly that many.
+                let batch = limits
+                    .max_limit
+                    .min(wanted - taken)
+                    .min(limits.max_select_events + 1 - read);
+                let (page, next) = caravel_core::events::scan_events(
+                    &self.core,
+                    &state.relay.id,
+                    filter,
+                    after,
+                    batch,
+                    now,
+                    &authed,
+                )
                 .await
-                .map_err(|error| failed(&error))?
-                .map_err(|error| Refusal::blocked(error.to_string()))?;
+                .map_err(|error| failed(&error))?;
 
-            match next {
-                Some(next) if taken < wanted => after = Some(next),
-                _ => break,
+                read += page.len();
+                if read > limits.max_select_events {
+                    return Err(Refusal::blocked(format!(
+                        "a SELECT may read at most {} events",
+                        limits.max_select_events
+                    )));
+                }
+
+                let visible: Vec<StoredEvent> = page
+                    .into_iter()
+                    .filter(|stored| {
+                        state.snapshot.can_any_receive(
+                            &authed,
+                            EventFacts::of_head(&stored.head),
+                            now,
+                        )
+                    })
+                    .take(wanted - taken)
+                    .collect();
+                taken += visible.len();
+
+                let unseen: Vec<StoredEvent> = visible
+                    .into_iter()
+                    .filter(|stored| gathered.insert(stored.head.id))
+                    .collect();
+                aggregation = tokio::task::spawn_blocking(move || aggregation.gather(&unseen))
+                    .await
+                    .map_err(|error| failed(&error))?
+                    .map_err(|error| Refusal::blocked(error.to_string()))?;
+
+                match next {
+                    Some(next) if taken < wanted => after = Some(next),
+                    _ => break,
+                }
             }
         }
 

@@ -135,8 +135,8 @@ pub enum ClientMessage {
         subscription_id: SubscriptionId,
         filters: Vec<Filter>,
     },
-    /// `["SELECT", <id>, <filter>, <columns>, <options>]` — group and aggregate
-    /// the events a filter matches, returning rows rather than events.
+    /// `["SELECT", <id>, [<filter>...], <columns>, <options>]` — group and aggregate
+    /// the events any of the filters match, returning rows rather than events.
     Select {
         subscription_id: SubscriptionId,
         query: Query,
@@ -193,10 +193,10 @@ impl<'de> Visitor<'de> for ClientMessageVisitor {
             },
             "SELECT" => {
                 let subscription_id = required(&mut seq, 1)?;
-                let filter = required(&mut seq, 2)?;
+                let filters: Vec<Filter> = required(&mut seq, 2)?;
                 let columns: Vec<Column> = required(&mut seq, 3)?;
                 let options: Option<Options> = seq.next_element()?;
-                let query = Query::new(filter, columns, options.unwrap_or_default())
+                let query = Query::new(filters, columns, options.unwrap_or_default())
                     .map_err(de::Error::custom)?;
 
                 ClientMessage::Select {
@@ -534,30 +534,33 @@ mod tests {
     #[test]
     fn reads_a_select() {
         let message = parse(
-            r#"["SELECT","s",{"kinds":[7]},["content",{"count":"id"}],{"order":[1,"desc"],"salt":"x","sample":8}]"#,
+            r#"["SELECT","s",[{"kinds":[7]},{"kinds":[1]}],["content",{"count":"id"}],{"order":[1,"desc"],"salt":"x","sample":8}]"#,
         );
 
         let ClientMessage::Select { query, .. } = message else {
             panic!("expected a SELECT");
         };
 
+        assert_eq!(query.filters.len(), 2);
         assert_eq!(query.columns.len(), 2);
         assert_eq!(query.options.order.map(|order| order.column), Some(1));
         assert_eq!(query.options.sample.map(|sample| sample.size), Some(8));
         assert!(matches!(
-            parse(r#"["SELECT","s",{},["content"]]"#),
+            parse(r#"["SELECT","s",[{}],["content"]]"#),
             ClientMessage::Select { .. }
         ));
     }
 
     #[test]
-    fn refuses_a_select_whose_columns_or_options_dont_fit() {
+    fn refuses_a_select_whose_filters_columns_or_options_dont_fit() {
         for message in [
-            r#"["SELECT","s",{},[]]"#,
-            r#"["SELECT","s",{},[{"median":"id"}]]"#,
-            r#"["SELECT","s",{},["content"],{"order":[1,"asc"]}]"#,
-            r#"["SELECT","s",{},["content"],{"sample":8}]"#,
-            r#"["SELECT","s",{},["content"],{"unknown":true}]"#,
+            r#"["SELECT","s",{},["content"]]"#,
+            r#"["SELECT","s",[],["content"]]"#,
+            r#"["SELECT","s",[{}],[]]"#,
+            r#"["SELECT","s",[{}],[{"median":"id"}]]"#,
+            r#"["SELECT","s",[{}],["content"],{"order":[1,"asc"]}]"#,
+            r#"["SELECT","s",[{}],["content"],{"sample":8}]"#,
+            r#"["SELECT","s",[{}],["content"],{"unknown":true}]"#,
         ] {
             assert!(
                 serde_json::from_str::<ClientMessage>(message).is_err(),

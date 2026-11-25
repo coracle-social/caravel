@@ -8,7 +8,7 @@ mod expression;
 mod model;
 mod sample;
 
-pub use evaluate::Plan;
+pub use evaluate::{Aggregation, Plan, TooManyGroups};
 pub use expression::Expression;
 pub use model::*;
 pub use sample::rank;

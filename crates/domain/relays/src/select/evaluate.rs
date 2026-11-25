@@ -1,5 +1,6 @@
-use std::cmp::Ordering;
+use std::cmp::{Ordering, Reverse};
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::fmt;
 
 use jmespath::Rcvar;
 use serde_json::{Value, json};
@@ -17,6 +18,27 @@ pub struct Plan {
     latest: Option<Expression>,
 }
 
+/// A query partway through its events: the rows gathered so far, and with `latest`,
+/// the newest event for each value, which can only be gathered once every event has
+/// been seen.
+pub struct Aggregation {
+    plan: Plan,
+    max_groups: usize,
+    rows: BTreeMap<String, Row>,
+    newest: HashMap<String, Selected>,
+}
+
+/// More groups than a query may gather.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TooManyGroups(pub usize);
+
+/// An event that passed `where`, as gathering reads it.
+struct Selected {
+    created_at: i64,
+    id: [u8; 32],
+    variable: Rcvar,
+}
+
 /// What one row has gathered for one aggregate column.
 struct Cell {
     count: u64,
@@ -31,6 +53,12 @@ struct Cell {
 struct Row {
     groups: Vec<Value>,
     cells: Vec<Option<Cell>>,
+}
+
+impl fmt::Display for TooManyGroups {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "a SELECT may gather at most {} groups", self.0)
+    }
 }
 
 impl Plan {
@@ -57,15 +85,247 @@ impl Plan {
         })
     }
 
-    /// The rows the query computes over the events its filter selected.
-    pub fn evaluate(&self, events: &[StoredEvent]) -> Selection {
-        let sample = self.query.options.sample.as_ref();
-        let grouping: Vec<usize> = (0..self.columns.len())
-            .filter(|&i| self.columns[i].0.is_none())
+    /// Start gathering rows, refusing to gather more than `max_groups` of them.
+    pub fn start(self, max_groups: usize) -> Aggregation {
+        let mut aggregation = Aggregation {
+            plan: self,
+            max_groups,
+            rows: BTreeMap::new(),
+            newest: HashMap::new(),
+        };
+        if aggregation.grouping().is_empty() {
+            let row = aggregation.new_row(Vec::new());
+            aggregation.rows.insert(canonical(&json!([])), row);
+        }
+        aggregation
+    }
+}
+
+impl Aggregation {
+    /// Gather a batch of the events the query's filter selected. Batches may come in
+    /// any order.
+    pub fn gather(mut self, events: &[StoredEvent]) -> Result<Self, TooManyGroups> {
+        for event in events {
+            let Some(variable) = to_variable(&event.to_json(false)) else {
+                continue;
+            };
+            let passes = self
+                .plan
+                .r#where
+                .as_ref()
+                .is_none_or(|condition| is_truthy(&condition.evaluate(&variable)));
+            if !passes {
+                continue;
+            }
+
+            let selected = Selected {
+                created_at: event.head.created_at,
+                id: event.head.id,
+                variable,
+            };
+            let Some(latest) = &self.plan.latest else {
+                self.place(&selected)?;
+                continue;
+            };
+
+            let key = canonical(&latest.evaluate(&selected.variable));
+            let is_newer = self.newest.get(&key).is_none_or(|current| {
+                (selected.created_at, Reverse(selected.id))
+                    > (current.created_at, Reverse(current.id))
+            });
+            if is_newer {
+                self.newest.insert(key, selected);
+            }
+        }
+
+        Ok(self)
+    }
+
+    /// The rows the query computes over every event gathered.
+    pub fn finish(mut self) -> Result<Selection, TooManyGroups> {
+        for selected in std::mem::take(&mut self.newest).into_values() {
+            self.place(&selected)?;
+        }
+
+        let Aggregation { plan, rows, .. } = self;
+        let mut finished: Vec<(Vec<Value>, Vec<Option<Cell>>)> = rows
+            .into_values()
+            .map(|row| {
+                let mut groups = row.groups.into_iter();
+                let values = plan
+                    .columns
+                    .iter()
+                    .zip(&row.cells)
+                    .map(|((aggregate, _), cell)| match (aggregate, cell) {
+                        (Some(aggregate), Some(cell)) => value_of(*aggregate, cell),
+                        _ => groups.next().unwrap_or(Value::Null),
+                    })
+                    .collect();
+                (values, row.cells)
+            })
             .collect();
-        let new_row = |groups: Vec<Value>| Row {
+
+        if let Some(order) = plan.query.options.order {
+            // Sums sort by their exact value, which large ones lose once written as strings
+            let is_sum = plan.columns[order.column].0 == Some(Aggregate::Sum);
+            finished.sort_by(|(a, a_cells), (b, b_cells)| {
+                let sum =
+                    |cells: &[Option<Cell>]| cells[order.column].as_ref().map(|cell| cell.sum);
+                let ordering = match (&a[order.column], &b[order.column]) {
+                    _ if is_sum => sum(a_cells).cmp(&sum(b_cells)),
+                    (Value::Null, Value::Null) => return Ordering::Equal,
+                    (Value::Null, _) => return Ordering::Greater,
+                    (_, Value::Null) => return Ordering::Less,
+                    (a, b) => compare(a, b),
+                };
+                if order.descending {
+                    ordering.reverse()
+                } else {
+                    ordering
+                }
+            });
+        }
+        if let Some(limit) = plan.query.options.limit {
+            finished.truncate(limit);
+        }
+
+        let (rows, cells): (Vec<_>, Vec<_>) = finished.into_iter().unzip();
+        let samples = plan.query.options.sample.as_ref().map(|_| {
+            cells
+                .into_iter()
+                .map(|cells| {
+                    cells
+                        .into_iter()
+                        .map(|cell| cell.and_then(|cell| cell.sampler).map(Sampler::drain))
+                        .collect()
+                })
+                .collect()
+        });
+
+        Ok(Selection { rows, samples })
+    }
+
+    /// Add one event to the rows its groups name, creating rows up to the limit.
+    fn place(&mut self, selected: &Selected) -> Result<(), TooManyGroups> {
+        let grouping = self.grouping();
+        let lists: Vec<Vec<Value>> = grouping
+            .iter()
+            .map(|&i| distinct(self.plan.columns[i].1.evaluate(&selected.variable)))
+            .collect();
+
+        // An event's combinations are distinct rows, so too many is too many groups.
+        let combinations = lists
+            .iter()
+            .fold(1usize, |product, list| product.saturating_mul(list.len()));
+        if combinations > self.max_groups {
+            return Err(TooManyGroups(self.max_groups));
+        }
+
+        let combos = lists.iter().fold(vec![Vec::new()], |combos, list| {
+            combos
+                .iter()
+                .flat_map(|combo| {
+                    list.iter().map(move |group| {
+                        let mut next: Vec<Value> = combo.clone();
+                        next.push(group.clone());
+                        next
+                    })
+                })
+                .collect()
+        });
+        let sample = self.plan.query.options.sample.clone();
+        let id = hex::encode(selected.id);
+        let event_rank = sample
+            .as_ref()
+            .map(|sample| rank(&sample.salt, &selected.id));
+        let values: Vec<Option<Value>> = self
+            .plan
+            .columns
+            .iter()
+            .map(|(aggregate, expression)| {
+                aggregate.map(|_| expression.evaluate(&selected.variable))
+            })
+            .collect();
+
+        for combo in combos {
+            let key = canonical(&Value::Array(combo.clone()));
+            if !self.rows.contains_key(&key) {
+                if self.rows.len() >= self.max_groups {
+                    return Err(TooManyGroups(self.max_groups));
+                }
+                let row = self.new_row(combo);
+                self.rows.insert(key.clone(), row);
+            }
+            let row = self.rows.get_mut(&key).expect("the row was just inserted");
+
+            for (i, (aggregate, _)) in self.plan.columns.iter().enumerate() {
+                let (Some(aggregate), Some(cell), Some(value)) =
+                    (aggregate, row.cells[i].as_mut(), &values[i])
+                else {
+                    continue;
+                };
+
+                match aggregate {
+                    Aggregate::Count if !value.is_null() => {
+                        cell.count += 1;
+                        if let (Some(sampler), Some(rank)) = (&mut cell.sampler, event_rank) {
+                            sampler.offer(rank, &id, || json!(id));
+                        }
+                    }
+                    Aggregate::Sum => {
+                        if let Some(amount) = as_integer(value) {
+                            cell.sum += i128::from(amount);
+                            if let (Some(sampler), Some(rank), true) =
+                                (&mut cell.sampler, event_rank, amount > 0)
+                            {
+                                sampler.offer(rank / amount as f64, &id, || json!([id, amount]));
+                            }
+                        }
+                    }
+                    Aggregate::Min => {
+                        if let Some(number) = value.as_f64() {
+                            cell.min = Some(cell.min.map_or(number, |min| min.min(number)));
+                        }
+                    }
+                    Aggregate::Max => {
+                        if let Some(number) = value.as_f64() {
+                            cell.max = Some(cell.max.map_or(number, |max| max.max(number)));
+                        }
+                    }
+                    Aggregate::Distinct => {
+                        for element in distinct(value.clone()) {
+                            let key = canonical(&element);
+                            if element.is_null() || !cell.values.insert(key.clone()) {
+                                continue;
+                            }
+                            if let (Some(sampler), Some(sample)) = (&mut cell.sampler, &sample) {
+                                let rank = rank(&sample.salt, key.as_bytes());
+                                sampler.offer(rank, &key, || json!([element, id]));
+                            }
+                        }
+                    }
+                    Aggregate::Count => {}
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// The indexes of the grouping columns.
+    fn grouping(&self) -> Vec<usize> {
+        (0..self.plan.columns.len())
+            .filter(|&i| self.plan.columns[i].0.is_none())
+            .collect()
+    }
+
+    /// An empty row for some groups.
+    fn new_row(&self, groups: Vec<Value>) -> Row {
+        let sample = self.plan.query.options.sample.as_ref();
+        Row {
             groups,
             cells: self
+                .plan
                 .columns
                 .iter()
                 .map(|(aggregate, _)| {
@@ -81,171 +341,7 @@ impl Plan {
                     })
                 })
                 .collect(),
-        };
-
-        let mut rows: BTreeMap<String, Row> = BTreeMap::new();
-        if grouping.is_empty() {
-            rows.insert(canonical(&json!([])), new_row(Vec::new()));
         }
-
-        for (event, variable) in self.select(events) {
-            let id = event.head.id_hex();
-            let event_rank = sample.map(|sample| rank(&sample.salt, &event.head.id));
-            let values: Vec<Option<Value>> = self
-                .columns
-                .iter()
-                .map(|(aggregate, expression)| aggregate.map(|_| expression.evaluate(&variable)))
-                .collect();
-            let combos = grouping.iter().fold(vec![Vec::new()], |combos, &i| {
-                let groups = distinct(self.columns[i].1.evaluate(&variable));
-                combos
-                    .iter()
-                    .flat_map(|combo| {
-                        groups.iter().map(move |group| {
-                            let mut next: Vec<Value> = combo.clone();
-                            next.push(group.clone());
-                            next
-                        })
-                    })
-                    .collect()
-            });
-
-            for combo in combos {
-                let row = rows
-                    .entry(canonical(&Value::Array(combo.clone())))
-                    .or_insert_with(|| new_row(combo));
-
-                for (i, (aggregate, _)) in self.columns.iter().enumerate() {
-                    let (Some(aggregate), Some(cell), Some(value)) =
-                        (aggregate, row.cells[i].as_mut(), &values[i])
-                    else {
-                        continue;
-                    };
-
-                    match aggregate {
-                        Aggregate::Count if !value.is_null() => {
-                            cell.count += 1;
-                            if let (Some(sampler), Some(rank)) = (&mut cell.sampler, event_rank) {
-                                sampler.offer(rank, &id, || json!(id));
-                            }
-                        }
-                        Aggregate::Sum => {
-                            if let Some(amount) = as_integer(value) {
-                                cell.sum += i128::from(amount);
-                                if let (Some(sampler), Some(rank), true) =
-                                    (&mut cell.sampler, event_rank, amount > 0)
-                                {
-                                    sampler
-                                        .offer(rank / amount as f64, &id, || json!([id, amount]));
-                                }
-                            }
-                        }
-                        Aggregate::Min => {
-                            if let Some(number) = value.as_f64() {
-                                cell.min = Some(cell.min.map_or(number, |min| min.min(number)));
-                            }
-                        }
-                        Aggregate::Max => {
-                            if let Some(number) = value.as_f64() {
-                                cell.max = Some(cell.max.map_or(number, |max| max.max(number)));
-                            }
-                        }
-                        Aggregate::Distinct => {
-                            for element in distinct(value.clone()) {
-                                let key = canonical(&element);
-                                if element.is_null() || !cell.values.insert(key.clone()) {
-                                    continue;
-                                }
-                                if let (Some(sampler), Some(sample)) = (&mut cell.sampler, sample) {
-                                    let rank = rank(&sample.salt, key.as_bytes());
-                                    sampler.offer(rank, &key, || json!([element, id]));
-                                }
-                            }
-                        }
-                        Aggregate::Count => {}
-                    }
-                }
-            }
-        }
-
-        let mut finished: Vec<(Vec<Value>, Vec<Option<Cell>>)> = rows
-            .into_values()
-            .map(|row| {
-                let mut groups = row.groups.into_iter();
-                let values = self
-                    .columns
-                    .iter()
-                    .zip(&row.cells)
-                    .map(|((aggregate, _), cell)| match (aggregate, cell) {
-                        (Some(aggregate), Some(cell)) => value_of(*aggregate, cell),
-                        _ => groups.next().unwrap_or(Value::Null),
-                    })
-                    .collect();
-                (values, row.cells)
-            })
-            .collect();
-
-        if let Some(order) = self.query.options.order {
-            finished.sort_by(|(a, _), (b, _)| {
-                let (a, b) = (&a[order.column], &b[order.column]);
-                match (a.is_null(), b.is_null()) {
-                    (true, true) => Ordering::Equal,
-                    (true, false) => Ordering::Greater,
-                    (false, true) => Ordering::Less,
-                    _ if order.descending => compare(b, a),
-                    _ => compare(a, b),
-                }
-            });
-        }
-        if let Some(limit) = self.query.options.limit {
-            finished.truncate(limit);
-        }
-
-        let (rows, cells): (Vec<_>, Vec<_>) = finished.into_iter().unzip();
-        let samples = sample.map(|_| {
-            cells
-                .into_iter()
-                .map(|cells| {
-                    cells
-                        .into_iter()
-                        .map(|cell| cell.and_then(|cell| cell.sampler).map(Sampler::drain))
-                        .collect()
-                })
-                .collect()
-        });
-
-        Selection { rows, samples }
-    }
-
-    /// The events that pass `where`, with only the newest for each value of `latest`,
-    /// each with the variable its expressions read.
-    fn select<'a>(&self, events: &'a [StoredEvent]) -> Vec<(&'a StoredEvent, Rcvar)> {
-        let passing = events.iter().filter_map(|event| {
-            let variable = to_variable(&event.to_json(false))?;
-            let keep = self
-                .r#where
-                .as_ref()
-                .is_none_or(|condition| is_truthy(&condition.evaluate(&variable)));
-            keep.then_some((event, variable))
-        });
-
-        let Some(latest) = &self.latest else {
-            return passing.collect();
-        };
-
-        let mut newest: HashMap<String, (&StoredEvent, Rcvar)> = HashMap::new();
-        for (event, variable) in passing {
-            let key = canonical(&latest.evaluate(&variable));
-            let is_newer = newest.get(&key).is_none_or(|(current, _)| {
-                (event.head.created_at, std::cmp::Reverse(event.head.id))
-                    > (current.head.created_at, std::cmp::Reverse(current.head.id))
-            });
-            if is_newer {
-                newest.insert(key, (event, variable));
-            }
-        }
-
-        newest.into_values().collect()
     }
 }
 
@@ -289,24 +385,22 @@ fn value_of(aggregate: Aggregate, cell: &Cell) -> Value {
     }
 }
 
-/// Numbers before strings before anything else. Numbers, including sums written as
-/// strings, sort numerically, and strings by code point.
+/// Numbers before strings before anything else. Numbers sort numerically, and strings
+/// by code point, even ones that hold integers.
 fn compare(a: &Value, b: &Value) -> Ordering {
     let rank = |value: &Value| match value {
         Value::Number(_) => 0,
-        Value::String(text) if text.parse::<i128>().is_ok() => 0,
         Value::String(_) => 1,
         _ => 2,
     };
-    let number = |value: &Value| match value {
-        Value::String(text) => text.parse::<f64>().unwrap_or(0.0),
-        _ => value.as_f64().unwrap_or(0.0),
-    };
 
-    match (rank(a), rank(b)) {
-        (0, 0) => number(a).total_cmp(&number(b)),
-        (1, 1) => a.as_str().cmp(&b.as_str()),
-        (x, y) => x.cmp(&y),
+    match (a, b) {
+        (Value::Number(x), Value::Number(y)) => {
+            let (x, y) = (x.as_f64().unwrap_or(0.0), y.as_f64().unwrap_or(0.0));
+            x.total_cmp(&y)
+        }
+        (Value::String(x), Value::String(y)) => x.cmp(y),
+        _ => rank(a).cmp(&rank(b)),
     }
 }
 
@@ -352,7 +446,12 @@ mod tests {
         let columns = columns.iter().map(|text| column(text)).collect();
         let options: Options = serde_json::from_value(options).unwrap();
         let query = Query::new(Filter::new(), columns, options).unwrap();
-        Plan::new(query).unwrap().evaluate(events)
+        let aggregation = Plan::new(query)
+            .unwrap()
+            .start(1000)
+            .gather(events)
+            .unwrap();
+        aggregation.finish().unwrap()
     }
 
     fn sorted(mut rows: Vec<Vec<Value>>) -> Vec<Vec<Value>> {
@@ -498,6 +597,96 @@ mod tests {
     }
 
     #[test]
+    fn gathers_the_same_rows_however_events_are_batched() {
+        let authors: Vec<PublicKey> = (0..5).map(|_| SecretKey::generate().public_key()).collect();
+        let events: Vec<StoredEvent> = (0..40)
+            .map(|i| {
+                let content = ["+", "-", "🔥"][i as usize % 3];
+                event(
+                    i,
+                    authors[i as usize % 5],
+                    content,
+                    &[],
+                    (i * 7 % 13) as i64,
+                )
+            })
+            .collect();
+        let query = || {
+            let columns = vec![column(r#""content""#), column(r#"{"count": "id"}"#)];
+            let options = serde_json::from_value(json!({"latest": "pubkey"})).unwrap();
+            Plan::new(Query::new(Filter::new(), columns, options).unwrap()).unwrap()
+        };
+        let whole = query()
+            .start(100)
+            .gather(&events)
+            .unwrap()
+            .finish()
+            .unwrap();
+        let reversed: Vec<StoredEvent> = events.iter().rev().cloned().collect();
+        let batched = reversed
+            .chunks(7)
+            .try_fold(query().start(100), |aggregation, batch| {
+                aggregation.gather(batch)
+            })
+            .unwrap()
+            .finish()
+            .unwrap();
+
+        assert_eq!(whole, batched);
+        assert_eq!(
+            whole
+                .rows
+                .iter()
+                .map(|row| row[1].as_u64().unwrap())
+                .sum::<u64>(),
+            5
+        );
+    }
+
+    #[test]
+    fn stops_gathering_at_the_group_limit() {
+        let a = SecretKey::generate().public_key();
+        let gather = |events: &[StoredEvent], columns: &[&str]| {
+            let columns = columns.iter().map(|text| column(text)).collect();
+            let query = Query::new(Filter::new(), columns, Options::default()).unwrap();
+            Plan::new(query).unwrap().start(10).gather(events).err()
+        };
+        let notes: Vec<StoredEvent> = (0..11)
+            .map(|i| event(i, a, &i.to_string(), &[], 1))
+            .collect();
+        let tags: Vec<String> = (0..200).map(|i| i.to_string()).collect();
+        let many: Vec<[&str; 2]> = tags.iter().map(|tag| ["t", tag.as_str()]).collect();
+        let many: Vec<&[&str]> = many.iter().map(|tag| tag.as_slice()).collect();
+        let exploding = [event(0, a, "", &many, 1)];
+        let tag = r#""tags[?[0]=='t'][1]""#;
+
+        assert_eq!(gather(&notes[..10], &[r#""content""#]), None);
+        assert_eq!(gather(&notes, &[r#""content""#]), Some(TooManyGroups(10)));
+        // 200³ combinations are refused before any of them is built.
+        assert_eq!(
+            gather(&exploding, &[tag, tag, tag]),
+            Some(TooManyGroups(10))
+        );
+    }
+
+    #[test]
+    fn sorts_strings_by_code_point_even_ones_that_hold_integers() {
+        let a = SecretKey::generate().public_key();
+        let events: Vec<StoredEvent> = ["10", "9", "b", "a", "😀", "\u{ffff}"]
+            .iter()
+            .enumerate()
+            .map(|(i, content)| event(i as u64, a, content, &[], 1))
+            .collect();
+
+        assert_eq!(
+            run(&events, &[r#""content""#], json!({"order": [0, "asc"]}))
+                .rows
+                .concat(),
+            ["10", "9", "a", "b", "\u{ffff}", "😀"].map(|text| json!(text))
+        );
+    }
+
+    #[test]
     fn gives_null_for_expressions_that_fail_at_runtime() {
         let a = SecretKey::generate().public_key();
         let columns = [r#"{"count": "length(created_at)"}"#, r#"{"count": "id"}"#];
@@ -515,6 +704,47 @@ mod tests {
             Expression::compile("lower(content)").err().unwrap(),
             "unknown function lower"
         );
+    }
+
+    #[test]
+    fn refuses_expressions_too_large_to_parse_safely() {
+        let refusal = |source: &str| Expression::compile(source).err().unwrap();
+        let realistic = "to_number(from_json(tags[?[0]=='description'][1] | [0]).tags[?[0]=='amount'][1] | [0]) == bolt11(tags[?[0]=='bolt11'][1] | [0]).msats";
+
+        assert!(refusal(&"a".repeat(1025)).contains("1024 bytes"));
+        assert!(refusal(&format!("{}a{}", "(".repeat(9), ")".repeat(9))).contains("8 levels"));
+        assert!(refusal(&format!("a{}", ".a".repeat(65))).contains("64 operators"));
+        assert!(Expression::compile(realistic).is_ok());
+        assert!(Expression::compile(&format!("{}a{}", "(".repeat(8), ")".repeat(8))).is_ok());
+        assert!(
+            Expression::compile(&format!("contains(content, '{}')", ".|!(".repeat(100))).is_ok()
+        );
+    }
+
+    #[test]
+    fn the_largest_expressions_allowed_run_on_a_small_stack() {
+        let shapes = [
+            format!("{}a", "!".repeat(64)),
+            format!("a{}", "[]".repeat(32)),
+            format!("a{}", "[*]".repeat(32)),
+            format!("a{}", ".a".repeat(64)),
+            format!("a{}", "|a".repeat(64)),
+            format!("a{}", "||a".repeat(32)),
+            format!("{}a{}", "(".repeat(8), ")".repeat(8)),
+        ];
+        let event = to_variable(r#"{"a":[[[1]]]}"#).unwrap();
+
+        // An overflow aborts the test binary rather than failing this test.
+        std::thread::Builder::new()
+            .stack_size(2 * 1024 * 1024)
+            .spawn(move || {
+                for source in shapes {
+                    Expression::compile(&source).unwrap().evaluate(&event);
+                }
+            })
+            .unwrap()
+            .join()
+            .unwrap();
     }
 
     #[test]

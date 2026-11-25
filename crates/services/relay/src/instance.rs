@@ -18,6 +18,7 @@ use coracle_lib::events::{Event, EventId};
 use coracle_lib::filters::Filter;
 use coracle_lib::keys::PublicKey;
 use coracle_lib::sync::{FrameBudget, Item, Message as SyncMessage, SyncSet, reconcile_responder};
+use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 use crate::RelayLimits;
@@ -556,13 +557,19 @@ impl RelayInstance {
     }
 
     /// A `SELECT`'s rows over the events its filter matches that the connection may
-    /// see: admitted and filtered by the rules a subscription is, and evaluated off
-    /// the async runtime.
+    /// see, admitted and filtered by the rules a subscription is. Events are read a page
+    /// at a time and gathered off the async runtime, so a `SELECT` holds one page of
+    /// events and the rows it has gathered.
     async fn select(&self, session: &Session, query: Query) -> Result<Selection, Refusal> {
         let state = self.state();
         let authed = self.connections.pubkeys(session);
         let now = self.core.clock.now();
         let limits = &self.limits;
+        let deadline = Instant::now() + limits.select_timeout;
+        let failed = |error: &dyn std::fmt::Display| {
+            tracing::warn!(relay = %state.relay.id, error = %error, "select failed");
+            Refusal::Error("the query could not be run")
+        };
 
         state.snapshot.admit_req(&authed)?;
         if let Some(sample) = &query.options.sample
@@ -575,38 +582,69 @@ impl RelayInstance {
         }
 
         let plan = Plan::new(query).map_err(Refusal::invalid)?;
-        let events = caravel_core::events::query_events(
-            &self.core,
-            &state.relay.id,
-            &plan.query.filter,
-            limits.max_select_events + 1,
-            now,
-            &authed,
-            |head| {
-                state
-                    .snapshot
-                    .can_any_receive(&authed, EventFacts::of_head(head), now)
-            },
-        )
-        .await
-        .map_err(|error| {
-            tracing::warn!(relay = %state.relay.id, error = %error, "select failed");
-            Refusal::Error("the query could not be run")
-        })?;
+        let filter = plan.query.filter.clone();
+        let wanted = filter.limit.unwrap_or(usize::MAX);
+        let mut aggregation = plan.start(limits.max_select_groups);
+        let (mut after, mut read, mut taken) = (None, 0, 0);
+        loop {
+            if Instant::now() > deadline {
+                return Err(Refusal::blocked(format!(
+                    "a SELECT may take at most {} seconds",
+                    limits.select_timeout.as_secs()
+                )));
+            }
 
-        if events.len() > limits.max_select_events {
-            return Err(Refusal::blocked(format!(
-                "a SELECT may cover at most {} events",
-                limits.max_select_events
-            )));
+            // One more than the reading limit allows, to tell a filter that matches too
+            // many events from one that matches exactly that many.
+            let batch = limits
+                .max_limit
+                .min(wanted - taken)
+                .min(limits.max_select_events + 1 - read);
+            let (page, next) = caravel_core::events::scan_events(
+                &self.core,
+                &state.relay.id,
+                &filter,
+                after,
+                batch,
+                now,
+                &authed,
+            )
+            .await
+            .map_err(|error| failed(&error))?;
+
+            read += page.len();
+            if read > limits.max_select_events {
+                return Err(Refusal::blocked(format!(
+                    "a SELECT may read at most {} events",
+                    limits.max_select_events
+                )));
+            }
+
+            let visible: Vec<StoredEvent> = page
+                .into_iter()
+                .filter(|stored| {
+                    state
+                        .snapshot
+                        .can_any_receive(&authed, EventFacts::of_head(&stored.head), now)
+                })
+                .take(wanted - taken)
+                .collect();
+            taken += visible.len();
+            aggregation = tokio::task::spawn_blocking(move || aggregation.gather(&visible))
+                .await
+                .map_err(|error| failed(&error))?
+                .map_err(|error| Refusal::blocked(error.to_string()))?;
+
+            match next {
+                Some(next) if taken < wanted => after = Some(next),
+                _ => break,
+            }
         }
 
-        let selection = tokio::task::spawn_blocking(move || plan.evaluate(&events))
+        let selection = tokio::task::spawn_blocking(move || aggregation.finish())
             .await
-            .map_err(|error| {
-                tracing::warn!(relay = %state.relay.id, error = %error, "select failed");
-                Refusal::Error("the query could not be run")
-            })?;
+            .map_err(|error| failed(&error))?
+            .map_err(|error| Refusal::blocked(error.to_string()))?;
 
         if selection.rows.len() > limits.max_select_rows {
             return Err(Refusal::blocked(format!(

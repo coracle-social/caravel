@@ -6,7 +6,7 @@ use coracle_lib::keys::PublicKey;
 use sqlx::postgres::PgRow;
 use sqlx::{PgConnection, PgExecutor, Postgres, QueryBuilder, Row};
 
-use super::{EventGroup, EventHead, EventPage, StoredEvent};
+use super::{EventCursor, EventGroup, EventHead, EventPage, StoredEvent};
 use caravel_util::error::{Error, Result};
 use caravel_util::nostr::kinds;
 
@@ -128,41 +128,72 @@ pub async fn query_events(
     // Read in batches past the last row seen, each twice the last, until enough are admitted.
     let mut found = Vec::new();
     let mut batch = limit;
-    let mut after: Option<(i64, Vec<u8>)> = None;
+    let mut after = None;
     loop {
-        let mut query = QueryBuilder::<Postgres>::new(SELECT_EVENT);
-        push_filter(&mut query, relay_id, filter, now, authed);
-        if let Some((created_at, id)) = &after {
-            query
-                .push(" AND (created_at < ")
-                .push_bind(*created_at)
-                .push(" OR (created_at = ")
-                .push_bind(*created_at)
-                .push(" AND id > ")
-                .push_bind(id.clone())
-                .push("))");
-        }
-        query
-            .push(" ORDER BY created_at DESC, id LIMIT ")
-            .push_bind(batch as i64);
-
-        let rows = query.build().fetch_all(db).await?;
+        let (page, next) = scan_events(db, relay_id, filter, after, batch, now, authed).await?;
         let wanted = limit - found.len();
         found.extend(
-            rows.iter()
-                .filter_map(stored_event)
+            page.into_iter()
                 .filter(|stored| is_visible(&stored.head))
                 .take(wanted),
         );
 
-        match rows.last() {
-            Some(last) if found.len() < limit && rows.len() == batch => {
-                after = Some((last.get("created_at"), last.get("id")));
+        match next {
+            Some(next) if found.len() < limit => {
+                after = Some(next);
                 batch = (batch * 2).min(max_limit);
             }
             _ => return Ok(found),
         }
     }
+}
+
+/// A page of at most `batch` of a relay's unexpired events matching a filter, newest
+/// first with ties broken by id, picking up after `after`, and where the next page
+/// starts if this one was full. The filter's limit is the caller's to apply. Only
+/// `authed` sees the events they scheduled.
+pub async fn scan_events(
+    db: impl PgExecutor<'_>,
+    relay_id: &str,
+    filter: &Filter,
+    after: Option<EventCursor>,
+    batch: usize,
+    now: i64,
+    authed: &[PublicKey],
+) -> Result<(Vec<StoredEvent>, Option<EventCursor>)> {
+    if filter.matches_nothing() || batch == 0 {
+        return Ok((Vec::new(), None));
+    }
+
+    let mut query = QueryBuilder::<Postgres>::new(SELECT_EVENT);
+    push_filter(&mut query, relay_id, filter, now, authed);
+    if let Some(after) = after {
+        query
+            .push(" AND (created_at < ")
+            .push_bind(after.created_at)
+            .push(" OR (created_at = ")
+            .push_bind(after.created_at)
+            .push(" AND id > ")
+            .push_bind(after.id.to_vec())
+            .push("))");
+    }
+    query
+        .push(" ORDER BY created_at DESC, id LIMIT ")
+        .push_bind(batch as i64);
+
+    let rows = query.build().fetch_all(db).await?;
+    let next = match rows.last() {
+        Some(last) if rows.len() == batch => Some(EventCursor {
+            created_at: last.get("created_at"),
+            id: last
+                .get::<Vec<u8>, _>("id")
+                .try_into()
+                .map_err(|_| Error::internal("an event id isn't 32 bytes"))?,
+        }),
+        _ => None,
+    };
+
+    Ok((rows.iter().filter_map(stored_event).collect(), next))
 }
 
 /// The heads of a relay's unexpired events matching a filter, oldest first, or

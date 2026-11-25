@@ -56,12 +56,16 @@ pub struct RelayLimits {
     pub max_limit: usize,
     /// The most events one reconciliation covers.
     pub max_sync: usize,
-    /// The most events one `SELECT` evaluates.
+    /// The most events one `SELECT` reads, whether or not the reader may see them.
     pub max_select_events: usize,
+    /// The most groups one `SELECT` gathers before it sorts and limits its rows.
+    pub max_select_groups: usize,
     /// The most rows one `SELECT` returns.
     pub max_select_rows: usize,
     /// The largest sample a `SELECT` may ask for.
     pub max_select_sample: usize,
+    /// How long one `SELECT` may spend reading and gathering, checked between pages.
+    pub select_timeout: Duration,
     /// New connections allowed per minute from one address, allowing a minute's
     /// worth at once.
     pub connections_per_minute: u32,
@@ -76,9 +80,11 @@ impl Default for RelayLimits {
             max_filters: 200,
             max_limit: 1000,
             max_sync: 20_000,
-            max_select_events: 50_000,
+            max_select_events: 20_000,
+            max_select_groups: 100_000,
             max_select_rows: 10_000,
             max_select_sample: 1024,
+            select_timeout: Duration::from_secs(10),
             connections_per_minute: 60,
         }
     }
@@ -452,6 +458,7 @@ async fn root(
             max_subscriptions: config.limits.max_subscriptions,
             max_message_size: config.transport.max_message_size,
             max_select_events: config.limits.max_select_events,
+            max_select_groups: config.limits.max_select_groups,
             max_select_rows: config.limits.max_select_rows,
             max_select_sample: config.limits.max_select_sample,
         };

@@ -54,6 +54,14 @@ pub struct EventPage {
     pub limit: usize,
 }
 
+/// Where a scan of a relay's events, newest first with ties broken by id, picks up:
+/// after the event a page ended on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct EventCursor {
+    pub created_at: i64,
+    pub id: [u8; 32],
+}
+
 /// What saving an event did.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Saved {

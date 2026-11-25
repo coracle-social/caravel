@@ -59,6 +59,17 @@ static RUNTIME: LazyLock<Runtime> = LazyLock::new(|| {
     runtime
 });
 
+/// The most bytes an expression may hold.
+pub const MAX_EXPRESSION_BYTES: usize = 1024;
+
+/// How deeply an expression's parentheses, brackets and braces may nest.
+pub const MAX_EXPRESSION_DEPTH: usize = 8;
+
+/// The most operators an expression may hold. Chains such as `a.b.c` or `!!a` don't
+/// nest, but parsing and evaluating recurse through them as through brackets, and a
+/// few hundred levels overflow a thread's stack, which aborts the process.
+pub const MAX_EXPRESSION_OPERATORS: usize = 64;
+
 /// A compiled JMESPath expression, evaluated against one event at a time.
 pub struct Expression {
     source: String,
@@ -66,9 +77,10 @@ pub struct Expression {
 }
 
 impl Expression {
-    /// Compile an expression, refusing one that doesn't parse or that calls a function
-    /// the relay doesn't have.
+    /// Compile an expression, refusing one that is too large, that doesn't parse or
+    /// that calls a function the relay doesn't have.
     pub fn compile(source: &str) -> Result<Self, String> {
+        check_size(source)?;
         let ast = jmespath::parse(source)
             .map_err(|error| format!("invalid expression {source}: {error}"))?;
         check_functions(&ast)?;
@@ -132,6 +144,55 @@ fn to_number(value: f64) -> Value {
     } else {
         Number::from_f64(value).map_or(Value::Null, Value::Number)
     }
+}
+
+/// Refuse an expression longer, more deeply nested or with more operators than the
+/// limits allow, reading it before the recursive parser does. What literals and
+/// quoted names hold doesn't count.
+fn check_size(source: &str) -> Result<(), String> {
+    if source.len() > MAX_EXPRESSION_BYTES {
+        return Err(format!(
+            "an expression may hold at most {MAX_EXPRESSION_BYTES} bytes"
+        ));
+    }
+
+    let (mut depth, mut operators) = (0usize, 0usize);
+    let (mut quote, mut escaped) = (None, false);
+    for c in source.chars() {
+        if let Some(closing) = quote {
+            match c {
+                _ if escaped => escaped = false,
+                '\\' => escaped = true,
+                _ if c == closing => quote = None,
+                _ => {}
+            }
+            continue;
+        }
+
+        match c {
+            '\'' | '"' | '`' => quote = Some(c),
+            '(' | '[' | '{' => {
+                depth += 1;
+                operators += 1;
+            }
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            '.' | '|' | '&' | '!' | '*' | '<' | '>' | '=' => operators += 1,
+            _ => {}
+        }
+
+        if depth > MAX_EXPRESSION_DEPTH {
+            return Err(format!(
+                "an expression may nest at most {MAX_EXPRESSION_DEPTH} levels deep"
+            ));
+        }
+        if operators > MAX_EXPRESSION_OPERATORS {
+            return Err(format!(
+                "an expression may hold at most {MAX_EXPRESSION_OPERATORS} operators"
+            ));
+        }
+    }
+
+    Ok(())
 }
 
 /// Refuse an expression that calls a function the runtime doesn't have, which

@@ -53,6 +53,7 @@ async fn the_information_document_describes_the_relay() {
         document["select"],
         json!({
             "max_events": defaults.max_select_events,
+            "max_groups": defaults.max_select_groups,
             "max_rows": defaults.max_select_rows,
             "max_sample": defaults.max_select_sample,
         })
@@ -667,7 +668,16 @@ async fn count(client: &mut Client, filters: Vec<Value>) -> Value {
 
 #[tokio::test]
 async fn a_select_is_admitted_and_filtered_like_a_subscription() {
-    let server = Server::start().await;
+    // Pages of two events, so a select reads several with hidden events among them.
+    let core = testing::core(&SecretKey::generate().public_key().to_hex()).await;
+    let config = RelaysConfig {
+        limits: RelayLimits {
+            max_limit: 2,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let server = Server::start_configured(core, config).await;
     let (relay, owner) = server.relay().await;
     let host = relay.canonical_host();
     let (insider, outsider) = (SecretKey::generate(), SecretKey::generate());
@@ -720,6 +730,17 @@ async fn a_select_is_admitted_and_filtered_like_a_subscription() {
         json!(["SELECT", "s", [["+", 2, 1], ["🔥", 1, 1]]])
     );
 
+    // A filter's limit keeps the newest events the reader may see.
+    let newest = json!(["SELECT", "s", {"kinds": [1, 9], "limit": 2}, [{"count": "id"}]]);
+    assert_eq!(
+        select(&mut outside, newest.clone()).await,
+        json!(["SELECT", "s", [[2]]])
+    );
+    assert_eq!(
+        select(&mut inside, newest).await,
+        json!(["SELECT", "s", [[2]]])
+    );
+
     // A reader who may not subscribe may not select either.
     let mut stranger = server.connect(&host).await;
     stranger.auth(&SecretKey::generate(), server.now()).await;
@@ -751,6 +772,7 @@ async fn a_select_samples_its_items_and_refuses_what_it_may_not_answer() {
     let config = RelaysConfig {
         limits: RelayLimits {
             max_select_events: 3,
+            max_select_groups: 3,
             max_select_rows: 2,
             max_select_sample: 4,
             ..Default::default()
@@ -811,6 +833,37 @@ async fn a_select_samples_its_items_and_refuses_what_it_may_not_answer() {
         .await,
         json!(["CLOSED", "s", "invalid: unknown function lower"])
     );
+    assert_eq!(
+        select(
+            &mut client,
+            json!([
+                "SELECT",
+                "s",
+                notes,
+                [format!("{}content{}", "(".repeat(9), ")".repeat(9))]
+            ])
+        )
+        .await,
+        json!([
+            "CLOSED",
+            "s",
+            "invalid: an expression may nest at most 8 levels deep"
+        ])
+    );
+
+    // Groups past the limit are refused as they are gathered, even within one event.
+    assert_eq!(
+        select(
+            &mut client,
+            json!(["SELECT", "s", notes, ["[content, 'w', 'x', 'y']"]])
+        )
+        .await,
+        json!([
+            "CLOSED",
+            "s",
+            "blocked: a SELECT may gather at most 3 groups"
+        ])
+    );
     let malformed = select(&mut client, json!(["SELECT", "s", notes, []])).await;
     assert_eq!(malformed[0], "CLOSED");
     assert!(
@@ -818,7 +871,7 @@ async fn a_select_samples_its_items_and_refuses_what_it_may_not_answer() {
         "{malformed}"
     );
 
-    // More events than a SELECT may cover are refused, unless the filter's limit keeps
+    // More events than a SELECT may read are refused, unless the filter's limit keeps
     // within it.
     let fourth = sign_event(&owner, 1, "d", &[], server.now());
     assert!(client.publish(&fourth).await.0);
@@ -828,11 +881,7 @@ async fn a_select_samples_its_items_and_refuses_what_it_may_not_answer() {
             json!(["SELECT", "s", notes, [{"count": "id"}]])
         )
         .await,
-        json!([
-            "CLOSED",
-            "s",
-            "blocked: a SELECT may cover at most 3 events"
-        ])
+        json!(["CLOSED", "s", "blocked: a SELECT may read at most 3 events"])
     );
     assert_eq!(
         select(

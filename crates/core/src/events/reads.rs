@@ -7,7 +7,7 @@ use coracle_lib::keys::PublicKey;
 
 use crate::Core;
 use caravel_billing::relays::Relay;
-use caravel_relays::events::{EventGroup, EventHead, StoredEvent};
+use caravel_relays::events::{EventCursor, EventGroup, EventHead, StoredEvent};
 use caravel_relays::notify::Notification;
 use caravel_relays::policy::RelaySnapshot;
 use caravel_util::error::Result;
@@ -31,6 +31,30 @@ pub async fn query_events(
         now,
         authed,
         is_visible,
+    )
+    .await
+}
+
+/// A page of a relay's unexpired events matching `filter`, newest first, after
+/// `after`, and where the next page starts if this one was full, for a `SELECT` to read
+/// a page at a time. Only `authed` sees the events they scheduled.
+pub async fn scan_events(
+    core: &Core,
+    relay_id: &str,
+    filter: &Filter,
+    after: Option<EventCursor>,
+    batch: usize,
+    now: i64,
+    authed: &[PublicKey],
+) -> Result<(Vec<StoredEvent>, Option<EventCursor>)> {
+    caravel_relays::events::queries::scan_events(
+        core.db.pool(),
+        relay_id,
+        filter,
+        after,
+        batch,
+        now,
+        authed,
     )
     .await
 }
